@@ -48,8 +48,11 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   Bumping it is its own commit (`build: bump toolchain to 1.x`), with every gate green on Linux
   and Windows.
 - Windows releases are built with native MSVC in CI (D-35). Locally, `cargo-xwin` cross-builds the
-  MSVC target from WSL; `scripts/check.sh clippy-windows` cross-checks without linking.
-- Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli` (versions pinned in
+  MSVC target from WSL; `scripts/check.sh clippy-windows` cross-checks without linking, through
+  `cargo xwin clippy` so C dependencies (bundled SQLite) compile too. It needs `clang` on `PATH`
+  (a distro `clang` package, or a conda-forge `clang` environment); cargo-xwin links it as
+  `clang-cl` and uses the toolchain's `llvm-tools` as `llvm-lib`.
+- Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli`, `cargo-xwin` (versions pinned in
   `.github/workflows/ci.yml`; use the same or newer locally).
 - **Shared build cache** (optional, local only): `scripts/check.sh` runs Cargo as `$CARGO`
   (default `cargo`). With [mbx](https://mr-boxington.jdx.dev/) installed, run

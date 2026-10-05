@@ -27,7 +27,17 @@ run_gate() {
     spdx) scripts/check-spdx.sh ;;
     clippy) "$cargo" clippy --workspace --all-targets --all-features --locked -- -D warnings ;;
     clippy-windows)
-        "$cargo" clippy --workspace --all-targets --all-features --locked \
+        # cargo-xwin supplies the MSVC headers and libraries, so C dependencies (bundled SQLite)
+        # build for the msvc target. It drives clang as clang-cl and the toolchain's llvm-ar as
+        # llvm-lib, so it needs `clang` on PATH. Run through plain cargo: the cross-check doesn't
+        # share the native build's cache anyway.
+        for tool in cargo-xwin clang; do
+            command -v "$tool" >/dev/null 2>&1 || {
+                echo "clippy-windows needs $tool on PATH (docs/STANDARDS.md, \"Toolchain\")" >&2
+                exit 1
+            }
+        done
+        cargo xwin clippy --workspace --all-targets --all-features --locked \
             --target x86_64-pc-windows-msvc -- -D warnings
         ;;
     deny) "$cargo" deny --locked check ;;
