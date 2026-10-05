@@ -51,6 +51,13 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   MSVC target from WSL; `scripts/check.sh clippy-windows` cross-checks without linking.
 - Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli` (versions pinned in
   `.github/workflows/ci.yml`; use the same or newer locally).
+- **Shared build cache** (optional, local only): `scripts/check.sh` runs Cargo as `$CARGO`
+  (default `cargo`). With [mbx](https://mr-boxington.jdx.dev/) installed, run
+  `CARGO=mbx MBX_CACHE_DIR=<one shared dir> scripts/check.sh` (and `mbx build|test|...` instead of
+  `cargo ...`), so parallel worktrees share compiled output and one CPU/memory budget. Keep your
+  own `CARGO_TARGET_DIR`; mbx leaves it alone. Cached files are read-only hard links: delete the
+  cache with `mbx gc` or after `chmod -R u+w`. Don't export `CARGO=mbx` in your shell: mbx finds
+  Cargo through `$CARGO` and would call itself. CI runs plain `cargo`.
 
 ## 3. Workflow for agents and humans
 
