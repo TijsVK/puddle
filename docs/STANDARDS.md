@@ -31,6 +31,7 @@ different crates and rarely collides.
 | `crates/xtask` | bin (dev) | `cargo xtask runtime` (runtime folder from the fork release, checksums, `licenses/`), `cargo xtask notices` (third-party notices; `--check` is a gate); never shipped | W1, W7 |
 | `crates/puddle-ipc` | lib | Per-sandbox host endpoints (named pipe / Unix socket) only the current user can open: owner-only DACL, first-instance check, random names, `0600` sockets in a `0700` dir (T-029 HO-1, HO-2). Its `unsafe` (Win32 security calls) is in one module, `windows/security.rs` | W1 |
 | `crates/puddle-e2e` | lib (tests) | Harness for end-to-end and hostile-guest tests; never a dependency of product crates | W7, T-035 |
+| `crates/puddle-vm-tests` | lib (tests) | VM test harness on the msb SDK: per-run prefix, private msb home, runtime pair, scoped backend; the `vm_*` tests of tiers K/W/L. Never a dependency of product crates | W1, T-102 |
 
 Later, not yet created: the Svelte UI (`ui/`, W5) and the Tauri shell (`crates/puddle-app` or
 `src-tauri/`, W8).
@@ -40,7 +41,7 @@ Later, not yet created: the Svelte UI (`ui/`, W5) and the Tauri shell (`crates/p
 `proxy` and `store` don't depend on each other's internals: the proxy asks for decisions through a
 trait defined in `puddle-types` (or the proxy crate) that `store` implements, and `puddle` wires
 them. `puddle-agent` depends on `puddle-types` and `puddle-agent-proto` only (it is built for the guest); the host side (`proxy`) uses `puddle-agent-proto` too, and `puddle-ipc` for the per-sandbox route it listens on. No cycles, no
-product crate depends on `puddle-e2e`.
+product crate depends on `puddle-e2e` or `puddle-vm-tests`.
 
 **New crate:** only when a component doesn't fit the table (say why in the commit). Copy an
 existing `Cargo.toml` (all `*.workspace = true` fields, `[lints] workspace = true`), add it to
@@ -173,8 +174,9 @@ the owner, then tagged `vX.Y.Z` on `main`.
 | L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, rustdoc | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
-| L3 Linux KVM e2e | a real msb microVM; MWE behaviours; hostile-guest **tier V** | `crates/puddle-e2e/tests/`, functions named `vm_*` | per PR smoke + nightly full (once added) |
-| L4 Windows e2e | the L3 scenarios on WHP plus Windows-only paths; hostile-guest **tier W** | `ci/windows-e2e.ps1` driving `puddle-e2e` | on demand / before a release (D-28) |
+| L3 Linux KVM e2e (**K**) | a real msb microVM; MWE behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: by hand on any branch, nightly on `develop` |
+| L4 Windows e2e (**W**) | the L3 scenarios on WHP plus Windows-only paths; hostile-guest **tier W** | same crate, same names | `vm-windows.yml` on the hosted `windows-2025` runner: by hand on any branch, nightly on `develop` |
+| L4 laptop (**L**) | what hosted runners can't show: real client OS, mains power, sleep/resume, Defender, corporate network | same crate, named `vm_laptop_*` | `ci/windows-e2e.ps1` on the laptop, posts the `puddle/windows-e2e` status; before a release (D-28) |
 | L5 manual | VS Code attach, sleep/resume, network drop | release checklist | each release candidate |
 
 ### Rules
@@ -183,14 +185,19 @@ the owner, then tagged `vX.Y.Z` on `main`.
   works end to end.** A bug fix starts with a test that reproduces it.
 - **Hostile-guest cases** (T-029 §6, suite T-035): every case is a named test (`hostile_<id>_…`)
   asserting on the audit log, the API and the fake upstream's record. Write the tier P version
-  with the feature; V and W follow in `puddle-e2e`.
+  with the feature; V and W follow as VM tests on the `puddle-vm-tests` harness, named
+  `vm_hostile_<id>_…` so the VM profile picks them up.
 - **Property tests** (`proptest`) for every parser and classifier that sees guest or network input;
   fuzz targets for the same once `cargo-fuzz` is set up.
 - **Deterministic:** no `sleep` to wait for something (wait on the event, with a timeout); no real
   internet in gated tests (local fixtures with fixed responses, D-31); bind port 0; temp dirs per
   test; per-test `MSB_HOME` and unique sandbox/pipe names; no dependence on test order.
-- **VM tests** are named `vm_*` so nextest runs them one at a time (`.config/nextest.toml`) and they
-  can be filtered (`cargo nextest run -E 'not test(/vm_/)'`).
+- **VM tests** are named `vm_*` (function or test file). The default and `ci` nextest profiles leave
+  them out, so the gates never need KVM; `cargo nextest run -p puddle-vm-tests --profile vm` runs
+  only them, one at a time, never retried (`.config/nextest.toml`). They need
+  `PUDDLE_VM_RUNTIME_DIR` (msb + libkrunfw, from `ci/fetch-msb.sh`), and take `PUDDLE_VM_PREFIX`
+  and `PUDDLE_VM_ROOT`; every sandbox name and the private msb home carry the prefix, so up to three
+  runs share a host. Laptop-only tests are named `vm_laptop_*`.
 - **Redaction:** tests that handle a credential use a canary value and assert it never appears in
   logs, errors, audit entries or the guest's view.
 - **Flaky tests:** nextest never retries (`retries = 0`). A test that fails without a code change
@@ -216,12 +223,15 @@ the owner, then tagged `vX.Y.Z` on `main`.
 |---|---|---|---|
 | `ci.yml` | push to `develop`/`main`, every PR, manual | `ubuntu-24.04` | all of `scripts/check.sh all` in one job; every gate runs even if an earlier one fails |
 | `windows.yml` | nightly 02:30 UTC (skipped if unchanged since the last green nightly), PRs to `main`, manual | `windows-2025` | clippy, nextest, doc tests, release build (MSVC) |
+| `vm-linux.yml` | manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if unchanged) | `ubuntu-24.04` (KVM) | VM tests, tier K; no KVM ⇒ warning, infrastructure skip |
+| `vm-windows.yml` | manual on any branch, nightly 03:15 UTC on `develop` (skipped if unchanged) | `windows-2025` (WHP) | VM tests, tier W; no WHP ⇒ warning, infrastructure skip |
 | Dependabot | weekly, grouped | — | opens PRs to `develop` |
 
 The repo is private, so CI shares 2 000 free minutes a month, and Windows minutes count double:
 don't add jobs or triggers without checking the budget, and keep Windows on nightly/PR-to-main.
 Actions are pinned to commit SHAs; workflows get `contents: read` unless they need more.
-The KVM e2e job and the Windows e2e script arrive with the first VM tests (L3/L4).
+VM jobs never run per push: dispatch them on your task branch when your change needs K/W evidence.
+The msb runtime they boot is pinned by tag and archive SHA-256 in `ci/msb-runtime.sha256`.
 
 ## 11. Licence headers
 
