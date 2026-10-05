@@ -23,6 +23,7 @@ puddle-api = { path = "crates/puddle-api" }
 puddle-boot = { path = "crates/puddle-boot" }
 puddle-agent-proto = { path = "crates/puddle-agent-proto" }
 puddle-runtime = { path = "crates/puddle-runtime" }
+puddle-ipc = { path = "crates/puddle-ipc" }
 
 # External
 object = { version = "0.40", default-features = false }
@@ -42,6 +43,8 @@ tokio-yamux = { version = "0.3.20", default-features = false, features = ["tokio
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 libc = "0.2.172"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
+getrandom = "0.4"
+windows-sys = "0.61"
 
 [workspace.lints.rust]
 unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless it needs FFI

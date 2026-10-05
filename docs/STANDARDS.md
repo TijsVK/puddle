@@ -27,6 +27,7 @@ different crates and rarely collides.
 | `crates/puddle-agent-proto` | lib | Agent ↔ host wire protocol: yamux settings, stream kinds, control messages, host session, reset-preserving splice | W1/W2 |
 | `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI, daemon, wiring of the crates above | W7 |
 | `crates/xtask` | bin (dev) | `cargo xtask runtime` (runtime folder from the fork release, checksums, `licenses/`), `cargo xtask notices` (third-party notices; `--check` is a gate); never shipped | W1, W7 |
+| `crates/puddle-ipc` | lib | Per-sandbox host endpoints (named pipe / Unix socket) only the current user can open: owner-only DACL, first-instance check, random names, `0600` sockets in a `0700` dir (T-029 HO-1, HO-2). Its `unsafe` (Win32 security calls) is in one module, `windows/security.rs` | W1 |
 | `crates/puddle-e2e` | lib (tests) | Harness for end-to-end and hostile-guest tests; never a dependency of product crates | W7, T-035 |
 
 Later, not yet created: the Svelte UI (`ui/`, W5) and the Tauri shell (`crates/puddle-app` or
