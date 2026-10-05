@@ -1,0 +1,979 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! The audit log's wire format (`docs/spec/rules.md` §5, ADR 0002).
+//!
+//! Every record is one variant of [`AuditRecord`], serialised by `serde_json` only (R-23), with
+//! control characters escaped and the size caps of R-26 applied in [`AuditRecord::to_line`], the
+//! one place a record becomes text. Nothing secret is representable: there are no header, body,
+//! query-string or credential fields (R-25).
+
+use std::fmt;
+use std::io;
+use std::net::IpAddr;
+
+use puddle_types::{Host, PendingId, RuleId, SandboxName};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::pattern::Pattern;
+use crate::pending::PendingRow;
+use crate::rule::{Actor, Rule, Scope};
+
+/// Longest audit line, in bytes (R-26).
+pub const MAX_LINE_BYTES: usize = 4096;
+/// Longest string field, in bytes, before the line cap applies (R-26).
+pub const MAX_FIELD_BYTES: usize = 1024;
+
+/// A record could not be turned into a line.
+#[derive(Debug, thiserror::Error)]
+pub enum AuditError {
+    /// `serde_json` failed (it can't for these types; kept rather than panicking).
+    #[error("audit record did not serialise: {0}")]
+    Serialise(#[from] serde_json::Error),
+    /// The record is over the line cap with every string already empty.
+    #[error("audit record exceeds {MAX_LINE_BYTES} bytes without its strings")]
+    TooLarge,
+}
+
+/// How the proxy handled a connection (R-24).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionDecision {
+    /// Let through.
+    Allow,
+    /// Refused by a deny rule.
+    Deny,
+    /// Refused while waiting for the user.
+    Pending,
+    /// Refused regardless of rules (toggle off, puddle's own endpoint, unsupported protocol).
+    Blocked,
+}
+
+/// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`,
+/// `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `suppressed`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionReason {
+    /// A rule decided.
+    Rule,
+    /// No rule matched.
+    NoRule,
+    /// A local-destination toggle is off; names the category (R-14).
+    Toggle(String),
+    /// puddle's own endpoints are always blocked (D-26).
+    PuddleEndpoint,
+    /// SSH through the proxy isn't supported.
+    SshUnsupported,
+    /// Summary of connection records over the per-sandbox limit (R-26).
+    Suppressed,
+}
+
+impl fmt::Display for ConnectionReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Rule => f.write_str("rule"),
+            Self::NoRule => f.write_str("no_rule"),
+            Self::Toggle(category) => write!(f, "toggle:{category}"),
+            Self::PuddleEndpoint => f.write_str("puddle_endpoint"),
+            Self::SshUnsupported => f.write_str("ssh_unsupported"),
+            Self::Suppressed => f.write_str("suppressed"),
+        }
+    }
+}
+
+/// The request line of a terminated HTTP request. Only the method and the path reach the audit:
+/// the query string, fragment, scheme and authority (with any userinfo) are dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpRequestLine {
+    /// `GET`, `POST`, ...
+    pub method: String,
+    /// The request target as received (origin form or absolute form).
+    pub target: String,
+}
+
+/// One connection as the proxy (W2) reports it; the store stamps the time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionEvent {
+    /// The sandbox it came from.
+    pub sandbox: SandboxName,
+    /// The requested host.
+    pub host: Host,
+    /// The requested port.
+    pub port: u16,
+    /// The address connected to, once resolved.
+    pub resolved_ip: Option<IpAddr>,
+    /// What happened.
+    pub decision: ConnectionDecision,
+    /// Why.
+    pub reason: ConnectionReason,
+    /// The deciding rule.
+    pub rule_id: Option<RuleId>,
+    /// The pending row, when pending.
+    pub pending_id: Option<PendingId>,
+    /// The credential binding used, by id only (D-11). Never the credential.
+    pub binding_id: Option<String>,
+    /// Whether a credential was injected.
+    pub injected: bool,
+    /// Method and target, on terminated hosts only.
+    pub http: Option<HttpRequestLine>,
+    /// Bytes from the guest.
+    pub bytes_up: u64,
+    /// Bytes to the guest.
+    pub bytes_down: u64,
+}
+
+/// A `connection` record (R-24). `host`, `port` and `decision` are `null` only on a
+/// `reason: suppressed` summary, which carries `count` instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionRecord {
+    /// Epoch ms.
+    pub ts: u64,
+    /// The sandbox.
+    pub sandbox_id: String,
+    /// The requested host.
+    pub host: Option<String>,
+    /// The requested port.
+    pub port: Option<u16>,
+    /// The address connected to.
+    pub resolved_ip: Option<String>,
+    /// What happened.
+    pub decision: Option<ConnectionDecision>,
+    /// Why (see [`ConnectionReason`]).
+    pub reason: String,
+    /// The deciding rule.
+    pub rule_id: Option<i64>,
+    /// The pending row.
+    pub pending_id: Option<i64>,
+    /// The credential binding, by id.
+    pub binding_id: Option<String>,
+    /// Whether a credential was injected.
+    pub injected: bool,
+    /// HTTP method, terminated hosts only.
+    pub method: Option<String>,
+    /// HTTP path without query string, terminated hosts only.
+    pub path: Option<String>,
+    /// Whether `path` was cut to fit (R-26).
+    pub path_truncated: bool,
+    /// Bytes from the guest.
+    pub bytes_up: u64,
+    /// Bytes to the guest.
+    pub bytes_down: u64,
+    /// Records summarised, on a `suppressed` summary.
+    pub count: Option<u64>,
+}
+
+impl ConnectionRecord {
+    pub(crate) fn from_event(ts: u64, event: &ConnectionEvent) -> Self {
+        let (method, path) = event.http.as_ref().map_or((None, None), |http| {
+            (
+                Some(http.method.clone()),
+                Some(path_only(&http.target).to_owned()),
+            )
+        });
+        Self {
+            ts,
+            sandbox_id: event.sandbox.to_string(),
+            host: Some(event.host.to_string()),
+            port: Some(event.port),
+            resolved_ip: event.resolved_ip.map(|ip| ip.to_string()),
+            decision: Some(event.decision),
+            reason: event.reason.to_string(),
+            rule_id: event.rule_id.map(|id| id.0),
+            pending_id: event.pending_id.map(|id| id.0),
+            binding_id: event.binding_id.clone(),
+            injected: event.injected,
+            method,
+            path,
+            path_truncated: false,
+            bytes_up: event.bytes_up,
+            bytes_down: event.bytes_down,
+            count: None,
+        }
+    }
+
+    pub(crate) fn suppressed_summary(ts: u64, sandbox: &SandboxName, count: u64) -> Self {
+        Self {
+            ts,
+            sandbox_id: sandbox.to_string(),
+            host: None,
+            port: None,
+            resolved_ip: None,
+            decision: None,
+            reason: ConnectionReason::Suppressed.to_string(),
+            rule_id: None,
+            pending_id: None,
+            binding_id: None,
+            injected: false,
+            method: None,
+            path: None,
+            path_truncated: false,
+            bytes_up: 0,
+            bytes_down: 0,
+            count: Some(count),
+        }
+    }
+}
+
+/// The path of a request target, without scheme, authority, query string or fragment.
+fn path_only(target: &str) -> &str {
+    let end = target.find(['?', '#']).unwrap_or(target.len());
+    let target = target.get(..end).unwrap_or_default();
+    match target.find("://") {
+        Some(scheme_end) => {
+            let rest = target.get(scheme_end + 3..).unwrap_or_default();
+            rest.find('/')
+                .and_then(|slash| rest.get(slash..))
+                .unwrap_or("/")
+        }
+        None => target,
+    }
+}
+
+/// A rule as it appears in the audit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleWire {
+    /// Row id.
+    pub id: i64,
+    /// `global` or `sandbox`.
+    pub scope: String,
+    /// The sandbox, for a sandbox rule.
+    pub sandbox_id: Option<String>,
+    /// `exact` or `suffix`.
+    pub pattern_kind: String,
+    /// `example.com` or `.example.com`.
+    pub pattern: String,
+    /// `allow` or `deny`.
+    pub effect: String,
+    /// Epoch ms, or `null` for permanent.
+    pub expires_at: Option<u64>,
+    /// Epoch ms.
+    pub created_at: u64,
+    /// `cli`, `ui` or `api`.
+    pub created_by: String,
+    /// The pending row it came from.
+    pub source_pending_id: Option<i64>,
+}
+
+impl From<&Rule> for RuleWire {
+    fn from(rule: &Rule) -> Self {
+        Self {
+            id: rule.id.0,
+            scope: match rule.scope {
+                Scope::Global => "global",
+                Scope::Sandbox(_) => "sandbox",
+            }
+            .to_owned(),
+            sandbox_id: rule.scope.sandbox().map(ToString::to_string),
+            pattern_kind: match rule.pattern {
+                Pattern::Exact(_) => "exact",
+                Pattern::Suffix(_) => "suffix",
+            }
+            .to_owned(),
+            pattern: rule.pattern.to_string(),
+            effect: rule.effect.as_str().to_owned(),
+            expires_at: rule.expires_at,
+            created_at: rule.created_at,
+            created_by: rule.created_by.as_str().to_owned(),
+            source_pending_id: rule.source_pending_id.map(|id| id.0),
+        }
+    }
+}
+
+/// A pending row as it appears in the audit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingWire {
+    /// Row id.
+    pub id: i64,
+    /// The sandbox.
+    pub sandbox_id: String,
+    /// The requested host.
+    pub host: String,
+    /// The requested port.
+    pub port: u16,
+    /// Epoch ms.
+    pub first_seen: u64,
+    /// Epoch ms.
+    pub last_seen: u64,
+    /// Requests the row stands for.
+    pub attempts: u64,
+    /// `requested`, `allowed`, `denied` or `expired`.
+    pub state: String,
+    /// Epoch ms.
+    pub decided_at: Option<u64>,
+    /// `cli`, `ui`, `api` or `system`.
+    pub decided_by: Option<String>,
+    /// The deciding rule.
+    pub rule_id: Option<i64>,
+}
+
+impl From<&PendingRow> for PendingWire {
+    fn from(row: &PendingRow) -> Self {
+        Self {
+            id: row.id.0,
+            sandbox_id: row.sandbox.to_string(),
+            host: row.host.to_string(),
+            port: row.port,
+            first_seen: row.first_seen,
+            last_seen: row.last_seen,
+            attempts: row.attempts,
+            state: row.state.as_str().to_owned(),
+            decided_at: row.decided_at,
+            decided_by: row.decided_by.map(|a| a.as_str().to_owned()),
+            rule_id: row.rule_id.map(|id| id.0),
+        }
+    }
+}
+
+/// Why a pending row expired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingExpiryReason {
+    /// No repeat for the stale period (R-20).
+    Stale,
+    /// Its sandbox was deleted (R-21).
+    SandboxDeleted,
+}
+
+/// Why a rule was deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleDeleteReason {
+    /// A user deleted it.
+    User,
+    /// Its sandbox was deleted (R-21).
+    SandboxDeleted,
+}
+
+/// One audit record (R-24). Internally tagged: `{"type": "rule_created", ...}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AuditRecord {
+    /// A connection the proxy handled (written by W2).
+    Connection(ConnectionRecord),
+    /// A new pending row.
+    PendingCreated {
+        /// Epoch ms.
+        ts: u64,
+        /// The row.
+        pending: PendingWire,
+    },
+    /// A pending row approved or denied, by the user or by a rule that now covers it (R-16).
+    PendingDecided {
+        /// Epoch ms.
+        ts: u64,
+        /// The row as decided.
+        pending: PendingWire,
+    },
+    /// A pending row expired.
+    PendingExpired {
+        /// Epoch ms.
+        ts: u64,
+        /// The row as expired.
+        pending: PendingWire,
+        /// Stale or sandbox deleted.
+        reason: PendingExpiryReason,
+    },
+    /// Requests over a sandbox's limit, not written as rows (R-13).
+    PendingSuppressed {
+        /// Epoch ms.
+        ts: u64,
+        /// The sandbox.
+        sandbox_id: String,
+        /// Requests suppressed since the previous record.
+        count: u64,
+    },
+    /// A rule created.
+    RuleCreated {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule.
+        rule: RuleWire,
+    },
+    /// A rule changed.
+    RuleUpdated {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule before.
+        before: RuleWire,
+        /// The rule after.
+        rule: RuleWire,
+        /// Who changed it.
+        actor: String,
+    },
+    /// A rule deleted.
+    RuleDeleted {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule as it was.
+        rule: RuleWire,
+        /// User or sandbox deletion.
+        reason: RuleDeleteReason,
+        /// Who deleted it.
+        actor: String,
+    },
+    /// A rule removed by the sweeper after it expired (R-19).
+    RuleExpired {
+        /// Epoch ms.
+        ts: u64,
+        /// The whole rule.
+        rule: RuleWire,
+    },
+    /// Oldest records deleted to keep the audit under its cap (R-26).
+    AuditTrimmed {
+        /// Epoch ms.
+        ts: u64,
+        /// Records deleted.
+        deleted_records: u64,
+        /// `ts` of the oldest record left, `null` if none.
+        oldest_ts_kept: Option<u64>,
+    },
+}
+
+impl AuditRecord {
+    /// The `type` tag.
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Connection(_) => "connection",
+            Self::PendingCreated { .. } => "pending_created",
+            Self::PendingDecided { .. } => "pending_decided",
+            Self::PendingExpired { .. } => "pending_expired",
+            Self::PendingSuppressed { .. } => "pending_suppressed",
+            Self::RuleCreated { .. } => "rule_created",
+            Self::RuleUpdated { .. } => "rule_updated",
+            Self::RuleDeleted { .. } => "rule_deleted",
+            Self::RuleExpired { .. } => "rule_expired",
+            Self::AuditTrimmed { .. } => "audit_trimmed",
+        }
+    }
+
+    /// Epoch ms.
+    #[must_use]
+    pub fn ts(&self) -> u64 {
+        match self {
+            Self::Connection(record) => record.ts,
+            Self::PendingCreated { ts, .. }
+            | Self::PendingDecided { ts, .. }
+            | Self::PendingExpired { ts, .. }
+            | Self::PendingSuppressed { ts, .. }
+            | Self::RuleCreated { ts, .. }
+            | Self::RuleUpdated { ts, .. }
+            | Self::RuleDeleted { ts, .. }
+            | Self::RuleExpired { ts, .. }
+            | Self::AuditTrimmed { ts, .. } => *ts,
+        }
+    }
+
+    /// The sandbox the record is about, if any (indexed for per-sandbox reads).
+    #[must_use]
+    pub fn sandbox_id(&self) -> Option<&str> {
+        match self {
+            Self::Connection(record) => Some(&record.sandbox_id),
+            Self::PendingCreated { pending, .. }
+            | Self::PendingDecided { pending, .. }
+            | Self::PendingExpired { pending, .. } => Some(&pending.sandbox_id),
+            Self::PendingSuppressed { sandbox_id, .. } => Some(sandbox_id),
+            Self::RuleCreated { rule, .. }
+            | Self::RuleUpdated { rule, .. }
+            | Self::RuleDeleted { rule, .. }
+            | Self::RuleExpired { rule, .. } => rule.sandbox_id.as_deref(),
+            Self::AuditTrimmed { .. } => None,
+        }
+    }
+
+    /// The record as one JSONL line (no newline), at most [`MAX_LINE_BYTES`].
+    ///
+    /// Every string longer than [`MAX_FIELD_BYTES`] is cut to it; `path` is also stripped of any
+    /// query string and marks `path_truncated`. If the line is still too long, the longest
+    /// string is halved until it fits. Control characters (C0, DEL, C1) and U+2028/U+2029 come
+    /// out as `\uXXXX`.
+    ///
+    /// # Errors
+    /// [`AuditError`] if the record can't be serialised or can't fit.
+    pub fn to_line(&self) -> Result<String, AuditError> {
+        let mut value = serde_json::to_value(self)?;
+        let path = value
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|p| path_only(p).to_owned());
+        if let (Some(path), Some(slot)) = (path, value.get_mut("path")) {
+            *slot = Value::String(path);
+        }
+        let mut cut = Vec::new();
+        cap_strings(&mut value, MAX_FIELD_BYTES, "", &mut cut);
+        let mut line = encode(&value)?;
+        while line.len() > MAX_LINE_BYTES {
+            let Some((_, pointer)) = longest_string(&value, "") else {
+                return Err(AuditError::TooLarge);
+            };
+            if let Some(Value::String(s)) = value.pointer_mut(&pointer) {
+                let keep = s.floor_char_boundary(s.len() / 2);
+                s.truncate(keep);
+            }
+            cut.push(pointer);
+            line = encode(&value)?;
+        }
+        if cut.iter().any(|p| p == "/path")
+            && let Some(flag) = value.get_mut("path_truncated")
+        {
+            *flag = Value::Bool(true);
+            line = encode(&value)?;
+        }
+        Ok(line)
+    }
+}
+
+/// Cuts every string over `max` bytes, recording the JSON pointer of each one cut.
+fn cap_strings(value: &mut Value, max: usize, pointer: &str, cut: &mut Vec<String>) {
+    match value {
+        Value::String(s) if s.len() > max => {
+            let keep = s.floor_char_boundary(max);
+            s.truncate(keep);
+            cut.push(pointer.to_owned());
+        }
+        Value::Object(map) => {
+            for (key, child) in map {
+                cap_strings(child, max, &format!("{pointer}/{key}"), cut);
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter_mut().enumerate() {
+                cap_strings(child, max, &format!("{pointer}/{index}"), cut);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The JSON pointer and encoded length of the non-empty string whose encoding is longest.
+fn longest_string(value: &Value, pointer: &str) -> Option<(usize, String)> {
+    match value {
+        Value::String(s) if !s.is_empty() => Some((encoded_len(s), pointer.to_owned())),
+        Value::Object(map) => map
+            .iter()
+            .filter_map(|(key, child)| longest_string(child, &format!("{pointer}/{key}")))
+            .max_by_key(|(len, _)| *len),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, child)| longest_string(child, &format!("{pointer}/{index}")))
+            .max_by_key(|(len, _)| *len),
+        _ => None,
+    }
+}
+
+fn encoded_len(s: &str) -> usize {
+    s.chars()
+        .map(|c| if needs_escape(c) { 6 } else { c.len_utf8() })
+        .sum()
+}
+
+fn needs_escape(c: char) -> bool {
+    c.is_control() || c == '"' || c == '\\' || c == '\u{2028}' || c == '\u{2029}'
+}
+
+fn encode(value: &Value) -> Result<String, AuditError> {
+    let mut out = Vec::new();
+    let mut ser = serde_json::Serializer::with_formatter(&mut out, EscapingFormatter);
+    value.serialize(&mut ser)?;
+    // serde_json only ever writes UTF-8.
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// `serde_json`'s compact formatter, plus `\uXXXX` for DEL, C1 controls and U+2028/U+2029,
+/// which `serde_json` leaves raw. C0 controls are already escaped before they get here.
+struct EscapingFormatter;
+
+impl serde_json::ser::Formatter for EscapingFormatter {
+    fn write_string_fragment<W: ?Sized + io::Write>(
+        &mut self,
+        writer: &mut W,
+        fragment: &str,
+    ) -> io::Result<()> {
+        let mut start = 0;
+        for (index, c) in fragment.char_indices() {
+            if needs_escape(c) {
+                writer.write_all(fragment.get(start..index).unwrap_or_default().as_bytes())?;
+                write!(writer, "\\u{:04x}", u32::from(c))?;
+                start = index + c.len_utf8();
+            }
+        }
+        writer.write_all(fragment.get(start..).unwrap_or_default().as_bytes())
+    }
+}
+
+/// Per-sandbox limit on `connection` records (R-26): at most `limit` per wall-clock second; the
+/// excess is counted and written as one summary record when the second is over.
+#[derive(Debug, Default)]
+pub(crate) struct ConnectionWindow {
+    second: u64,
+    written: u32,
+    excess: u64,
+}
+
+impl ConnectionWindow {
+    /// Whether a record at `now` may be written, and a summary `(second_start_ms, count)` for a
+    /// finished second that had excess.
+    pub(crate) fn admit(&mut self, now: u64, limit: u32) -> (bool, Option<(u64, u64)>) {
+        let finished = self.roll(now);
+        if self.written < limit {
+            self.written += 1;
+            (true, finished)
+        } else {
+            self.excess += 1;
+            (false, finished)
+        }
+    }
+
+    /// The summary of a finished second with excess, if `now` is past it.
+    pub(crate) fn roll(&mut self, now: u64) -> Option<(u64, u64)> {
+        let second = now / 1000;
+        if second == self.second {
+            return None;
+        }
+        let finished = (self.excess > 0).then_some((self.second * 1000, self.excess));
+        *self = Self {
+            second,
+            written: 0,
+            excess: 0,
+        };
+        finished
+    }
+}
+
+/// Maps a stored actor to the wire string.
+pub(crate) fn actor_str(actor: Actor) -> String {
+    actor.as_str().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pending::PendingState;
+    use proptest::prelude::*;
+
+    const CANARY: &str = "CANARY-7f3a9c";
+
+    fn sb() -> SandboxName {
+        SandboxName::new("sb-1").unwrap()
+    }
+
+    fn event() -> ConnectionEvent {
+        ConnectionEvent {
+            sandbox: sb(),
+            host: Host::parse_normalised("api.example.com").unwrap(),
+            port: 443,
+            resolved_ip: Some("93.184.216.34".parse().unwrap()),
+            decision: ConnectionDecision::Allow,
+            reason: ConnectionReason::Rule,
+            rule_id: Some(RuleId(4)),
+            pending_id: None,
+            binding_id: Some("github".into()),
+            injected: true,
+            http: Some(HttpRequestLine {
+                method: "GET".into(),
+                target: "/v1/items?id=1".into(),
+            }),
+            bytes_up: 10,
+            bytes_down: 20,
+        }
+    }
+
+    fn rule_wire() -> RuleWire {
+        RuleWire {
+            id: 1,
+            scope: "sandbox".into(),
+            sandbox_id: Some("sb-1".into()),
+            pattern_kind: "exact".into(),
+            pattern: "example.com".into(),
+            effect: "allow".into(),
+            expires_at: None,
+            created_at: 5,
+            created_by: "cli".into(),
+            source_pending_id: Some(2),
+        }
+    }
+
+    fn pending_wire() -> PendingWire {
+        PendingWire {
+            id: 2,
+            sandbox_id: "sb-1".into(),
+            host: "example.com".into(),
+            port: 443,
+            first_seen: 1,
+            last_seen: 2,
+            attempts: 3,
+            state: PendingState::Requested.as_str().into(),
+            decided_at: None,
+            decided_by: None,
+            rule_id: None,
+        }
+    }
+
+    fn every_record() -> Vec<AuditRecord> {
+        vec![
+            AuditRecord::Connection(ConnectionRecord::from_event(9, &event())),
+            AuditRecord::Connection(ConnectionRecord::suppressed_summary(9, &sb(), 12)),
+            AuditRecord::PendingCreated {
+                ts: 9,
+                pending: pending_wire(),
+            },
+            AuditRecord::PendingDecided {
+                ts: 9,
+                pending: pending_wire(),
+            },
+            AuditRecord::PendingExpired {
+                ts: 9,
+                pending: pending_wire(),
+                reason: PendingExpiryReason::Stale,
+            },
+            AuditRecord::PendingSuppressed {
+                ts: 9,
+                sandbox_id: "sb-1".into(),
+                count: 3,
+            },
+            AuditRecord::RuleCreated {
+                ts: 9,
+                rule: rule_wire(),
+            },
+            AuditRecord::RuleUpdated {
+                ts: 9,
+                before: rule_wire(),
+                rule: rule_wire(),
+                actor: "ui".into(),
+            },
+            AuditRecord::RuleDeleted {
+                ts: 9,
+                rule: rule_wire(),
+                reason: RuleDeleteReason::SandboxDeleted,
+                actor: "system".into(),
+            },
+            AuditRecord::RuleExpired {
+                ts: 9,
+                rule: rule_wire(),
+            },
+            AuditRecord::AuditTrimmed {
+                ts: 9,
+                deleted_records: 100,
+                oldest_ts_kept: None,
+            },
+        ]
+    }
+
+    #[test]
+    fn r23_records_are_internally_tagged_snake_case_with_nulls_written() {
+        for record in every_record() {
+            let line = record.to_line().unwrap();
+            let value: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(value["type"], record.kind(), "{line}");
+            assert_eq!(value["ts"], 9);
+            let back: AuditRecord = serde_json::from_str(&line).unwrap();
+            assert_eq!(back, record);
+        }
+        let line = AuditRecord::Connection(ConnectionRecord::suppressed_summary(9, &sb(), 12))
+            .to_line()
+            .unwrap();
+        assert!(line.contains(r#""host":null"#), "{line}");
+        assert!(line.contains(r#""reason":"suppressed""#));
+        assert!(line.contains(r#""count":12"#));
+    }
+
+    #[test]
+    fn r23_control_characters_come_out_escaped() {
+        let mut e = event();
+        e.binding_id = Some("a\u{1b}[31m\u{7f}\u{9b}\u{2028}\n\"\\z".into());
+        let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+            .to_line()
+            .unwrap();
+        assert!(!line.chars().any(char::is_control), "{line:?}");
+        assert!(!line.contains('\u{2028}'));
+        assert!(
+            line.contains(r#"a\u001b[31m\u007f\u009b\u2028\n\"\\z"#),
+            "{line}"
+        );
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["binding_id"], e.binding_id.unwrap());
+    }
+
+    #[test]
+    fn r24_record_types_and_connection_fields() {
+        let kinds: Vec<_> = every_record().iter().map(AuditRecord::kind).collect();
+        for kind in [
+            "connection",
+            "pending_created",
+            "pending_decided",
+            "pending_expired",
+            "pending_suppressed",
+            "rule_created",
+            "rule_updated",
+            "rule_deleted",
+            "rule_expired",
+            "audit_trimmed",
+        ] {
+            assert!(kinds.contains(&kind), "{kind}");
+        }
+        let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &event()))
+            .to_line()
+            .unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        let fields: Vec<_> = value.as_object().unwrap().keys().cloned().collect();
+        for field in [
+            "type",
+            "ts",
+            "sandbox_id",
+            "host",
+            "port",
+            "resolved_ip",
+            "decision",
+            "reason",
+            "rule_id",
+            "pending_id",
+            "binding_id",
+            "injected",
+            "method",
+            "path",
+            "path_truncated",
+            "bytes_up",
+            "bytes_down",
+            "count",
+        ] {
+            assert!(fields.iter().any(|f| f == field), "{field}");
+        }
+        assert_eq!(value["decision"], "allow");
+        assert_eq!(value["path"], "/v1/items");
+    }
+
+    #[test]
+    fn r24_reasons_serialise_as_documented() {
+        let reasons = [
+            (ConnectionReason::Rule, "rule"),
+            (ConnectionReason::NoRule, "no_rule"),
+            (ConnectionReason::Toggle("lan".into()), "toggle:lan"),
+            (ConnectionReason::PuddleEndpoint, "puddle_endpoint"),
+            (ConnectionReason::SshUnsupported, "ssh_unsupported"),
+            (ConnectionReason::Suppressed, "suppressed"),
+        ];
+        for (reason, text) in reasons {
+            assert_eq!(reason.to_string(), text);
+        }
+    }
+
+    #[test]
+    fn r25_no_secrets_in_connection_records() {
+        let mut e = event();
+        e.http = Some(HttpRequestLine {
+            method: "POST".into(),
+            target: format!("https://user:{CANARY}@api.example.com/login?token={CANARY}#{CANARY}"),
+        });
+        let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+            .to_line()
+            .unwrap();
+        assert!(!line.contains(CANARY), "{line}");
+        assert!(line.contains(r#""path":"/login""#), "{line}");
+    }
+
+    #[test]
+    fn r25_query_string_is_dropped_even_from_a_hand_built_record() {
+        let mut record = ConnectionRecord::from_event(1, &event());
+        record.path = Some(format!("/a?secret={CANARY}"));
+        let line = AuditRecord::Connection(record).to_line().unwrap();
+        assert!(!line.contains(CANARY), "{line}");
+    }
+
+    #[test]
+    fn r25_every_record_type_carries_no_secret_fields() {
+        // Credential material has no field to go in; this pins that no record grows one.
+        for record in every_record() {
+            let line = record.to_line().unwrap();
+            for word in [
+                "header",
+                "authorization",
+                "cookie",
+                "body",
+                "query",
+                "token",
+                "secret",
+            ] {
+                assert!(!line.contains(word), "{word} in {line}");
+            }
+        }
+    }
+
+    #[test]
+    fn path_only_strips_everything_but_the_path() {
+        assert_eq!(path_only("/a/b?c=d"), "/a/b");
+        assert_eq!(path_only("/a#frag"), "/a");
+        assert_eq!(path_only("http://h.example/x/y?z"), "/x/y");
+        assert_eq!(path_only("http://u:p@h.example"), "/");
+        assert_eq!(path_only("*"), "*");
+    }
+
+    #[test]
+    fn r26_path_cut_to_1kib_and_flagged() {
+        let mut e = event();
+        e.http = Some(HttpRequestLine {
+            method: "GET".into(),
+            target: format!("/{}", "é".repeat(2000)),
+        });
+        let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+            .to_line()
+            .unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert!(value["path"].as_str().unwrap().len() <= MAX_FIELD_BYTES);
+        assert_eq!(value["path_truncated"], true);
+    }
+
+    #[test]
+    fn r26_line_never_exceeds_4kib_even_with_escapes() {
+        let mut e = event();
+        let nasty = "\u{1}".repeat(1024);
+        e.binding_id = Some(nasty.clone());
+        e.reason = ConnectionReason::Toggle(nasty.clone());
+        e.http = Some(HttpRequestLine {
+            method: nasty.clone(),
+            target: format!("/{nasty}"),
+        });
+        let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+            .to_line()
+            .unwrap();
+        assert!(line.len() <= MAX_LINE_BYTES, "{}", line.len());
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["path_truncated"], true);
+    }
+
+    #[test]
+    fn connection_window_counts_excess_per_second() {
+        let mut w = ConnectionWindow::default();
+        assert_eq!(w.admit(5_000, 2), (true, None));
+        assert_eq!(w.admit(5_100, 2), (true, None));
+        assert_eq!(w.admit(5_200, 2), (false, None));
+        assert_eq!(w.admit(5_999, 2), (false, None));
+        assert_eq!(w.admit(6_000, 2), (true, Some((5_000, 2))));
+        assert_eq!(w.roll(6_500), None);
+        assert_eq!(w.roll(9_000), None);
+    }
+
+    #[test]
+    fn actor_strings() {
+        assert_eq!(actor_str(Actor::Ui), "ui");
+    }
+
+    proptest! {
+        #[test]
+        fn r26_any_strings_give_a_parseable_line_within_the_cap(
+            binding in ".{0,1500}",
+            target in ".{0,3000}",
+            method in ".{0,1500}",
+            category in ".{0,1500}",
+        ) {
+            let mut e = event();
+            e.binding_id = Some(binding);
+            e.reason = ConnectionReason::Toggle(category);
+            e.http = Some(HttpRequestLine { method, target });
+            let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e)).to_line().unwrap();
+            prop_assert!(line.len() <= MAX_LINE_BYTES);
+            prop_assert!(!line.chars().any(char::is_control));
+            let value: Value = serde_json::from_str(&line).unwrap();
+            prop_assert_eq!(&value["type"], "connection");
+            prop_assert!(!value["path"].as_str().unwrap().contains('?'));
+        }
+    }
+}

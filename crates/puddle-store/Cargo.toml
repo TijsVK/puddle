@@ -11,6 +11,19 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+psl = { workspace = true }
+puddle-types = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros", "test-util"] }
 
 [lints]
 workspace = true
