@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Pinned toolchain: bumped deliberately in its own commit (see docs/STANDARDS.md, "Toolchain").
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy", "llvm-tools"]
+targets = ["x86_64-pc-windows-msvc"] # for `scripts/check.sh clippy-windows` from Linux
+profile = "minimal"

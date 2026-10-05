@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Test runner settings. Retries stay at 0: a flaky proxy or transparency test is the bug itself
+# (docs/STANDARDS.md, "Flaky tests"). Only infrastructure steps may retry, and they do so in the
+# harness, visibly.
+
+[profile.default]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+[profile.ci]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 4 }
+failure-output = "immediate-final"
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# Tests that boot a microVM run one at a time (hosted runners have 2 vCPU / 8 GB).
+# Name VM test functions `vm_*` to land in this group.
+[test-groups]
+vm = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = "test(/(^|::)vm_/)"
+test-group = "vm"
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[[profile.ci.overrides]]
+filter = "test(/(^|::)vm_/)"
+test-group = "vm"
+slow-timeout = { period = "120s", terminate-after = 5 }

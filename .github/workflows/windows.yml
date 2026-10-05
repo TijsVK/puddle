@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Native Windows MSVC build and tests (D-35). Windows minutes count double on a private repo, so
+# this runs nightly (skipped when develop didn't change since the last green nightly), on pull
+# requests to main, and by hand. Linux CI already cross-checks clippy for the msvc target.
+name: windows
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  changed:
+    name: anything new since the last green nightly?
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          last=$(gh run list -R "${{ github.repository }}" --workflow windows.yml \
+            --event schedule --status success --limit 1 --json headSha --jq '.[0].headSha // ""')
+          if [ "$last" = "${{ github.sha }}" ]; then
+            echo "develop unchanged since the last green nightly ($last); skipping"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows:
+    name: windows-msvc (build, clippy, tests)
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: clippy
+        shell: bash
+        run: scripts/check.sh clippy
+      - name: tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cargo nextest run --workspace --all-features --locked --profile ci
+      - name: doc tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cargo test --doc --workspace --all-features --locked
+      - name: release build
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cargo build --workspace --release --locked
+      - name: upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-test-results
+          path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: ignore

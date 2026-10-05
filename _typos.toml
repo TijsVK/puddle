@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[files]
+extend-exclude = ["LICENSE", "CLA.md", "*.lock"]
+
+[default.extend-words]
+# Real words in this project that typos flags. Add with a comment.

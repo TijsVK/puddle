@@ -1,0 +1,4 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Fast gates before each commit. Enable once per clone: git config core.hooksPath .githooks
+exec "$(git rev-parse --show-toplevel)/scripts/check.sh" fast

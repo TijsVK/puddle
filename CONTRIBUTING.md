@@ -51,7 +51,8 @@ from it.
 - Branch from `develop` and open the pull request against `develop`. `main` holds released
   versions only.
 - Keep a pull request to one change, with a description of what and why.
-- Run the checks before pushing (the README's "Development" section lists them once there is code).
+- Run `scripts/check.sh` before pushing (or enable the hooks: `git config core.hooksPath .githooks`).
+  The rules your change must meet are in [docs/STANDARDS.md](docs/STANDARDS.md).
 - By submitting a pull request you confirm that your contribution falls under the CLA you signed.
 
 ## Licence headers

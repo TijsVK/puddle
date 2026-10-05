@@ -1,0 +1,4 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# All gates before each push, so develop stays green. Enable: git config core.hooksPath .githooks
+exec "$(git rev-parse --show-toplevel)/scripts/check.sh" all

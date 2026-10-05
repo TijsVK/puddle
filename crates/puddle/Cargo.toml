@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle"
+description = "The puddle host program: CLI and daemon that wires the other crates together (W7)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+puddle-types = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

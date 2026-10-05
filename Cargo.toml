@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+authors = ["Tijs van Kampen <puddle@tijsvankampen.be>"]
+repository = "https://github.com/TijsVK/puddle"
+publish = false
+
+[workspace.dependencies]
+# Internal crates. Add external dependencies here too, with a version, and use
+# `dep = { workspace = true }` in the member crates, so every crate gets the same version.
+puddle-types = { path = "crates/puddle-types" }
+puddle-compute = { path = "crates/puddle-compute" }
+puddle-proxy = { path = "crates/puddle-proxy" }
+puddle-store = { path = "crates/puddle-store" }
+puddle-api = { path = "crates/puddle-api" }
+
+# External
+thiserror = "2"
+
+[workspace.lints.rust]
+unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless it needs FFI
+missing_docs = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Restriction lints picked for a security tool written mostly by agents.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+exit = "warn"
+expect_used = "warn"
+get_unwrap = "warn"
+indexing_slicing = "warn"
+mem_forget = "warn"
+panic = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
+wildcard_dependencies = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

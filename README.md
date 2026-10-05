@@ -11,7 +11,8 @@ program with a Tauri desktop app, and builds on
 The idea follows [Huddle](https://github.com/infosupport/huddle); puddle is written from scratch and
 shares no code with it.
 
-**Status:** pre-implementation. There is no code yet.
+**Status:** early development. The workspace and its quality gates are in place; product code is
+being written.
 
 ## Branches
 
@@ -20,7 +21,18 @@ shares no code with it.
 
 ## Development
 
-No code yet. Build and check commands go here once there is something to build.
+Rust, pinned in `rust-toolchain.toml` (rustup installs it on first use). Tools for the gates:
+`cargo install --locked cargo-nextest cargo-llvm-cov cargo-deny typos-cli` (or `cargo binstall`).
+
+```sh
+git config core.hooksPath .githooks   # once per clone: fast gates on commit, all gates on push
+scripts/check.sh                      # every gate CI runs: fmt, typos, SPDX, clippy, deny, docs, tests + coverage
+cargo nextest run                     # tests only
+cargo run -p puddle -- --version
+```
+
+Layout, coding and testing rules, coverage thresholds and the agent workflow:
+[docs/STANDARDS.md](docs/STANDARDS.md).
 
 ## Contributing
 

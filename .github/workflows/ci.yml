@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Linux gates on every push to develop/main and every pull request (docs/STANDARDS.md, "CI").
+# One job, so the private repo's free minutes aren't spent on per-job rounding and setup.
+# Every gate runs even when an earlier one fails, so one run shows every problem.
+name: ci
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  linux:
+    name: linux (all gates)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+        with:
+          tool: cargo-nextest@0.9.146,cargo-llvm-cov@0.9.1,cargo-deny@0.20.2,typos@1.50.3
+      - name: fmt
+        run: scripts/check.sh fmt
+      - name: typos
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh typos
+      - name: spdx headers
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh spdx
+      - name: clippy (linux)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh clippy
+      - name: clippy (windows-msvc, cross-checked)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh clippy-windows
+      - name: cargo-deny
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh deny
+      - name: doc tests and rustdoc
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh doc
+      - name: tests with coverage gate
+        if: ${{ !cancelled() }}
+        env:
+          NEXTEST_PROFILE: ci
+        run: |
+          scripts/check.sh coverage
+          {
+            echo '### Coverage'
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-test-results
+          path: |
+            target/nextest/ci/junit.xml
+            target/lcov.info
+          retention-days: 14
+          if-no-files-found: ignore

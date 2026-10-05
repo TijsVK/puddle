@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-agent"
+description = "Guest agent: static binary inside each sandbox that carries traffic to the host over vsock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+puddle-types = { workspace = true }
+
+[lints]
+workspace = true
