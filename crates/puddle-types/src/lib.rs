@@ -36,8 +36,8 @@ pub use name::{
 };
 
 pub use policy::{
-    Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy, PolicyError, RuleId,
-    SuffixAllows,
+    BlockReason, Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy,
+    PolicyError, ProtocolHint, RuleId, SuffixAllows,
 };
 
 /// puddle's version, from the workspace manifest.

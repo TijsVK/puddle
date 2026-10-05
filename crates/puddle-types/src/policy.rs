@@ -84,6 +84,63 @@ pub enum Decision {
     },
     /// No rule decided.
     Pending(PendingOutcome),
+    /// Refused whatever the rules say (R-14, D-26, F-8). Never approvable: no pending row is
+    /// written and nothing in the inbox can change it; the reason names what would.
+    Blocked {
+        /// Why.
+        reason: BlockReason,
+    },
+}
+
+impl Decision {
+    /// Whether the connection may go ahead.
+    #[must_use]
+    pub fn is_allow(&self) -> bool {
+        matches!(self, Self::Allow { .. })
+    }
+}
+
+/// Why a request was [`Decision::Blocked`]. Each has its audit `reason` code ([`Self::code`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum BlockReason {
+    /// SSH through the proxy isn't supported yet (F-8; audit reason `ssh_unsupported`).
+    SshUnsupported,
+    /// The destination is one of puddle's own endpoints (D-26; `puddle_endpoint`).
+    PuddleEndpoint,
+    /// Every address of the destination is local (loopback, private, link-local, metadata, ...)
+    /// and no local-destination toggle exists yet to allow it (`local_address`). T-132's toggles
+    /// add a reason that names the toggle.
+    LocalAddress,
+}
+
+impl BlockReason {
+    /// The audit `reason` code (R-24).
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::SshUnsupported => "ssh_unsupported",
+            Self::PuddleEndpoint => "puddle_endpoint",
+            Self::LocalAddress => "local_address",
+        }
+    }
+}
+
+impl fmt::Display for BlockReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+/// What the guest said it is about to speak, when the proxy knows (F-8). A plain `CONNECT`
+/// carries no hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ProtocolHint {
+    /// A plain-HTTP request in absolute form.
+    Http,
+    /// SSH, from the agent's `connect` stream (`ProxyCommand`).
+    Ssh,
 }
 
 /// Whether suffix allow rules count for this request (R-14).
@@ -100,8 +157,10 @@ pub enum SuffixAllows {
     Ignore,
 }
 
-/// One connection attempt as the proxy sees it: `(sandbox, host, port)`.
+/// One connection attempt as the proxy sees it: `(sandbox, host, port)`, plus an optional
+/// protocol hint. Non-exhaustive: build it with [`EgressRequest::new`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct EgressRequest {
     /// The sandbox, from the route the connection arrived on.
     pub sandbox: SandboxName,
@@ -109,6 +168,28 @@ pub struct EgressRequest {
     pub host: Host,
     /// The destination port. Rules ignore it (R-2); pending rows and the audit record it.
     pub port: u16,
+    /// What the guest said it will speak, if anything. Rules ignore it.
+    pub protocol: Option<ProtocolHint>,
+}
+
+impl EgressRequest {
+    /// A request with no protocol hint.
+    #[must_use]
+    pub fn new(sandbox: SandboxName, host: Host, port: u16) -> Self {
+        Self {
+            sandbox,
+            host,
+            port,
+            protocol: None,
+        }
+    }
+
+    /// The same request with a protocol hint.
+    #[must_use]
+    pub fn with_protocol(mut self, protocol: ProtocolHint) -> Self {
+        self.protocol = Some(protocol);
+        self
+    }
 }
 
 /// The engine could not decide. The proxy fails closed: it refuses the connection.
@@ -150,6 +231,43 @@ mod tests {
             Some(PendingId(4))
         );
         assert_eq!(PendingOutcome::Suppressed.pending_id(), None);
+    }
+
+    #[test]
+    fn block_reasons_have_their_audit_codes() {
+        assert_eq!(BlockReason::SshUnsupported.to_string(), "ssh_unsupported");
+        assert_eq!(BlockReason::PuddleEndpoint.code(), "puddle_endpoint");
+        assert_eq!(BlockReason::LocalAddress.code(), "local_address");
+    }
+
+    #[test]
+    fn only_allow_lets_a_connection_through() {
+        let allow = Decision::Allow {
+            rule_id: RuleId(1),
+            pattern: PatternKind::Exact,
+        };
+        assert!(allow.is_allow());
+        assert!(
+            !Decision::Blocked {
+                reason: BlockReason::LocalAddress
+            }
+            .is_allow()
+        );
+        assert!(!Decision::Pending(PendingOutcome::Suppressed).is_allow());
+    }
+
+    #[test]
+    fn requests_carry_an_optional_protocol_hint() {
+        let sandbox = SandboxName::new("box").unwrap();
+        let host = Host::parse_normalised("example.com").unwrap();
+        let plain = EgressRequest::new(sandbox, host, 443);
+        assert_eq!(plain.protocol, None);
+        let ssh = plain.clone().with_protocol(ProtocolHint::Ssh);
+        assert_eq!(ssh.protocol, Some(ProtocolHint::Ssh));
+        assert_eq!(
+            (ssh.port, ssh.host.to_string()),
+            (443, "example.com".into())
+        );
     }
 
     #[test]

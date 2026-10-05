@@ -41,11 +41,7 @@ fn sb(id: &str) -> SandboxName {
 }
 
 fn req(sandbox: &str, host: &str, port: u16) -> EgressRequest {
-    EgressRequest {
-        sandbox: sb(sandbox),
-        host: Host::parse_normalised(host).unwrap(),
-        port,
-    }
+    EgressRequest::new(sb(sandbox), Host::parse_normalised(host).unwrap(), port)
 }
 
 fn decide(store: &Store, sandbox: &str, host: &str) -> Decision {
