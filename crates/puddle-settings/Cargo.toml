@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
-name = "puddle-types"
-description = "Shared types for puddle's crates: validated names, guest files and env, memory size, events, errors"
+name = "puddle-settings"
+description = "puddle's settings model: global settings, per-sandbox overrides, consents, schema versions and migrations"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,12 +11,13 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+puddle-types = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-serde_json = { workspace = true }
 
 [lints]
 workspace = true

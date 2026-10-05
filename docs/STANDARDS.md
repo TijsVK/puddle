@@ -16,7 +16,8 @@ different crates and rarely collides.
 
 | Crate | Kind | Owns | Plan |
 |---|---|---|---|
-| `crates/puddle-types` | lib | Shared IDs, wire types, errors that cross crate boundaries (validated names, guest files/env, memory setting, events). No I/O. | all |
+| `crates/puddle-types` | lib | Shared IDs, wire types, errors that cross crate boundaries (validated names, guest files/env, memory size, events). No I/O. | all |
+| `crates/puddle-settings` | lib | The settings model (T-088): global settings, per-sandbox overrides and their resolution, the consent store; versioned documents with migrations and kept unknown fields. No storage, no I/O | W3/W4 |
 | `crates/puddle-compute` | lib | The compute-plane contract: `Runtime`/`Sandbox` traits, `FakeRuntime` (feature `fake`), the contract suite every runtime passes (feature `contract`). W1 rows build on it in their own crates (msb adapter, boot hook, workspace, lifecycle, ...) | W1 |
 | `crates/puddle-runtime` | lib | The bundled msb runtime (D-19): runtime folder + private `MSB_HOME`, `MSB_*` environment pinning, exact `<release>-puddle.N` version check from msb's embedded `.msbver` (T-107) | W1 |
 | `crates/puddle-boot` | lib | Boot hook (`guest/boot.sh`, `guest/agent-supervise.sh`, POSIX sh) and the readiness gate: no SSH or exec before the hook returns 0; applies provider `GuestFile`s/env as a list (T-108) | W1 |
@@ -33,7 +34,7 @@ different crates and rarely collides.
 Later, not yet created: the Svelte UI (`ui/`, W5) and the Tauri shell (`crates/puddle-app` or
 `src-tauri/`, W8).
 
-**Dependency direction.** `puddle-types` ← `compute`, `proxy`, `store` ← `api` ← `puddle`.
+**Dependency direction.** `puddle-types` ← `compute`, `proxy`, `store`, `settings` ← `api` ← `puddle`.
 `proxy` and `store` don't depend on each other's internals: the proxy asks for decisions through a
 trait defined in `puddle-types` (or the proxy crate) that `store` implements, and `puddle` wires
 them. `puddle-agent` depends on `puddle-types` and `puddle-agent-proto` only (it is built for the guest); the host side (`proxy`) uses `puddle-agent-proto` too. No cycles, no

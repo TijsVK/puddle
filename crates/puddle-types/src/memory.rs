@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The guest memory setting: one default for every sandbox plus per-sandbox overrides.
+//! Guest memory size. The setting itself (a global default with per-sandbox overrides) lives in
+//! `puddle-settings`.
 //!
 //! The value becomes msb's `--memory` at create; a change applies at the sandbox's next start.
 //! puddle never sets `--max-memory` (T-106).
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{SandboxName, ValidationError};
+use crate::ValidationError;
 
 /// Guest memory in MiB, within [`MemoryMib::MIN`]..=[`MemoryMib::MAX`].
 ///
@@ -81,43 +81,6 @@ impl From<MemoryMib> for u32 {
     }
 }
 
-/// The memory setting: a default for all sandboxes and optional per-sandbox overrides.
-///
-/// ```
-/// use puddle_types::{MemoryMib, MemorySetting, SandboxName};
-/// let big = SandboxName::new("big").unwrap();
-/// let mut s = MemorySetting::default();
-/// s.set_override(big.clone(), MemoryMib::new(16 * 1024).unwrap());
-/// assert_eq!(s.for_sandbox(&big).get(), 16 * 1024);
-/// assert_eq!(s.for_sandbox(&SandboxName::new("small").unwrap()), MemoryMib::DEFAULT);
-/// ```
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MemorySetting {
-    /// The size used by every sandbox without an override.
-    pub default: MemoryMib,
-    /// Per-sandbox sizes that replace [`MemorySetting::default`].
-    #[serde(default)]
-    pub overrides: BTreeMap<SandboxName, MemoryMib>,
-}
-
-impl MemorySetting {
-    /// The size `sandbox` gets at its next create or start.
-    #[must_use]
-    pub fn for_sandbox(&self, sandbox: &SandboxName) -> MemoryMib {
-        self.overrides.get(sandbox).copied().unwrap_or(self.default)
-    }
-
-    /// Gives `sandbox` its own size; returns the override it replaces.
-    pub fn set_override(&mut self, sandbox: SandboxName, mib: MemoryMib) -> Option<MemoryMib> {
-        self.overrides.insert(sandbox, mib)
-    }
-
-    /// Makes `sandbox` use the default again; returns the removed override.
-    pub fn clear_override(&mut self, sandbox: &SandboxName) -> Option<MemoryMib> {
-        self.overrides.remove(sandbox)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,33 +105,12 @@ mod tests {
     }
 
     #[test]
-    fn overrides_replace_and_clear() {
-        let n = SandboxName::new("a").unwrap();
-        let mut s = MemorySetting::default();
-        assert_eq!(s.for_sandbox(&n), MemoryMib::DEFAULT);
-        assert_eq!(s.set_override(n.clone(), MemoryMib::MIN), None);
+    fn serde_validates_on_the_way_in() {
+        assert_eq!(serde_json::to_string(&MemoryMib::DEFAULT).unwrap(), "8192");
         assert_eq!(
-            s.set_override(n.clone(), MemoryMib::MAX),
-            Some(MemoryMib::MIN)
+            serde_json::from_str::<MemoryMib>("4096").unwrap().get(),
+            4096
         );
-        assert_eq!(s.for_sandbox(&n), MemoryMib::MAX);
-        assert_eq!(s.clear_override(&n), Some(MemoryMib::MAX));
-        assert_eq!(s.for_sandbox(&n), MemoryMib::DEFAULT);
-    }
-
-    #[test]
-    fn serde_round_trip_and_validation() {
-        let mut s = MemorySetting::default();
-        s.set_override(SandboxName::new("a").unwrap(), MemoryMib::MIN);
-        let json = serde_json::to_string(&s).unwrap();
-        assert_eq!(json, r#"{"default":8192,"overrides":{"a":256}}"#);
-        assert_eq!(serde_json::from_str::<MemorySetting>(&json).unwrap(), s);
-        let only_default: MemorySetting = serde_json::from_str(r#"{"default":4096}"#).unwrap();
-        assert!(only_default.overrides.is_empty());
-        assert!(serde_json::from_str::<MemorySetting>(r#"{"default":1}"#).is_err());
-        assert!(
-            serde_json::from_str::<MemorySetting>(r#"{"default":4096,"overrides":{"Bad":512}}"#)
-                .is_err()
-        );
+        assert!(serde_json::from_str::<MemoryMib>("1").is_err());
     }
 }

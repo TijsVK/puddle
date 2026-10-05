@@ -24,6 +24,7 @@ puddle-boot = { path = "crates/puddle-boot" }
 puddle-agent-proto = { path = "crates/puddle-agent-proto" }
 puddle-runtime = { path = "crates/puddle-runtime" }
 puddle-ipc = { path = "crates/puddle-ipc" }
+puddle-settings = { path = "crates/puddle-settings" }
 
 # External
 object = { version = "0.40", default-features = false }
