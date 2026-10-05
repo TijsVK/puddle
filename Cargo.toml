@@ -21,6 +21,7 @@ puddle-proxy = { path = "crates/puddle-proxy" }
 puddle-store = { path = "crates/puddle-store" }
 puddle-api = { path = "crates/puddle-api" }
 puddle-boot = { path = "crates/puddle-boot" }
+puddle-agent-proto = { path = "crates/puddle-agent-proto" }
 
 # External
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
@@ -32,6 +33,12 @@ tempfile = "3"
 thiserror = "2"
 tokio = { version = "1.52", default-features = false }
 tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
+# Guest agent and its protocol (T-111). tokio-yamux multiplexes guest connections over a few
+# vsock streams (a Windows vsock route tops out around 100 streams); libc for AF_VSOCK.
+tokio-yamux = { version = "0.3.20", default-features = false, features = ["tokio-timer"] }
+futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
+libc = "0.2.172"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless it needs FFI

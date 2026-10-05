@@ -23,6 +23,7 @@ different crates and rarely collides.
 | `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper | W3 |
 | `crates/puddle-api` | lib | axum API, SSE, auth token, OpenAPI generation (ADR 0004) | W4 |
 | `crates/puddle-agent` | bin | Guest agent (static musl binary, ADR 0005): vsock to the host proxy | W1/W2 |
+| `crates/puddle-agent-proto` | lib | Agent ↔ host wire protocol: yamux settings, stream kinds, control messages, host session, reset-preserving splice | W1/W2 |
 | `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI, daemon, wiring of the crates above | W7 |
 | `crates/puddle-e2e` | lib (tests) | Harness for end-to-end and hostile-guest tests; never a dependency of product crates | W7, T-035 |
 
@@ -32,7 +33,7 @@ Later, not yet created: the Svelte UI (`ui/`, W5) and the Tauri shell (`crates/p
 **Dependency direction.** `puddle-types` ← `compute`, `proxy`, `store` ← `api` ← `puddle`.
 `proxy` and `store` don't depend on each other's internals: the proxy asks for decisions through a
 trait defined in `puddle-types` (or the proxy crate) that `store` implements, and `puddle` wires
-them. `puddle-agent` depends on `puddle-types` only (it is built for the guest). No cycles, no
+them. `puddle-agent` depends on `puddle-types` and `puddle-agent-proto` only (it is built for the guest); the host side (`proxy`) uses `puddle-agent-proto` too. No cycles, no
 product crate depends on `puddle-e2e`.
 
 **New crate:** only when a component doesn't fit the table (say why in the commit). Copy an

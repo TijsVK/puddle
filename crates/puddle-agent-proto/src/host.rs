@@ -1,0 +1,403 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! The host side of one agent connection: accept the yamux session, serve the control stream,
+//! hand every other stream to the proxy.
+//!
+//! ```no_run
+//! # use std::sync::Arc;
+//! # use puddle_agent_proto::host::{serve_session, GuestStream, HostConfig, StreamHandler};
+//! # use puddle_types::{NullSink, SandboxName};
+//! struct Proxy;
+//! impl StreamHandler for Proxy {
+//!     async fn handle(&self, stream: GuestStream) {
+//!         // read the CONNECT line from `stream`, decide, splice ...
+//!         # drop(stream);
+//!     }
+//! }
+//! # async fn f(conn: tokio::net::UnixStream) -> Result<(), Box<dyn std::error::Error>> {
+//! let sandbox = SandboxName::new("box")?;
+//! serve_session(conn, sandbox, Arc::new(NullSink), Arc::new(Proxy), HostConfig::default()).await?;
+//! # Ok(()) }
+//! ```
+
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
+use std::time::Duration;
+
+use futures_util::StreamExt;
+use puddle_types::{Event, EventSink, SandboxName};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, BufReader, ReadBuf};
+use tokio::task::JoinSet;
+use tokio::time::Instant;
+use tokio_yamux::{Session, StreamHandle};
+
+use crate::control::{self, AgentMessage, MAX_LINE};
+use crate::kind::{MAX_PREAMBLE, StreamKind, parse_preamble};
+use crate::yamux::{VERSION_BYTE, server_config};
+
+/// Name used in [`Event::OomKill`] when the agent couldn't tell which process was killed (its pid
+/// is then 0).
+pub const UNKNOWN_PROCESS: &str = "unknown";
+
+/// Longest agent version string kept for the log.
+const MAX_VERSION_CHARS: usize = 64;
+
+/// Limits for one session. The defaults suit a real guest; tests shorten them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostConfig {
+    /// How long a new connection or stream may stay silent before its first byte. A proxied
+    /// client sends its request line at once; the agent writes the control preamble at once.
+    pub first_byte_timeout: Duration,
+    /// Control messages a stream may send in one burst.
+    pub control_burst: u32,
+    /// Control messages per second a stream may send after its burst. Messages over the limit are
+    /// dropped and counted in a warning.
+    pub control_per_second: u32,
+}
+
+impl Default for HostConfig {
+    fn default() -> Self {
+        Self {
+            first_byte_timeout: Duration::from_secs(30),
+            control_burst: 32,
+            control_per_second: 10,
+        }
+    }
+}
+
+/// Why a session ended other than cleanly.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum SessionError {
+    /// The connection doesn't start with a yamux frame, so it isn't from `puddle-agent`.
+    #[error("not a yamux session: first byte {0:#04x}")]
+    NotYamux(u8),
+    /// Nothing arrived within [`HostConfig::first_byte_timeout`].
+    #[error("no data from the guest within {0:?}")]
+    Timeout(Duration),
+    /// The connection or the yamux session failed.
+    #[error("session i/o: {0}")]
+    Io(#[from] io::Error),
+}
+
+/// What the host does with a proxied guest connection (one yamux stream that isn't the control
+/// stream). The proxy implements it.
+pub trait StreamHandler: Send + Sync + 'static {
+    /// Serves one connection. Errors are the handler's to log; to pass an abort on, drop the
+    /// stream without shutting it down (see [`crate::relay`]).
+    fn handle(&self, stream: GuestStream) -> impl Future<Output = ()> + Send;
+}
+
+/// One proxied guest connection: a yamux stream with its first byte (already read by the host to
+/// tell it from the control stream) put back in front.
+#[derive(Debug)]
+pub struct GuestStream(Prefixed<StreamHandle>);
+
+impl AsyncRead for GuestStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for GuestStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+/// A stream with one already-read byte put back in front of it.
+#[derive(Debug)]
+struct Prefixed<S> {
+    first: Option<u8>,
+    inner: S,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Prefixed<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if buf.remaining() > 0
+            && let Some(b) = self.first.take()
+        {
+            buf.put_slice(&[b]);
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Prefixed<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// State shared by the streams of one session.
+struct Shared<H> {
+    sandbox: SandboxName,
+    sink: Arc<dyn EventSink>,
+    handler: Arc<H>,
+    config: HostConfig,
+    /// Set while a control stream is open: a session has at most one.
+    control_open: AtomicBool,
+}
+
+/// Serves one connection from a sandbox's agent until it closes. `sandbox` is the sandbox the
+/// route belongs to (the route is the identity, HO-3): nothing the guest sends can change it.
+///
+/// Every stream task is owned here and ends when the session does.
+///
+/// # Errors
+///
+/// [`SessionError::NotYamux`] for a connection that isn't a yamux session,
+/// [`SessionError::Timeout`] if it stays silent, [`SessionError::Io`] if the session fails. A
+/// clean close by the guest is `Ok`.
+pub async fn serve_session<IO, H>(
+    mut io: IO,
+    sandbox: SandboxName,
+    sink: Arc<dyn EventSink>,
+    handler: Arc<H>,
+    config: HostConfig,
+) -> Result<(), SessionError>
+where
+    IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    H: StreamHandler,
+{
+    let Some(first) = first_byte(&mut io, config.first_byte_timeout).await? else {
+        return Ok(());
+    };
+    if first != VERSION_BYTE {
+        return Err(SessionError::NotYamux(first));
+    }
+    let shared = Arc::new(Shared {
+        sandbox,
+        sink,
+        handler,
+        config,
+        control_open: AtomicBool::new(false),
+    });
+    let mut session = Session::new_server(
+        Prefixed {
+            first: Some(first),
+            inner: io,
+        },
+        server_config(),
+    );
+    let mut tasks = JoinSet::new();
+    loop {
+        tokio::select! {
+            inbound = session.next() => match inbound {
+                None => return Ok(()),
+                Some(Err(err)) => return Err(err.into()),
+                Some(Ok(stream)) => {
+                    tasks.spawn(serve_stream(stream, Arc::clone(&shared)));
+                }
+            },
+            Some(done) = tasks.join_next(), if !tasks.is_empty() => {
+                if let Err(err) = done
+                    && err.is_panic()
+                {
+                    tracing::error!(sandbox = %shared.sandbox, "stream task panicked");
+                }
+            }
+        }
+    }
+}
+
+/// Reads the first byte within `limit`; `None` at a clean end of stream.
+async fn first_byte<R: AsyncRead + Unpin>(
+    io: &mut R,
+    limit: Duration,
+) -> Result<Option<u8>, SessionError> {
+    let mut first = [0u8; 1];
+    match tokio::time::timeout(limit, io.read(&mut first)).await {
+        Err(_) => Err(SessionError::Timeout(limit)),
+        Ok(Err(err)) => Err(err.into()),
+        Ok(Ok(0)) => Ok(None),
+        Ok(Ok(_)) => Ok(Some(first[0])),
+    }
+}
+
+async fn serve_stream<H: StreamHandler>(mut stream: StreamHandle, shared: Arc<Shared<H>>) {
+    let first = match first_byte(&mut stream, shared.config.first_byte_timeout).await {
+        Ok(Some(b)) => b,
+        Ok(None) => return,
+        Err(err) => {
+            tracing::debug!(sandbox = %shared.sandbox, error = %err, "guest stream dropped before its first byte");
+            return;
+        }
+    };
+    if first != 0 {
+        let stream = GuestStream(Prefixed {
+            first: Some(first),
+            inner: stream,
+        });
+        shared.handler.handle(stream).await;
+        return;
+    }
+    let mut reader = BufReader::new(Prefixed {
+        first: Some(first),
+        inner: stream,
+    });
+    let mut line = Vec::with_capacity(MAX_PREAMBLE);
+    let read = tokio::time::timeout(
+        shared.config.first_byte_timeout,
+        control::read_line(&mut reader, &mut line, MAX_PREAMBLE),
+    )
+    .await;
+    if !matches!(read, Ok(Ok(true))) {
+        tracing::warn!(sandbox = %shared.sandbox, "stream with an unreadable preamble closed");
+        return;
+    }
+    match parse_preamble(&line) {
+        Ok((StreamKind::Control, 1)) => {
+            if shared.control_open.swap(true, Ordering::AcqRel) {
+                tracing::warn!(sandbox = %shared.sandbox, "second control stream on one session refused");
+                return;
+            }
+            serve_control(reader, &shared).await;
+            shared.control_open.store(false, Ordering::Release);
+        }
+        Ok((kind, version)) => {
+            tracing::warn!(sandbox = %shared.sandbox, kind = kind.name(), version, "stream kind not served by this host, closed");
+        }
+        Err(err) => {
+            tracing::warn!(sandbox = %shared.sandbox, error = %err, "stream closed");
+        }
+    }
+}
+
+/// Reads control messages until the stream ends or misbehaves. The preamble is already read.
+async fn serve_control<H>(mut reader: BufReader<Prefixed<StreamHandle>>, shared: &Shared<H>) {
+    let sandbox = &shared.sandbox;
+    let mut limit = RateLimit::new(
+        shared.config.control_burst,
+        shared.config.control_per_second,
+        Instant::now(),
+    );
+    let mut line = Vec::with_capacity(256);
+    loop {
+        match control::read_line(&mut reader, &mut line, MAX_LINE).await {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(err) => {
+                tracing::warn!(%sandbox, error = %err, "control stream ended");
+                return;
+            }
+        }
+        if !limit.allow(Instant::now()) {
+            continue;
+        }
+        if limit.suppressed > 0 {
+            tracing::warn!(%sandbox, dropped = limit.suppressed, "control messages over the rate limit were dropped");
+            limit.suppressed = 0;
+        }
+        match AgentMessage::from_line(&line) {
+            Ok(msg) => on_message(msg, shared),
+            Err(err) => tracing::warn!(%sandbox, error = %err, "invalid control message ignored"),
+        }
+    }
+}
+
+fn on_message<H>(msg: AgentMessage, shared: &Shared<H>) {
+    let sandbox = &shared.sandbox;
+    match msg {
+        AgentMessage::Hello {
+            agent_version,
+            protocol,
+        } => {
+            let version = clean(&agent_version, MAX_VERSION_CHARS);
+            tracing::info!(%sandbox, agent_version = %version, protocol, "guest agent connected");
+        }
+        AgentMessage::OomKill { pid, process } => {
+            let event = Event::oom_kill(
+                sandbox.clone(),
+                pid.unwrap_or(0),
+                process.as_deref().unwrap_or(UNKNOWN_PROCESS),
+            );
+            if let Event::OomKill { pid, process, .. } = &event {
+                tracing::warn!(%sandbox, pid, process = %process, "guest out of memory: process killed");
+            }
+            shared.sink.emit(event);
+        }
+        AgentMessage::Unknown => {
+            tracing::debug!(%sandbox, "unknown control message ignored");
+        }
+    }
+}
+
+/// Cuts `s` to `max` characters and replaces control characters, for guest text in logs.
+fn clean(s: &str, max: usize) -> String {
+    s.chars()
+        .take(max)
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect()
+}
+
+/// A token bucket: `burst` messages at once, then `per_second`.
+#[derive(Debug)]
+struct RateLimit {
+    tokens: f64,
+    burst: f64,
+    per_second: f64,
+    last: Instant,
+    /// Messages dropped since the last one that got through.
+    suppressed: u64,
+}
+
+impl RateLimit {
+    fn new(burst: u32, per_second: u32, now: Instant) -> Self {
+        Self {
+            tokens: f64::from(burst),
+            burst: f64::from(burst),
+            per_second: f64::from(per_second),
+            last: now,
+            suppressed: 0,
+        }
+    }
+
+    fn allow(&mut self, now: Instant) -> bool {
+        let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
+        self.last = now;
+        self.tokens = (self.tokens + elapsed * self.per_second).min(self.burst);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            self.suppressed += 1;
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;
