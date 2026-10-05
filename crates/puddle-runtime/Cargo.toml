@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-runtime"
+description = "The bundled msb runtime: environment pinning, private MSB_HOME and the exact-version check (W1, D-19)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+object = { workspace = true, features = ["std", "read_core", "elf", "pe", "coff"] }
+thiserror = { workspace = true }
+
+[features]
+# Lets `PUDDLE_DEV_ANY_RUNTIME=1` accept a runtime of another version, for developers testing an
+# unreleased msb build. Never enabled by a shipped crate: a release build with it fails to compile,
+# and `tests/dev_override.rs` fails when anything in the workspace turns it on.
+dev-override = []
+
+[dev-dependencies]
+object = { workspace = true, features = ["write"] }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

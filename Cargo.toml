@@ -22,8 +22,10 @@ puddle-store = { path = "crates/puddle-store" }
 puddle-api = { path = "crates/puddle-api" }
 puddle-boot = { path = "crates/puddle-boot" }
 puddle-agent-proto = { path = "crates/puddle-agent-proto" }
+puddle-runtime = { path = "crates/puddle-runtime" }
 
 # External
+object = { version = "0.40", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
