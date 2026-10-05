@@ -30,6 +30,11 @@ puddle-netpolicy = { path = "crates/puddle-netpolicy" }
 
 # External
 object = { version = "0.40", default-features = false }
+# msb SDK, exact pin: the SDK and the bundled runtime move together (D-19). Default features
+# off: no build-time runtime download, no keyring/dbus, no cloud client. `net` is required even
+# without guest networking: without it the SDK's launch config lacks `sandbox_slot` and a release
+# msb refuses it ("missing field `sandbox_slot`", T-102).
+microsandbox = { version = "=0.7.7", default-features = false, features = ["local", "net"] }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
 sha2 = "0.11"
@@ -37,7 +42,7 @@ proptest = { version = "1.11", default-features = false, features = ["std"] }
 psl = "2.1"
 # UTS #46 host-name mapping (IDNA to ASCII) for the proxy's name normalisation (T-132).
 idna = "1.1"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1.52", default-features = false }

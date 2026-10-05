@@ -2,32 +2,52 @@
 # Test runner settings. Retries stay at 0: a flaky proxy or transparency test is the bug itself
 # (docs/STANDARDS.md, "Flaky tests"). Only infrastructure steps may retry, and they do so in the
 # harness, visibly.
+#
+# VM tests (functions or test binaries named `vm_*`, crate `puddle-vm-tests`) boot real microVMs.
+# The default and ci profiles leave them out, so `scripts/check.sh` and the Linux gates never
+# need KVM; `--profile vm` runs only them (vm-linux / vm-windows workflows, ci/windows-e2e.ps1).
 
 [profile.default]
 retries = 0
 fail-fast = false
 slow-timeout = { period = "30s", terminate-after = 4 }
+default-filter = "not (test(/(^|::)vm_/) | binary(/^vm_/))"
 
 [profile.ci]
 retries = 0
 fail-fast = false
 slow-timeout = { period = "30s", terminate-after = 4 }
 failure-output = "immediate-final"
+default-filter = "not (test(/(^|::)vm_/) | binary(/^vm_/))"
 
 [profile.ci.junit]
 path = "junit.xml"
 
-# Tests that boot a microVM run one at a time (hosted runners have 2 vCPU / 8 GB).
-# Name VM test functions `vm_*` to land in this group.
+# VM tests only, one at a time (hosted runners have 2 vCPU / 8 GB), never retried (T-032).
+# A test is killed after 12 minutes, inside the jobs' 15-minute limit.
+[profile.vm]
+retries = 0
+fail-fast = false
+test-threads = 1
+default-filter = "test(/(^|::)vm_/) | binary(/^vm_/)"
+slow-timeout = { period = "120s", terminate-after = 6 }
+failure-output = "immediate-final"
+success-output = "final"
+
+[profile.vm.junit]
+path = "junit.xml"
+
+# If a VM test runs under another profile (an explicit `-E` or `--ignore-default-filter`), it
+# still runs alone.
 [test-groups]
 vm = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = "test(/(^|::)vm_/)"
+filter = "test(/(^|::)vm_/) | binary(/^vm_/)"
 test-group = "vm"
 slow-timeout = { period = "120s", terminate-after = 5 }
 
 [[profile.ci.overrides]]
-filter = "test(/(^|::)vm_/)"
+filter = "test(/(^|::)vm_/) | binary(/^vm_/)"
 test-group = "vm"
 slow-timeout = { period = "120s", terminate-after = 5 }
