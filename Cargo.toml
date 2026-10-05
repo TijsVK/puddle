@@ -22,7 +22,10 @@ puddle-store = { path = "crates/puddle-store" }
 puddle-api = { path = "crates/puddle-api" }
 
 # External
+serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
+serde_json = "1.0.149"
 thiserror = "2"
+tokio = { version = "1.52", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless it needs FFI

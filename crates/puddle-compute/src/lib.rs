@@ -1,5 +1,46 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Compute plane: creates, starts, stops and reconciles sandboxes and workspace volumes over the microsandbox SDK, owns the bundled runtime and the boot hook (MWE plan W1).
+//! Compute plane: the traits every microVM runtime implements, and the types they take.
 //!
-//! Placeholder: no code yet. See `docs/STANDARDS.md` ("Workspace layout") for what belongs here.
+//! Other crates code against [`Runtime`] and [`Sandbox`], never against the msb SDK; the SDK
+//! adapter lives in its own crate (`puddle-compute-msb`), so everything else builds and tests
+//! without it.
+//!
+//! # Trait surface
+//!
+//! | Need | Call |
+//! |---|---|
+//! | runtime version, workaround flags | [`Runtime::probe`] → [`Capabilities`] |
+//! | image cached + its ENTRYPOINT/CMD/ENV | [`Runtime::pull_image`] → [`ImageConfig`] |
+//! | create and boot | [`Runtime::create`] with a [`SandboxSpec`] → owning [`Sandbox`] handle |
+//! | boot again | [`Runtime::start`] → owning handle |
+//! | re-adopt a running sandbox | [`Runtime::get`] → non-owning handle |
+//! | list / delete | [`Runtime::list`], [`Runtime::remove`] |
+//! | clean up after failed creates | [`Runtime::stale_dirs`], [`Runtime::remove_stale_dir`] |
+//! | named disk volumes | [`Runtime::create_volume`], [`Runtime::volume`] (incl. holder), [`Runtime::list_volumes`], [`Runtime::remove_volume`] |
+//! | stop, state | [`Sandbox::stop`], [`Sandbox::status`] |
+//! | run a command | [`Sandbox::exec`] with an [`ExecRequest`] → [`ExecOutput`] |
+//! | SSH on a pipe/socket | [`Sandbox::serve_ssh`] on any [`SshStream`] |
+//!
+//! A [`SandboxSpec`] carries: image, memory ([`puddle_types::MemoryMib`]), env
+//! ([`puddle_types::GuestEnv`]), [`NetworkPolicy::None`] plus [`VsockRoute`]s, read-only
+//! [`FileMount`]s, named [`VolumeMount`]s and [`OwnedDisk`]s. Errors are one enum,
+//! [`ComputeError`].
+//!
+//! The traits use `impl Future + Send` returns (no `async-trait`), so implementations can write
+//! `async fn` and callers can spawn the futures. They aren't object-safe: be generic over
+//! `R: Runtime`.
 #![forbid(unsafe_code)]
+
+mod error;
+mod exec;
+mod runtime;
+mod spec;
+
+pub use error::ComputeError;
+pub use exec::{ExecOutput, ExecRequest, ExitStatus};
+pub use runtime::{
+    Capabilities, ImageConfig, Runtime, Sandbox, SandboxInfo, SshStream, VolumeInfo, VolumeSpec,
+};
+pub use spec::{
+    DiskSize, FileMount, NetworkPolicy, OwnedDisk, SandboxSpec, VolumeMount, VsockRoute,
+};

@@ -1,7 +1,34 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Shared types for puddle's crates: identifiers, wire types and errors that cross crate
 //! boundaries. Keep this crate small and free of I/O, so every other crate can depend on it.
+//!
+//! (The W1 breakdown, T-081, calls this crate `puddle-core`.)
+//!
+//! | Item | What |
+//! |---|---|
+//! | [`SandboxName`], [`WorkspaceId`], [`VolumeName`], [`ImageRef`] | validated names; sandbox, workspace and volume names are DNS labels |
+//! | [`GuestPath`], [`GuestFile`], [`GuestEnv`] | what providers put into a guest; the boot hook applies them |
+//! | [`MemoryMib`], [`MemorySetting`] | guest memory: default 8 GiB, per-sandbox overrides |
+//! | [`SandboxStatus`], [`Event`], [`EventSink`] | sandbox states and the user-facing event stream (incl. [`Event::OomKill`]) |
+//! | [`ValidationError`] | the one error every checked constructor returns |
+//!
+//! Every checked type validates in its constructor *and* when deserialised, so a value of the
+//! type is always valid. Names are compared and hashed as plain strings.
 #![forbid(unsafe_code)]
+
+mod error;
+mod event;
+mod guest;
+mod memory;
+mod name;
+
+pub use error::ValidationError;
+pub use event::{CollectingSink, Event, EventSink, NullSink, SandboxStatus};
+pub use guest::{GuestEnv, GuestFile, GuestPath};
+pub use memory::{MemoryMib, MemorySetting};
+pub use name::{
+    ImageRef, RESERVED_SANDBOX_NAMES, SandboxName, VolumeName, WORKSPACE_VOLUME_PREFIX, WorkspaceId,
+};
 
 /// puddle's version, from the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
