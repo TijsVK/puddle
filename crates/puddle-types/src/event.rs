@@ -61,6 +61,10 @@ const MAX_PROCESS_NAME_CHARS: usize = 64;
 
 /// Something the user should hear about. Serialised as one internally tagged enum
 /// (`{"type":"oom_kill",...}`, ADR 0002).
+///
+/// Most events are about one sandbox and carry a `sandbox` field; global ones (crash report
+/// waiting, consent needed, network change, ...) carry none, and [`Event::sandbox`] returns
+/// `None` for them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -84,6 +88,9 @@ pub enum Event {
         /// The killed process's name (`comm`), cleaned by [`Event::oom_kill`].
         process: String,
     },
+    /// A global event, standing in for the real ones until the first lands.
+    #[cfg(test)]
+    TestGlobal,
 }
 
 impl Event {
@@ -109,11 +116,19 @@ impl Event {
         }
     }
 
-    /// The sandbox this event is about.
+    /// The sandbox this event is about, or `None` for a global event.
+    ///
+    /// ```
+    /// use puddle_types::{Event, SandboxName};
+    /// let a = SandboxName::new("a").unwrap();
+    /// assert_eq!(Event::oom_kill(a.clone(), 1, "x").sandbox(), Some(&a));
+    /// ```
     #[must_use]
-    pub fn sandbox(&self) -> &SandboxName {
+    pub fn sandbox(&self) -> Option<&SandboxName> {
         match self {
-            Self::StatusChanged { sandbox, .. } | Self::OomKill { sandbox, .. } => sandbox,
+            Self::StatusChanged { sandbox, .. } | Self::OomKill { sandbox, .. } => Some(sandbox),
+            #[cfg(test)]
+            Self::TestGlobal => None,
         }
     }
 }
@@ -240,8 +255,47 @@ mod tests {
             r#"{"type":"status_changed","sandbox":"box","status":"crashed"}"#
         );
         assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), s);
-        assert_eq!(s.sandbox(), &name());
-        assert_eq!(e.sandbox(), &name());
+        assert_eq!(s.sandbox(), Some(&name()));
+        assert_eq!(e.sandbox(), Some(&name()));
+    }
+
+    #[test]
+    fn global_events_have_no_sandbox_and_round_trip_without_one() {
+        let g = Event::TestGlobal;
+        assert_eq!(g.sandbox(), None);
+        let json = serde_json::to_string(&g).unwrap();
+        assert_eq!(json, r#"{"type":"test_global"}"#);
+        assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), g);
+        let sink = CollectingSink::default();
+        sink.emit(g.clone());
+        assert_eq!(sink.take(), [g]);
+    }
+
+    #[test]
+    fn per_sandbox_json_is_unchanged_by_global_events() {
+        // Events are not persisted today, but SSE clients parse them: the wire shape of
+        // existing variants must stay exactly as it was (ADR 0002).
+        for (json, want) in [
+            (
+                r#"{"type":"status_changed","sandbox":"box","status":"running"}"#,
+                Event::StatusChanged {
+                    sandbox: name(),
+                    status: SandboxStatus::Running,
+                },
+            ),
+            (
+                r#"{"type":"oom_kill","sandbox":"box","pid":1,"process":"x"}"#,
+                Event::oom_kill(name(), 1, "x"),
+            ),
+        ] {
+            let got: Event = serde_json::from_str(json).unwrap();
+            assert_eq!(got, want);
+            assert_eq!(got.sandbox(), Some(&name()));
+            assert_eq!(serde_json::to_string(&got).unwrap(), json);
+        }
+        assert!(
+            serde_json::from_str::<Event>(r#"{"type":"oom_kill","pid":1,"process":"x"}"#).is_err()
+        );
     }
 
     #[test]
