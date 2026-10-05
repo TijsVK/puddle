@@ -10,6 +10,8 @@
 //! | [`GuestPath`], [`GuestFile`], [`GuestEnv`] | what providers put into a guest; the boot hook applies them |
 //! | [`MemoryMib`], [`MemorySetting`] | guest memory: default 8 GiB, per-sandbox overrides |
 //! | [`SandboxStatus`], [`Event`], [`EventSink`] | sandbox states and the user-facing event stream (incl. [`Event::OomKill`]) |
+//! | [`Host`], [`DomainName`] | a normalised egress destination (the proxy normalises, everyone else validates) |
+//! | [`EgressRequest`], [`Decision`], [`Policy`] | what the proxy asks the rules engine and what it gets back |
 //! | [`ValidationError`] | the one error every checked constructor returns |
 //!
 //! Every checked type validates in its constructor *and* when deserialised, so a value of the
@@ -19,15 +21,23 @@
 mod error;
 mod event;
 mod guest;
+mod host;
 mod memory;
 mod name;
+mod policy;
 
 pub use error::ValidationError;
 pub use event::{CollectingSink, Event, EventSink, NullSink, SandboxStatus};
 pub use guest::{GuestEnv, GuestFile, GuestPath};
+pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
 pub use memory::{MemoryMib, MemorySetting};
 pub use name::{
     ImageRef, RESERVED_SANDBOX_NAMES, SandboxName, VolumeName, WORKSPACE_VOLUME_PREFIX, WorkspaceId,
+};
+
+pub use policy::{
+    Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy, PolicyError, RuleId,
+    SuffixAllows,
 };
 
 /// puddle's version, from the workspace manifest.
