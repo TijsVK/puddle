@@ -75,7 +75,7 @@ impl RuleSet {
             .max_by_key(|rule| {
                 (
                     rule.pattern.specificity(),
-                    matches!(rule.scope, Scope::Sandbox(_)),
+                    rule.scope.rank(),
                     rule.effect == Effect::Deny,
                     Reverse(rule.id),
                 )
@@ -201,6 +201,12 @@ mod tests {
     }
 
     #[test]
+    fn scope_rank_leaves_room_below_global() {
+        assert_eq!(Scope::Global.rank(), 1);
+        assert!(Scope::Sandbox(sb("a")).rank() > Scope::Global.rank());
+    }
+
+    #[test]
     fn identical_rules_tie_on_lower_id() {
         let set = RuleSet::new(vec![
             rule(5, None, "example.com", Effect::Allow),
@@ -262,7 +268,7 @@ mod tests {
             let key = |r: &Rule| {
                 (
                     r.pattern.specificity(),
-                    r.scope.sandbox().is_some(),
+                    r.scope.rank(),
                     r.effect == Effect::Deny,
                     Reverse(r.id),
                 )

@@ -62,7 +62,11 @@ impl PendingOutcome {
 /// The engine's answer for one request (R-9).
 ///
 /// `Pending` means the connection is refused now (R-10) and the request waits in the inbox.
+///
+/// Non-exhaustive: a match from a user rule set (D-52), which has no rule row, will be an
+/// additive variant rather than a nullable `rule_id` here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Decision {
     /// An allow rule decided.
     Allow {

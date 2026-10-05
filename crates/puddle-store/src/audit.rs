@@ -37,6 +37,7 @@ pub enum AuditError {
 /// How the proxy handled a connection (R-24).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ConnectionDecision {
     /// Let through.
     Allow,
@@ -51,6 +52,7 @@ pub enum ConnectionDecision {
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`,
 /// `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `suppressed`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConnectionReason {
     /// A rule decided.
     Rule,

@@ -5,8 +5,10 @@ use puddle_types::{RuleId, SandboxName};
 
 use crate::pattern::Pattern;
 
-/// Which requests a rule applies to (R-5).
+/// Which requests a rule applies to (R-5). Non-exhaustive: user rule sets (D-52) will be a third
+/// scope, ranked below `Global`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Scope {
     /// Every sandbox.
     Global,
@@ -15,6 +17,16 @@ pub enum Scope {
 }
 
 impl Scope {
+    /// Precedence at equal pattern specificity (R-6 step 2): higher wins. `Sandbox` 2, `Global` 1;
+    /// rank 0 is kept for rule sets.
+    #[must_use]
+    pub fn rank(&self) -> u8 {
+        match self {
+            Self::Global => 1,
+            Self::Sandbox(_) => 2,
+        }
+    }
+
     /// The sandbox, for a sandbox rule.
     #[must_use]
     pub fn sandbox(&self) -> Option<&SandboxName> {
@@ -47,6 +59,7 @@ impl Effect {
 
 /// Who made a change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Actor {
     /// The `puddle` command line.
     Cli,
