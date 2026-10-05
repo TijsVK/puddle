@@ -18,6 +18,7 @@ different crates and rarely collides.
 |---|---|---|---|
 | `crates/puddle-types` | lib | Shared IDs, wire types, errors that cross crate boundaries (validated names, guest files/env, memory setting, events). No I/O. | all |
 | `crates/puddle-compute` | lib | The compute-plane contract: `Runtime`/`Sandbox` traits, `FakeRuntime` (feature `fake`), the contract suite every runtime passes (feature `contract`). W1 rows build on it in their own crates (msb adapter, boot hook, workspace, lifecycle, ...) | W1 |
+| `crates/puddle-boot` | lib | Boot hook (`guest/boot.sh`, `guest/agent-supervise.sh`, POSIX sh) and the readiness gate: no SSH or exec before the hook returns 0; applies provider `GuestFile`s/env as a list (T-108) | W1 |
 | `crates/puddle-proxy` | lib | Egress proxy: CONNECT/HTTP, pending requests, toggles, credential injection, upstream chaining, transparent capture | W2 |
 | `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper | W3 |
 | `crates/puddle-api` | lib | axum API, SSE, auth token, OpenAPI generation (ADR 0004) | W4 |
@@ -52,7 +53,7 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   `cargo xwin clippy` so C dependencies (bundled SQLite) compile too. It needs `clang` on `PATH`
   (a distro `clang` package, or a conda-forge `clang` environment); cargo-xwin links it as
   `clang-cl` and uses the toolchain's `llvm-tools` as `llvm-lib`.
-- Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli`, `cargo-xwin` (versions pinned in
+- Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli`, `cargo-xwin`, `shellcheck` (versions pinned in
   `.github/workflows/ci.yml`; use the same or newer locally).
 - **Shared build cache** (optional, local only): `scripts/check.sh` runs Cargo as `$CARGO`
   (default `cargo`). With [mbx](https://mr-boxington.jdx.dev/) installed, run
@@ -162,7 +163,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
-| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, rustdoc | `scripts/check.sh` | every push, every PR |
+| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, rustdoc | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e | a real msb microVM; MWE behaviours; hostile-guest **tier V** | `crates/puddle-e2e/tests/`, functions named `vm_*` | per PR smoke + nightly full (once added) |

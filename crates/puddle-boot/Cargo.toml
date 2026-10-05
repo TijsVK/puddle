@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-boot"
+description = "Boot hook (guest/boot.sh) and the readiness gate: no SSH or exec before the hook passes (W1, T-108)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+puddle-compute = { workspace = true }
+puddle-types = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+
+[dev-dependencies]
+puddle-compute = { workspace = true, features = ["fake"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+
+[lints]
+workspace = true

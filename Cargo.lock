@@ -261,6 +261,17 @@ name = "puddle-api"
 version = "0.0.0"
 
 [[package]]
+name = "puddle-boot"
+version = "0.0.0"
+dependencies = [
+ "puddle-compute",
+ "puddle-types",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "puddle-compute"
 version = "0.0.0"
 dependencies = [

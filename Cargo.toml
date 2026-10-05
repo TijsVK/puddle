@@ -20,6 +20,7 @@ puddle-compute = { path = "crates/puddle-compute" }
 puddle-proxy = { path = "crates/puddle-proxy" }
 puddle-store = { path = "crates/puddle-store" }
 puddle-api = { path = "crates/puddle-api" }
+puddle-boot = { path = "crates/puddle-boot" }
 
 # External
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
