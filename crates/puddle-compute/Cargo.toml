@@ -15,5 +15,18 @@ puddle-types = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 
+[features]
+# FakeRuntime: an in-memory msb for unit tests of the crates above the compute plane.
+fake = ["tokio/io-util"]
+# The contract suite every Runtime implementation runs (contract::run_all, contract_tests!).
+contract = ["tokio/io-util", "tokio/macros", "tokio/rt", "tokio/time"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "rt-multi-thread", "time"] }
+
+[[test]]
+name = "contract_fake"
+required-features = ["fake", "contract"]
+
 [lints]
 workspace = true

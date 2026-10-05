@@ -26,13 +26,27 @@
 //! [`FileMount`]s, named [`VolumeMount`]s and [`OwnedDisk`]s. Errors are one enum,
 //! [`ComputeError`].
 //!
+//! # Features
+//!
+//! - `fake`: [`fake::FakeRuntime`], an in-memory msb with fault injection, a call log and a small
+//!   command interpreter, for unit tests of the crates above this one.
+//! - `contract`: [`contract`], the suite every runtime passes (the fake here, the SDK adapter on
+//!   VMs), and the [`contract_tests!`] macro.
+//!
+//! Crates that test against the fake add
+//! `puddle-compute = { workspace = true, features = ["fake"] }` under `[dev-dependencies]`.
+//!
 //! The traits use `impl Future + Send` returns (no `async-trait`), so implementations can write
 //! `async fn` and callers can spawn the futures. They aren't object-safe: be generic over
 //! `R: Runtime`.
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "contract")]
+pub mod contract;
 mod error;
 mod exec;
+#[cfg(feature = "fake")]
+pub mod fake;
 mod runtime;
 mod spec;
 

@@ -16,8 +16,8 @@ different crates and rarely collides.
 
 | Crate | Kind | Owns | Plan |
 |---|---|---|---|
-| `crates/puddle-types` | lib | Shared IDs, wire types, errors that cross crate boundaries. No I/O. | all |
-| `crates/puddle-compute` | lib | Sandboxes, volumes, bundled runtime, boot hook, SSH endpoint, reconcile, `doctor` checks, over the msb SDK | W1 |
+| `crates/puddle-types` | lib | Shared IDs, wire types, errors that cross crate boundaries (validated names, guest files/env, memory setting, events). No I/O. | all |
+| `crates/puddle-compute` | lib | The compute-plane contract: `Runtime`/`Sandbox` traits, `FakeRuntime` (feature `fake`), the contract suite every runtime passes (feature `contract`). W1 rows build on it in their own crates (msb adapter, boot hook, workspace, lifecycle, ...) | W1 |
 | `crates/puddle-proxy` | lib | Egress proxy: CONNECT/HTTP, pending requests, toggles, credential injection, upstream chaining, transparent capture | W2 |
 | `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper | W3 |
 | `crates/puddle-api` | lib | axum API, SSE, auth token, OpenAPI generation (ADR 0004) | W4 |
