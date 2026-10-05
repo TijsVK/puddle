@@ -18,6 +18,7 @@ different crates and rarely collides.
 |---|---|---|---|
 | `crates/puddle-types` | lib | Shared IDs, wire types, errors that cross crate boundaries (validated names, guest files/env, memory setting, events). No I/O. | all |
 | `crates/puddle-compute` | lib | The compute-plane contract: `Runtime`/`Sandbox` traits, `FakeRuntime` (feature `fake`), the contract suite every runtime passes (feature `contract`). W1 rows build on it in their own crates (msb adapter, boot hook, workspace, lifecycle, ...) | W1 |
+| `crates/puddle-runtime` | lib | The bundled msb runtime (D-19): runtime folder + private `MSB_HOME`, `MSB_*` environment pinning, exact `<release>-puddle.N` version check from msb's embedded `.msbver` (T-107) | W1 |
 | `crates/puddle-boot` | lib | Boot hook (`guest/boot.sh`, `guest/agent-supervise.sh`, POSIX sh) and the readiness gate: no SSH or exec before the hook returns 0; applies provider `GuestFile`s/env as a list (T-108) | W1 |
 | `crates/puddle-proxy` | lib | Egress proxy: CONNECT/HTTP, pending requests, toggles, credential injection, upstream chaining, transparent capture | W2 |
 | `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper | W3 |
@@ -25,6 +26,7 @@ different crates and rarely collides.
 | `crates/puddle-agent` | bin | Guest agent (static musl binary, ADR 0005): vsock to the host proxy | W1/W2 |
 | `crates/puddle-agent-proto` | lib | Agent ↔ host wire protocol: yamux settings, stream kinds, control messages, host session, reset-preserving splice | W1/W2 |
 | `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI, daemon, wiring of the crates above | W7 |
+| `crates/xtask` | bin (dev) | `cargo xtask runtime` (runtime folder from the fork release, checksums, `licenses/`), `cargo xtask notices` (third-party notices; `--check` is a gate); never shipped | W1, W7 |
 | `crates/puddle-e2e` | lib (tests) | Harness for end-to-end and hostile-guest tests; never a dependency of product crates | W7, T-035 |
 
 Later, not yet created: the Svelte UI (`ui/`, W5) and the Tauri shell (`crates/puddle-app` or
@@ -54,7 +56,7 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   `cargo xwin clippy` so C dependencies (bundled SQLite) compile too. It needs `clang` on `PATH`
   (a distro `clang` package, or a conda-forge `clang` environment); cargo-xwin links it as
   `clang-cl` and uses the toolchain's `llvm-tools` as `llvm-lib`.
-- Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli`, `cargo-xwin`, `shellcheck` (versions pinned in
+- Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli`, `cargo-xwin`, `shellcheck`, `cargo-about` (with `--features cli`) (versions pinned in
   `.github/workflows/ci.yml`; use the same or newer locally).
 - **Shared build cache** (optional, local only): `scripts/check.sh` runs Cargo as `$CARGO`
   (default `cargo`). With [mbx](https://mr-boxington.jdx.dev/) installed, run
@@ -232,6 +234,10 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
   advisories (any RustSec advisory or yanked crate fails), bans (no wildcards) and sources
   (crates.io only; puddle's own forks on GitHub once added, D-53). An exception names the advisory
   or crate, the reason and a review date.
+- **Third-party notices:** `cargo xtask notices --check` (gate `notices`) fails when a shipped
+  dependency has no licence entry in cargo-about's report (`about.toml`, whose `accepted` list
+  mirrors `deny.toml`). Release notices for puddle and the bundled msb come from
+  `cargo xtask runtime` (D-35).
 - Prefer well-maintained crates already in the tree; a new dependency is justified in its commit.
 - Never copy code from Huddle (D-54); code from elsewhere follows CONTRIBUTING's "Work you did not
   write".

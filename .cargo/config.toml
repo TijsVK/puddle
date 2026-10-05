@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[alias]
+# Developer and release tasks (crates/xtask): `cargo xtask runtime`, `cargo xtask notices --check`.
+xtask = "run --quiet --locked -p xtask --"

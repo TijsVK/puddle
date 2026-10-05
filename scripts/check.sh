@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, clippy, clippy-windows, deny, test, doc, coverage
+#   fmt, typos, spdx, shellcheck, clippy, clippy-windows, deny, notices, test, doc, coverage
 #   fast  = fmt typos spdx shellcheck            (pre-commit hook)
-#   all   = fast clippy clippy-windows deny doc coverage   (pre-push hook, CI; coverage runs the tests)
+#   all   = fast clippy clippy-windows deny notices doc coverage   (pre-push hook, CI; coverage runs the tests)
 # Set CARGO to run every Cargo command through a wrapper, e.g. CARGO=mbx for the shared build
 # cache (docs/STANDARDS.md, "Shared build cache"); unset, it runs plain cargo.
 # Coverage thresholds live here (docs/STANDARDS.md, "Coverage"); raise them, never lower them
@@ -49,6 +49,10 @@ run_gate() {
             --target x86_64-pc-windows-msvc -- -D warnings
         ;;
     deny) "$cargo" deny --locked check ;;
+    notices)
+        # Every shipped dependency has a licence entry in the third-party notices (cargo-about).
+        "$cargo" run --quiet --locked -p xtask -- notices --check
+        ;;
     test) "$cargo" nextest run --workspace --all-features --locked ;;
     doc)
         "$cargo" test --doc --workspace --all-features --locked
@@ -72,7 +76,7 @@ run_gate() {
 for arg in "$@"; do
     case "$arg" in
     fast) for g in fmt typos spdx shellcheck; do run_gate "$g"; done ;;
-    all) for g in fmt typos spdx shellcheck clippy clippy-windows deny doc coverage; do run_gate "$g"; done ;;
+    all) for g in fmt typos spdx shellcheck clippy clippy-windows deny notices doc coverage; do run_gate "$g"; done ;;
     *) run_gate "$arg" ;;
     esac
 done

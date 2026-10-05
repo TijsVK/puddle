@@ -28,6 +28,7 @@ puddle-runtime = { path = "crates/puddle-runtime" }
 object = { version = "0.40", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
+sha2 = "0.11"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 psl = "2.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
