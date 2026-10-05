@@ -33,6 +33,7 @@ cargo run -p puddle -- --version
 
 Layout, coding and testing rules, coverage thresholds and the agent workflow:
 [docs/STANDARDS.md](docs/STANDARDS.md).
+Architecture decisions and why: [docs/adr/](docs/adr/README.md).
 
 ## Contributing
 
