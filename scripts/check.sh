@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, clippy, clippy-windows, deny, test, doc, coverage
-#   fast  = fmt typos spdx                       (pre-commit hook)
+#   fmt, typos, spdx, shellcheck, clippy, clippy-windows, deny, test, doc, coverage
+#   fast  = fmt typos spdx shellcheck            (pre-commit hook)
 #   all   = fast clippy clippy-windows deny doc coverage   (pre-push hook, CI; coverage runs the tests)
 # Set CARGO to run every Cargo command through a wrapper, e.g. CARGO=mbx for the shared build
 # cache (docs/STANDARDS.md, "Shared build cache"); unset, it runs plain cargo.
@@ -25,6 +25,14 @@ run_gate() {
     fmt) "$cargo" fmt --all --check ;;
     typos) typos ;;
     spdx) scripts/check-spdx.sh ;;
+    shellcheck)
+        # Every shell script, including the guest scripts puddle runs inside sandboxes (POSIX sh).
+        command -v shellcheck >/dev/null 2>&1 || {
+            echo "shellcheck gate needs shellcheck on PATH (docs/STANDARDS.md, \"Toolchain\")" >&2
+            exit 1
+        }
+        git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
+        ;;
     clippy) "$cargo" clippy --workspace --all-targets --all-features --locked -- -D warnings ;;
     clippy-windows)
         # cargo-xwin supplies the MSVC headers and libraries, so C dependencies (bundled SQLite)
@@ -63,8 +71,8 @@ run_gate() {
 [ "$#" -gt 0 ] || set -- all
 for arg in "$@"; do
     case "$arg" in
-    fast) for g in fmt typos spdx; do run_gate "$g"; done ;;
-    all) for g in fmt typos spdx clippy clippy-windows deny doc coverage; do run_gate "$g"; done ;;
+    fast) for g in fmt typos spdx shellcheck; do run_gate "$g"; done ;;
+    all) for g in fmt typos spdx shellcheck clippy clippy-windows deny doc coverage; do run_gate "$g"; done ;;
     *) run_gate "$arg" ;;
     esac
 done

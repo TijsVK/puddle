@@ -34,7 +34,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
-          tool: cargo-nextest@0.9.146,cargo-llvm-cov@0.9.1,cargo-deny@0.20.2,typos@1.50.3,cargo-xwin@0.23.1
+          tool: cargo-nextest@0.9.146,cargo-llvm-cov@0.9.1,cargo-deny@0.20.2,typos@1.50.3,cargo-xwin@0.23.1,shellcheck@0.11.0
       - name: clang for the msvc cross-check (preinstalled on the runner)
         run: clang --version
       - name: Cache the MSVC CRT and Windows SDK that cargo-xwin downloads
@@ -50,6 +50,9 @@ jobs:
       - name: spdx headers
         if: ${{ !cancelled() }}
         run: scripts/check.sh spdx
+      - name: shellcheck
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh shellcheck
       - name: clippy (linux)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy
