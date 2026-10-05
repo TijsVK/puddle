@@ -43,9 +43,11 @@ pub(crate) struct FakeRoot {
     stubs: PathBuf,
 }
 
-/// The POSIX shells on this host to run the hook with (dash and bash at least on CI).
+/// The POSIX shells on this host to run the hook with (dash and bash). Not busybox: Ubuntu's
+/// `busybox sh` runs its own applets (`sysctl`, ...) before `PATH`, so the stubs can't stand in;
+/// busybox ash is covered by the Alpine VM test.
 pub(crate) fn shells() -> Vec<PathBuf> {
-    let found: Vec<PathBuf> = ["/bin/dash", "/bin/bash", "/bin/busybox"]
+    let found: Vec<PathBuf> = ["/bin/dash", "/bin/bash"]
         .iter()
         .map(PathBuf::from)
         .filter(|p| p.exists())
@@ -60,7 +62,7 @@ fn write_exec(path: &Path, text: &str) {
 }
 
 impl FakeRoot {
-    /// A fresh root, run with `shell` (`/bin/busybox` runs as `busybox sh`).
+    /// A fresh root, run with `shell`.
     pub(crate) fn new(shell: &Path) -> Self {
         static N: AtomicU32 = AtomicU32::new(0);
         let nanos = SystemTime::now()
@@ -140,9 +142,6 @@ impl FakeRoot {
     /// `/usr/bin:/bin` (so the host's own `sysctl` in `/usr/sbin` is never used).
     pub(crate) fn command(&self, args: &[String], path_with_stubs: bool) -> Command {
         let mut cmd = Command::new(&self.shell);
-        if self.shell.ends_with("busybox") {
-            cmd.arg("sh");
-        }
         let path = if path_with_stubs {
             format!("{}:/usr/bin:/bin", self.stubs.display())
         } else {

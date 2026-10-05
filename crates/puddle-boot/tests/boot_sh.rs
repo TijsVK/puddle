@@ -72,11 +72,6 @@ fn source_and_print(fr: &FakeRoot, files: &[&str], expr: &str) -> String {
     parts.push(format!("printf '%s' \"{expr}\""));
     let script = parts.join(" ");
     let out = std::process::Command::new(&fr.shell)
-        .args(if fr.shell.ends_with("busybox") {
-            vec!["sh"]
-        } else {
-            vec![]
-        })
         .arg("-c")
         .arg(script)
         .env_clear()
