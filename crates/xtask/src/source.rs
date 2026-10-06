@@ -239,10 +239,7 @@ impl ReleaseSource for GitHubSource {
     fn facts(&self) -> Result<ForkFacts> {
         let compare = run(Command::new("gh").args([
             "api",
-            &format!(
-                "repos/{}/compare/{}...{}",
-                self.fork, self.upstream_tag, self.tag
-            ),
+            &compare_path(&self.fork, &self.upstream, &self.upstream_tag, &self.tag),
         ]))?;
         let commits = parse_compare(&compare)?;
         let src = self.checkout()?;
@@ -333,6 +330,16 @@ fn parse_libkrunfw_makefile(makefile: &str) -> Result<(String, String)> {
     let kernel = var("KERNEL_VERSION").ok_or_else(|| missing("KERNEL_VERSION"))?;
     let kernel = kernel.strip_prefix("linux-").unwrap_or(&kernel).to_owned();
     Ok((version, kernel))
+}
+
+/// The compare API path for the fork's commits on top of upstream's tag. The base names upstream's
+/// owner: the fork has upstream's commits but not its tags (`compare/v0.7.7...` on the fork is a
+/// 404).
+fn compare_path(fork: &str, upstream: &str, upstream_tag: &str, tag: &str) -> String {
+    let owner = upstream
+        .split_once('/')
+        .map_or(upstream, |(owner, _)| owner);
+    format!("repos/{fork}/compare/{owner}:{upstream_tag}...{tag}")
 }
 
 /// The commits of a GitHub compare API response, oldest first.
@@ -460,5 +467,18 @@ mod tests {
         };
         assert_eq!(s.repo(Origin::Fork), ("f/m", "v1.0.0-puddle.1"));
         assert_eq!(s.repo(Origin::Upstream), ("u/m", "v1.0.0"));
+    }
+
+    #[test]
+    fn the_compare_base_names_upstreams_owner() {
+        assert_eq!(
+            compare_path(
+                "TijsVK/microsandbox",
+                "superradcompany/microsandbox",
+                "v0.7.7",
+                "v0.7.7-puddle.3"
+            ),
+            "repos/TijsVK/microsandbox/compare/superradcompany:v0.7.7...v0.7.7-puddle.3"
+        );
     }
 }
