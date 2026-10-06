@@ -349,9 +349,10 @@ impl Runtime for MsbRuntime {
                 runtime_version: version,
                 // The adapter removes what a failed create leaves (remove_leftover_dir).
                 stale_dir_fixed: true,
-                // msb 0.7.7 still reports exit 0 over SSH for a signal-killed command (T-028,
-                // T-078); T-117 flips this for the fork tag once its test passes.
-                ssh_reports_signal_exit: false,
+                // The fork's SSH server sends no exit status for a signal-killed command, so
+                // clients see a failure (fork `359f1585`; stock 0.7.7 sent 0).
+                // `vm_ssh_reports_a_signal_killed_command_as_a_failure` checks it.
+                ssh_reports_signal_exit: true,
             })
         })
     }

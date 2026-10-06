@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The adapter's own VM bars (T-106), beyond the contract suite: HG-01 (no direct network from
 //! the guest), HG-02 (only the routed vsock port reaches the host), ext4 volumes and owned disks,
-//! three sandboxes at once with their own routes, and `--max-memory` never set.
+//! three sandboxes at once with their own routes, `--max-memory` never set, and (fork, T-117) SSH
+//! reporting a signal-killed command as a failure.
 #![expect(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -330,4 +331,37 @@ async fn vm_mount_sources_outside_the_share_are_refused() {
             .iter()
             .all(|i| i.name != n.as_str())
     );
+}
+
+/// The fork's SSH server (SDK, in puddle's process) reports a signal-killed command as a failure:
+/// it sends no exit status, so OpenSSH exits 255 and the SDK client reads `-1`; a normal exit
+/// code still arrives as is (msb fork `359f1585`, T-028 `ssh.signal_kill9_exit`). The reason
+/// [`puddle_compute::Capabilities::ssh_reports_signal_exit`] is `true` on the fork.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_ssh_reports_a_signal_killed_command_as_a_failure() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let harness = VmEnv::new(settings.clone()).await.unwrap();
+    let s = spec(&settings, "sshsig");
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+    let statuses = harness
+        .scope(Box::pin(async {
+            let live = SdkSandbox::get(n.as_str()).await?.connect().await?;
+            let client = live.ssh().open_client().await?;
+            let killed = client.exec("kill -9 $$").await?.status;
+            let seven = client.exec("exit 7").await?.status;
+            client.close().await?;
+            Ok::<_, microsandbox::MicrosandboxError>((killed, seven))
+        }))
+        .await;
+    assert!(rt.probe().await.unwrap().ssh_reports_signal_exit);
+    sb.stop().await.unwrap();
+    cleanup(&rt, &[&n]).await;
+    let (killed, seven) = statuses.expect("SSH exec through the SDK client");
+    assert_eq!(
+        killed, -1,
+        "a signal-killed command must not report a status"
+    );
+    assert_eq!(seven, 7, "a normal exit code is reported as is");
 }
