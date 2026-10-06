@@ -11,7 +11,10 @@
 //! 3. pins the environment with [`RuntimeEnv`]: removes **every** `MSB_*` variable the user set
 //!    (incl. `MSB_LIBKRUNFW_PATH`, `MSB_AGENTD_PATH`, `MSB_BACKEND`), then sets `MSB_PATH`,
 //!    `MSB_HOME` and `MSB_CONFIG_PATH`. Apply it to the process before any thread starts
-//!    ([`RuntimeEnv::apply_to_process`]) or to a child [`std::process::Command`].
+//!    ([`RuntimeEnv::apply_to_process`]) or to a child [`std::process::Command`];
+//! 4. points the SDK's registry client at puddle's image-pull proxy with [`PullProxyEnv`]
+//!    (T-116): the user's proxy variables out, `HTTPS_PROXY`/`HTTP_PROXY` with the per-run token
+//!    in, applied the same way.
 //!
 //! | Item | What |
 //! |---|---|
@@ -19,6 +22,7 @@
 //! | [`read_embedded_version`] | the version msb embeds in its binary (`.msbver`), read without running it |
 //! | [`check_version`], [`VersionStatus`], [`DevOverride`] | the exact-match rule and the dev-only escape hatch |
 //! | [`RuntimeLayout`], [`RuntimeEnv`], [`BundledRuntime`] | paths, environment, the opened runtime |
+//! | [`PullProxyEnv`], [`NO_PROXY_NONE`], [`is_proxy_variable`] | image pulls through puddle's pull proxy |
 //! | [`RuntimeError`] | every way the runtime can be unusable |
 //!
 //! # Features
@@ -30,6 +34,7 @@ mod env;
 mod error;
 mod layout;
 mod msbver;
+mod pull_proxy;
 mod runtime;
 mod version;
 
@@ -37,6 +42,7 @@ pub use env::{RuntimeEnv, is_msb_variable};
 pub use error::RuntimeError;
 pub use layout::{LIBKRUNFW_FILE_NAME, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeLayout};
 pub use msbver::{MAX_VERSION_BYTES, VERSION_SECTION, read_embedded_version};
+pub use pull_proxy::{NO_PROXY_NONE, PullProxyEnv, is_proxy_variable};
 pub use runtime::BundledRuntime;
 pub use version::{
     BUILT_FOR, DEV_OVERRIDE_COMPILED, DEV_OVERRIDE_VAR, DevOverride, ParseVersionError,
