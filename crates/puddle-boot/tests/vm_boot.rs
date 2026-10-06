@@ -355,6 +355,87 @@ async fn check_merge() {
     rt.remove(&name).await.unwrap();
 }
 
+/// T-125: VS Code's Machine settings are merged as JSONC, so the user's own settings, comments
+/// and trailing commas survive restarts byte for byte; an invalid file is left as it is. On
+/// Alpine, like [`check_merge`].
+async fn check_machine_merge() {
+    const MACHINE: &str = puddle_boot::MACHINE_SETTINGS_GUEST;
+    const USER: &str = "// mine\n{\n    \"editor.fontSize\": 14, // big\n    \"github.gitAuthentication\": true,\n    \"remote.portsAttributes\": {\n        \"8080\": { \"label\": \"web\" },\n    },\n}\n";
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let image = ImageRef::new(FakeRuntime::ALPINE).unwrap();
+    let config = rt.pull_image(&image).await.unwrap();
+    let plan = BootPlan::builder(&config).build().unwrap();
+    let dir = assets_dir(rt, "machine");
+    let assets = write_assets(&dir).unwrap();
+    let name = sandbox_name(&settings, "machine");
+    let spec = with_boot_mounts(
+        SandboxSpec::new(name.clone(), image),
+        assets,
+        Some(&agent_binary(&dir)),
+    );
+    let gate = Gate::new();
+    let hook = BootHook::new();
+
+    // Boot 1: puddle creates the file; the user then edits it.
+    let sb = hook.create(rt, spec, &plan, &gate).await.unwrap();
+    let (_, created) = sh(&sb, &format!("cat {MACHINE}")).await;
+    assert!(
+        created.contains("\"remote.autoForwardPortsSource\": \"process\""),
+        "{created}"
+    );
+    write_guest(&sb, MACHINE, USER).await;
+    sb.stop().await.unwrap();
+
+    // Boot 2: the user's keys and comments stay, puddle's arrive, the guard wins.
+    let sb = hook.start(rt, &name, &plan, &gate).await.unwrap();
+    let (_, merged) = sh(&sb, &format!("cat {MACHINE}")).await;
+    assert!(
+        merged.starts_with("// mine\n{\n    \"editor.fontSize\": 14, // big\n"),
+        "{merged}"
+    );
+    assert!(
+        merged.contains("\"8080\": { \"label\": \"web\" },"),
+        "{merged}"
+    );
+    assert!(
+        merged.contains("\"github.gitAuthentication\": false"),
+        "{merged}"
+    );
+    assert!(
+        merged.contains("\"remote.autoForwardPortsFallback\": 0"),
+        "{merged}"
+    );
+    sb.stop().await.unwrap();
+
+    // Boot 3: nothing changes, byte for byte.
+    let sb = hook.start(rt, &name, &plan, &gate).await.unwrap();
+    assert_eq!(sh(&sb, &format!("cat {MACHINE}")).await.1, merged, "boot 3");
+    write_guest(&sb, MACHINE, "{ \"editor.fontSize\": oops").await;
+    sb.stop().await.unwrap();
+
+    // Boot 4: an invalid file is left as it is; the boot goes on.
+    let sb = hook.start(rt, &name, &plan, &gate).await.unwrap();
+    let report = &sb.boot_report().stdout;
+    assert!(
+        report.contains(&format!(
+            "{MACHINE} left as it is: the file is not valid JSONC"
+        )),
+        "boot 4: {report}"
+    );
+    assert_eq!(
+        sh(&sb, &format!("cat {MACHINE}")).await.1,
+        "{ \"editor.fontSize\": oops"
+    );
+    sb.stop().await.unwrap();
+    rt.remove(&name).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_merged_machine_settings_keep_the_users_jsonc_across_boots() {
+    Box::pin(check_machine_merge()).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_merged_docker_config_keeps_a_docker_login_across_boots() {
     Box::pin(check_merge()).await;

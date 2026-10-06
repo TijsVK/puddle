@@ -103,7 +103,15 @@ fn boot_applies_every_step() {
         let mode = |p: &str| std::fs::metadata(fr.path(p)).unwrap().permissions().mode() & 0o7777;
         assert_eq!(mode("/etc/npmrc"), 0o600);
         assert_eq!(mode(ENV_FILE_GUEST), 0o644);
-        assert!(fr.read(MACHINE_SETTINGS_GUEST).contains("\"process\""));
+        // VS Code's Machine settings go through the merge tool as JSONC (T-125).
+        let machine = fr.read(&format!(
+            "/merge-specs/{}",
+            MACHINE_SETTINGS_GUEST.replace('/', "_")
+        ));
+        assert!(
+            machine.contains("\"jsonc\"") && machine.contains("process"),
+            "{machine}"
+        );
 
         // Login shells: the image PATH back, the env with odd values intact.
         assert_eq!(
@@ -362,7 +370,7 @@ fn a_missing_or_silent_agent_fails_the_boot() {
 
     std::fs::write(
         fr.path("/puddle/mute"),
-        "#!/bin/sh\necho $$ >>\"$PUDDLE_ROOT/agent.pids\"\necho mute agent here\nexec sleep 1000\n",
+        "#!/bin/sh\nif [ \"${1:-}\" = merge-file ]; then cat >/dev/null; echo unchanged; exit 0; fi\necho $$ >>\"$PUDDLE_ROOT/agent.pids\"\necho mute agent here\nexec sleep 1000\n",
     )
     .unwrap();
     std::fs::set_permissions(
@@ -485,8 +493,11 @@ async fn boot_hook_through_the_fake_runtime_runs_the_real_script() {
     assert_eq!(fr.read("/proc/sys/kernel/unprivileged_bpf_disabled"), "1\n");
     assert!(fr.read(ENV_FILE_GUEST).contains("HTTPS_PROXY"));
     assert!(
-        fr.read(MACHINE_SETTINGS_GUEST)
-            .contains("autoForwardPortsFallback")
+        fr.read(&format!(
+            "/merge-specs/{}",
+            MACHINE_SETTINGS_GUEST.replace('/', "_")
+        ))
+        .contains("autoForwardPortsFallback")
     );
     assert!(
         !fr.path(CA_DIR_GUEST).exists(),
@@ -518,10 +529,12 @@ fn plan_with(files: Vec<GuestFile>) -> BootPlan {
         .unwrap()
 }
 
+/// The merge tool's calls for the files a test lists (not VS Code's Machine settings, which
+/// every plan merges).
 fn merge_calls(fr: &FakeRoot) -> Vec<String> {
     fr.calls()
         .into_iter()
-        .filter(|c| c.starts_with("merge-file"))
+        .filter(|c| c.starts_with("merge-file") && !c.contains(MACHINE_SETTINGS_GUEST))
         .collect()
 }
 
@@ -544,7 +557,7 @@ fn merged_files_go_through_the_merge_tool_and_lose_only_puddles_keys_when_droppe
         assert!(fr.path("/root/.docker").is_dir());
         assert_eq!(
             fr.read("/var/lib/puddle/merge-files"),
-            format!("{DOCKER}\n")
+            format!("{MACHINE_SETTINGS_GUEST}\n{DOCKER}\n")
         );
         assert!(!fr.read("/var/lib/puddle/boot-files").contains(DOCKER));
 
@@ -563,7 +576,10 @@ fn merged_files_go_through_the_merge_tool_and_lose_only_puddles_keys_when_droppe
             merge_calls(&fr).last().unwrap(),
             &format!("merge-file remove {DOCKER}")
         );
-        assert_eq!(fr.read("/var/lib/puddle/merge-files"), "");
+        assert_eq!(
+            fr.read("/var/lib/puddle/merge-files"),
+            format!("{MACHINE_SETTINGS_GUEST}\n")
+        );
         let out = fr.run(&plan_with(vec![]));
         assert!(out.status.success());
         assert_eq!(merge_calls(&fr).len(), 2, "nothing left to remove");
@@ -587,7 +603,11 @@ fn a_file_the_tool_cannot_parse_is_left_and_the_boot_goes_on() {
         )),
         "{stdout}"
     );
-    assert!(stdout.contains("files applied (3 changed)"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("{MACHINE_SETTINGS_GUEST} left as it is")),
+        "{stdout}"
+    );
+    assert!(stdout.contains("files applied (2 changed)"), "{stdout}");
 }
 
 #[test]
@@ -598,7 +618,7 @@ fn a_failing_or_odd_merge_tool_fails_the_boot_with_its_message() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains(&format!("cannot merge {DOCKER}: disk full")),
+        stderr.contains(&format!("cannot merge {MACHINE_SETTINGS_GUEST}: disk full")),
         "{stderr}"
     );
     std::fs::write(fr.path("/merge-answer"), "maybe").unwrap();
@@ -652,14 +672,17 @@ fn without_the_merge_tool_the_removal_waits_for_a_later_boot() {
         .no_agent()
         .build()
         .unwrap();
+    // Every plan merges VS Code's Machine settings (T-125), so a missing tool now fails the boot
+    // before anything is removed: the record of Docker's keys stays for a later boot.
     let out = fr.run(&bare);
-    assert!(out.status.success(), "{}", show(&out));
-    assert!(String::from_utf8_lossy(&out.stdout).contains(&format!(
-        "puddle's keys stay in {DOCKER} for now: no merge tool at /puddle/puddle-agent"
-    )));
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("the merge tool /puddle/puddle-agent is missing")
+    );
     assert_eq!(
         fr.read("/var/lib/puddle/merge-files"),
-        format!("{DOCKER}\n")
+        format!("{MACHINE_SETTINGS_GUEST}\n{DOCKER}\n")
     );
     std::fs::rename(fr.path("/agent.saved"), fr.path("/puddle/puddle-agent")).unwrap();
     assert!(fr.run(&bare).status.success());

@@ -31,12 +31,16 @@ if [ -f "$PUDDLE_ROOT/fail-update-ca" ]; then echo "boom: bad certificate" >&2; 
 "#;
 
 /// The agent binary: `merge-file` logs `merge-file <action> <guest path> [mode]`, keeps the
-/// last spec in `merge-spec` and answers with the contents of `merge-answer` (default
+/// last spec in `merge-spec` (and each file's in `merge-specs/<path with _>`) and answers with the contents of `merge-answer` (default
 /// `changed`; `fail` exits 1). Anything else plays the agent.
 const AGENT_STUB: &str = r#"#!/bin/sh
 if [ "${1:-}" = merge-file ]; then
     echo "merge-file $2 $4${6:+ $6}" >>"$PUDDLE_ROOT/calls"
-    if [ "$2" = apply ]; then cat >"$PUDDLE_ROOT/merge-spec"; fi
+    if [ "$2" = apply ]; then
+        cat >"$PUDDLE_ROOT/merge-spec"
+        mkdir -p "$PUDDLE_ROOT/merge-specs"
+        cp "$PUDDLE_ROOT/merge-spec" "$PUDDLE_ROOT/merge-specs/$(echo "$4" | tr / _)"
+    fi
     answer=changed
     if [ -f "$PUDDLE_ROOT/merge-answer" ]; then answer=$(cat "$PUDDLE_ROOT/merge-answer"); fi
     if [ "$answer" = fail ]; then echo "disk full" >&2; exit 1; fi

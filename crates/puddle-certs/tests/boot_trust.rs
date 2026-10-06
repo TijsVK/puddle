@@ -25,6 +25,9 @@ use puddle_certs::{
 };
 use puddle_compute::ImageConfig;
 
+/// The agent binary as the merge tool: reads the spec and leaves the file as it is.
+const MERGE_TOOL_STUB: &str = "#!/bin/sh\ncat >/dev/null\necho unchanged\n";
+
 const SYSCTL_STUB: &str = r#"#!/bin/sh
 [ "$1" = -w ] && shift
 key=${1%%=*}
@@ -90,6 +93,8 @@ impl Guest {
         }
         std::fs::write(root.join("proc/sys/kernel/random/boot_id"), "boot-1\n").unwrap();
         write_exec(&root.join("puddle/boot.sh"), BOOT_SH);
+        // Every plan merges VS Code's Machine settings through the agent binary (T-125).
+        write_exec(&root.join("puddle/puddle-agent"), MERGE_TOOL_STUB);
         let stubs = root.join("stubs");
         write_exec(&stubs.join("sysctl"), SYSCTL_STUB);
         let g = Self {

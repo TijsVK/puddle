@@ -8,8 +8,9 @@
 //! keys again (when no provider lists the file any more) deletes exactly them. A file that can't
 //! be parsed is never touched: the caller leaves it and logs the [`MergeRefusal`].
 //!
-//! Only JSON exists today ([`MergeFormat::Json`], e.g. the Docker CLI's `config.json`, whose
-//! `auths` from `docker login` must survive a restart). Other formats (JSONC, INI, TOML) are a
+//! Two formats exist: [`MergeFormat::Json`] (the Docker CLI's `config.json`, whose `auths` from
+//! `docker login` must survive a restart) and [`MergeFormat::Jsonc`] (VS Code's Machine
+//! `settings.json`, which may hold comments and trailing commas). Other formats (INI, TOML) are a
 //! new [`MergeFormat`] variant with its own engine; keys are paths of strings in every format,
 //! values are text in the format's own syntax.
 //!
@@ -35,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::ValidationError;
 
 mod json;
+mod jsonc;
 
 /// Largest file the engine reads (4 MiB). A larger one is left alone.
 pub const MAX_MERGE_FILE: usize = 4 << 20;
@@ -46,6 +48,10 @@ pub const MAX_MERGE_FILE: usize = 4 << 20;
 pub enum MergeFormat {
     /// Strict JSON (RFC 8259) with an object at the top level.
     Json,
+    /// JSON with `//` and `/* */` comments and trailing commas, as VS Code reads its settings.
+    /// An object at the top level; the user's comments stay where they are. Values in a
+    /// [`MergeEntry`] are plain JSON.
+    Jsonc,
 }
 
 /// One key puddle owns, as a path from the top level (`["proxies", "default"]`), and its value
@@ -193,7 +199,7 @@ impl MergeSpec {
                 ));
             }
             match format {
-                MergeFormat::Json => {
+                MergeFormat::Json | MergeFormat::Jsonc => {
                     if serde_json::from_str::<serde_json::Value>(&e.value).is_err() {
                         return Err(ValidationError::new(WHAT, &shown, "value is not JSON"));
                     }
@@ -250,16 +256,11 @@ impl MergeSpec {
             .filter(|k| !owned.contains(k))
             .map(Vec::as_slice)
             .collect();
-        match self.format {
-            MergeFormat::Json => {
-                json::apply(original.as_deref(), &dropped, &self.entries).map(|out| match out {
-                    Some(t) if original.as_deref() != Some(t.as_str()) => {
-                        Merged::Write(t.into_bytes())
-                    }
-                    _ => Merged::Unchanged,
-                })
-            }
-        }
+        let dialect = dialect(self.format);
+        json::apply(dialect, original.as_deref(), &dropped, &self.entries).map(|out| match out {
+            Some(t) if original.as_deref() != Some(t.as_str()) => Merged::Write(t.into_bytes()),
+            _ => Merged::Unchanged,
+        })
     }
 }
 
@@ -280,16 +281,20 @@ pub fn unmerge(
         });
     };
     let keys: Vec<&[String]> = keys.iter().map(Vec::as_slice).collect();
+    let (out, empty) = json::unmerge(dialect(format), &original, &keys)?;
+    let merged = if out == original {
+        Merged::Unchanged
+    } else {
+        Merged::Write(out.into_bytes())
+    };
+    Ok(Unmerged { merged, empty })
+}
+
+/// The engine's dialect for a format.
+fn dialect(format: MergeFormat) -> json::Dialect {
     match format {
-        MergeFormat::Json => {
-            let (out, empty) = json::unmerge(&original, &keys)?;
-            let merged = if out == original {
-                Merged::Unchanged
-            } else {
-                Merged::Write(out.into_bytes())
-            };
-            Ok(Unmerged { merged, empty })
-        }
+        MergeFormat::Json => json::Dialect::Strict,
+        MergeFormat::Jsonc => json::Dialect::Comments,
     }
 }
 

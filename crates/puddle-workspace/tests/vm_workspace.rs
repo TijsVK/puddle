@@ -124,7 +124,9 @@ impl Boot {
             .unwrap();
         let dir = rt.config().guest_share.join(format!("t112-{tag}"));
         let mounts = write_assets(&dir).unwrap();
-        let agent = agent.then(|| {
+        // Mounted even for a plan that starts no agent: it is the merge tool for the Machine
+        // settings (T-125).
+        let agent = Some({
             let built = PathBuf::from(
                 std::env::var_os("PUDDLE_AGENT_BIN")
                     .expect("PUDDLE_AGENT_BIN: the static puddle-agent (ci/build-agent.sh)"),

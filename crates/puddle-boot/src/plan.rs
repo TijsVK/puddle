@@ -837,8 +837,9 @@ mod tests {
         let merged = GuestFile::merged(GuestPath::new("/root/c.json").unwrap(), spec)
             .with_mode(0o600)
             .unwrap();
+        // Every plan merges VS Code's Machine settings (T-125).
         let without = BootPlan::builder(&ImageConfig::default()).build().unwrap();
-        assert!(!without.has_merged_files());
+        assert!(without.has_merged_files());
         let plan = BootPlan::builder(&ImageConfig::default())
             .file(merged)
             .build()

@@ -51,7 +51,8 @@ fn spec(name: &str) -> SandboxSpec {
         SandboxName::new(name).unwrap(),
         ImageRef::new(FakeRuntime::DEBIAN).unwrap(),
     );
-    with_boot_mounts(spec, mounts, None)
+    // Every plan merges VS Code's Machine settings, so the agent binary is mounted (T-125).
+    with_boot_mounts(spec, mounts, Some(Path::new("agent")))
 }
 
 async fn plan(rt: &FakeRuntime) -> BootPlan {

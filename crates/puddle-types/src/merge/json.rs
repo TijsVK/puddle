@@ -6,10 +6,40 @@
 //! path, and splices only those spans. After all edits, the result is parsed again and compared
 //! with the same edits done on the parsed value; any difference refuses the merge
 //! ([`MergeRefusal::Inconsistent`]) instead of writing a file puddle can't vouch for.
+//!
+//! The same engine serves JSONC ([`Dialect::Comments`]): it reads a same-length *view* of the
+//! text with the comments and trailing commas blanked (see `jsonc`), and splices the original,
+//! so comments stay where the user put them.
 
 use serde_json::{Map, Value};
 
+use super::jsonc::{Blanked, blank};
 use super::{MergeEntry, MergeRefusal, display_key};
+
+/// What the file may contain besides strict JSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Dialect {
+    /// RFC 8259 only.
+    Strict,
+    /// Also `//` and `/* */` comments and trailing commas (VS Code settings).
+    Comments,
+}
+
+impl Dialect {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Strict => "JSON",
+            Self::Comments => "JSONC",
+        }
+    }
+
+    fn blank(self, text: &str) -> Result<Blanked, MergeRefusal> {
+        match self {
+            Self::Strict => Ok(Blanked::strict(text)),
+            Self::Comments => blank(text),
+        }
+    }
+}
 
 /// Indent unit for new members when the file shows none (the Docker CLI writes tabs).
 const DEFAULT_UNIT: &str = "\t";
@@ -17,45 +47,74 @@ const DEFAULT_UNIT: &str = "\t";
 /// Applies a spec: removes `dropped`, sets every entry. `None` in means no file; the result is
 /// `None` only when nothing was written and nothing exists.
 pub(super) fn apply(
+    d: Dialect,
     original: Option<&str>,
     dropped: &[&[String]],
     entries: &[MergeEntry],
 ) -> Result<Option<String>, MergeRefusal> {
-    let start = original.unwrap_or("{}\n");
-    let before = parse_root(start)?;
-    let mut expected = before.clone();
-    let mut text = start.to_owned();
+    let mut text = original.unwrap_or("{}\n").to_owned();
+    if only_comments(d, &text)? {
+        // A settings file that holds nothing but comments is an empty one: the object goes
+        // below them.
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str("{}\n");
+    }
+    let mut expected = parse_root(d, &text)?;
     for key in dropped {
-        text = remove(&text, key)?;
-        value_remove(&mut expected, key);
+        let (t, top) = remove(d, &text, key)?;
+        text = t;
+        if let Some(len) = top {
+            value_delete(&mut expected, key.get(..len).unwrap_or(key));
+        }
     }
     for e in entries {
         let value: Value =
             serde_json::from_str(&e.value).map_err(|_| MergeRefusal::Inconsistent)?;
-        text = set(&text, &e.key, &value)?;
+        text = set(d, &text, &e.key, &value)?;
         value_set(&mut expected, &e.key, value);
     }
-    check(&text, &expected)?;
+    check(d, &text, &expected)?;
     Ok(Some(text))
+}
+
+/// Whether a JSONC file has comments and nothing else.
+fn only_comments(d: Dialect, text: &str) -> Result<bool, MergeRefusal> {
+    let b = d.blank(text)?;
+    Ok(!b.comments.is_empty() && b.view.trim().is_empty())
 }
 
 /// Removes `keys` (and objects left empty on their paths). Returns the text and whether the top
 /// level is empty.
-pub(super) fn unmerge(original: &str, keys: &[&[String]]) -> Result<(String, bool), MergeRefusal> {
-    let mut expected = parse_root(original)?;
+pub(super) fn unmerge(
+    d: Dialect,
+    original: &str,
+    keys: &[&[String]],
+) -> Result<(String, bool), MergeRefusal> {
+    if only_comments(d, original)? {
+        return Ok((original.to_owned(), false));
+    }
+    let mut expected = parse_root(d, original)?;
     let mut text = original.to_owned();
     for key in keys {
-        text = remove(&text, key)?;
-        value_remove(&mut expected, key);
+        let (t, top) = remove(d, &text, key)?;
+        text = t;
+        if let Some(len) = top {
+            value_delete(&mut expected, key.get(..len).unwrap_or(key));
+        }
     }
-    check(&text, &expected)?;
-    let empty = expected.as_object().is_some_and(Map::is_empty);
+    check(d, &text, &expected)?;
+    // A file that still has the user's comments is not empty.
+    let empty =
+        expected.as_object().is_some_and(Map::is_empty) && d.blank(&text)?.comments.is_empty();
     Ok((text, empty))
 }
 
-fn parse_root(text: &str) -> Result<Value, MergeRefusal> {
-    let v: Value = serde_json::from_str(text).map_err(|e| MergeRefusal::Syntax {
-        format: "JSON",
+fn parse_root(d: Dialect, text: &str) -> Result<Value, MergeRefusal> {
+    let view = d.blank(text)?.view;
+    let v: Value = serde_json::from_str(&view).map_err(|e| MergeRefusal::Syntax {
+        format: d.name(),
         reason: e.to_string(),
     })?;
     if v.is_object() {
@@ -65,8 +124,8 @@ fn parse_root(text: &str) -> Result<Value, MergeRefusal> {
     }
 }
 
-fn check(text: &str, expected: &Value) -> Result<(), MergeRefusal> {
-    match serde_json::from_str::<Value>(text) {
+fn check(d: Dialect, text: &str, expected: &Value) -> Result<(), MergeRefusal> {
+    match serde_json::from_str::<Value>(&d.blank(text)?.view) {
         Ok(v) if &v == expected => Ok(()),
         _ => Err(MergeRefusal::Inconsistent),
     }
@@ -92,26 +151,21 @@ fn value_set(root: &mut Value, key: &[String], value: Value) {
     }
 }
 
-/// Removes `key`; then every parent on the path that is left empty. Returns whether `key` was
-/// there.
-fn value_remove(root: &mut Value, key: &[String]) -> bool {
-    let Some((first, rest)) = key.split_first() else {
-        return false;
+/// Removes `key` (and nothing else) from the value tree.
+fn value_delete(root: &mut Value, key: &[String]) {
+    let Some((last, parents)) = key.split_last() else {
+        return;
     };
-    let Some(obj) = root.as_object_mut() else {
-        return false;
-    };
-    if rest.is_empty() {
-        return obj.remove(first).is_some();
+    let mut cur = root;
+    for k in parents {
+        let Some(next) = cur.as_object_mut().and_then(|o| o.get_mut(k)) else {
+            return;
+        };
+        cur = next;
     }
-    let Some(child) = obj.get_mut(first) else {
-        return false;
-    };
-    let removed = value_remove(child, rest);
-    if removed && child.as_object().is_some_and(Map::is_empty) {
-        obj.remove(first);
+    if let Some(obj) = cur.as_object_mut() {
+        obj.remove(last);
     }
-    removed
 }
 
 // --- The scanner -----------------------------------------------------------------------------
@@ -358,21 +412,23 @@ fn splice(text: &str, start: usize, end: usize, with: &str) -> Result<String, Me
 // --- Edits -----------------------------------------------------------------------------------
 
 /// Sets `key` to `value`, creating the objects on its path. An equal value is left as it is.
-fn set(text: &str, key: &[String], value: &Value) -> Result<String, MergeRefusal> {
-    match find(text, key)? {
+fn set(d: Dialect, text: &str, key: &[String], value: &Value) -> Result<String, MergeRefusal> {
+    let blanked = d.blank(text)?;
+    let view = blanked.view.as_str();
+    match find(view, key)? {
         Found::Member { obj, idx } => {
-            let unit = indent_unit(text, &obj);
+            let unit = indent_unit(view, &obj);
             let Some(m) = obj.members.get(idx) else {
                 return bug();
             };
-            let Some(old) = text.get(m.value_start..m.value_end) else {
+            let Some(old) = view.get(m.value_start..m.value_end) else {
                 return bug();
             };
             if serde_json::from_str::<Value>(old).ok().as_ref() == Some(value) {
                 return Ok(text.to_owned());
             }
-            let rendered = if starts_line(text, m.key_start, obj.open) {
-                pretty(value, &unit, line_indent(text, m.key_start))
+            let rendered = if starts_line(view, m.key_start, obj.open) {
+                pretty(value, &unit, line_indent(view, m.key_start))
             } else {
                 value.to_string()
             };
@@ -388,7 +444,14 @@ fn set(text: &str, key: &[String], value: &Value) -> Result<String, MergeRefusal
                 map.insert(k.clone(), nested);
                 nested = Value::Object(map);
             }
-            insert(text, &obj, name, &nested, &indent_unit(text, &obj))
+            insert(
+                text,
+                &blanked,
+                &obj,
+                name,
+                &nested,
+                &indent_unit(view, &obj),
+            )
         }
     }
 }
@@ -396,77 +459,198 @@ fn set(text: &str, key: &[String], value: &Value) -> Result<String, MergeRefusal
 /// Adds `"name": value` as the last member of `obj`, in the object's layout.
 fn insert(
     text: &str,
+    blanked: &Blanked,
     obj: &Object,
     name: &str,
     value: &Value,
     unit: &str,
 ) -> Result<String, MergeRefusal> {
+    let view = blanked.view.as_str();
     let Some(last) = obj.members.last() else {
-        // An empty object becomes a multi-line one.
-        let outer = line_indent(text, obj.open);
+        let outer = line_indent(view, obj.open);
         let inner = format!("{outer}{unit}");
-        let member = format!(
-            "\n{inner}{}: {}\n{outer}",
-            quoted(name),
-            pretty(value, unit, &inner)
-        );
-        return splice(text, obj.open + 1, obj.close, &member);
+        let member = format!("{}: {}", quoted(name), pretty(value, unit, &inner));
+        let between = text.get(obj.open + 1..obj.close).unwrap_or("");
+        return if between.trim().is_empty() {
+            // An empty object becomes a multi-line one.
+            splice(
+                text,
+                obj.open + 1,
+                obj.close,
+                &format!("\n{inner}{member}\n{outer}"),
+            )
+        } else {
+            // Only comments inside: the member goes in front of them.
+            splice(
+                text,
+                obj.open + 1,
+                obj.open + 1,
+                &format!("\n{inner}{member}"),
+            )
+        };
     };
-    let member = if starts_line(text, last.key_start, obj.open) {
-        let indent = line_indent(text, last.key_start);
-        format!(
-            ",\n{indent}{}: {}",
-            quoted(name),
-            pretty(value, unit, indent)
-        )
-    } else {
-        format!(", {}: {value}", quoted(name))
-    };
-    splice(text, last.value_end, last.value_end, &member)
+    if !starts_line(view, last.key_start, obj.open) {
+        let member = format!(", {}: {value}", quoted(name));
+        return splice(text, last.value_end, last.value_end, &member);
+    }
+    let indent = line_indent(view, last.key_start);
+    let member = format!(
+        "\n{indent}{}: {}",
+        quoted(name),
+        pretty(value, unit, indent)
+    );
+    match end_of_line(text, blanked, last.value_end) {
+        // The member goes on the line after the last one, so a comment trailing the last
+        // member stays with it.
+        Some((eol, has_comma))
+            if !blanked
+                .comments
+                .iter()
+                .any(|c| c.start < eol && eol < c.end) =>
+        {
+            let text = splice(text, eol, eol, &member)?;
+            if has_comma {
+                Ok(text)
+            } else {
+                splice(&text, last.value_end, last.value_end, ",")
+            }
+        }
+        _ => {
+            let member = format!(",{member}");
+            splice(text, last.value_end, last.value_end, &member)
+        }
+    }
 }
 
-/// Removes `key`, then each object on its path that is left empty. A missing key, or a path
-/// through a non-object, leaves the text as it is.
-fn remove(text: &str, key: &[String]) -> Result<String, MergeRefusal> {
+/// From `from` (the end of a value) to the end of its line, when only spaces, a comma and
+/// comments follow: the offset of the line break (or of the end), and whether a comma was there
+/// (the view has blanked a trailing one, so look in the text).
+fn end_of_line(text: &str, blanked: &Blanked, from: usize) -> Option<(usize, bool)> {
+    let rest = blanked.view.get(from..)?;
+    let end = from + rest.find(['\n', '\r']).unwrap_or(rest.len());
+    let only_blank = text
+        .get(from..end)?
+        .bytes()
+        .enumerate()
+        .all(|(i, b)| matches!(b, b' ' | b'\t' | b',') || in_comment(blanked, from + i));
+    let comma =
+        (from..end).any(|i| text.as_bytes().get(i) == Some(&b',') && !in_comment(blanked, i));
+    only_blank.then_some((end, comma))
+}
+
+fn in_comment(blanked: &Blanked, at: usize) -> bool {
+    blanked.comments.iter().any(|c| c.contains(&at))
+}
+
+/// Removes `key`, then each object on its path that is left empty and has no comment in it. A
+/// missing key, or a path through a non-object, leaves the text as it is. The second value is
+/// the length of the shortest path that went (`None`: nothing did), for the value-level twin.
+fn remove(d: Dialect, text: &str, key: &[String]) -> Result<(String, Option<usize>), MergeRefusal> {
     let mut text = text.to_owned();
+    let mut top = None;
     for len in (1..=key.len()).rev() {
         let Some(path) = key.get(..len) else {
             return bug();
         };
-        let (obj, idx) = match find(&text, path) {
+        let blanked = d.blank(&text)?;
+        let view = blanked.view.as_str();
+        let (obj, idx) = match find(view, path) {
             Ok(Found::Member { obj, idx }) => (obj, idx),
-            Ok(Found::Missing { .. }) | Err(MergeRefusal::Conflict { .. }) => return Ok(text),
+            Ok(Found::Missing { .. }) | Err(MergeRefusal::Conflict { .. }) => {
+                return Ok((text, top));
+            }
             Err(e) => return Err(e),
         };
         if len < key.len() {
-            // A parent: remove it only when the removal below left it empty.
+            // A parent: remove it only when the removal below left it empty, comments and all.
             let Some(m) = obj.members.get(idx) else {
                 return bug();
             };
-            if !object_at(&text, m.value_start)?.members.is_empty() {
-                return Ok(text);
+            let inner = object_at(view, m.value_start)?;
+            if !inner.members.is_empty() || blanked.has_comment_in(inner.open..inner.close) {
+                return Ok((text, top));
             }
         }
-        text = remove_member(&text, &obj, idx)?;
+        text = remove_member(&text, &blanked, &obj, idx)?;
+        top = Some(len);
     }
-    Ok(text)
+    Ok((text, top))
 }
 
-fn remove_member(text: &str, obj: &Object, idx: usize) -> Result<String, MergeRefusal> {
+fn remove_member(
+    text: &str,
+    blanked: &Blanked,
+    obj: &Object,
+    idx: usize,
+) -> Result<String, MergeRefusal> {
     let m = &obj.members;
-    match (
+    let (start, end, joined) = match (
         idx.checked_sub(1).and_then(|p| m.get(p)),
         m.get(idx),
         m.get(idx + 1),
     ) {
         // The only member: the object becomes `{}`.
-        (None, Some(_), None) => splice(text, obj.open + 1, obj.close, ""),
+        (None, Some(_), None) => (obj.open + 1, obj.close, false),
         // The first of several: up to the next key, so the next one takes its place.
-        (None, Some(this), Some(next)) => splice(text, this.key_start, next.key_start, ""),
+        (None, Some(this), Some(next)) => (this.key_start, next.key_start, false),
         // Any later one: from the end of the previous value (its comma goes with it).
-        (Some(prev), Some(this), _) => splice(text, prev.value_end, this.value_end, ""),
-        (_, None, _) => bug(),
+        (Some(prev), Some(this), _) => (prev.value_end, this.value_end, true),
+        (_, None, _) => return bug(),
+    };
+    let Some(this) = m.get(idx) else {
+        return bug();
+    };
+    // The user's comments between the members stay; the removed member's own do not.
+    let kept = kept_comments(
+        text,
+        blanked,
+        start..end,
+        this.key_start..this.value_end,
+        joined,
+    );
+    splice(text, start, end, &kept)
+}
+
+/// The comments in `span` that are not inside `owned`, as text to put back where the span was.
+fn kept_comments(
+    text: &str,
+    blanked: &Blanked,
+    span: std::ops::Range<usize>,
+    owned: std::ops::Range<usize>,
+    joined: bool,
+) -> String {
+    let mut out = String::new();
+    for c in &blanked.comments {
+        let inside_span = c.start >= span.start && c.end <= span.end;
+        let inside_owned = c.start >= owned.start && c.end <= owned.end;
+        if !inside_span || inside_owned {
+            continue;
+        }
+        let Some(t) = text.get(c.clone()) else {
+            continue;
+        };
+        if out.is_empty() && joined {
+            out.push(' ');
+        }
+        out.push_str(t);
+        out.push(if t.starts_with("//") { '\n' } else { ' ' });
     }
+    if out.ends_with('\n') {
+        // The line comment needs its break, unless one follows anyway; then the next member
+        // keeps the indent it had.
+        let after = text.get(span.end..).unwrap_or("");
+        if after.is_empty() || after.starts_with(['\n', '\r']) {
+            out.pop();
+        } else if let Some(indent) = text
+            .get(span.clone())
+            .and_then(|s| s.rsplit_once('\n'))
+            .map(|(_, tail)| tail)
+            .filter(|tail| tail.chars().all(|c| c == ' ' || c == '\t'))
+        {
+            out.push_str(indent);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -585,10 +769,11 @@ mod tests {
     #[test]
     fn a_parent_the_user_also_uses_is_kept() {
         let file = r#"{"proxies": {"default": {"httpProxy": "x"}, "tcp://h": {}}}"#;
-        let (out, empty) = unmerge(file, &[&k("proxies.default")]).unwrap();
+        let (out, empty) = unmerge(Dialect::Strict, file, &[&k("proxies.default")]).unwrap();
         assert_eq!(out, r#"{"proxies": {"tcp://h": {}}}"#);
         assert!(!empty);
         let (out, empty) = unmerge(
+            Dialect::Strict,
             "{\n\t\"proxies\": {\n\t\t\"default\": 1\n\t}\n}\n",
             &[&k("proxies.default")],
         )
@@ -601,19 +786,21 @@ mod tests {
     fn removal_handles_first_middle_last_and_missing_members() {
         let file = "{\n  \"a\": 1,\n  \"b\": [1, {\"c\": \"}\"}],\n  \"d\": \"\\\"\"\n}";
         assert_eq!(
-            unmerge(file, &[&k("a")]).unwrap().0,
+            unmerge(Dialect::Strict, file, &[&k("a")]).unwrap().0,
             "{\n  \"b\": [1, {\"c\": \"}\"}],\n  \"d\": \"\\\"\"\n}"
         );
         assert_eq!(
-            unmerge(file, &[&k("b")]).unwrap().0,
+            unmerge(Dialect::Strict, file, &[&k("b")]).unwrap().0,
             "{\n  \"a\": 1,\n  \"d\": \"\\\"\"\n}"
         );
         assert_eq!(
-            unmerge(file, &[&k("d")]).unwrap().0,
+            unmerge(Dialect::Strict, file, &[&k("d")]).unwrap().0,
             "{\n  \"a\": 1,\n  \"b\": [1, {\"c\": \"}\"}]\n}"
         );
         assert_eq!(
-            unmerge(file, &[&k("x"), &k("a.b"), &k("b.c")]).unwrap().0,
+            unmerge(Dialect::Strict, file, &[&k("x"), &k("a.b"), &k("b.c")])
+                .unwrap()
+                .0,
             file
         );
     }
@@ -658,6 +845,271 @@ mod tests {
         ));
     }
 
+    // --- JSONC -------------------------------------------------------------------------------
+
+    fn vscode_spec() -> MergeSpec {
+        MergeSpec::new(
+            MergeFormat::Jsonc,
+            vec![
+                MergeEntry::json(&["remote.autoForwardPortsSource"], &json!("process")),
+                MergeEntry::json(
+                    &["remote.portsAttributes", "3128"],
+                    &json!({"onAutoForward": "ignore"}),
+                ),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn one(key: &str, value: &Value) -> MergeSpec {
+        MergeSpec::new(MergeFormat::Jsonc, vec![MergeEntry::json(&[key], value)]).unwrap()
+    }
+
+    fn unmerged(spec: &MergeSpec, file: &str) -> String {
+        let u = unmerge_bytes(spec.format(), file.as_bytes(), &spec.keys()).unwrap();
+        match u.merged {
+            Merged::Write(b) => String::from_utf8(b).unwrap(),
+            Merged::Unchanged => file.to_owned(),
+        }
+    }
+
+    /// A settings file as a person writes it: comments, trailing commas, 4-space indent.
+    const USER_SETTINGS: &str = "// My settings\n{\n    // the font\n    \"editor.fontSize\": 14, // big\n    /* theme */\n    \"workbench.colorTheme\": \"Monokai\",\n    \"remote.portsAttributes\": {\n        \"8080\": { \"label\": \"web\" }, // mine\n    },\n}\n";
+
+    #[test]
+    fn the_users_comments_and_commas_survive_a_merge_and_puddles_keys_arrive() {
+        let spec = vscode_spec();
+        let out = applied(&spec, USER_SETTINGS, &[]);
+        assert_eq!(
+            out,
+            "// My settings\n{\n    // the font\n    \"editor.fontSize\": 14, // big\n    /* theme */\n    \"workbench.colorTheme\": \"Monokai\",\n    \"remote.portsAttributes\": {\n        \"8080\": { \"label\": \"web\" }, // mine\n        \"3128\": {\n            \"onAutoForward\": \"ignore\"\n        }\n    },\n    \"remote.autoForwardPortsSource\": \"process\"\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_second_apply_changes_nothing_and_unmerge_keeps_the_users_comments() {
+        let spec = vscode_spec();
+        let out = applied(&spec, USER_SETTINGS, &[]);
+        assert_eq!(
+            spec.apply(Some(out.as_bytes()), &spec.keys()).unwrap(),
+            Merged::Unchanged
+        );
+        let back = unmerged(&spec, &out);
+        for kept in [
+            "// My settings",
+            "// the font",
+            "// big",
+            "/* theme */",
+            "// mine",
+        ] {
+            assert!(back.contains(kept), "{kept} lost: {back}");
+        }
+        assert!(
+            !back.contains("3128") && !back.contains("process"),
+            "{back}"
+        );
+        assert!(blank(&back).is_ok());
+    }
+
+    #[test]
+    fn a_trailing_comment_stays_on_the_last_users_line() {
+        let spec = one("z", &json!(1));
+        let file = "{\n  \"a\": 1 // keep me\n}\n";
+        let out = applied(&spec, file, &[]);
+        assert_eq!(out, "{\n  \"a\": 1, // keep me\n  \"z\": 1\n}\n");
+        assert_eq!(unmerged(&spec, &out), file);
+        // With a trailing comma already there.
+        let out = applied(&spec, "{\n  \"a\": 1, // keep me\n}\n", &[]);
+        assert_eq!(out, "{\n  \"a\": 1, // keep me\n  \"z\": 1\n}\n");
+    }
+
+    #[test]
+    fn a_changed_value_is_replaced_and_the_comments_around_it_stay() {
+        let spec = one("a", &json!("new"));
+        let out = applied(
+            &spec,
+            "{\n  // why\n  \"a\": \"old\", // note\n  \"b\": 1,\n}",
+            &[],
+        );
+        assert_eq!(
+            out,
+            "{\n  // why\n  \"a\": \"new\", // note\n  \"b\": 1,\n}"
+        );
+    }
+
+    #[test]
+    fn dropped_keys_go_and_the_comment_above_the_next_key_stays() {
+        let old = MergeSpec::new(
+            MergeFormat::Jsonc,
+            vec![
+                MergeEntry::json(&["gone"], &json!(1)),
+                MergeEntry::json(&["kept"], &json!(2)),
+            ],
+        )
+        .unwrap();
+        let new = one("kept", &json!(2));
+        let file = "{\n  \"gone\": 1,\n  // about b\n  \"b\": 3,\n  \"kept\": 2, // mine\n}";
+        assert_eq!(
+            applied(&new, file, &old.keys()),
+            "{\n  // about b\n  \"b\": 3,\n  \"kept\": 2, // mine\n}"
+        );
+        // A later member: the comment on the line before it stays.
+        let file = "{\n  \"b\": 3, // three\n  \"gone\": 1\n}";
+        let out = applied(&new, file, &old.keys());
+        assert!(out.contains("// three") && !out.contains("gone"), "{out}");
+        assert!(blank(&out).is_ok());
+    }
+
+    #[test]
+    fn a_parent_with_a_comment_stays_when_puddles_key_leaves() {
+        let spec = vscode_spec();
+        let file = "{\n  \"remote.portsAttributes\": {\n    // mine\n    \"3128\": { \"onAutoForward\": \"ignore\" }\n  }\n}\n";
+        let u = unmerge_bytes(MergeFormat::Jsonc, file.as_bytes(), &spec.keys()).unwrap();
+        let Merged::Write(b) = u.merged else { panic!() };
+        let out = String::from_utf8(b).unwrap();
+        assert!(
+            out.contains("// mine") && out.contains("remote.portsAttributes"),
+            "{out}"
+        );
+        assert!(!u.empty);
+    }
+
+    #[test]
+    fn a_file_with_only_comments_counts_as_empty_and_keeps_them() {
+        let spec = vscode_spec();
+        let out = applied(&spec, "// nothing yet\n", &[]);
+        assert!(
+            out.starts_with("// nothing yet\n{\n\t\"remote.autoForwardPortsSource\""),
+            "{out}"
+        );
+        let u = unmerge_bytes(MergeFormat::Jsonc, b"// nothing yet\n", &spec.keys()).unwrap();
+        assert_eq!(u.merged, Merged::Unchanged);
+        assert!(!u.empty, "the user's comment is still there");
+        assert!(unmerged(&spec, &out).contains("// nothing yet"));
+    }
+
+    #[test]
+    fn a_comment_only_object_gets_the_member_in_front_of_it() {
+        let out = applied(&one("a", &json!(1)), "{\n  // empty\n}\n", &[]);
+        assert_eq!(out, "{\n\t\"a\": 1\n  // empty\n}\n");
+    }
+
+    #[test]
+    fn a_file_puddle_wrote_is_empty_again_after_removal() {
+        let spec = vscode_spec();
+        let u = unmerge_bytes(MergeFormat::Jsonc, &spec.fresh(), &spec.keys()).unwrap();
+        assert!(u.empty);
+    }
+
+    #[test]
+    fn invalid_jsonc_is_refused_and_never_quoted() {
+        let spec = vscode_spec();
+        for bad in [
+            "{\"secret\": 1 /* open",
+            "{\"secret\": }",
+            "{\"a\": 1,, }",
+            "[1] // not an object",
+            "{\"a\": 1} {\"b\": 2}",
+        ] {
+            let e = spec.apply(Some(bad.as_bytes()), &[]).unwrap_err();
+            assert!(!e.to_string().contains("secret"), "{e}");
+            assert!(
+                matches!(
+                    e,
+                    MergeRefusal::Syntax {
+                        format: "JSONC",
+                        ..
+                    } | MergeRefusal::NotAnObject
+                ),
+                "{bad}: {e:?}"
+            );
+            assert!(unmerge_bytes(MergeFormat::Jsonc, bad.as_bytes(), &spec.keys()).is_err());
+        }
+    }
+
+    #[test]
+    fn a_non_object_on_an_owned_path_and_duplicates_are_refused_in_jsonc_too() {
+        let spec = vscode_spec();
+        assert_eq!(
+            spec.apply(Some(b"{ // c\n \"remote.portsAttributes\": 3 }"), &[]),
+            Err(MergeRefusal::Conflict {
+                key: "remote.portsAttributes".into()
+            })
+        );
+        assert_eq!(
+            spec.apply(
+                Some(b"{\"remote.autoForwardPortsSource\": 1, /* x */ \"remote.autoForwardPortsSource\": 2}"),
+                &[]
+            ),
+            Err(MergeRefusal::DuplicateKey {
+                key: "remote.autoForwardPortsSource".into()
+            })
+        );
+    }
+
+    #[test]
+    fn comment_syntax_is_not_accepted_in_strict_json() {
+        assert!(matches!(
+            docker_spec().apply(Some(b"{ // c\n}"), &[]),
+            Err(MergeRefusal::Syntax { format: "JSON", .. })
+        ));
+    }
+
+    #[test]
+    fn crlf_files_keep_their_line_breaks() {
+        let out = applied(&one("z", &json!(1)), "{\r\n  \"a\": 1 // c\r\n}\r\n", &[]);
+        assert!(
+            out.starts_with("{\r\n  \"a\": 1, // c\n  \"z\": 1"),
+            "{out:?}"
+        );
+        assert!(out.ends_with("\r\n}\r\n"));
+    }
+
+    /// Every line of a pretty document gets a trailing comment; a comment opens the file.
+    fn commented(text: &str) -> String {
+        let mut out = String::from("/* head */\n");
+        for line in text.lines() {
+            out.push_str(line);
+            out.push_str(" // c\n");
+        }
+        out
+    }
+
+    proptest! {
+        #[test]
+        fn jsonc_merges_keep_every_comment_and_converge(
+            (doc, _) in arb_doc(),
+            value in arb_json(),
+        ) {
+            let text = commented(&serde_json::to_string_pretty(&doc).unwrap());
+            let spec = MergeSpec::new(MergeFormat::Jsonc, vec![MergeEntry {
+                key: vec!["zz".into()],
+                value: value.to_string(),
+            }]).unwrap();
+            let out = match spec.apply(Some(text.as_bytes()), &[]).unwrap() {
+                Merged::Write(b) => String::from_utf8(b).unwrap(),
+                Merged::Unchanged => text.clone(),
+            };
+            prop_assert!(out.starts_with("/* head */"));
+            prop_assert!(out.matches("// c").count() >= text.matches("// c").count());
+            prop_assert_eq!(
+                spec.apply(Some(out.as_bytes()), &spec.keys()).unwrap(),
+                Merged::Unchanged
+            );
+            // Removing the key gives the same document, comments included.
+            let back = unmerged(&spec, &out);
+            prop_assert_eq!(back.matches("// c").count(), text.matches("// c").count());
+            let back: Value = serde_json::from_str(&blank(&back).unwrap().view).unwrap();
+            prop_assert_eq!(back, doc);
+        }
+
+        #[test]
+        fn arbitrary_jsonc_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..64)) {
+            let _ = vscode_spec().apply(Some(&bytes), &[k("a.b")]);
+            let _ = unmerge_bytes(MergeFormat::Jsonc, &bytes, &[k("a")]);
+        }
+    }
+
     fn arb_json() -> impl Strategy<Value = Value> {
         let leaf = prop_oneof![
             Just(Value::Null),
@@ -696,7 +1148,7 @@ mod tests {
 
     /// `v` without `key` and without the objects on its path that are (then) empty.
     fn strip(mut v: Value, key: &[String]) -> Value {
-        value_remove(&mut v, key);
+        value_delete(&mut v, key);
         for len in (1..key.len()).rev() {
             let path = &key[..len];
             let empty = path

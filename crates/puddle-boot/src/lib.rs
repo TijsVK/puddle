@@ -41,7 +41,8 @@
 //! let spec = puddle_boot::with_boot_mounts(
 //!     SandboxSpec::new(SandboxName::new("demo").unwrap(), image),
 //!     mounts.to_vec(),
-//!     None,
+//!     // Every plan merges VS Code's Machine settings, so the agent binary (the merge tool) is mounted.
+//!     Some(std::path::Path::new("unused")),
 //! );
 //! let gate = Gate::new();
 //! let sandbox = BootHook::new().create(&rt, spec, &plan, &gate).await.unwrap();
