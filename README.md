@@ -2,10 +2,10 @@
 
 Rubber ducks welcome.
 
-puddle runs each devcontainer workspace in its own microVM on Windows, with puddle's own proxy as the
-only way out of the VM. Outbound connections go to domains you allowed, per workspace or globally;
-anything else waits in an approval inbox until you allow or deny it. It is a native Windows Rust
-program with a Tauri desktop app, and builds on
+puddle runs each devcontainer workspace in its own microVM on Windows (Linux hosts
+from v1), with puddle's own proxy as the only way out of the VM. Outbound connections go to domains you allowed, per workspace or globally;
+anything else waits in an approval inbox until you allow or deny it. It is a native Rust
+program with a Tauri desktop app, built and tested on Windows and Linux, and builds on
 [microsandbox](https://github.com/superradcompany/microsandbox) for the microVMs.
 
 The idea follows [Huddle](https://github.com/infosupport/huddle); puddle is written from scratch and

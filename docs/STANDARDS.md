@@ -147,7 +147,11 @@ the owner, then tagged `vX.Y.Z` on `main`.
   Every network wait has a timeout; every spawned task has an owner that ends it on shutdown.
 - **Platforms:** host code builds and is tested on Linux and Windows. Platform code lives behind
   `#[cfg(windows)]` / `#[cfg(unix)]` in its own module with the same interface on both, so the
-  logic above it is tested on both. Use `std::path`, never string-joined paths.
+  logic above it is tested on both. Use `std::path`, never string-joined paths. Per-OS code is for
+  genuine OS integration only; a workaround for a dependency's bug goes in our fork or an upstream
+  draft, with a task to remove any stopgap (D-66). Prefer a maintained crate (licence- and
+  `cargo deny`-clean, light tree) over our own per-OS code. Linux and macOS are separate cases:
+  `cfg(unix)` is not "Linux".
 - **Security-sensitive code** (proxy decisions, credential injection, address classification, API
   auth, pipe/socket permissions, anything parsing guest input): treat all guest input as hostile,
   fail closed (deny on error), and add a hostile-guest test (§8) with the change.
