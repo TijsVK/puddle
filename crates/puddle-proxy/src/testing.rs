@@ -138,22 +138,11 @@ impl Policy for StaticPolicy {
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
     ) -> Result<Decision, PolicyError> {
+        self.state().decisions += 1;
+        if let Some(decision) = self.lookup(request, suffix_allows)? {
+            return Ok(decision);
+        }
         let mut state = self.state();
-        state.decisions += 1;
-        if state.unavailable {
-            return Err(PolicyError {
-                reason: "unavailable for this test".into(),
-            });
-        }
-        match state.rules.get(&request.host) {
-            Some(&(rule_id, true, pattern))
-                if pattern == PatternKind::Exact || suffix_allows == SuffixAllows::Count =>
-            {
-                return Ok(Decision::Allow { rule_id, pattern });
-            }
-            Some(&(rule_id, false, pattern)) => return Ok(Decision::Deny { rule_id, pattern }),
-            _ => {}
-        }
         let open = state.pending.iter_mut().find(|p| {
             p.open
                 && p.sandbox == request.sandbox
@@ -175,6 +164,28 @@ impl Policy for StaticPolicy {
             open: true,
         });
         Ok(Decision::Pending(PendingOutcome::New(id)))
+    }
+
+    fn lookup(
+        &self,
+        request: &EgressRequest,
+        suffix_allows: SuffixAllows,
+    ) -> Result<Option<Decision>, PolicyError> {
+        let state = self.state();
+        if state.unavailable {
+            return Err(PolicyError {
+                reason: "unavailable for this test".into(),
+            });
+        }
+        Ok(match state.rules.get(&request.host) {
+            Some(&(rule_id, true, pattern))
+                if pattern == PatternKind::Exact || suffix_allows == SuffixAllows::Count =>
+            {
+                Some(Decision::Allow { rule_id, pattern })
+            }
+            Some(&(rule_id, false, pattern)) => Some(Decision::Deny { rule_id, pattern }),
+            _ => None,
+        })
     }
 }
 

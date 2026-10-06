@@ -84,10 +84,14 @@ States: `requested → allowed | denied | expired`. The three end states are fin
 - **R-14 Local destinations** (W2 applies this after resolving an allowed name; the engine supplies
   the match): an address in a local category with its toggle off is blocked and the block names
   the toggle, with no pending row (D-1, T-029 HG-06). With the toggle on, only an `exact` allow
-  counts; a suffix allow is treated as no match and the request goes pending for the exact name
-  (D-37, D-44), unless the "wildcards reach local addresses" setting is on (global default off,
-  per-sandbox override *(default)*). puddle's own endpoints are blocked whatever rules or toggles
-  say, and never become pending (D-26).
+  counts: of the name, or of the resolved address itself (an exact IP rule admits that address,
+  and only it). A suffix allow is treated as no match, and if no address is admitted the request
+  goes pending for the exact name (D-37, D-44), unless the "wildcards reach local addresses"
+  setting is on (global default off, per-sandbox override *(default)*). The IP check only looks
+  up rules (`Policy::lookup`); it never writes a pending row for the address. puddle's own
+  endpoints are blocked whatever rules or toggles say, and never become pending (D-26).
+  *Changed 2026-10-06 (T-092): the exact-IP case was added to follow D-44 ("a local destination
+  needs an exact name or IP entry"); before, only an exact name rule or an approval counted.*
 - **R-15 Approve and deny** take a row id and four choices: effect (`allow`/`deny`), scope (`sandbox`,
   the default, or `global`), pattern (`exact`, the default, or a suffix of the row's host that passes
   R-4) and expiry (permanent, the default, or a duration). This covers the inbox's four outcomes

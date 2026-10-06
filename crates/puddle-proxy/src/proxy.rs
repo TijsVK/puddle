@@ -462,11 +462,19 @@ pub(crate) async fn admit(
     }
     if pattern == PatternKind::Exact {
         // An exact allow reaches local addresses whose toggle is on (D-37).
-        usable.extend(exact_only);
-    } else if usable.is_empty() && !exact_only.is_empty() {
-        // Only local addresses whose toggle is on, after a wildcard allow: they need an exact
-        // allow (R-14, D-44). Asking again without suffix allows writes the pending row for the
-        // exact name.
+        usable.append(&mut exact_only);
+    } else if !exact_only.is_empty() {
+        // After a wildcard allow, a local address whose toggle is on needs an exact allow of its
+        // own (R-14, D-44): an exact rule for the address itself admits it.
+        let (by_ip, rest): (Vec<_>, Vec<_>) = exact_only
+            .into_iter()
+            .partition(|addr| ip_allowed(proxy, request, *addr));
+        usable.extend(by_ip);
+        exact_only = rest;
+    }
+    if usable.is_empty() && !exact_only.is_empty() {
+        // Otherwise only an exact allow of the name counts. Asking again without suffix allows
+        // writes the pending row for the exact name.
         let again = proxy.decide(request, SuffixAllows::Ignore).await;
         if allowed(request, again).map_err(|r| wildcard_note(r, &categories))? != PatternKind::Exact
         {
@@ -483,11 +491,31 @@ pub(crate) async fn admit(
     Ok(usable)
 }
 
+/// Whether an exact allow rule for `addr`'s IP applies to `request`'s sandbox (R-14, D-44).
+/// Looks only; a miss records nothing. A policy error counts as no match.
+fn ip_allowed(proxy: &Proxy, request: &EgressRequest, addr: SocketAddr) -> bool {
+    let by_ip = EgressRequest::new(request.sandbox.clone(), Host::Ip(addr.ip()), request.port);
+    match proxy.policy.lookup(&by_ip, SuffixAllows::Ignore) {
+        Ok(Some(Decision::Allow {
+            rule_id,
+            pattern: PatternKind::Exact,
+        })) => {
+            tracing::info!(sandbox = %request.sandbox, host = %request.host, %addr, rule = %rule_id, "local address allowed by its IP rule");
+            true
+        }
+        Ok(_) => false,
+        Err(err) => {
+            tracing::warn!(%addr, error = %err, "IP rule lookup failed, address not admitted");
+            false
+        }
+    }
+}
+
 /// Adds to a pending refusal why the wildcard allow didn't count (D-44).
 fn wildcard_note(mut refusal: Refusal, categories: &[LocalCategory]) -> Refusal {
     if let Some(category) = categories.first() {
         refusal.message = format!(
-            "{} (it resolves to a {} address, and wildcard rules don't reach local addresses: approve the exact name, or turn on \"wildcards reach local addresses\")",
+            "{} (it resolves to a {} address, and wildcard rules don't reach local addresses: approve the exact name, add an exact rule for its address, or turn on \"wildcards reach local addresses\")",
             refusal.message,
             category.describe()
         );

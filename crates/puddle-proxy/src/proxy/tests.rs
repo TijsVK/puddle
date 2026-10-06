@@ -5,7 +5,7 @@
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use puddle_types::{NullSink, RuleId};
+use puddle_types::{NullSink, PendingId, RuleId};
 use tokio::net::TcpListener;
 
 use super::*;
@@ -671,6 +671,132 @@ mod guard {
         );
         let refusal = admit(&p, &request("nas.nip.example")).await.unwrap_err();
         assert_eq!(blocked(&refusal), Some("toggle:private"));
+    }
+
+    #[tokio::test]
+    async fn d44_exact_ip_rule_admits_the_local_address_of_a_wildcard_name() {
+        let policy = Arc::new(StaticPolicy::new());
+        for h in [
+            "nas.nip.example",
+            "both.nip.example",
+            "two.nip.example",
+            "other.nip.example",
+            "denied.nip.example",
+        ] {
+            policy.allow_as_suffix(&host(h));
+        }
+        policy.allow(&host("192.168.1.20"));
+        policy.deny_host(&host("192.168.1.30"));
+        let resolver = || {
+            StaticResolver::new()
+                .with("nas.nip.example", &[ip("192.168.1.20")])
+                .with("both.nip.example", &[ip("192.168.1.20"), ip("8.8.8.8")])
+                .with("two.nip.example", &[ip("192.168.1.20"), ip("192.168.1.21")])
+                .with("other.nip.example", &[ip("192.168.1.21")])
+                .with("denied.nip.example", &[ip("192.168.1.30")])
+        };
+        let p = guarded(policy.clone(), resolver(), all_on());
+        // The IP rule admits its address: no pending row for the name or the address.
+        assert_eq!(
+            admit(&p, &request("nas.nip.example")).await.unwrap(),
+            vec![SocketAddr::new(ip("192.168.1.20"), 443)]
+        );
+        assert_eq!(policy.pending().len(), 0);
+        // Mixed with a public address: both are used.
+        assert_eq!(
+            admit(&p, &request("both.nip.example")).await.unwrap(),
+            vec![
+                SocketAddr::new(ip("8.8.8.8"), 443),
+                SocketAddr::new(ip("192.168.1.20"), 443)
+            ]
+        );
+        // Only the address the rule names: its neighbour is dropped.
+        assert_eq!(
+            admit(&p, &request("two.nip.example")).await.unwrap(),
+            vec![SocketAddr::new(ip("192.168.1.20"), 443)]
+        );
+        assert_eq!(policy.pending().len(), 0);
+        // A neighbour with no IP rule, or an address with an IP deny, goes pending for the name.
+        for h in ["other.nip.example", "denied.nip.example"] {
+            let refusal = admit(&p, &request(h)).await.unwrap_err();
+            assert_eq!(
+                header(&refusal, "x-puddle-decision"),
+                Some("pending"),
+                "{h}"
+            );
+            assert!(
+                refusal
+                    .message
+                    .contains("add an exact rule for its address"),
+                "{h}: {}",
+                refusal.message
+            );
+        }
+        let pending: Vec<Host> = policy.pending().into_iter().map(|p| p.host).collect();
+        assert_eq!(
+            pending,
+            vec![host("other.nip.example"), host("denied.nip.example")]
+        );
+        // The IP rule never replaces the toggle.
+        let p = guarded(
+            policy.clone(),
+            resolver(),
+            all_on().with_toggle(LocalCategory::Private, false),
+        );
+        let refusal = admit(&p, &request("nas.nip.example")).await.unwrap_err();
+        assert_eq!(blocked(&refusal), Some("toggle:private"));
+    }
+
+    /// Suffix-allows every name and records a pending row on `Ignore`; `lookup` fails.
+    struct BrokenLookup(StaticPolicy);
+
+    impl Policy for BrokenLookup {
+        fn decide(&self, r: &EgressRequest, mode: SuffixAllows) -> Result<Decision, PolicyError> {
+            match mode {
+                SuffixAllows::Count => Ok(Decision::Allow {
+                    rule_id: RuleId(1),
+                    pattern: PatternKind::Suffix,
+                }),
+                SuffixAllows::Ignore => self.0.decide(r, mode),
+            }
+        }
+
+        fn lookup(
+            &self,
+            _: &EgressRequest,
+            _: SuffixAllows,
+        ) -> Result<Option<Decision>, PolicyError> {
+            Err(PolicyError {
+                reason: "lookup down".into(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn d44_failed_or_missing_ip_lookup_admits_nothing() {
+        let resolver = || StaticResolver::new().with("nas.nip.example", &[ip("192.168.1.20")]);
+        // `lookup` errors: the address isn't admitted and the name goes pending.
+        let broken = Arc::new(BrokenLookup(StaticPolicy::new()));
+        let p = guarded(broken.clone(), resolver(), all_on());
+        let refusal = admit(&p, &request("nas.nip.example")).await.unwrap_err();
+        assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
+        assert_eq!(broken.0.pending().len(), 1);
+        // The trait's default `lookup` (no IP rules known): the same.
+        let suffix = Decision::Allow {
+            rule_id: RuleId(1),
+            pattern: PatternKind::Suffix,
+        };
+        let pending = Decision::Pending(PendingOutcome::New(PendingId(7)));
+        let policy = FnPolicy::new(move |mode| {
+            Ok(match mode {
+                SuffixAllows::Count => suffix,
+                SuffixAllows::Ignore => pending,
+            })
+        });
+        let p = guarded(policy.clone(), resolver(), all_on());
+        let refusal = admit(&p, &request("nas.nip.example")).await.unwrap_err();
+        assert_eq!(header(&refusal, "x-puddle-pending"), Some("7"));
+        assert_eq!(policy.ignore_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

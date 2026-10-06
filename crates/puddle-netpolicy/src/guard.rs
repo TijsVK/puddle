@@ -18,9 +18,10 @@ use crate::{
 pub enum AddressVerdict {
     /// Connect if the rules allow the request.
     Allow,
-    /// A local address whose toggle is on: connect only after an **exact** allow (R-14, D-44).
-    /// After a suffix allow the proxy asks again with `SuffixAllows::Ignore`, so the request goes
-    /// pending for the exact name.
+    /// A local address whose toggle is on: connect only after an **exact** allow of the name or
+    /// of this address (R-14, D-44). After a suffix allow the proxy admits the address if an
+    /// exact rule for its IP allows it, and otherwise asks again with `SuffixAllows::Ignore`, so
+    /// the request goes pending for the exact name.
     ExactOnly(LocalCategory),
     /// Never connect, whatever the rules say; no pending row.
     Block(BlockReason),

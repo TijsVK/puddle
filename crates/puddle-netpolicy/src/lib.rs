@@ -18,9 +18,9 @@
 //!   [`LocalCategory`], with a global default and a per-sandbox override.
 //! - **D-37:** a toggle only *permits* its category; the destination still needs an allow rule
 //!   or an approval.
-//! - **D-44 / R-14:** with the toggle on, only an **exact** allow reaches a local address; a
-//!   wildcard (suffix) allow doesn't, unless "wildcards reach local addresses" is on
-//!   ([`AddressVerdict::ExactOnly`]).
+//! - **D-44 / R-14:** with the toggle on, only an **exact** allow (of the name, or of the
+//!   address itself) reaches a local address; a wildcard (suffix) allow doesn't, unless
+//!   "wildcards reach local addresses" is on ([`AddressVerdict::ExactOnly`]).
 //! - **D-26:** puddle's own listeners are their own class, blocked whatever the toggles say.
 //! - A blocked request names the toggle that would allow it ([`block_message`]).
 #![forbid(unsafe_code)]

@@ -18,8 +18,8 @@
 //! 4. **Addresses**: an allowed name is resolved once; every address goes through the
 //!    [`AddressCheck`] (`puddle_netpolicy::NetPolicy`: address classes, local toggles, puddle's
 //!    own endpoints) and only an address that passed is connected to. A local address needs its
-//!    toggle on and an exact allow, unless "wildcards reach local addresses" is on (R-14, D-44);
-//!    a block names the toggle that would allow it.
+//!    toggle on and an exact allow of the name or of the address itself, unless "wildcards
+//!    reach local addresses" is on (R-14, D-44); a block names the toggle that would allow it.
 //! 5. **Relay**: `CONNECT` is spliced both ways, an abort on either side reaching the other as a
 //!    reset (T-048); a plain-HTTP request is forwarded once with `Host` rewritten to the checked
 //!    target and its body framed exactly, so nothing unchecked rides along.
