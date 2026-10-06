@@ -11,10 +11,13 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+base64 = { workspace = true }
+getrandom = { workspace = true }
 puddle-agent-proto = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-types = { workspace = true }
+subtle = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing = { workspace = true }
 
@@ -23,10 +26,13 @@ tracing = { workspace = true }
 testing = []
 
 [dev-dependencies]
+base64 = { workspace = true }
 futures-util = { workspace = true }
 proptest = { workspace = true }
 puddle-proxy = { path = ".", features = ["testing"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

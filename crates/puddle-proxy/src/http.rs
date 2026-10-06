@@ -149,7 +149,7 @@ pub(crate) fn header_name(line: &str) -> String {
 }
 
 /// The trimmed value of a header line.
-fn header_value(line: &str) -> &str {
+pub(crate) fn header_value(line: &str) -> &str {
     line.split_once(':').map_or("", |(_, v)| v.trim())
 }
 

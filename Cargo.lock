@@ -4128,6 +4128,8 @@ dependencies = [
  "microsandbox-runtime",
  "puddle-compute",
  "puddle-ipc",
+ "puddle-netpolicy",
+ "puddle-proxy",
  "puddle-runtime",
  "puddle-types",
  "puddle-vm-tests",
@@ -4142,12 +4144,24 @@ name = "puddle-e2e"
 version = "0.0.0"
 dependencies = [
  "puddle-agent",
+ "puddle-compute",
+ "puddle-compute-msb",
  "puddle-ipc",
+ "puddle-netpolicy",
  "puddle-proxy",
+ "puddle-runtime",
  "puddle-store",
  "puddle-types",
+ "rcgen",
+ "rustls",
  "serde_json",
+ "sha2 0.11.0",
+ "tar",
+ "tempfile",
  "tokio",
+ "tokio-rustls",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -4186,15 +4200,19 @@ dependencies = [
 name = "puddle-proxy"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
+ "getrandom 0.4.3",
  "proptest",
  "puddle-agent-proto",
  "puddle-ipc",
  "puddle-netpolicy",
  "puddle-proxy",
  "puddle-types",
+ "subtle",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

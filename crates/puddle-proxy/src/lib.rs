@@ -36,6 +36,9 @@
 //! open connections and each route on agent sessions ([`ProxyConfig`]), far above what real tools
 //! open (D-2).
 //!
+//! [`PullProxy`] is the other way out: the loopback listener for puddle's own image pulls
+//! (T-116), with a per-run token instead of a route, and the address guard without the rules.
+//!
 //! # Features
 //!
 //! - `testing`: in-memory doubles ([`testing::StaticPolicy`], [`testing::AnyAddress`],
@@ -47,6 +50,7 @@ mod counted;
 mod destination;
 mod http;
 mod proxy;
+mod pull;
 mod route;
 mod tap;
 mod target;
@@ -55,4 +59,5 @@ pub mod testing;
 
 pub use destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver, SystemResolver};
 pub use proxy::{Proxy, ProxyConfig, SandboxHandler};
+pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
 pub use route::Route;

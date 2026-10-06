@@ -268,7 +268,7 @@ pub(crate) struct Refusal {
 }
 
 impl Refusal {
-    fn new(status: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(status: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,
             headers: Vec::new(),
@@ -276,7 +276,7 @@ impl Refusal {
         }
     }
 
-    fn header(mut self, name: &'static str, value: impl Into<String>) -> Self {
+    pub(crate) fn header(mut self, name: &'static str, value: impl Into<String>) -> Self {
         self.headers.push((name, value.into()));
         self
     }
@@ -302,7 +302,7 @@ impl Refusal {
 
 /// Sends `refusal` and closes the stream cleanly: a refusal is a normal end, and dropping the
 /// stream without the shutdown would reset it, which can reach the client before the response.
-async fn refuse<S: AsyncWrite + Unpin>(stream: &mut S, refusal: &Refusal) {
+pub(crate) async fn refuse<S: AsyncWrite + Unpin>(stream: &mut S, refusal: &Refusal) {
     let sent = async {
         stream.write_all(&refusal.bytes()).await?;
         stream.shutdown().await
@@ -397,12 +397,18 @@ async fn relay(
     event
 }
 
-/// The guest side of one proxied stream, counted for the audit.
-type GuestReader = BufReader<Counted<GuestStream>>;
+/// The client side of one proxied stream, counted for the audit.
+pub(crate) type ClientReader<S> = BufReader<Counted<S>>;
 
-/// Reads the head within `limit`. `Err(None)`: the guest closed or failed before a request, so
+/// The guest side of one proxied stream.
+type GuestReader = ClientReader<GuestStream>;
+
+/// Reads the head within `limit`. `Err(None)`: the client closed or failed before a request, so
 /// there is no one to answer.
-async fn read_request(reader: &mut GuestReader, limit: Duration) -> Result<Head, Option<Refusal>> {
+pub(crate) async fn read_request<S: AsyncRead + Unpin>(
+    reader: &mut ClientReader<S>,
+    limit: Duration,
+) -> Result<Head, Option<Refusal>> {
     match tokio::time::timeout(limit, http::read_head(reader)).await {
         Err(_) => Err(Some(Refusal::new(
             "408 Request Timeout",
@@ -423,7 +429,7 @@ async fn read_request(reader: &mut GuestReader, limit: Duration) -> Result<Head,
 }
 
 /// The normalised target, the origin-form path for a plain-HTTP request, and its body framing.
-fn parse_request(head: &Head) -> Result<(Target, Option<String>, Body), Refusal> {
+pub(crate) fn parse_request(head: &Head) -> Result<(Target, Option<String>, Body), Refusal> {
     let RawTarget { host, port, path } =
         http::parse_target(&head.method, &head.uri).map_err(|why| {
             Refusal::new(
@@ -791,7 +797,7 @@ fn shown_reason(reasons: &[BlockReason]) -> BlockReason {
 }
 
 /// Connects to the first address that answers within `per_address`.
-async fn connect_first(
+pub(crate) async fn connect_first(
     addrs: &[SocketAddr],
     per_address: Duration,
 ) -> io::Result<(TcpStream, SocketAddr)> {
@@ -817,7 +823,10 @@ async fn connect_first(
 ///
 /// Returns the tunnel's first request line if it carried plain HTTP/1.x (Node `fetch` and Yarn
 /// Berry tunnel `http://` this way, T-098), for the audit. The bytes are relayed unchanged.
-async fn tunnel(reader: GuestReader, mut server: TcpStream) -> Option<HttpRequestLine> {
+pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
+    reader: ClientReader<S>,
+    mut server: TcpStream,
+) -> Option<HttpRequestLine> {
     let early = reader.buffer().to_vec();
     let mut guest = RequestTap::new(reader.into_inner(), &early);
     let opened = async {
@@ -844,8 +853,8 @@ async fn tunnel(reader: GuestReader, mut server: TcpStream) -> Option<HttpReques
 
 /// Plain HTTP: one request per connection, `Host` rewritten to the checked target, body framed
 /// exactly, so a second request can't ride on the checked connection.
-async fn forward(
-    mut reader: GuestReader,
+pub(crate) async fn forward<S: AsyncRead + AsyncWrite + Unpin>(
+    mut reader: ClientReader<S>,
     mut server: TcpStream,
     head: &Head,
     path: &str,
