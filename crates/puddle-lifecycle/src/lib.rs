@@ -14,7 +14,8 @@
 //! - **Reconcile.** After a hard kill the records are wrong (`Running` for a VM that is gone, or
 //!   `Crashed`). [`reconcile`] runs at start: it stops VMs a previous puddle left running, removes
 //!   records, stale directories and orphaned `ws-*` volumes puddle no longer knows, and **never
-//!   touches anything puddle didn't create** (a foreign name).
+//!   touches anything puddle didn't create** (a foreign name). Leftover maintenance sandboxes
+//!   (`m--*`, T-112) always go; [`adopt_workspaces`] then rebuilds the workspace holders.
 //!
 //! # Windows consoles: why puddle runs as two processes
 //!
@@ -35,9 +36,9 @@
 //! }
 //! ```
 //!
-//! Inside `run_puddle`: [`reconcile`] first, then create or start sandboxes and hand their
-//! owning handles to [`Lifecycle::manage`], then `wait_for_shutdown().await` and
-//! [`Lifecycle::shutdown`].
+//! Inside `run_puddle`: [`reconcile`] and [`adopt_workspaces`] first, then create or start
+//! sandboxes and hand their owning handles to [`Lifecycle::manage`], then
+//! `wait_for_shutdown().await` and [`Lifecycle::shutdown`].
 #![cfg_attr(not(windows), forbid(unsafe_code))]
 
 mod error;
@@ -51,7 +52,7 @@ mod trim;
 mod windows;
 
 pub use error::LifecycleError;
-pub use reconcile::{Failure, Inventory, ReconcileReport, reconcile};
+pub use reconcile::{Failure, Inventory, ReconcileReport, adopt_workspaces, reconcile};
 pub use shutdown::{Lifecycle, SandboxOutcome, ShutdownConfig, ShutdownReport, StopOutcome};
 pub use signal::{ShutdownCause, ShutdownSignals, wait_for_shutdown};
 pub use supervise::{ROLE_VAR, Role, supervise};

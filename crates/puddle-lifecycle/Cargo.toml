@@ -13,6 +13,7 @@ publish.workspace = true
 [dependencies]
 puddle-compute = { workspace = true }
 puddle-types = { workspace = true }
+puddle-workspace = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-std", "io-util", "macros", "rt", "signal", "sync", "time"] }
 tracing = { workspace = true }

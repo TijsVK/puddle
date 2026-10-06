@@ -5,11 +5,17 @@
 //! owner label) **and** a valid [`SandboxName`]; a stale directory with a valid [`SandboxName`]
 //! (it has no record that could carry the label; puddle's msb home is private, T-107); a volume
 //! named `ws-<workspace id>`. Everything else is foreign and only reported.
+//!
+//! A puddle-owned maintenance sandbox (`m--<workspace id>`, T-112) only lives while puddle checks
+//! or trims a workspace, so one found at start is always a leftover: it is stopped and removed
+//! even if the inventory lists it. After reconcile, [`adopt_workspaces`] rebuilds the workspace
+//! holder registry (it lives in memory) from the inventory.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use puddle_compute::{ComputeError, Runtime, SandboxInfo};
 use puddle_types::{SandboxName, SandboxStatus, VolumeName, WorkspaceId};
+use puddle_workspace::{Workspaces, is_maintenance_name};
 
 use crate::shutdown::{ShutdownConfig, StopOutcome, trim_and_stop};
 
@@ -22,6 +28,9 @@ pub struct Inventory {
     pub sandboxes: BTreeSet<SandboxName>,
     /// Workspaces puddle has a record of; their `ws-*` volumes are kept.
     pub workspaces: BTreeSet<WorkspaceId>,
+    /// The sandbox each known workspace is attached to, from puddle's store; read by
+    /// [`adopt_workspaces`].
+    pub attached: BTreeMap<WorkspaceId, SandboxName>,
 }
 
 /// One reconcile step that failed; the others still ran.
@@ -135,6 +144,30 @@ pub async fn reconcile<R: Runtime>(
     Ok(report)
 }
 
+/// Rebuilds `workspaces`' holder registry after a restart (T-112): every attachment in
+/// `inventory.attached` whose workspace and sandbox are both known is adopted, so a second
+/// sandbox can't take a workspace a stopped one still holds. Call it after [`reconcile`] and
+/// before any sandbox starts. Returns the adopted pairs; an attachment naming an unknown
+/// workspace or sandbox is skipped with a warning.
+pub fn adopt_workspaces(
+    workspaces: &Workspaces,
+    inventory: &Inventory,
+) -> Vec<(WorkspaceId, SandboxName)> {
+    let mut adopted = Vec::new();
+    for (id, sandbox) in &inventory.attached {
+        if !inventory.workspaces.contains(id)
+            || !inventory.sandboxes.contains(sandbox)
+            || is_maintenance_name(sandbox.as_str())
+        {
+            tracing::warn!(workspace = %id, %sandbox, "reconcile: attachment to an unknown workspace or sandbox; skipped");
+            continue;
+        }
+        workspaces.adopt(id, sandbox);
+        adopted.push((id.clone(), sandbox.clone()));
+    }
+    adopted
+}
+
 /// The sandbox's name if puddle owns it.
 fn owned(info: &SandboxInfo) -> Option<SandboxName> {
     if info.puddle_owned {
@@ -175,7 +208,7 @@ async fn reconcile_sandbox<R: Runtime>(
             Err(e) => report.fail(name.as_str(), "stop", &e),
         }
     }
-    if inventory.sandboxes.contains(&name) {
+    if inventory.sandboxes.contains(&name) && !is_maintenance_name(name.as_str()) {
         if status == SandboxStatus::Crashed {
             report.crashed.push(name);
         }

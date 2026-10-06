@@ -5,7 +5,7 @@
     reason = "test helpers: a failed step fails the test"
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use puddle_compute::fake::{Call, ExecContext, FakeRuntime, Fault, Op};
@@ -13,8 +13,11 @@ use puddle_compute::{
     ComputeError, DiskSize, ExecOutput, ExecRequest, Runtime, Sandbox, SandboxSpec, VolumeMount,
     VolumeSpec,
 };
-use puddle_lifecycle::{Inventory, Lifecycle, ShutdownConfig, StopOutcome, TrimOutcome, reconcile};
+use puddle_lifecycle::{
+    Inventory, Lifecycle, ShutdownConfig, StopOutcome, TrimOutcome, adopt_workspaces, reconcile,
+};
 use puddle_types::{GuestPath, ImageRef, SandboxName, SandboxStatus, VolumeName, WorkspaceId};
+use puddle_workspace::{WorkspaceError, Workspaces};
 
 fn name(s: &str) -> SandboxName {
     SandboxName::new(s).unwrap()
@@ -280,6 +283,7 @@ async fn killed_puddle_world() -> World {
             .map(name)
             .collect(),
         workspaces: BTreeSet::from([WorkspaceId::new("known").unwrap()]),
+        ..Inventory::default()
     };
     World {
         rt,
@@ -498,4 +502,82 @@ async fn an_orphan_that_cannot_be_reached_is_reported() {
     assert_eq!(report.failures[0].action, "stop");
     assert_eq!(report.removed.len(), 0);
     drop(left);
+}
+
+#[tokio::test]
+async fn leftover_maintenance_sandboxes_go_even_when_listed() {
+    let rt = FakeRuntime::new();
+    fstrim_ok(&rt);
+    // A maintenance run puddle died in (running), one that finished but wasn't removed, and a
+    // foreign sandbox that only looks like one.
+    let running = rt.create(spec("m--acme")).await.unwrap();
+    rt.create(spec("m--beta"))
+        .await
+        .unwrap()
+        .stop()
+        .await
+        .unwrap();
+    rt.add_foreign_sandbox("m--other", SandboxStatus::Running);
+    let inventory = Inventory {
+        // Even a store that lists one doesn't keep it.
+        sandboxes: BTreeSet::from([name("m--beta")]),
+        ..Inventory::default()
+    };
+
+    let report = reconcile(&rt, &inventory, &ShutdownConfig::default())
+        .await
+        .unwrap();
+
+    assert_eq!(report.stopped, [name("m--acme")]);
+    assert_eq!(report.removed, [name("m--acme"), name("m--beta")]);
+    assert_eq!(report.foreign, ["m--other"]);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_eq!(status_of(&rt, "m--acme").await, None);
+    assert_eq!(
+        status_of(&rt, "m--other").await,
+        Some(SandboxStatus::Running)
+    );
+    drop(running);
+}
+
+#[tokio::test]
+async fn adopted_workspaces_refuse_a_second_sandbox_after_a_restart() {
+    let rt = FakeRuntime::new();
+    fstrim_ok(&rt);
+    let acme = WorkspaceId::new("acme").unwrap();
+    let beta = WorkspaceId::new("beta").unwrap();
+    // Before the restart: "one" runs with workspace acme.
+    let before = Workspaces::default();
+    let one = before.create(&rt, &acme, spec("one"), None).await.unwrap();
+    drop(one);
+    drop(before);
+
+    // After it: the registry is empty until reconcile adopts the store's attachments.
+    let inventory = Inventory {
+        sandboxes: BTreeSet::from([name("one")]),
+        workspaces: BTreeSet::from([acme.clone(), beta.clone()]),
+        attached: BTreeMap::from([
+            (acme.clone(), name("one")),
+            // Stale store rows are skipped, not adopted.
+            (beta.clone(), name("gone")),
+            (WorkspaceId::new("unknown").unwrap(), name("one")),
+        ]),
+    };
+    reconcile(&rt, &inventory, &ShutdownConfig::default())
+        .await
+        .unwrap();
+    let workspaces = Workspaces::default();
+    let adopted = adopt_workspaces(&workspaces, &inventory);
+
+    assert_eq!(adopted, [(acme.clone(), name("one"))]);
+    assert_eq!(status_of(&rt, "one").await, Some(SandboxStatus::Stopped));
+    let refused = workspaces
+        .create(&rt, &acme, spec("two"), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&refused, WorkspaceError::InUse { holder, .. } if holder == "one"),
+        "{refused}"
+    );
+    assert!(workspaces.holder(&beta).is_none());
 }

@@ -428,7 +428,7 @@ async fn hard_kill_rounds(suffix: &str, kill: impl Fn(&mut Host)) {
     let world = World::new(suffix).await;
     let inventory = Inventory {
         sandboxes: BTreeSet::from([world.name.clone()]),
-        workspaces: BTreeSet::new(),
+        ..Inventory::default()
     };
     let mut gone_after = Vec::new();
     for round in 1..=ITERATIONS {
@@ -638,6 +638,7 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
     let inventory = Inventory {
         sandboxes: BTreeSet::from([sb("known")]),
         workspaces: BTreeSet::from([ws("known")]),
+        ..Inventory::default()
     };
     let report = reconcile(rt, &inventory, &ShutdownConfig::default())
         .await
