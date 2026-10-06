@@ -1,0 +1,65 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+info  CPU virtualization    this Windows runs in a virtual machine (VMwareVMware); see Hypervisor
+FAIL  Hypervisor            can't run: this is a virtual machine without nested virtualization
+      fix:  This Windows is a virtual machine (VMwareVMware) whose host doesn't pass CPU
+            virtualization through. Turn on nested virtualization for this VM on its host, or
+            run puddle on a physical PC. On a Hyper-V host, with the VM off:
+              Set-VMProcessor -VMName <name> -ExposeVirtualizationExtensions $true
+            On VMware: "Virtualize Intel VT-x/EPT or AMD-V/RVI" in the VM's processor settings.
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
+skip  Test boot             not checked: no usable hypervisor
+ok    Global Secure Access  client not installed
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "info",
+      "summary": "this Windows runs in a virtual machine (VMwareVMware); see Hypervisor"
+    },
+    {
+      "id": "hypervisor",
+      "status": "fail",
+      "summary": "can't run: this is a virtual machine without nested virtualization",
+      "finding": "nested_virtualization_off",
+      "fix": "This Windows is a virtual machine (VMwareVMware) whose host doesn't pass CPU virtualization through. Turn on nested virtualization for this VM on its host, or run puddle on a physical PC. On a Hyper-V host, with the VM off:\n  Set-VMProcessor -VMName <name> -ExposeVirtualizationExtensions $true\nOn VMware: \"Virtualize Intel VT-x/EPT or AMD-V/RVI\" in the VM's processor settings."
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: no usable hypervisor"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

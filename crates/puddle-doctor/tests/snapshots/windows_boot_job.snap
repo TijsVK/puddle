@@ -1,0 +1,75 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+ok    CPU virtualization    on (the hypervisor uses it)
+ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+info  Job object            puddle runs in a job object that doesn't let child processes leave it
+      note: Usual under CI runners and some IDE or remote shells. puddle keeps its VM processes
+            in its own job, so this only matters if "Test boot" fails with access denied.
+ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
+FAIL  Test boot             msb exited with 1: access denied starting the VM process inside this job object
+      fix:  The job object puddle was started in (see "Job object") doesn't let the VM process
+            leave it. Run puddle doctor from a normal terminal; on a CI runner, start it through
+            a process outside the step's job.
+      from: error: io error: Access is denied. (os error 5)
+ok    Global Secure Access  client not installed
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "job_object",
+      "status": "info",
+      "summary": "puddle runs in a job object that doesn't let child processes leave it",
+      "finding": "job_without_breakaway",
+      "fix": "Usual under CI runners and some IDE or remote shells. puddle keeps its VM processes in its own job, so this only matters if \"Test boot\" fails with access denied."
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "fail",
+      "summary": "msb exited with 1: access denied starting the VM process inside this job object",
+      "finding": "boot_blocked_by_job",
+      "fix": "The job object puddle was started in (see \"Job object\") doesn't let the VM process leave it. Run puddle doctor from a normal terminal; on a CI runner, start it through a process outside the step's job.",
+      "detail": "error: io error: Access is denied. (os error 5)"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

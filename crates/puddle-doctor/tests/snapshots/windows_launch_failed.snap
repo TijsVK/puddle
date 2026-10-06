@@ -1,0 +1,63 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+ok    CPU virtualization    on (the hypervisor uses it)
+ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+FAIL  Runtime starts        msb could not be started
+      fix:  Reinstall puddle. If this stays, include the line below when you report it.
+      from: %1 is not a valid Win32 application. (os error 193)
+skip  Test boot             not checked: the runtime doesn't start
+ok    Global Secure Access  client not installed
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "fail",
+      "summary": "msb could not be started",
+      "finding": "launch_failed",
+      "fix": "Reinstall puddle. If this stays, include the line below when you report it.",
+      "detail": "%1 is not a valid Win32 application. (os error 193)"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: the runtime doesn't start"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

@@ -1,0 +1,72 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+ok    CPU virtualization    on (the hypervisor uses it)
+ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs enforced
+      note: An App Control (WDAC) policy decides which programs may run. If it blocks puddle's
+            runtime, "Runtime starts" says so and names the log with the rule.
+ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+FAIL  Runtime starts        App Control for Business (WDAC) or Smart App Control blocks msb
+      fix:  A code integrity policy doesn't allow
+            C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe. Allow puddle's files or
+            signer in that policy; Event Viewer > Applications and Services Logs > Microsoft >
+            Windows > CodeIntegrity > Operational names the rule. Smart App Control has no
+            exceptions: it can only be turned off (Windows Security > App & browser control >
+            Smart App Control).
+      from: Your organization used Device Guard to block this app. Contact your support person
+            for more info. (os error 4551)
+skip  Test boot             not checked: the runtime doesn't start
+ok    Global Secure Access  client not installed
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs enforced",
+      "fix": "An App Control (WDAC) policy decides which programs may run. If it blocks puddle's runtime, \"Runtime starts\" says so and names the log with the rule."
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "fail",
+      "summary": "App Control for Business (WDAC) or Smart App Control blocks msb",
+      "finding": "blocked_by_app_control",
+      "fix": "A code integrity policy doesn't allow C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe. Allow puddle's files or signer in that policy; Event Viewer > Applications and Services Logs > Microsoft > Windows > CodeIntegrity > Operational names the rule. Smart App Control has no exceptions: it can only be turned off (Windows Security > App & browser control > Smart App Control).",
+      "detail": "Your organization used Device Guard to block this app. Contact your support person for more info. (os error 4551)"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: the runtime doesn't start"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

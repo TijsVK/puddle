@@ -1,0 +1,46 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+ok    CPU virtualization  on (the hypervisor uses it)
+ok    Hypervisor          /dev/kvm is usable
+ok    Bundled runtime     msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
+ok    Test boot           a test VM booted and ran a program in 1.1 s
+
+No problems found. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": true,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "/dev/kvm is usable"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "ok",
+      "summary": "a test VM booted and ran a program in 1.1 s"
+    }
+  ],
+  "elapsed_ms": 1234
+}

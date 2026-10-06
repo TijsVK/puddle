@@ -1,0 +1,60 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+ok    CPU virtualization  on in firmware
+FAIL  Hypervisor          /dev/kvm exists but you can't open it
+      fix:  Add yourself to the group that owns /dev/kvm (usually kvm):
+              sudo usermod -aG kvm "$USER"
+            then log out and in again.
+      from: /dev/kvm: Permission denied (os error 13)
+ok    Bundled runtime     msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+FAIL  Runtime starts      the file's permissions don't let you run msb
+      fix:  Make it readable and executable again:
+              chmod a+rx "C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe"
+            or reinstall puddle.
+      from: Permission denied (os error 13)
+skip  Test boot           not checked: no usable hypervisor
+
+2 problems to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on in firmware"
+    },
+    {
+      "id": "hypervisor",
+      "status": "fail",
+      "summary": "/dev/kvm exists but you can't open it",
+      "finding": "kvm_access_denied",
+      "fix": "Add yourself to the group that owns /dev/kvm (usually kvm):\n  sudo usermod -aG kvm \"$USER\"\nthen log out and in again.",
+      "detail": "/dev/kvm: Permission denied (os error 13)"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "fail",
+      "summary": "the file's permissions don't let you run msb",
+      "finding": "runtime_permissions",
+      "fix": "Make it readable and executable again:\n  chmod a+rx \"C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe\"\nor reinstall puddle.",
+      "detail": "Permission denied (os error 13)"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: no usable hypervisor"
+    }
+  ],
+  "elapsed_ms": 1234
+}

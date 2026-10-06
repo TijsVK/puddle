@@ -1,0 +1,49 @@
+puddle doctor (puddle 0.1.0, other x86_64)
+
+info  CPU virtualization  unknown
+FAIL  Hypervisor          puddle has no hypervisor support on this operating system
+      fix:  Run puddle on Windows 10/11 (or Linux with KVM).
+ok    Bundled runtime     msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
+skip  Test boot           not checked: no usable hypervisor
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "other",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "info",
+      "summary": "unknown"
+    },
+    {
+      "id": "hypervisor",
+      "status": "fail",
+      "summary": "puddle has no hypervisor support on this operating system",
+      "finding": "unsupported_os",
+      "fix": "Run puddle on Windows 10/11 (or Linux with KVM)."
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: no usable hypervisor"
+    }
+  ],
+  "elapsed_ms": 1234
+}

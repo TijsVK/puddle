@@ -1,0 +1,54 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+ok    CPU virtualization  on (the hypervisor uses it)
+ok    Hypervisor          /dev/kvm is usable
+ok    Bundled runtime     msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
+FAIL  Test boot           msb can't find its firmware library (libkrunfw) beside it
+      fix:  Reinstall puddle: its runtime folder
+            C:\Users\dev\AppData\Local\Programs\puddle\runtime is incomplete. msb needs the
+            libkrunfw it was released with in the same folder.
+      from: error: microsandbox runtime installation is incomplete: /opt/puddle/runtime/msb
+            has no matching libkrunfw
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "/dev/kvm is usable"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "fail",
+      "summary": "msb can't find its firmware library (libkrunfw) beside it",
+      "finding": "runtime_missing",
+      "fix": "Reinstall puddle: its runtime folder C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime is incomplete. msb needs the libkrunfw it was released with in the same folder.",
+      "detail": "error: microsandbox runtime installation is incomplete: /opt/puddle/runtime/msb\nhas no matching libkrunfw"
+    }
+  ],
+  "elapsed_ms": 1234
+}

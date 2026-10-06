@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-doctor"
+description = "`puddle doctor`: checks the host's prerequisites and what can interfere, with the exact fix for each finding (W1, D-23, D-24)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+puddle-runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Wdk_System_SystemInformation",
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Services",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+] }
+
+[dev-dependencies]
+object = { workspace = true, features = ["read_core", "elf", "write"] }
+
+[lints]
+workspace = true

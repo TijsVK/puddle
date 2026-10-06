@@ -1,0 +1,66 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+FAIL  CPU virtualization    off in the firmware (UEFI/BIOS)
+      fix:  Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: "Intel
+            Virtualization Technology" / VT-x; AMD: "SVM Mode"), save, and start the PC again.
+FAIL  Hypervisor            Windows Hypervisor Platform is on, but the hypervisor can't run: CPU virtualization is off
+      fix:  Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: "Intel
+            Virtualization Technology" / VT-x; AMD: "SVM Mode"), save, and start the PC again.
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
+skip  Test boot             not checked: no usable hypervisor
+ok    Global Secure Access  client not installed
+
+2 problems to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "fail",
+      "summary": "off in the firmware (UEFI/BIOS)",
+      "finding": "firmware_virtualization_off",
+      "fix": "Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: \"Intel Virtualization Technology\" / VT-x; AMD: \"SVM Mode\"), save, and start the PC again."
+    },
+    {
+      "id": "hypervisor",
+      "status": "fail",
+      "summary": "Windows Hypervisor Platform is on, but the hypervisor can't run: CPU virtualization is off",
+      "finding": "firmware_virtualization_off",
+      "fix": "Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: \"Intel Virtualization Technology\" / VT-x; AMD: \"SVM Mode\"), save, and start the PC again."
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: no usable hypervisor"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

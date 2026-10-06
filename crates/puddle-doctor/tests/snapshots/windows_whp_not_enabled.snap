@@ -1,0 +1,70 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+ok    CPU virtualization    on in firmware
+FAIL  Hypervisor            Windows Hypervisor Platform is off
+      fix:  Enable the Windows Hypervisor Platform feature in PowerShell as administrator:
+              Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All
+            then restart Windows. (Or: Settings > System > Optional features > More Windows
+            features > Windows Hypervisor Platform.) Virtual Machine Platform, which WSL2 uses,
+            is a different feature.
+      from: WinHvPlatform.dll: The specified module could not be found. (os error 126)
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+FAIL  Runtime starts        msb can't load a DLL it needs (0xC0000135)
+      fix:  msb links the Windows Hypervisor Platform's DLL: fix "Hypervisor" above first.
+skip  Test boot             not checked: no usable hypervisor
+ok    Global Secure Access  client not installed
+
+2 problems to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on in firmware"
+    },
+    {
+      "id": "hypervisor",
+      "status": "fail",
+      "summary": "Windows Hypervisor Platform is off",
+      "finding": "whp_not_enabled",
+      "fix": "Enable the Windows Hypervisor Platform feature in PowerShell as administrator:\n  Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All\nthen restart Windows. (Or: Settings > System > Optional features > More Windows features > Windows Hypervisor Platform.) Virtual Machine Platform, which WSL2 uses, is a different feature.",
+      "detail": "WinHvPlatform.dll: The specified module could not be found. (os error 126)"
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "fail",
+      "summary": "msb can't load a DLL it needs (0xC0000135)",
+      "finding": "dll_missing",
+      "fix": "msb links the Windows Hypervisor Platform's DLL: fix \"Hypervisor\" above first."
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: no usable hypervisor"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

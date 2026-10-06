@@ -13,6 +13,8 @@ pub enum Command {
         /// The sandbox's endpoint (named pipe or Unix socket path).
         endpoint: std::path::PathBuf,
     },
+    /// Check this machine's prerequisites, see [`crate::cmd::doctor`].
+    Doctor(crate::cmd::doctor::DoctorArgs),
 }
 
 /// Arguments that don't form a valid command.
@@ -30,7 +32,8 @@ pub enum UsageError {
 }
 
 /// Usage text for `--help` and for usage errors.
-pub const USAGE: &str = "usage: puddle [--version | --help | ssh-bridge <endpoint>]";
+pub const USAGE: &str =
+    "usage: puddle [--version | --help | doctor [--json] [--no-boot] | ssh-bridge <endpoint>]";
 
 /// Parse the arguments after the program name.
 ///
@@ -49,6 +52,7 @@ where
             "--version" | "-V" => Command::Version,
             "--help" | "-h" => Command::Help,
             "ssh-bridge" => return crate::cmd::ssh_bridge::parse(args),
+            "doctor" => return crate::cmd::doctor::parse(args),
             other => return Err(UsageError::UnknownArgument(other.to_owned())),
         },
     };

@@ -1,0 +1,52 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+info  CPU virtualization  this Linux runs in a virtual machine (Microsoft Hv); see Hypervisor
+FAIL  Hypervisor          no /dev/kvm
+      fix:  Load KVM for your CPU (sudo modprobe kvm_intel, or kvm_amd). In a virtual machine,
+            turn on nested virtualization on its host first.
+      from: /dev/kvm: No such file or directory (os error 2)
+ok    Bundled runtime     msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
+skip  Test boot           not checked: no usable hypervisor
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "info",
+      "summary": "this Linux runs in a virtual machine (Microsoft Hv); see Hypervisor"
+    },
+    {
+      "id": "hypervisor",
+      "status": "fail",
+      "summary": "no /dev/kvm",
+      "finding": "kvm_missing",
+      "fix": "Load KVM for your CPU (sudo modprobe kvm_intel, or kvm_amd). In a virtual machine, turn on nested virtualization on its host first.",
+      "detail": "/dev/kvm: No such file or directory (os error 2)"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: no usable hypervisor"
+    }
+  ],
+  "elapsed_ms": 1234
+}

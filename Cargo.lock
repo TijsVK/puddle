@@ -3998,9 +3998,11 @@ name = "puddle"
 version = "0.0.0"
 dependencies = [
  "puddle-compute",
+ "puddle-doctor",
  "puddle-ipc",
  "puddle-ssh",
  "puddle-types",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
@@ -4137,6 +4139,18 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "puddle-doctor"
+version = "0.0.0"
+dependencies = [
+ "object",
+ "puddle-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

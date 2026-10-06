@@ -1,0 +1,64 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+ok    CPU virtualization    on (the hypervisor uses it)
+ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+FAIL  Bundled runtime       bundled runtime C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe is msb 0.7.7, but this puddle needs exactly msb 0.7.7-puddle.2
+      fix:  Reinstall puddle so the runtime in
+            C:\Users\dev\AppData\Local\Programs\puddle\runtime matches this puddle again. Don't
+            copy an msb from elsewhere into it: puddle only runs the exact msb 0.7.7-puddle.2 it
+            was built for.
+skip  Runtime starts        not checked: the bundled runtime isn't usable
+skip  Test boot             not checked: the runtime doesn't start
+ok    Global Secure Access  client not installed
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "runtime",
+      "status": "fail",
+      "summary": "bundled runtime C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe is msb 0.7.7, but this puddle needs exactly msb 0.7.7-puddle.2",
+      "finding": "runtime_version_mismatch",
+      "fix": "Reinstall puddle so the runtime in C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime matches this puddle again. Don't copy an msb from elsewhere into it: puddle only runs the exact msb 0.7.7-puddle.2 it was built for."
+    },
+    {
+      "id": "launch",
+      "status": "skipped",
+      "summary": "not checked: the bundled runtime isn't usable"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: the runtime doesn't start"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

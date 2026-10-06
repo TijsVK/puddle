@@ -1,0 +1,53 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+ok    CPU virtualization  on (the hypervisor uses it)
+ok    Hypervisor          /dev/kvm is usable
+FAIL  Bundled runtime     you aren't allowed to read or run /opt/puddle/runtime/msb
+      fix:  Make it readable and executable again:
+              chmod a+rx "/opt/puddle/runtime/msb"
+            or reinstall puddle.
+      from: not executable
+skip  Runtime starts      not checked: the bundled runtime isn't usable
+skip  Test boot           not checked: the runtime doesn't start
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "/dev/kvm is usable"
+    },
+    {
+      "id": "runtime",
+      "status": "fail",
+      "summary": "you aren't allowed to read or run /opt/puddle/runtime/msb",
+      "finding": "runtime_permissions",
+      "fix": "Make it readable and executable again:\n  chmod a+rx \"/opt/puddle/runtime/msb\"\nor reinstall puddle.",
+      "detail": "not executable"
+    },
+    {
+      "id": "launch",
+      "status": "skipped",
+      "summary": "not checked: the bundled runtime isn't usable"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: the runtime doesn't start"
+    }
+  ],
+  "elapsed_ms": 1234
+}

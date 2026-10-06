@@ -1,0 +1,67 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+ok    CPU virtualization    on (the hypervisor uses it)
+ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
+FAIL  Test boot             msb exited with 1 without booting the test VM
+      fix:  msb starts but can't boot a VM. If endpoint security runs on this PC, check its log
+            for msb: it must be allowed to start virtual machines through the hypervisor.
+            Otherwise restart the PC and run puddle doctor again, and include the lines below
+            when you report it.
+      from: error: failed to start sandbox
+              → sandbox process exited (exit code: 0) before agent relay became available
+ok    Global Secure Access  client not installed
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "fail",
+      "summary": "msb exited with 1 without booting the test VM",
+      "finding": "boot_failed",
+      "fix": "msb starts but can't boot a VM. If endpoint security runs on this PC, check its log for msb: it must be allowed to start virtual machines through the hypervisor. Otherwise restart the PC and run puddle doctor again, and include the lines below when you report it.",
+      "detail": "error: failed to start sandbox\n  → sandbox process exited (exit code: 0) before agent relay became available"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

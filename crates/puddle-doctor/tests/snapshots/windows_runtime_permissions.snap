@@ -1,0 +1,65 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+ok    CPU virtualization    on (the hypervisor uses it)
+ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+FAIL  Bundled runtime       you aren't allowed to read or run C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe
+      fix:  The file's permissions deny your account. Restore the inherited permissions:
+              icacls "C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe" /reset
+            (as administrator if puddle is installed for all users), or reinstall puddle.
+      from: Access is denied. (os error 5)
+skip  Runtime starts        not checked: the bundled runtime isn't usable
+skip  Test boot             not checked: the runtime doesn't start
+ok    Global Secure Access  client not installed
+
+1 problem to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "runtime",
+      "status": "fail",
+      "summary": "you aren't allowed to read or run C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe",
+      "finding": "runtime_permissions",
+      "fix": "The file's permissions deny your account. Restore the inherited permissions:\n  icacls \"C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe\" /reset\n(as administrator if puddle is installed for all users), or reinstall puddle.",
+      "detail": "Access is denied. (os error 5)"
+    },
+    {
+      "id": "launch",
+      "status": "skipped",
+      "summary": "not checked: the bundled runtime isn't usable"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: the runtime doesn't start"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

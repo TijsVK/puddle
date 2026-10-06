@@ -1,0 +1,56 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+info  CPU virtualization  unknown
+FAIL  Hypervisor          the hypervisor query failed
+      fix:  Run puddle doctor again. If this stays, include the line below when you report it.
+      from: /dev/kvm: Is a directory (os error 21)
+ok    Bundled runtime     msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+FAIL  Runtime starts      msb was killed by a signal instead of answering
+      fix:  If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it
+            may have stopped the process. Otherwise reinstall puddle and include the lines below
+            when you report it.
+skip  Test boot           not checked: no usable hypervisor
+
+2 problems to fix before puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "info",
+      "summary": "unknown"
+    },
+    {
+      "id": "hypervisor",
+      "status": "fail",
+      "summary": "the hypervisor query failed",
+      "finding": "hypervisor_query_failed",
+      "fix": "Run puddle doctor again. If this stays, include the line below when you report it.",
+      "detail": "/dev/kvm: Is a directory (os error 21)"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "fail",
+      "summary": "msb was killed by a signal instead of answering",
+      "finding": "launch_exited",
+      "fix": "If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it may have stopped the process. Otherwise reinstall puddle and include the lines below when you report it."
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: no usable hypervisor"
+    }
+  ],
+  "elapsed_ms": 1234
+}
