@@ -27,6 +27,7 @@ puddle-runtime = { path = "crates/puddle-runtime" }
 puddle-ipc = { path = "crates/puddle-ipc" }
 puddle-settings = { path = "crates/puddle-settings" }
 puddle-netpolicy = { path = "crates/puddle-netpolicy" }
+puddle-ca = { path = "crates/puddle-ca" }
 
 # External
 object = { version = "0.40", default-features = false }
@@ -55,6 +56,12 @@ libc = "0.2.172"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 getrandom = "0.4"
 windows-sys = "0.61"
+# Per-sandbox CA and leaf certificates (T-133). ring, not aws-lc-rs: aws-lc-sys carries the
+# OpenSSL licence, which deny.toml does not allow; ring is Apache-2.0 AND ISC.
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+time = { version = "0.3", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless it needs FFI

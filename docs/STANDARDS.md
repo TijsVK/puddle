@@ -22,6 +22,7 @@ different crates and rarely collides.
 | `crates/puddle-runtime` | lib | The bundled msb runtime (D-19): runtime folder + private `MSB_HOME`, `MSB_*` environment pinning, exact `<release>-puddle.N` version check from msb's embedded `.msbver` (T-107) | W1 |
 | `crates/puddle-boot` | lib | Boot hook (`guest/boot.sh`, `guest/agent-supervise.sh`, POSIX sh) and the readiness gate: no SSH or exec before the hook returns 0; applies provider `GuestFile`s/env as a list (T-108) | W1 |
 | `crates/puddle-netpolicy` | lib | The destination guard (T-132): strict host-name normalisation (IDNA, LDH, canonical IPs), address classes, the local-destination toggles and wildcard rule (D-1, D-37, D-44), the registry of puddle's own endpoints (D-26), block messages. Pure policy, no network I/O | W2 |
+| `crates/puddle-ca` | lib | The per-sandbox CA for credential injection (T-133, D-11): name constraints as a builder input, a key that is never exported or serialised, a bounded leaf cache per sandbox (HO-4), the guest trust bundle as a list of CAs. In memory only, no I/O | W2 |
 | `crates/puddle-proxy` | lib | Egress proxy: CONNECT/HTTP, pending requests, toggles, credential injection, upstream chaining, transparent capture | W2 |
 | `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper | W3 |
 | `crates/puddle-api` | lib | axum API, SSE, auth token, OpenAPI generation (ADR 0004) | W4 |
