@@ -3,7 +3,9 @@
 //!
 //! | Variable | Default | |
 //! |---|---|---|
-//! | `PUDDLE_AGENT_LISTEN` | `127.0.0.1:3128` | proxy listener; `0.0.0.0:3128` lets nested containers reach it on the docker0 gateway |
+//! | `PUDDLE_AGENT_LISTEN` | `127.0.0.1:3128` | proxy listener (the sandbox's own processes) |
+//! | `PUDDLE_AGENT_BRIDGE` | `172.17.0.1:3128` | the Docker bridge address nested containers use as their proxy (T-099): the agent listens there only while a bridge interface owns that address; `off` disables it |
+//! | `PUDDLE_AGENT_BRIDGE_POLL_MS` | `200` | how often the bridge is looked for |
 //! | `PUDDLE_AGENT_TARGET` | `vsock://2:5000` | the host: `vsock://<cid>:<port>`, or `unix:///path` for tests without a VM |
 //! | `PUDDLE_AGENT_MUX` | `4` | yamux sessions (vsock connections) to spread streams over, 1–64 |
 //! | `PUDDLE_AGENT_VSOCK_BUF` | `16777216` | vsock socket buffer in bytes; `0` keeps the kernel default (reproduces the T-004 upload stall) |
@@ -15,7 +17,7 @@
 //! | `PUDDLE_AGENT_OOM_GRACE_MS` | `1000` | how long a counter increase waits for its kernel log line before it is reported unnamed |
 //! | `PUDDLE_AGENT_LOG` | `info` | `error`, `warn`, `info`, `debug` or `trace` (to stderr) |
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
@@ -91,11 +93,32 @@ impl Default for OomSources {
     }
 }
 
+/// The Docker bridge listener (T-099).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BridgeConfig {
+    /// The bridge's address and the proxy port containers use. Bound only while a bridge
+    /// interface owns the address.
+    pub addr: SocketAddrV4,
+    /// How often to look for the bridge.
+    pub poll: Duration,
+}
+
+impl Default for BridgeConfig {
+    fn default() -> Self {
+        Self {
+            addr: SocketAddrV4::new(Ipv4Addr::new(172, 17, 0, 1), 3128),
+            poll: Duration::from_millis(200),
+        }
+    }
+}
+
 /// Everything the agent needs to run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// Proxy listener inside the guest.
     pub listen: SocketAddr,
+    /// The Docker bridge listener, `None` when off.
+    pub bridge: Option<BridgeConfig>,
     /// The host.
     pub target: Target,
     /// yamux sessions to keep.
@@ -114,6 +137,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             listen: SocketAddr::from(([127, 0, 0, 1], 3128)),
+            bridge: Some(BridgeConfig::default()),
             target: Target::Vsock { cid: 2, port: 5000 },
             mux: 4,
             vsock_buffer: DEFAULT_VSOCK_BUFFER,
@@ -151,6 +175,18 @@ impl Config {
                 .parse()
                 .map_err(|_| bad(var, &v, "expected <ip>:<port>"))?;
         }
+        let mut bridge = BridgeConfig::default();
+        if let Some((v, var)) = lookup("PUDDLE_AGENT_BRIDGE_POLL_MS") {
+            bridge.poll = millis(var, &v)?;
+        }
+        config.bridge = match lookup("PUDDLE_AGENT_BRIDGE") {
+            None => Some(bridge),
+            Some((v, _)) if v == "off" => None,
+            Some((v, var)) => {
+                bridge.addr = bridge_addr(var, &v)?;
+                Some(bridge)
+            }
+        };
         if let Some((v, var)) = lookup("PUDDLE_AGENT_TARGET") {
             config.target = v.parse().map_err(|reason: String| bad(var, &v, &reason))?;
         }
@@ -201,6 +237,26 @@ fn bad(var: &'static str, value: &str, reason: &str) -> ConfigError {
         value: value.chars().take(MAX_ECHO).collect(),
         reason: reason.to_owned(),
     }
+}
+
+/// A bridge address must be a specific IPv4 address a container can route to: never a wildcard
+/// (that would listen on every interface), loopback or multicast.
+fn bridge_addr(var: &'static str, value: &str) -> Result<SocketAddrV4, ConfigError> {
+    let addr: SocketAddrV4 = value
+        .parse()
+        .map_err(|_| bad(var, value, "expected <ipv4>:<port> or off"))?;
+    let ip = addr.ip();
+    if ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() || ip.is_broadcast() {
+        return Err(bad(
+            var,
+            value,
+            "expected a specific, non-loopback bridge address",
+        ));
+    }
+    if addr.port() == 0 {
+        return Err(bad(var, value, "expected a fixed port"));
+    }
+    Ok(addr)
 }
 
 fn path(var: &'static str, value: &str) -> Result<PathBuf, ConfigError> {
@@ -279,6 +335,15 @@ mod tests {
     fn invalid_values_are_errors_that_name_the_variable() {
         let cases = [
             ("PUDDLE_AGENT_LISTEN", "3128"),
+            ("PUDDLE_AGENT_BRIDGE", "172.17.0.1"),
+            ("PUDDLE_AGENT_BRIDGE", "0.0.0.0:3128"),
+            ("PUDDLE_AGENT_BRIDGE", "127.0.0.1:3128"),
+            ("PUDDLE_AGENT_BRIDGE", "224.0.0.1:3128"),
+            ("PUDDLE_AGENT_BRIDGE", "255.255.255.255:3128"),
+            ("PUDDLE_AGENT_BRIDGE", "172.17.0.1:0"),
+            ("PUDDLE_AGENT_BRIDGE", "[::1]:3128"),
+            ("PUDDLE_AGENT_BRIDGE", "on"),
+            ("PUDDLE_AGENT_BRIDGE_POLL_MS", "0"),
             ("PUDDLE_AGENT_TARGET", "tcp://1.2.3.4:5"),
             ("PUDDLE_AGENT_TARGET", "vsock://2"),
             ("PUDDLE_AGENT_TARGET", "vsock://x:5000"),
@@ -300,6 +365,26 @@ mod tests {
             assert_eq!(err.var, var);
             assert!(err.to_string().starts_with(var), "{err}");
         }
+    }
+
+    #[test]
+    fn the_bridge_listener_is_on_for_the_docker_default_and_can_move_or_stop() {
+        let default = from(&[]).unwrap().bridge.unwrap();
+        assert_eq!(default.addr.to_string(), "172.17.0.1:3128");
+        assert_eq!(default.poll, Duration::from_millis(200));
+        let moved = from(&[
+            ("PUDDLE_AGENT_BRIDGE", "192.168.200.1:3129"),
+            ("PUDDLE_AGENT_BRIDGE_POLL_MS", "50"),
+        ])
+        .unwrap()
+        .bridge
+        .unwrap();
+        assert_eq!(moved.addr.to_string(), "192.168.200.1:3129");
+        assert_eq!(moved.poll, Duration::from_millis(50));
+        assert_eq!(
+            from(&[("PUDDLE_AGENT_BRIDGE", "off")]).unwrap().bridge,
+            None
+        );
     }
 
     #[test]

@@ -78,7 +78,7 @@ impl Rig {
     }
 }
 
-fn start_host(socket: &Path, sink: Arc<dyn EventSink>) -> JoinHandle<()> {
+pub fn start_host(socket: &Path, sink: Arc<dyn EventSink>) -> JoinHandle<()> {
     let listener = UnixListener::bind(socket).unwrap();
     tokio::spawn(async move {
         let mut sessions = tokio::task::JoinSet::new();
@@ -103,19 +103,39 @@ fn start_host(socket: &Path, sink: Arc<dyn EventSink>) -> JoinHandle<()> {
 /// Starts a host on a Unix socket and an agent on 127.0.0.1:0 pointed at it.
 /// `oom` gets the rig's temp dir and returns the OOM watch sources (or `None` for no watch).
 pub async fn rig(tag: &str, oom: impl FnOnce(&Path) -> Option<OomSources>) -> Rig {
+    rig_with(tag, oom, |_| {}, Arc::new(NoBridge)).await
+}
+
+/// A probe that never finds a bridge.
+pub struct NoBridge;
+
+impl puddle_agent::bridge::Probe for NoBridge {
+    fn find(&self, _: std::net::Ipv4Addr) -> Option<u32> {
+        None
+    }
+}
+
+/// [`rig`] with a say in the config and the bridge probe.
+pub async fn rig_with(
+    tag: &str,
+    oom: impl FnOnce(&Path) -> Option<OomSources>,
+    tweak: impl FnOnce(&mut Config),
+    probe: Arc<dyn puddle_agent::bridge::Probe>,
+) -> Rig {
     let dir = TempDir::new(tag);
     let oom = oom(&dir.0);
     let socket = dir.0.join("route.sock");
     let (tx, events) = mpsc::unbounded_channel();
     let sink: Arc<dyn EventSink> = Arc::new(ChanSink(tx));
     let host = start_host(&socket, Arc::clone(&sink));
-    let config = Config {
+    let mut config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         target: Target::Unix(socket),
         oom,
         ..Config::default()
     };
-    let agent = Agent::start(config).await.unwrap();
+    tweak(&mut config);
+    let agent = Agent::start_with_probe(config, probe).await.unwrap();
     Rig {
         agent,
         events,

@@ -40,7 +40,7 @@ fn sandbox() -> SandboxName {
 struct Rig {
     store: Arc<Store>,
     agent: Agent,
-    _route: Route,
+    route: Route,
     _root: IpcRoot,
 }
 
@@ -62,13 +62,15 @@ async fn rig() -> Rig {
         listen: SocketAddr::new(LOCAL, 0),
         target: Target::Unix(route.endpoint().path().to_path_buf()),
         oom: None,
+        // Never the machine's real docker0.
+        bridge: None,
         ..Config::default()
     };
     let agent = Agent::start(config).await.unwrap();
     Rig {
         store,
         agent,
-        _route: route,
+        route,
         _root: root,
     }
 }
@@ -497,4 +499,82 @@ async fn a_server_reset_reaches_the_guest_client_as_a_reset() {
         Some(io::ErrorKind::ConnectionReset),
         "the guest client must see the reset, not a clean end"
     );
+}
+
+/// A probe that always finds a bridge at index 1: the kernel's docker0, faked.
+struct BridgeUp;
+
+impl puddle_agent::bridge::Probe for BridgeUp {
+    fn find(&self, _: Ipv4Addr) -> Option<u32> {
+        Some(1)
+    }
+}
+
+/// T-099: a request that arrives on the Docker bridge listener meets the same policy and lands
+/// in the same audit as one on the loopback listener: same sandbox, same pending row (the
+/// repeat bumps `attempts`), same rule once approved, same record shape.
+#[tokio::test]
+async fn the_bridge_listener_gets_the_same_policy_and_audit_as_loopback() {
+    let rig = rig().await;
+    // A second agent on the same route, listening on the faked bridge address (127.0.0.2).
+    let config = Config {
+        listen: SocketAddr::new(LOCAL, 0),
+        target: Target::Unix(rig.route.endpoint().path().to_path_buf()),
+        oom: None,
+        bridge: Some(puddle_agent::config::BridgeConfig {
+            addr: std::net::SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 0),
+            poll: Duration::from_millis(10),
+        }),
+        ..Config::default()
+    };
+    let agent = Agent::start_with_probe(config, Arc::new(BridgeUp))
+        .await
+        .unwrap();
+    let mut state = agent.bridge_state();
+    let bridge = tokio::time::timeout(
+        Duration::from_secs(10),
+        state.wait_for(|s| s.addr.is_some()),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .addr
+    .unwrap();
+    let echo = echo_server().await;
+    let authority = format!("new.test:{}", echo.port());
+
+    // Unknown host: refused and pending, on both listeners.
+    let (code, _) = connect_via(rig.agent.local_addr(), &authority)
+        .await
+        .unwrap();
+    assert_eq!(code, 403);
+    let (code, _) = connect_via(bridge, &authority).await.unwrap();
+    assert_eq!(code, 403);
+    let pending = rig.store.open_pending(Some(&sandbox())).unwrap();
+    assert_eq!(pending.len(), 1, "one pending item for both listeners");
+    assert_eq!(pending[0].attempts, 2);
+    let records = wait_for_records(&rig.store, 2).await;
+    let shape = |r: &Value| {
+        (
+            r["sandbox_id"].clone(),
+            r["host"].clone(),
+            r["decision"].clone(),
+            r["reason"].clone(),
+            r["pending_id"].clone(),
+        )
+    };
+    assert_eq!(shape(&records[0]), shape(&records[1]));
+
+    // One approval covers both; the bridge then tunnels.
+    allow(&rig.store, "new.test");
+    let (code, mut conn) = connect_via(bridge, &authority).await.unwrap();
+    assert_eq!(code, 200);
+    conn.get_mut().write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    conn.read_exact(&mut back).await.unwrap();
+    assert_eq!(&back, b"ping");
+    drop(conn);
+    let records = wait_for_records(&rig.store, 3).await;
+    assert_eq!(records[2]["decision"], "allow");
+    assert_eq!(records[2]["sandbox_id"], "e2e");
 }
