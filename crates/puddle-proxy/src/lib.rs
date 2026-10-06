@@ -1,5 +1,45 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Egress proxy: the only way out of a sandbox. CONNECT/HTTP handling, rule lookup per request, the pending-request state machine, local-destination toggles, credential injection, upstream chaining (MWE plan W2).
+//! Egress proxy: the only way out of a sandbox (MWE plan W2).
 //!
-//! Placeholder: no code yet. See `docs/STANDARDS.md` ("Workspace layout") for what belongs here.
+//! Every guest connection reaches the host as a yamux stream on the sandbox's route (a per-sandbox
+//! named pipe or Unix socket, `puddle-ipc`), carried by the guest agent (`puddle-agent-proto`).
+//! [`Proxy::serve_route`] accepts the agent's sessions on that route; each proxied stream goes
+//! through these steps:
+//!
+//! 1. **Head**: at most 64 KiB (`431` over it) within [`ProxyConfig::head_timeout`] (`408`).
+//! 2. **Target**: `CONNECT host:port` or an absolute-form `http://` request; the host is
+//!    normalised into a [`puddle_types::Host`]; anything else is a `400`.
+//! 3. **Decision**: the [`puddle_types::Policy`] decides on the name before it is resolved
+//!    (R-10). Deny, pending and blocked are a `403` that says which, with an
+//!    `x-puddle-decision` header (and `x-puddle-pending: <id>` / `x-puddle-blocked: <reason>`);
+//!    a policy error is a `503`: the proxy fails closed.
+//! 4. **Addresses**: an allowed name is resolved once; every address goes through the
+//!    [`AddressCheck`] (default [`PublicOnly`]) and only an address that passed is connected to
+//!    (R-14: local addresses need an exact allow).
+//! 5. **Relay**: `CONNECT` is spliced both ways, an abort on either side reaching the other as a
+//!    reset (T-048); a plain-HTTP request is forwarded once with `Host` rewritten to the checked
+//!    target and its body framed exactly, so nothing unchecked rides along.
+//!
+//! The sandbox is the route's, never anything the guest says (HO-3). Each sandbox has a cap on
+//! open connections and each route on agent sessions ([`ProxyConfig`]), far above what real tools
+//! open (D-2).
+//!
+//! # Features
+//!
+//! - `testing`: in-memory doubles ([`testing::StaticPolicy`], [`testing::AnyAddress`],
+//!   [`testing::StaticResolver`]) for tests. Never use them in product code.
 #![forbid(unsafe_code)]
+
+mod destination;
+mod http;
+mod proxy;
+mod route;
+mod target;
+#[cfg(feature = "testing")]
+pub mod testing;
+
+pub use destination::{
+    AddressCheck, AddressVerdict, BoxFuture, PublicOnly, Resolver, SystemResolver, is_public,
+};
+pub use proxy::{Proxy, ProxyConfig, SandboxHandler};
+pub use route::Route;

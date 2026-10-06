@@ -11,6 +11,21 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+puddle-agent-proto = { workspace = true }
+puddle-ipc = { workspace = true }
+puddle-types = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tracing = { workspace = true }
+
+[features]
+# `testing`: in-memory policy, resolver and allow-any address check for tests (never in product code).
+testing = []
+
+[dev-dependencies]
+futures-util = { workspace = true }
+proptest = { workspace = true }
+puddle-proxy = { path = ".", features = ["testing"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints]
 workspace = true

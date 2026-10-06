@@ -37,7 +37,7 @@ Later, not yet created: the Svelte UI (`ui/`, W5) and the Tauri shell (`crates/p
 **Dependency direction.** `puddle-types` ← `compute`, `proxy`, `store`, `settings` ← `api` ← `puddle`.
 `proxy` and `store` don't depend on each other's internals: the proxy asks for decisions through a
 trait defined in `puddle-types` (or the proxy crate) that `store` implements, and `puddle` wires
-them. `puddle-agent` depends on `puddle-types` and `puddle-agent-proto` only (it is built for the guest); the host side (`proxy`) uses `puddle-agent-proto` too. No cycles, no
+them. `puddle-agent` depends on `puddle-types` and `puddle-agent-proto` only (it is built for the guest); the host side (`proxy`) uses `puddle-agent-proto` too, and `puddle-ipc` for the per-sandbox route it listens on. No cycles, no
 product crate depends on `puddle-e2e`.
 
 **New crate:** only when a component doesn't fit the table (say why in the commit). Copy an

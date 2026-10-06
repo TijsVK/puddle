@@ -535,6 +535,16 @@ dependencies = [
 [[package]]
 name = "puddle-proxy"
 version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "proptest",
+ "puddle-agent-proto",
+ "puddle-ipc",
+ "puddle-proxy",
+ "puddle-types",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "puddle-runtime"
