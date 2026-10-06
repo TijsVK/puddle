@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Pulling an image into msb's cache without creating a sandbox, and its config.
+//!
+//! The SDK 0.7.7 pulls only inside `create`; its image crate does the work, so the adapter calls
+//! it the same way `create` does: cache first, then the registry with the backend's registry
+//! settings (anonymous unless puddle's `config.json` says otherwise, which it doesn't).
+
+use std::collections::BTreeMap;
+
+use microsandbox::LocalBackend;
+use microsandbox::config::RegistryOptions;
+use microsandbox_image::{GlobalCache, Platform, PullOptions, Reference, Registry};
+use puddle_compute::{ComputeError, ImageConfig};
+use puddle_types::ImageRef;
+
+/// Makes sure `image` is in `local`'s cache and returns its config.
+pub(crate) async fn pull(
+    local: &LocalBackend,
+    image: &ImageRef,
+) -> Result<ImageConfig, ComputeError> {
+    let fail = |reason: String| ComputeError::ImagePull {
+        image: image.to_string(),
+        reason,
+    };
+    let reference: Reference = image
+        .as_str()
+        .parse()
+        .map_err(|e| fail(format!("invalid image reference: {e}")))?;
+    let cache = GlobalCache::new(&local.cache_dir()).map_err(|e| fail(e.to_string()))?;
+    let options = PullOptions::default();
+    if let Some((result, _)) = Registry::pull_cached_async(&cache, &reference, &options)
+        .await
+        .map_err(|e| fail(e.to_string()))?
+    {
+        return Ok(convert(result.config));
+    }
+    let settings = local
+        .registry_config(reference.registry(), RegistryOptions::default())
+        .await
+        .map_err(|e| fail(e.to_string()))?;
+    let registry = Registry::builder(Platform::host_linux(), cache)
+        .auth(settings.auth)
+        .extra_ca_certs(settings.ca_certs)
+        .add_insecure_registries(settings.insecure_registries)
+        .build()
+        .map_err(|e| fail(e.to_string()))?;
+    let result = Box::pin(registry.pull(&reference, &options))
+        .await
+        .map_err(|e| fail(e.to_string()))?;
+    Ok(convert(result.config))
+}
+
+/// The OCI config as puddle's [`ImageConfig`]. `ENV` entries without `=` are kept with an empty
+/// value; labels are sorted by key.
+pub(crate) fn convert(config: microsandbox_image::ImageConfig) -> ImageConfig {
+    ImageConfig {
+        entrypoint: config.entrypoint.unwrap_or_default(),
+        cmd: config.cmd.unwrap_or_default(),
+        env: config
+            .env
+            .into_iter()
+            .map(|entry| match entry.split_once('=') {
+                Some((k, v)) => (k.to_owned(), v.to_owned()),
+                None => (entry, String::new()),
+            })
+            .collect(),
+        working_dir: config.working_dir.filter(|w| !w.is_empty()),
+        user: config.user.filter(|u| !u.is_empty()),
+        labels: config.labels.into_iter().collect::<BTreeMap<_, _>>(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    #[test]
+    fn oci_config_becomes_puddles_image_config() {
+        let oci = microsandbox_image::ImageConfig {
+            env: vec![
+                "PATH=/usr/bin:/bin".into(),
+                "EMPTY=".into(),
+                "A=b=c".into(),
+                "BARE".into(),
+            ],
+            cmd: Some(vec!["bash".into()]),
+            entrypoint: Some(vec!["dockerd-entrypoint.sh".into()]),
+            working_dir: Some("/src".into()),
+            user: Some("vscode".into()),
+            labels: HashMap::from([
+                ("devcontainer.metadata".to_owned(), "[]".to_owned()),
+                ("a".to_owned(), "1".to_owned()),
+            ]),
+            ..Default::default()
+        };
+        let c = convert(oci);
+        assert_eq!(c.entrypoint, ["dockerd-entrypoint.sh"]);
+        assert_eq!(c.cmd, ["bash"]);
+        assert_eq!(c.env_var("PATH"), Some("/usr/bin:/bin"));
+        assert_eq!(c.env_var("EMPTY"), Some(""));
+        assert_eq!(c.env_var("A"), Some("b=c"));
+        assert_eq!(c.env_var("BARE"), Some(""));
+        assert_eq!(c.working_dir.as_deref(), Some("/src"));
+        assert_eq!(c.user.as_deref(), Some("vscode"));
+        assert_eq!(
+            c.labels.keys().collect::<Vec<_>>(),
+            ["a", "devcontainer.metadata"]
+        );
+    }
+
+    #[test]
+    fn missing_and_empty_fields_are_none_or_empty() {
+        let c = convert(microsandbox_image::ImageConfig {
+            working_dir: Some(String::new()),
+            user: Some(String::new()),
+            ..Default::default()
+        });
+        assert!(c.entrypoint.is_empty() && c.cmd.is_empty() && c.env.is_empty());
+        assert_eq!(c.working_dir, None);
+        assert_eq!(c.user, None);
+        assert!(c.labels.is_empty());
+    }
+}

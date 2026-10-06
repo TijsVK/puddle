@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-compute-msb"
+description = "The compute-plane traits over the msb SDK: sandboxes, volumes, images, exec, SSH, the memory setting (W1, T-106)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+microsandbox = { workspace = true }
+microsandbox-image = { workspace = true }
+puddle-compute = { workspace = true }
+puddle-runtime = { workspace = true }
+puddle-types = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
+microsandbox-runtime = { workspace = true }
+puddle-compute = { workspace = true, features = ["contract"] }
+puddle-ipc = { workspace = true }
+puddle-vm-tests = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

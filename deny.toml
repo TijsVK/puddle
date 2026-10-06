@@ -13,6 +13,11 @@ ignore = [
     # Unmaintained, not vulnerable: bincode 2 comes in through the msb SDK `=0.7.7`
     # (microsandbox-filesystem, msb_krun). Review at each SDK/fork bump (T-117, T-118), by 2027-01-06.
     { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained; transitive via the pinned msb SDK" },
+    # rsa timing side channel (Marvin), no fixed release. Comes in through the SDK's `ssh` feature
+    # (russh, ssh-key). puddle's SSH server listens only on an owner-only local pipe/socket (T-105)
+    # with an ed25519 host key; the attack needs remote timing observation. T-106; review with
+    # T-114 (SSH endpoint) and at each SDK/fork bump, by 2027-01-06.
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack; transitive via the msb SDK's russh, local-only SSH" },
 ]
 
 [licenses]

@@ -25,17 +25,23 @@ puddle-agent = { path = "crates/puddle-agent" }
 puddle-agent-proto = { path = "crates/puddle-agent-proto" }
 puddle-runtime = { path = "crates/puddle-runtime" }
 puddle-ipc = { path = "crates/puddle-ipc" }
+puddle-compute-msb = { path = "crates/puddle-compute-msb" }
+puddle-vm-tests = { path = "crates/puddle-vm-tests" }
 puddle-settings = { path = "crates/puddle-settings" }
 puddle-netpolicy = { path = "crates/puddle-netpolicy" }
 puddle-ca = { path = "crates/puddle-ca" }
 
 # External
-object = { version = "0.40", default-features = false }
 # msb SDK, exact pin: the SDK and the bundled runtime move together (D-19). Default features
 # off: no build-time runtime download, no keyring/dbus, no cloud client. `net` is required even
 # without guest networking: without it the SDK's launch config lacks `sandbox_slot` and a release
-# msb refuses it ("missing field `sandbox_slot`", T-102).
-microsandbox = { version = "=0.7.7", default-features = false, features = ["local", "net"] }
+# msb refuses it ("missing field `sandbox_slot`", T-102). `ssh` for the in-process SSH server.
+microsandbox = { version = "=0.7.7", default-features = false, features = ["local", "net", "ssh"] }
+# The SDK's image crate, same pin: the SDK has no public "pull without creating" call (T-106).
+microsandbox-image = { version = "=0.7.7", default-features = false }
+# Only for building the SDK's boot error in tests; same pin.
+microsandbox-runtime = { version = "=0.7.7", default-features = false }
+object = { version = "0.40", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
 sha2 = "0.11"
