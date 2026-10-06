@@ -30,11 +30,16 @@ proptest! {
         let _ = normalise_host(&raw);
     }
 
-    /// Case never changes the destination.
+    /// Case never changes the destination, or whether (and why) a name is refused. The error
+    /// quotes the input as given, so refusals are compared without it.
     #[test]
     fn ascii_case_is_folded(name in "[a-z][a-z0-9-]{0,20}[a-z0-9](\\.[a-z][a-z0-9]{0,10}){1,3}") {
         let upper = name.to_ascii_uppercase();
-        prop_assert_eq!(normalise_host(&upper), normalise_host(&name));
+        let without_input = |r: Result<_, NameError>| r.map_err(|e| match e {
+            NameError::Invalid { reason, .. } => reason.to_owned(),
+            other => format!("{other:?}"),
+        });
+        prop_assert_eq!(without_input(normalise_host(&upper)), without_input(normalise_host(&name)));
     }
 
     /// Every IP literal is accepted as itself, bracketed or not for IPv6.
