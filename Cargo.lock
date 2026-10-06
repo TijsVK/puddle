@@ -2814,8 +2814,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "anyhow",
  "astral-tokio-tar",
@@ -2873,8 +2873,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-agent-client"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "bytes",
  "ciborium",
@@ -2892,8 +2892,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-control-client"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "microsandbox-protocol",
  "microsandbox-protocol-client",
@@ -2908,8 +2908,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-db"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "async-trait",
  "microsandbox-types",
@@ -2923,8 +2923,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-filesystem"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "bincode",
  "crossbeam-channel",
@@ -2944,8 +2944,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-image"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "astral-tokio-tar",
  "async-compression",
@@ -2974,8 +2974,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-metrics"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "chrono",
  "libc",
@@ -2985,8 +2985,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-migration"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "microsandbox-db",
  "sea-orm-migration",
@@ -2995,8 +2995,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-network"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "hickory-proto",
  "ipnetwork",
@@ -3011,8 +3011,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-protocol"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "bytes",
  "chrono",
@@ -3028,8 +3028,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-protocol-client"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "microsandbox-protocol",
  "serde",
@@ -3040,8 +3040,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-runtime"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "base64 0.23.1",
  "cap-primitives",
@@ -3073,8 +3073,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-types"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "chrono",
  "hex",
@@ -3090,8 +3090,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-types-macros"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3100,8 +3100,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-utils"
-version = "0.7.7-puddle.3"
-source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7"
+version = "0.7.7-puddle.6"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.6#7ac3f65496c09539b75c7d5ecaa9a7f86788f25a"
 dependencies = [
  "dirs",
  "libc",
@@ -3211,7 +3211,7 @@ dependencies = [
 [[package]]
 name = "msb_krun"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 dependencies = [
  "crossbeam-channel",
  "kvm-bindings",
@@ -3230,7 +3230,7 @@ dependencies = [
 [[package]]
 name = "msb_krun_arch"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 dependencies = [
  "kvm-bindings",
  "kvm-ioctls",
@@ -3244,12 +3244,12 @@ dependencies = [
 [[package]]
 name = "msb_krun_arch_gen"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 
 [[package]]
 name = "msb_krun_cpuid"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 dependencies = [
  "kvm-bindings",
  "kvm-ioctls",
@@ -3259,7 +3259,7 @@ dependencies = [
 [[package]]
 name = "msb_krun_devices"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 dependencies = [
  "bincode",
  "bitflags 1.3.2",
@@ -3289,7 +3289,7 @@ dependencies = [
 [[package]]
 name = "msb_krun_hvf"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 dependencies = [
  "crossbeam-channel",
  "libloading",
@@ -3301,7 +3301,7 @@ dependencies = [
 [[package]]
 name = "msb_krun_kernel"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 dependencies = [
  "msb-vm-memory",
  "msb_krun_utils",
@@ -3310,7 +3310,7 @@ dependencies = [
 [[package]]
 name = "msb_krun_polly"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 dependencies = [
  "libc",
  "msb_krun_utils",
@@ -3319,7 +3319,7 @@ dependencies = [
 [[package]]
 name = "msb_krun_smbios"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 dependencies = [
  "msb-vm-memory",
 ]
@@ -3327,7 +3327,7 @@ dependencies = [
 [[package]]
 name = "msb_krun_utils"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 dependencies = [
  "bitflags 1.3.2",
  "crossbeam-channel",
@@ -3342,7 +3342,7 @@ dependencies = [
 [[package]]
 name = "msb_krun_vmm"
 version = "0.1.41"
-source = "git+https://github.com/TijsVK/libkrun?rev=5ea3fa5376b1df6ec068e89d0647bf13bee4f347#5ea3fa5376b1df6ec068e89d0647bf13bee4f347"
+source = "git+https://github.com/TijsVK/libkrun?rev=bdf711f0c7ec5117b70c697282c61943fca36ee7#bdf711f0c7ec5117b70c697282c61943fca36ee7"
 dependencies = [
  "bincode",
  "bzip2",
