@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-upstream"
+description = "Upstream company proxy: discovery (WinINet, WinHTTP PAC/WPAD, policy, env) and, later, authentication (W2)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinHttp",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+] }
+
+[features]
+# `testing`: `FakeOs`, an in-memory stand-in for the operating system's proxy answers (never in
+# product code).
+testing = []
+
+[dev-dependencies]
+proptest = { workspace = true }
+puddle-upstream = { path = ".", features = ["testing"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+
+[lints]
+workspace = true

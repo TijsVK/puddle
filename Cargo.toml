@@ -36,6 +36,7 @@ puddle-certs = { path = "crates/puddle-certs" }
 puddle-workspace = { path = "crates/puddle-workspace" }
 puddle-doctor = { path = "crates/puddle-doctor" }
 puddle-lifecycle = { path = "crates/puddle-lifecycle" }
+puddle-upstream = { path = "crates/puddle-upstream" }
 
 # External
 # msb SDK from puddle's fork (D-53), tag `v<release>-puddle.N`. The SDK and the bundled runtime

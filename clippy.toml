@@ -6,3 +6,6 @@ allow-panic-in-tests = true
 allow-indexing-slicing-in-tests = true
 allow-dbg-in-tests = true
 allow-print-in-tests = true
+
+# Names from the Windows proxy stack that doc-markdown would want in backticks (T-134).
+doc-valid-idents = ["WinINet", "WinHTTP", "WPAD", "PoC", "NTLM", "SSPI", ".."]

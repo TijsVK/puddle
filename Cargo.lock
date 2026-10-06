@@ -4309,6 +4309,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-upstream"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "puddle-upstream",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "puddle-vm-tests"
 version = "0.0.0"
 dependencies = [
