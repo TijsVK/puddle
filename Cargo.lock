@@ -4097,6 +4097,7 @@ version = "0.0.0"
 dependencies = [
  "puddle-compute",
  "puddle-compute-msb",
+ "puddle-guest-env",
  "puddle-types",
  "puddle-vm-tests",
  "serde_json",

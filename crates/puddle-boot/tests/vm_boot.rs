@@ -7,6 +7,7 @@
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::indexing_slicing,
     reason = "test helpers outside #[test] fns: a failed setup fails the test"
 )]
 
@@ -20,6 +21,7 @@ use puddle_boot::{
 use puddle_compute::fake::FakeRuntime;
 use puddle_compute::{ExecRequest, Runtime, Sandbox, SandboxSpec};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
+use puddle_guest_env::{ProxySettings, guest_proxy_config};
 use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, SandboxName};
 use puddle_vm_tests::Settings;
 
@@ -229,4 +231,131 @@ async fn vm_image_without_sh_gives_a_clear_error() {
         panic!("{err:?}")
     };
     assert!(matches!(**failure, BootFailure::NoShell { .. }), "{err}");
+}
+
+/// The Docker CLI config as `docker login` saves it: the file it read plus `auths` and
+/// `credHelpers`, written whole with tab indents.
+fn docker_login(config: &str) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(config).unwrap();
+    v["auths"] = serde_json::json!({"registry.example.test": {"auth": "dXNlcjpwdWRkbGU="}});
+    v["credHelpers"] = serde_json::json!({"gcr.io": "gcloud"});
+    let two_spaces = serde_json::to_string_pretty(&v).unwrap();
+    let lines: Vec<String> = two_spaces
+        .lines()
+        .map(|l| {
+            let body = l.trim_start_matches(' ');
+            "\t".repeat((l.len() - body.len()) / 2) + body
+        })
+        .collect();
+    lines.join("\n")
+}
+
+async fn write_guest<S: Sandbox>(sb: &GatedSandbox<S>, path: &str, text: &str) {
+    let out = sb
+        .exec(
+            ExecRequest::sh(format!("cat > {path}"))
+                .as_user("root")
+                .with_stdin(text.as_bytes().to_vec()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.status.code, 0);
+}
+
+/// T-097: the Docker CLI config from `puddle-guest-env` is merged, so a `docker login` survives
+/// restarts byte for byte; when the provider stops listing it only puddle's keys go; a file the
+/// merge tool can't parse is left alone and the boot goes on. On Alpine (busybox ash runs the
+/// hook; the static agent is the merge tool).
+async fn check_merge() {
+    const DOCKER: &str = "/root/.docker/config.json";
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let image = ImageRef::new(FakeRuntime::ALPINE).unwrap();
+    let config = rt.pull_image(&image).await.unwrap();
+    let proxy = guest_proxy_config(&ProxySettings::default(), &config.env).unwrap();
+    let docker = proxy
+        .files
+        .iter()
+        .find(|f| f.path().as_str() == DOCKER)
+        .cloned()
+        .unwrap();
+    let plan = |files: Vec<GuestFile>| {
+        BootPlan::builder(&config)
+            .env(&proxy.env)
+            .files(files)
+            .build()
+            .unwrap()
+    };
+    let with = plan(vec![docker.clone()]);
+    let without = plan(vec![]);
+    let dir = assets_dir(rt, "merge");
+    let assets = write_assets(&dir).unwrap();
+    let name = sandbox_name(&settings, "merge");
+    let spec = with_boot_mounts(
+        SandboxSpec::new(name.clone(), image).with_env(&proxy.env),
+        assets,
+        Some(&agent_binary(&dir)),
+    );
+    let gate = Gate::new();
+    let hook = BootHook::new();
+
+    // Boot 1: puddle creates the file (0600: it will hold credentials).
+    let sb = hook.create(rt, spec, &with, &gate).await.unwrap();
+    let (_, created) = sh(&sb, &format!("cat {DOCKER}")).await;
+    assert_eq!(
+        format!("{created}\n").as_bytes(),
+        docker.contents(),
+        "boot 1"
+    );
+    assert_eq!(sh(&sb, &format!("stat -c %a {DOCKER}")).await.1, "600");
+    let login = docker_login(&created);
+    write_guest(&sb, DOCKER, &login).await;
+    sb.stop().await.unwrap();
+
+    // Boots 2 and 3: the login is still there, byte for byte, and so are puddle's proxies.
+    for boot in [2, 3] {
+        let sb = hook.start(rt, &name, &with, &gate).await.unwrap();
+        let report = &sb.boot_report().stdout;
+        assert!(!report.contains("left as it is"), "boot {boot}: {report}");
+        assert_eq!(
+            sh(&sb, &format!("cat {DOCKER}")).await.1,
+            login,
+            "boot {boot}"
+        );
+        sb.stop().await.unwrap();
+    }
+
+    // Boot 4: no provider lists the file: puddle's keys go, the login stays.
+    let sb = hook.start(rt, &name, &without, &gate).await.unwrap();
+    let (_, text) = sh(&sb, &format!("cat {DOCKER}")).await;
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(v.get("proxies").is_none(), "boot 4: {text}");
+    assert_eq!(
+        v["auths"]["registry.example.test"]["auth"],
+        "dXNlcjpwdWRkbGU="
+    );
+    assert_eq!(v["credHelpers"]["gcr.io"], "gcloud");
+    write_guest(&sb, DOCKER, "{ \"auths\": oops").await;
+    sb.stop().await.unwrap();
+
+    // Boot 5: a file that isn't JSON is left as it is; the boot goes on.
+    let sb = hook.start(rt, &name, &with, &gate).await.unwrap();
+    let report = &sb.boot_report().stdout;
+    assert!(
+        report.contains(&format!(
+            "{DOCKER} left as it is: the file is not valid JSON"
+        )),
+        "boot 5: {report}"
+    );
+    assert_eq!(
+        sh(&sb, &format!("cat {DOCKER}")).await.1,
+        "{ \"auths\": oops"
+    );
+    sb.stop().await.unwrap();
+    rt.remove(&name).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_merged_docker_config_keeps_a_docker_login_across_boots() {
+    Box::pin(check_merge()).await;
 }
