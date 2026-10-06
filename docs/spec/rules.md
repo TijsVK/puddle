@@ -92,6 +92,19 @@ States: `requested → allowed | denied | expired`. The three end states are fin
   endpoints are blocked whatever rules or toggles say, and never become pending (D-26).
   *Changed 2026-10-06 (T-092): the exact-IP case was added to follow D-44 ("a local destination
   needs an exact name or IP entry"); before, only an exact name rule or an approval counted.*
+- **R-27 An exact IP deny wins for a resolved address** (W2 applies this to every address an
+  allowed name resolves to, before R-14). The proxy looks up each address's own rules
+  (`Policy::lookup`, R-5 to R-7 as for a request to that literal): if they deny it, the address is
+  never used, whatever allows the name (exact, suffix, or an approval) and whether it is local or
+  public. The remaining addresses go on to R-14. If every address is denied, the request is denied
+  with the IP rule's id (`x-puddle-rule`, and `rule_id` with `resolved_ip` in the `connection`
+  record); no pending row is written, because approving the name can't change it. A failed lookup
+  refuses the request (fail closed). A request for an IP literal was already decided as that
+  address. *(default)*: an address's own rules use R-6 precedence, so a sandbox allow of the
+  address beats a global deny of it. Numbered R-27 to keep the other numbers (and their test
+  names) stable. *Added 2026-10-06 (T-095): before, an IP deny was checked only on the wildcard
+  path, so an exact name allow or an approval reached a denied address (firewall model,
+  2026-10-04: false allows are very bad).*
 - **R-15 Approve and deny** take a row id and four choices: effect (`allow`/`deny`), scope (`sandbox`,
   the default, or `global`), pattern (`exact`, the default, or a suffix of the row's host that passes
   R-4) and expiry (permanent, the default, or a duration). This covers the inbox's four outcomes
