@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The real Windows certificate stores (Windows CI job): a test root added to
-//! `CurrentUser\Root` is exported, one also in `CurrentUser\Disallowed` is not, and the machine
-//! (Intune-style) and Group Policy stores are read too.
+//! The real Windows certificate stores (Windows CI job): a root in `CurrentUser\Disallowed` is
+//! not exported, machine (Intune-style) and Group Policy roots are, and a `CurrentUser\Root`
+//! root is wherever the session may add one (not on the hosted runner, see below).
 //!
-//! These tests change the stores of the user running them, so they only run where `CI` is set
-//! (GitHub Actions sets it); elsewhere they pass without doing anything. Every certificate they
-//! add is removed again, pass or fail.
+//! These tests change the stores of the user running them, so they only run where `CI` or
+//! `PUDDLE_STORE_TESTS` is set; elsewhere they pass without doing anything. Every certificate
+//! they add is removed again, pass or fail.
 #![cfg(windows)]
 #![expect(
     clippy::unwrap_used,
@@ -38,9 +38,9 @@ const LM_ROOT_GP: StoreSource = StoreSource::new(
 const POWERSHELL_LIMIT: Duration = Duration::from_secs(90);
 
 fn enabled() -> bool {
-    let on = std::env::var_os("CI").is_some();
+    let on = std::env::var_os("CI").is_some() || std::env::var_os("PUDDLE_STORE_TESTS").is_some();
     if !on {
-        eprintln!("skipped: changes the user's certificate stores; runs only where CI is set");
+        eprintln!("skipped: changes the certificate stores; set PUDDLE_STORE_TESTS=1 to run");
     }
     on
 }
@@ -125,22 +125,17 @@ fn test_root(tag: &str) -> TestCert {
     }
 }
 
-/// Imports `cert` into `store` (`Cert:\...` path). For `CurrentUser\Root`, falls back to
-/// writing the registry entry directly when the import is refused or times out (the import
-/// needs the user's confirmation on an interactive desktop). Returns how it was added.
-fn add(cert: &TestCert, store: &str, registry_fallback: Option<&str>) -> String {
-    let import = format!(
+/// Imports `cert` into `store` (`Cert:\\...` path); `Err` with PowerShell's output when refused.
+fn try_add(cert: &TestCert, store: &str) -> Result<(), String> {
+    powershell(&format!(
         "Import-Certificate -FilePath '{}' -CertStoreLocation '{store}' | Out-Null",
         cert.file.display()
-    );
-    match powershell(&import) {
-        Ok(_) => "Import-Certificate".to_owned(),
-        Err(e) => {
-            let key = registry_fallback.unwrap_or_else(|| panic!("import into {store}: {e}"));
-            write_registry_blob(cert, key);
-            format!("registry (Import-Certificate failed: {})", e.trim())
-        }
-    }
+    ))
+    .map(drop)
+}
+
+fn add(cert: &TestCert, store: &str) {
+    try_add(cert, store).unwrap_or_else(|e| panic!("import into {store}: {e}"));
 }
 
 /// Writes `cert` as a serialized certificate (property 32 = the DER) under `key`, the way
@@ -202,39 +197,57 @@ fn synced_sources(roots: &CorporateRoots, der: &[u8]) -> Option<Vec<StoreSource>
         .map(|c| c.sources().to_vec())
 }
 
-const CU_ROOT_KEY: &str = "HKCU:\\Software\\Microsoft\\SystemCertificates\\Root";
 const LM_GP_ROOT_KEY: &str = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\SystemCertificates\\Root";
 
+/// `CurrentUser\\Root` needs the user to confirm each added root in a dialog; a non-interactive
+/// session (the hosted runner) gets "UI is not allowed in this operation", and a root written to
+/// the store's registry key directly is not enumerated (T-110 CI run 37404373158). So the
+/// export half runs where the import succeeds (an interactive session, e.g. the laptop, where
+/// someone clicks Yes) and is reported as skipped otherwise.
 #[test]
-fn a_current_user_root_is_exported_and_a_disallowed_one_is_not() {
+fn a_current_user_root_is_exported_when_one_can_be_added() {
     if !enabled() {
         return;
     }
-    let trusted = test_root("trusted");
-    let banned = test_root("banned");
-    let _cleanup = Cleanup(vec![
-        (
-            &trusted,
-            vec!["Cert:\\CurrentUser\\Root"],
-            vec![CU_ROOT_KEY],
-        ),
-        (
-            &banned,
-            vec!["Cert:\\CurrentUser\\Root", "Cert:\\CurrentUser\\Disallowed"],
-            vec![CU_ROOT_KEY],
-        ),
-    ]);
-    let how = add(&trusted, "Cert:\\CurrentUser\\Root", Some(CU_ROOT_KEY));
-    eprintln!("CurrentUser\\Root: added by {how}");
-    add(&banned, "Cert:\\CurrentUser\\Root", Some(CU_ROOT_KEY));
-    add(&banned, "Cert:\\CurrentUser\\Disallowed", None);
-
-    let roots = select();
+    let trusted = test_root("user");
+    let _cleanup = Cleanup(vec![(&trusted, vec!["Cert:\\CurrentUser\\Root"], vec![])]);
+    if let Err(e) = try_add(&trusted, "Cert:\\CurrentUser\\Root") {
+        eprintln!(
+            "skipped: CurrentUser\\Root refused the import here: {}",
+            e.trim()
+        );
+        return;
+    }
     assert_eq!(
-        synced_sources(&roots, &trusted.der),
+        synced_sources(&select(), &trusted.der),
         Some(vec![CU_ROOT]),
         "the CurrentUser root is not exported"
     );
+}
+
+#[test]
+fn a_root_in_current_user_disallowed_is_not_exported() {
+    if !enabled() {
+        return;
+    }
+    let banned = test_root("banned");
+    let _cleanup = Cleanup(vec![(
+        &banned,
+        vec![
+            "Cert:\\LocalMachine\\Root",
+            "Cert:\\CurrentUser\\Disallowed",
+        ],
+        vec![],
+    )]);
+    add(&banned, "Cert:\\LocalMachine\\Root");
+    let roots = select();
+    assert_eq!(
+        synced_sources(&roots, &banned.der),
+        Some(vec![LM_ROOT]),
+        "control: trusted before it is distrusted"
+    );
+    add(&banned, "Cert:\\CurrentUser\\Disallowed");
+    let roots = select();
     assert_eq!(
         synced_sources(&roots, &banned.der),
         None,
@@ -265,7 +278,7 @@ fn machine_and_group_policy_roots_are_exported() {
         (&gpo, vec![], vec![LM_GP_ROOT_KEY]),
     ]);
     // Needs an elevated runner (GitHub's is); Intune puts its roots in LocalMachine\Root.
-    add(&intune, "Cert:\\LocalMachine\\Root", None);
+    add(&intune, "Cert:\\LocalMachine\\Root");
     // A GPO-pushed root, written where Group Policy writes it (T-026 lab L8).
     write_registry_blob(&gpo, LM_GP_ROOT_KEY);
 
