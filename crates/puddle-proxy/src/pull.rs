@@ -152,7 +152,9 @@ impl fmt::Debug for ProxyUrl {
     }
 }
 
-/// The image-pull proxy, bound but not serving yet. See the [module docs](self).
+/// The image-pull proxy (T-116), bound but not serving yet: `127.0.0.1` only, a per-run token
+/// every request must carry (`407` otherwise), registered in [`PuddleEndpoints`] so guests never
+/// reach it, and the address guard without the rules.
 ///
 /// Bind it early (it uses a std listener, so no async runtime is needed), put
 /// [`PullProxy::proxy_url`] into the environment before any thread starts, then
