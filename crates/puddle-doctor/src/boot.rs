@@ -13,17 +13,11 @@ use std::time::{Duration, Instant};
 use puddle_runtime::{RuntimeEnv, RuntimeLayout};
 
 use crate::diagnose::PROBE_EXIT_CODE;
-use crate::facts::{BootFacts, ProcessOutcome};
+use crate::facts::BootFacts;
 use crate::launch;
 
 /// The probe's path inside the guest.
 const PROBE_GUEST_PATH: &str = "/probe";
-
-/// msb's Windows boot race (T-106): the VM process sometimes exits before its agent relay is up.
-const BOOT_RACE: &str = "before agent relay became available";
-
-/// The least time worth a retry after losing the boot race.
-const MIN_RETRY_TIME: Duration = Duration::from_secs(4);
 
 /// A statically linked x86-64 Linux program of 132 bytes, without libc or loader: one ELF header,
 /// one loadable segment, and the code `mov edi, 42; mov eax, 231 (exit_group); syscall`.
@@ -92,8 +86,7 @@ pub fn write_rootfs(dir: &Path) -> std::io::Result<()> {
 }
 
 /// Boots a test VM with the msb in `runtime_dir`, giving up after `limit`. Uses a throwaway msb
-/// home and root file system in the temp dir; retries once if msb loses its Windows boot race and
-/// time is left.
+/// home and root file system in the temp dir;.
 #[must_use]
 pub fn test_boot(runtime_dir: &Path, arch: &str, limit: Duration) -> BootFacts {
     if arch != "x86_64" {
@@ -125,18 +118,11 @@ pub fn test_boot(runtime_dir: &Path, arch: &str, limit: Duration) -> BootFacts {
             };
         }
     };
-    let mut retried = false;
-    loop {
-        let left = limit.saturating_sub(start.elapsed());
-        let outcome = launch::run(&mut command(&layout, &rootfs), left);
-        let lost_race = matches!(&outcome, ProcessOutcome::Exited { stderr_tail, .. }
-            if stderr_tail.contains(BOOT_RACE));
-        if lost_race && !retried && limit.saturating_sub(start.elapsed()) >= MIN_RETRY_TIME {
-            retried = true;
-            continue;
-        }
-        return BootFacts::Ran { outcome, retried };
-    }
+    let outcome = launch::run(
+        &mut command(&layout, &rootfs),
+        limit.saturating_sub(start.elapsed()),
+    );
+    BootFacts::Ran { outcome }
 }
 
 fn command(layout: &RuntimeLayout, rootfs: &Path) -> Command {

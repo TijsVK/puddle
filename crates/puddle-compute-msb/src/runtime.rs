@@ -221,42 +221,15 @@ impl MsbRuntime {
         self.inner.sandboxes_dir.join(name)
     }
 
-    /// msb T-039: a create that fails after making the sandbox directory leaves it behind and
-    /// the name stays blocked. Remove it when this create made it and no record exists.
-    async fn remove_leftover_dir(&self, name: &SandboxName) {
-        let dir = self.sandbox_dir(name.as_str());
-        if !dir.exists() {
-            return;
-        }
-        if let Ok(None) = self.record(name.as_str()).await
-            && let Err(e) = std::fs::remove_dir_all(&dir)
-        {
-            tracing::warn!(sandbox = %name, dir = %dir.display(), error = %e,
-                "failed create left a directory that can't be removed; the name stays blocked");
-        }
-    }
-
-    /// After a create lost the boot race: the record it may have left (down) and its directory
-    /// go, so the retry finds the name free, as it was before this create.
-    async fn discard_failed_create(&self, name: &SandboxName) {
-        if let Ok(Some(record)) = self.record(name.as_str()).await
-            && status(record.status_snapshot()).is_down()
-            && let Err(e) = self.sdk(Sandbox::remove(name.as_str())).await
-        {
-            tracing::warn!(sandbox = %name, error = %e, "can't remove the record of a failed boot");
-        }
-        self.remove_leftover_dir(name).await;
-    }
-
-    /// Logs a lost boot race with the tail of msb's logs for the sandbox: the evidence for the
-    /// upstream fix (T-106 follow-up).
-    fn log_boot_race(&self, op: &str, name: &SandboxName, attempt: u32, error: &MicrosandboxError) {
+    /// Logs a lost boot race with the tail of msb's logs for the sandbox. The fork's `-puddle.6`
+    /// fixes the race (T-096), so seeing this means a regression: the logs are the evidence.
+    fn log_boot_race(&self, op: &str, name: &SandboxName, error: &MicrosandboxError) {
         let logs = log_tail(
             &self.sandbox_dir(name.as_str()).join("logs"),
             LOG_TAIL_BYTES,
         );
-        tracing::warn!(sandbox = %name, op, attempt, error = %error, logs = %logs,
-            "msb's VM exited before its agent relay was up; trying once more");
+        tracing::error!(sandbox = %name, op, error = %error, logs = %logs,
+            "msb's VM exited before its agent relay was up (fixed in the fork since -puddle.6)");
     }
 
     async fn handle_for(
@@ -278,17 +251,12 @@ impl MsbRuntime {
 const OPEN_ATTEMPTS: u32 = 5;
 const OPEN_BACKOFF: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// How often create and start try when msb loses its boot race (see [`is_boot_race`]).
-const BOOT_ATTEMPTS: u32 = 2;
-
 /// How much of each msb log file a lost boot race logs.
 const LOG_TAIL_BYTES: usize = 4096;
 
-/// msb on Windows sometimes loses the race between the guest's bootstrap and the host's agent
-/// relay: the VM exits 0 before the relay is up, and the SDK reports a synthetic boot error. Seen
-/// on 4 of ~45 creates on the hosted windows-2025 runner (T-106); the 0.6.10 regression in
-/// `docs/upstream/microsandbox-windows-bootstrap-regression.md` (workspace) has the same symptom.
-/// A second attempt boots. Never seen on Linux.
+/// msb on Windows used to lose the race between the guest's bootstrap and the host's agent
+/// relay: the VM exited 0 before the relay was up, and the SDK reported a synthetic boot error
+/// (T-106). The fork's `-puddle.6` fixes it (T-096); this only recognises it for the diagnostic.
 pub(crate) fn is_boot_race(error: &MicrosandboxError) -> bool {
     matches!(error, MicrosandboxError::BootStart { err, .. }
         if err.message.contains("before agent relay became available"))
@@ -347,7 +315,8 @@ impl Runtime for MsbRuntime {
                 })?;
             Ok(Capabilities {
                 runtime_version: version,
-                // The adapter removes what a failed create leaves (remove_leftover_dir).
+                // The fork removes what a failed create leaves (`0ad1ef63`, since -puddle.1); the
+                // contract suite's volume-mismatch case checks it on every VM run.
                 stale_dir_fixed: true,
                 // The fork's SSH server sends no exit status for a signal-killed command, so
                 // clients see a failure (fork `359f1585`; stock 0.7.7 sent 0).
@@ -394,23 +363,18 @@ impl Runtime for MsbRuntime {
             self.check_volumes(name.as_str(), &spec_mounts(&spec))
                 .await?;
             self.pull_image(&spec.image).await?;
-            let mut attempt = 1;
-            loop {
-                match self.sdk(spec::builder(&spec).create()).await {
-                    Ok(sdk) => return self.handle_for(&name, sdk).await,
-                    Err(e) if attempt < BOOT_ATTEMPTS && is_boot_race(&e) => {
-                        self.log_boot_race("create", &name, attempt, &e);
-                        self.discard_failed_create(&name).await;
-                        attempt += 1;
+            match self.sdk(spec::builder(&spec).create()).await {
+                Ok(sdk) => self.handle_for(&name, sdk).await,
+                Err(e) => {
+                    if is_boot_race(&e) {
+                        self.log_boot_race("create", &name, &e);
                     }
-                    Err(e) => {
-                        self.remove_leftover_dir(&name).await;
-                        return Err(match e {
-                            e @ (MicrosandboxError::ImageNotFound(_)
-                            | MicrosandboxError::Image(_)) => map("create", spec.image.as_str(), e),
-                            e => map("create", name.as_str(), e),
-                        });
-                    }
+                    Err(match e {
+                        e @ (MicrosandboxError::ImageNotFound(_) | MicrosandboxError::Image(_)) => {
+                            map("create", spec.image.as_str(), e)
+                        }
+                        e => map("create", name.as_str(), e),
+                    })
                 }
             }
         })
@@ -438,15 +402,13 @@ impl Runtime for MsbRuntime {
                 .map(|v| (v, None))
                 .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
-            let mut attempt = 1;
-            loop {
-                match self.sdk(Sandbox::start(name.as_str())).await {
-                    Ok(sdk) => return self.handle_for(name, sdk).await,
-                    Err(e) if attempt < BOOT_ATTEMPTS && is_boot_race(&e) => {
-                        self.log_boot_race("start", name, attempt, &e);
-                        attempt += 1;
+            match self.sdk(Sandbox::start(name.as_str())).await {
+                Ok(sdk) => self.handle_for(name, sdk).await,
+                Err(e) => {
+                    if is_boot_race(&e) {
+                        self.log_boot_race("start", name, &e);
                     }
-                    Err(e) => return Err(map("start", name.as_str(), e)),
+                    Err(map("start", name.as_str(), e))
                 }
             }
         })

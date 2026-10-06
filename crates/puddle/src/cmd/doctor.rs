@@ -158,7 +158,6 @@ mod tests {
                     stderr_tail: String::new(),
                     elapsed: Duration::from_millis(900),
                 },
-                retried: false,
             }
         }
         fn job(&self) -> Option<JobFacts> {

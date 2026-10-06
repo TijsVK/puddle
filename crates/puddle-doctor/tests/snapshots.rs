@@ -48,10 +48,9 @@ fn exited(code: i32, stdout: &str, stderr: &str, ms: u64) -> ProcessOutcome {
     }
 }
 
-fn booted(retried: bool) -> BootFacts {
+fn booted() -> BootFacts {
     BootFacts::Ran {
         outcome: exited(42, "", "", 1130),
-        retried,
     }
 }
 
@@ -79,7 +78,7 @@ fn windows() -> Fake {
             overridden: false,
         },
         launch: exited(0, "msb 0.7.7-puddle.2", "", 85),
-        boot: booted(false),
+        boot: booted(),
         job: None,
         gsa: Some(GsaFacts::NotInstalled),
         launches: Cell::new(0),
@@ -546,7 +545,6 @@ fn windows_boot_failed() {
                 "error: failed to start sandbox\n  → sandbox process exited (exit code: 0) before agent relay became available",
                 10_400,
             ),
-            retried: true,
         },
         ..windows()
     };
@@ -559,22 +557,12 @@ fn windows_boot_failed() {
 }
 
 #[test]
-fn windows_boot_retried_after_the_race_is_ok() {
-    let fake = Fake {
-        boot: booted(true),
-        ..windows()
-    };
-    check("windows_boot_retried", &fake, CheckId::TestBoot, None);
-}
-
-#[test]
 fn windows_boot_timed_out() {
     let fake = Fake {
         boot: BootFacts::Ran {
             outcome: ProcessOutcome::TimedOut {
                 after: Duration::from_secs(25),
             },
-            retried: false,
         },
         ..windows()
     };
@@ -596,7 +584,6 @@ fn windows_boot_denied_in_a_closed_job_is_the_job_not_edr() {
         }),
         boot: BootFacts::Ran {
             outcome: exited(1, "", DENIED, 900),
-            retried: false,
         },
         ..windows()
     };
@@ -635,7 +622,6 @@ fn windows_boot_spawn_refused() {
     let fake = Fake {
         boot: BootFacts::Ran {
             outcome: spawn_failed(1260, "This program is blocked by group policy."),
-            retried: false,
         },
         ..windows()
     };
@@ -647,7 +633,6 @@ fn windows_boot_spawn_refused() {
     let fake = Fake {
         boot: BootFacts::Ran {
             outcome: spawn_failed(1450, "Insufficient system resources exist."),
-            retried: false,
         },
         ..windows()
     };
@@ -844,7 +829,6 @@ fn linux_boot_killed_by_signal_and_odd_exit() {
                     stderr_tail: "boom".into(),
                     elapsed: Duration::from_millis(5),
                 },
-                retried: false,
             },
             ..linux()
         };
@@ -884,7 +868,6 @@ fn linux_boot_without_firmware_is_an_incomplete_runtime() {
                 "error: microsandbox runtime installation is incomplete: /opt/puddle/runtime/msb\nhas no matching libkrunfw",
                 40,
             ),
-            retried: false,
         },
         ..linux()
     };

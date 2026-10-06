@@ -19,7 +19,7 @@ pub(crate) fn settings() -> Settings {
 }
 
 /// The adapter on the run's private msb home, with `<home>/guest-share` as the mount root. Its
-/// warnings (a retried boot, with msb's log tail) go to the test's stderr.
+/// warnings (a lost boot race, with msb's log tail) go to the test's stderr.
 pub(crate) async fn runtime(settings: &Settings) -> MsbRuntime {
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)

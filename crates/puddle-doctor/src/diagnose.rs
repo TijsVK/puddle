@@ -619,7 +619,7 @@ doctor again; if it keeps timing out, check your endpoint security's log for msb
 
 fn test_boot(os: Os, msb: &Path, dir: &Path, facts: &BootFacts, job: Option<JobFacts>) -> Check {
     let id = CheckId::TestBoot;
-    let (outcome, retried) = match facts {
+    let outcome = match facts {
         BootFacts::UnsupportedArch { arch } => {
             return skipped(id, &format!("no test program for {arch}"));
         }
@@ -629,12 +629,7 @@ fn test_boot(os: Os, msb: &Path, dir: &Path, facts: &BootFacts, job: Option<JobF
                 .fix("Check that your temp folder (TEMP) exists, is writable and has free space.")
                 .detail(detail.clone());
         }
-        BootFacts::Ran { outcome, retried } => (outcome, *retried),
-    };
-    let retry_note = if retried {
-        "; msb's first start lost a known boot race and was retried"
-    } else {
-        ""
+        BootFacts::Ran { outcome } => outcome,
     };
     match outcome {
         ProcessOutcome::Exited {
@@ -645,7 +640,7 @@ fn test_boot(os: Os, msb: &Path, dir: &Path, facts: &BootFacts, job: Option<JobF
             id,
             Status::Ok,
             format!(
-                "a test VM booted and ran a program in {}{retry_note}",
+                "a test VM booted and ran a program in {}",
                 seconds(*elapsed)
             ),
         ),

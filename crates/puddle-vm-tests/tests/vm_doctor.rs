@@ -93,6 +93,27 @@ fn vm_doctor_is_all_green_with_a_test_boot_under_30_s() {
     );
 }
 
+/// msb's boot race is fixed in the fork (T-096), so the doctor's test boot has no retry: every one
+/// of 20 boots in a row must pass on its own (T-138).
+#[test]
+fn vm_test_boot_passes_20_in_a_row_without_a_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = runtime_copy(root.path());
+    for round in 1..=20 {
+        let facts = puddle_doctor::boot::test_boot(&dir, "x86_64", BAR);
+        let ok = matches!(
+            &facts,
+            puddle_doctor::BootFacts::Ran {
+                outcome: puddle_doctor::ProcessOutcome::Exited {
+                    code: Some(puddle_doctor::PROBE_EXIT_CODE),
+                    ..
+                }
+            }
+        );
+        assert!(ok, "boot {round} of 20: {facts:?}");
+    }
+}
+
 #[test]
 fn vm_doctor_names_a_missing_runtime() {
     let root = tempfile::tempdir().unwrap();

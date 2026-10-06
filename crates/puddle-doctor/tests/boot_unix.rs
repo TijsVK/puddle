@@ -57,46 +57,19 @@ exec "$2/probe""#,
         exit_code(&facts)
     };
     assert_eq!(exit_code(&facts), expected, "{facts:?}");
-    assert!(matches!(facts, BootFacts::Ran { retried: false, .. }));
 }
 
 #[test]
-fn losing_the_boot_race_is_retried_once() {
-    let marker = tempfile::tempdir().unwrap();
-    let m = marker.path().join("first");
-    let dir = runtime(&format!(
-        r#"if [ ! -e "{m}" ]; then : > "{m}"; echo "error: sandbox process exited (exit code: 0) before agent relay became available" >&2; exit 1; fi
-exit 42"#,
-        m = m.display()
-    ));
-    let facts = test_boot(dir.path(), "x86_64", LIMIT);
-    assert_eq!(exit_code(&facts), Some(PROBE_EXIT_CODE));
-    assert!(matches!(facts, BootFacts::Ran { retried: true, .. }));
-}
-
-#[test]
-fn losing_it_twice_reports_the_failure() {
-    let dir = runtime(
-        r#"echo "error: sandbox process exited (exit code: 0) before agent relay became available" >&2; exit 1"#,
-    );
-    let facts = test_boot(dir.path(), "x86_64", LIMIT);
-    assert_eq!(exit_code(&facts), Some(1));
-    assert!(matches!(facts, BootFacts::Ran { retried: true, .. }));
-}
-
-#[test]
-fn other_failures_are_not_retried() {
+fn a_failed_boot_is_reported_once() {
     let dir = runtime("echo 'error: something else' >&2; exit 1");
     let facts = test_boot(dir.path(), "x86_64", LIMIT);
     let BootFacts::Ran {
         outcome: ProcessOutcome::Exited { stderr_tail, .. },
-        retried,
     } = facts
     else {
         panic!("unexpected {facts:?}");
     };
     assert_eq!(stderr_tail, "error: something else");
-    assert!(!retried);
 }
 
 #[test]
@@ -106,8 +79,7 @@ fn a_hanging_boot_times_out() {
     assert!(matches!(
         facts,
         BootFacts::Ran {
-            outcome: ProcessOutcome::TimedOut { .. },
-            retried: false
+            outcome: ProcessOutcome::TimedOut { .. }
         }
     ));
 }

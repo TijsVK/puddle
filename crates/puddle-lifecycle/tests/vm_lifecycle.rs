@@ -47,8 +47,6 @@ const TARGET: &str = "PUDDLE_LC_TEST_TARGET";
 const ITERATIONS: usize = 10;
 /// Small and quick to boot; has busybox `fstrim`.
 const IMAGE: &str = "alpine:3";
-/// How often the test host tries to boot (see `host_worker`).
-const BOOT_ATTEMPTS: u32 = 3;
 /// The first boot pulls the image.
 const READY_TIMEOUT: Duration = Duration::from_secs(300);
 /// The bar for a hard kill: VMs gone within 5 s.
@@ -157,24 +155,16 @@ async fn host_worker() -> i32 {
     let settings = settings_with(&std::env::var(PREFIX).unwrap());
     let rt = msb(&settings).await;
     let name = SandboxName::new(&std::env::var(SANDBOX).unwrap()).unwrap();
-    // msb 0.7.7 on the hosted Windows runner sometimes loses its own boot race ("exited before
-    // agent relay became available", T-106); the adapter retries once, the test host twice more.
-    // A boot failure is not what these tests measure.
-    let mut attempt = 0;
-    let handle = loop {
-        attempt += 1;
-        let boot = if status(&rt, &name).await.is_some() {
-            rt.start(&name).await
-        } else {
-            rt.create(spec(&name)).await
-        };
-        match boot {
-            Ok(h) => break h,
-            Err(e) if attempt < BOOT_ATTEMPTS => eprintln!("boot attempt {attempt} failed: {e}"),
-            Err(e) => {
-                say(&format!("PUDDLE-LC FAILED boot: {e}"));
-                return 11;
-            }
+    let boot = if status(&rt, &name).await.is_some() {
+        rt.start(&name).await
+    } else {
+        rt.create(spec(&name)).await
+    };
+    let handle = match boot {
+        Ok(h) => h,
+        Err(e) => {
+            say(&format!("PUDDLE-LC FAILED boot: {e}"));
+            return 11;
         }
     };
     let lc = Lifecycle::new(

@@ -182,8 +182,6 @@ pub enum BootFacts {
     Ran {
         /// How it ended (the probe exits with [`crate::PROBE_EXIT_CODE`]).
         outcome: ProcessOutcome,
-        /// Whether a first attempt lost msb's Windows boot race and this is the retry.
-        retried: bool,
     },
 }
 
