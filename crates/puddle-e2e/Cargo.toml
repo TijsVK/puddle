@@ -14,12 +14,24 @@ publish.workspace = true
 
 [dev-dependencies]
 puddle-agent = { workspace = true }
+puddle-compute = { workspace = true }
+puddle-compute-msb = { workspace = true }
 puddle-ipc = { workspace = true }
+puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
+puddle-runtime = { workspace = true }
 puddle-store = { workspace = true }
 puddle-types = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+tokio-rustls = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true
