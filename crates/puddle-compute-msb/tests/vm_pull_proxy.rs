@@ -88,7 +88,10 @@ fn vm_image_pulls_through_the_pull_proxy_from_docker_hub_and_mcr() {
         assert!(config.env_var("PATH").is_some(), "{config:?}");
         let hub = resolver.names();
         assert!(
-            hub.contains("registry-1.docker.io") && hub.contains("auth.docker.io"),
+            // oci-client names Docker Hub `index.docker.io`; the token and the blob CDN hosts
+            // follow from its answers (`production.cloudfront.docker.com` on the first K run).
+            (hub.contains("index.docker.io") || hub.contains("registry-1.docker.io"))
+                && hub.contains("auth.docker.io"),
             "Docker Hub was not reached through the pull proxy: {hub:?}"
         );
 
