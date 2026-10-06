@@ -3,8 +3,8 @@
 //! puddle's own directory beside them (T-020 seams for T-112).
 //!
 //! ```text
-//! /workspaces/<id>/            the volume root (ext4; has lost+found, so never clone into it)
-//!   ├── lost+found/            ext4's, ignored
+//! /workspaces/<id>/            the volume root (ext4); never cloned into, it holds .puddle
+//!   ├── lost+found/            only if mkfs made one (msb 0.7.7's doesn't); ignored
 //!   ├── .puddle/               puddle-owned (code-server data, a later ~/.vscode-server); the
 //!   │                          delete check ignores it
 //!   └── <repo>/                a git checkout (one or more), what the IDE opens
@@ -21,7 +21,7 @@ pub const WORKSPACES_ROOT: &str = "/workspaces";
 /// puddle's own directory on the volume, beside the checkouts.
 pub const PUDDLE_DIR: &str = ".puddle";
 
-/// ext4's directory at the volume root; the reason a checkout can't be the volume root.
+/// ext4's recovery directory; ignored at the volume root (msb 0.7.7's mkfs doesn't make one).
 pub const LOST_AND_FOUND: &str = "lost+found";
 
 /// The checkout directory name used when a clone URL doesn't give a usable one.

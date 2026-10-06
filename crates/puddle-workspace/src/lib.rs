@@ -3,7 +3,7 @@
 //!
 //! Each workspace is a named msb disk volume `ws-<id>` (ext4), mounted at `/workspaces/<id>`.
 //! The volume outlives its sandboxes: rebuilding a sandbox reattaches it. Code gets in by
-//! cloning inside the guest, into a subdirectory (the volume root has `lost+found`).
+//! cloning inside the guest, into a subdirectory (the volume root also holds puddle's `.puddle`).
 //!
 //! | Need | Call |
 //! |---|---|

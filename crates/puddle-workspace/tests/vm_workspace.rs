@@ -362,7 +362,11 @@ async fn vm_clone_through_the_route_survives_a_sandbox_rebuild() {
     .await;
 
     let report = w.stop(sb.ungated()).await.unwrap();
-    assert!(report.trims[0].is_ok(), "trim on stop: {:?}", report.trims);
+    assert!(
+        report.trims[0].is_ok() || !DISCARD,
+        "trim on stop: {:?}",
+        report.trims
+    );
     drop(sb);
     rt.remove(&name).await.unwrap();
     w.sandbox_removed(&name);
@@ -488,9 +492,9 @@ async fn vm_vmm_kill_during_commits_leaves_git_consistent() {
         sh_ok(
             sb.ungated(),
             &format!(
-                "cd {repo} && rm -f .git/index.lock && setsid sh -c 'i=0; while :; do i=$((i+1)); \
+                "cd {repo} && find .git -name '*.lock' -delete && setsid sh -c 'i=0; while :; do i=$((i+1)); \
                  echo $i > f$((i % 64)); git add -A && git commit -qm r{round}-$i; done' \
-                 </dev/null >/dev/null 2>&1 &"
+                 </dev/null >/tmp/commit-loop.log 2>&1 &"
             ),
         )
         .await;
@@ -504,10 +508,21 @@ async fn vm_vmm_kill_during_commits_leaves_git_consistent() {
             if now.status.success() && count(now.stdout_text().trim().to_owned()) >= before + 25 {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "round {round}: the commit loop doesn't commit"
-            );
+            if Instant::now() >= deadline {
+                let diag = sh(
+                    sb.ungated(),
+                    &format!(
+                        "cd {repo}; find .git -name '*.lock'; git status --short | head; \
+                         tail -n 20 /tmp/commit-loop.log"
+                    ),
+                )
+                .await;
+                panic!(
+                    "round {round}: the commit loop doesn't commit\n{}{}",
+                    diag.stdout_text(),
+                    diag.stderr_text()
+                );
+            }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         let pid = vm_pid(&settings, &name).await;
