@@ -127,6 +127,8 @@ fn vm_role_host() {
 }
 
 fn host() -> i32 {
+    // The front logs its console events too.
+    init_logs();
     match supervise() {
         Ok(Role::Front { exit_code }) => return exit_code,
         Ok(Role::Worker) => {}
@@ -457,16 +459,8 @@ fn signal_helper(role: &str, target: u32) {
         .creation_flags(windows_sys::Win32::System::Threading::DETACHED_PROCESS)
         .status()
         .unwrap();
-    assert_ne!(
-        status.code(),
-        Some(3),
-        "{role}: the target's console has no window"
-    );
-    assert_ne!(
-        status.code(),
-        Some(4),
-        "{role}: could not attach to the target's console"
-    );
+    // 3: the console has no window, 4: attach failed, 5: send failed (details on stderr).
+    assert_eq!(status.code(), Some(0), "{role} helper failed");
 }
 
 /// Plays a signalling helper when [`ROLE`] says so; as a normal test it does nothing.
@@ -668,7 +662,9 @@ mod win {
     use windows_sys::Win32::System::Threading::{
         OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
     };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, IsWindowVisible, PostMessageW, WM_CLOSE,
+    };
 
     /// Makes Ctrl-C reach this process's handlers even if its parent disabled it (a process
     /// started in a new process group ignores Ctrl-C, and children inherit that).
@@ -692,9 +688,21 @@ mod win {
                     FreeConsole();
                     return 3;
                 }
+                let mut class = [0u16; 64];
+                let len = GetClassNameW(window, class.as_mut_ptr(), 64);
+                let class = String::from_utf16_lossy(
+                    class
+                        .get(..usize::try_from(len).unwrap_or(0))
+                        .unwrap_or_default(),
+                );
                 let posted = PostMessageW(window, WM_CLOSE, 0, 0);
+                let error = std::io::Error::last_os_error();
                 // Leave before the close event reaches the console's processes.
                 FreeConsole();
+                eprintln!(
+                    "close helper: window {window:?} class {class:?} visible {} posted {posted} ({error})",
+                    IsWindowVisible(window)
+                );
                 if posted == 0 { 5 } else { 0 }
             } else {
                 // Ignore it here; every other process on the console gets it.

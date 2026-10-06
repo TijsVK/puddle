@@ -94,6 +94,7 @@ fn cause(ctrl_type: u32) -> Option<ShutdownCause> {
 /// The console handler's work (on a thread Windows creates for it). Returns whether the event
 /// was handled; `false` lets the default handler end the front.
 pub(crate) fn on_console_event(ctrl_type: u32) -> bool {
+    tracing::info!(ctrl_type, "front: console event");
     let (Some(cause), Some(front)) = (cause(ctrl_type), FRONT.get()) else {
         return false;
     };
