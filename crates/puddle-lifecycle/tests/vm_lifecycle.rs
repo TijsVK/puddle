@@ -236,16 +236,17 @@ impl Host {
         self.child.id()
     }
 
-    /// The first line starting with `prefix`, within `timeout`; `None` at EOF or timeout.
+    /// The rest of the first line containing `prefix`, within `timeout`; `None` at EOF or timeout.
     fn line(&self, prefix: &str, timeout: Duration) -> Option<String> {
         let deadline = Instant::now() + timeout;
         loop {
             let left = deadline.checked_duration_since(Instant::now())?;
             let line = self.lines.recv_timeout(left).ok()?;
-            if let Some(rest) = line.strip_prefix(prefix) {
+            // libtest may have written `test vm_role_host ... ` on the same line first.
+            if let Some((_, rest)) = line.split_once(prefix) {
                 return Some(rest.trim().to_owned());
             }
-            assert!(!line.starts_with("PUDDLE-LC FAILED"), "host failed: {line}");
+            assert!(!line.contains("PUDDLE-LC FAILED"), "host failed: {line}");
         }
     }
 
@@ -536,7 +537,7 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
     ] {
         rt.create_volume(VolumeSpec {
             name: v,
-            size: DiskSize::mib(64),
+            size: DiskSize::mib(256),
         })
         .await
         .unwrap();
