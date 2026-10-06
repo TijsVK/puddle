@@ -10,6 +10,8 @@
 //!   └── <repo>/                a git checkout (one or more), what the IDE opens
 //! ```
 
+use std::time::Duration;
+
 use puddle_compute::ExecRequest;
 use puddle_types::{GuestPath, WorkspaceId};
 
@@ -26,6 +28,9 @@ pub const LOST_AND_FOUND: &str = "lost+found";
 
 /// The checkout directory name used when a clone URL doesn't give a usable one.
 pub const FALLBACK_CHECKOUT: &str = "src";
+
+/// How long a `sync` may take (a clone of a large repository leaves a lot to write).
+pub(crate) const SYNC_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Longest checkout directory name taken from a URL.
 const MAX_CHECKOUT_LEN: usize = 100;
@@ -102,6 +107,17 @@ impl Layout {
             "git",
             ["clone", "--", url, dir.as_str()].map(str::to_owned),
         ))
+    }
+
+    /// `sync`, as root: flushes everything the guest has cached to the volume. Directory entries
+    /// aren't covered by `core.fsync=committed` until the first fsync, so a VMM kill within
+    /// seconds of a fresh clone or `git init` can lose the whole repository without it (T-112
+    /// finding 2).
+    #[must_use]
+    pub fn sync_request() -> ExecRequest {
+        ExecRequest::new("sync", Vec::<String>::new())
+            .as_user("root")
+            .with_timeout(SYNC_TIMEOUT)
     }
 
     fn child(&self, name: &str) -> Result<GuestPath, WorkspaceError> {
@@ -223,6 +239,15 @@ mod tests {
             ]
         );
         assert_eq!(r.user, None);
+    }
+
+    #[test]
+    fn sync_request_flushes_everything_as_root() {
+        let r = Layout::sync_request();
+        assert_eq!(r.program, "sync");
+        assert_eq!(r.args, Vec::<String>::new());
+        assert_eq!(r.user.as_deref(), Some("root"));
+        assert_eq!(r.timeout, SYNC_TIMEOUT);
     }
 
     #[test]

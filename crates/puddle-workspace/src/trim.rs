@@ -13,7 +13,7 @@ use crate::{Layout, WorkspaceError};
 pub const TRIM_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// How much of a command's stderr goes into an error.
-const STDERR_TAIL: usize = 512;
+pub(crate) const STDERR_TAIL: usize = 512;
 
 /// What a trim did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +66,7 @@ fn trimmed_bytes(stdout: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-fn tail(text: &str) -> String {
+pub(crate) fn tail(text: &str) -> String {
     let text = text.trim();
     let start = text
         .char_indices()

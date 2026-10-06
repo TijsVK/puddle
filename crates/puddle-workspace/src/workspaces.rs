@@ -2,16 +2,21 @@
 //! [`Workspaces`]: create or reuse a workspace's volume, attach it to one sandbox at a time,
 //! trim it, and delete it only after the user confirmed what would be lost.
 
+use std::time::Duration;
+
 use puddle_compute::{
     ComputeError, DiskSize, Runtime, Sandbox, SandboxSpec, VolumeInfo, VolumeMount, VolumeSpec,
 };
-use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus, VolumeName, WorkspaceId};
+use puddle_types::{
+    GuestPath, ImageRef, MemoryMib, SandboxName, SandboxStatus, VolumeName, WorkspaceId,
+};
 use tracing::{debug, info, warn};
 
 use crate::check::{self, DeleteConfirmation, DeleteReport, Findings};
+use crate::locks::{self, LockReport};
 use crate::registry::{HoldKind, Holder, Registry};
-use crate::trim::{self, TrimReport};
-use crate::{Layout, WorkspaceError};
+use crate::trim::{self, TrimReport, tail};
+use crate::{Layout, WorkspaceError, checkout_name};
 
 /// Prefix of puddle's short-lived maintenance sandboxes: `m--<workspace id>` (fits the 63
 /// characters of a sandbox name for the longest workspace id). Reconcile (T-113) may remove
@@ -31,6 +36,9 @@ fn maintenance_name(id: &WorkspaceId) -> Result<SandboxName, WorkspaceError> {
         reason: e.to_string(),
     })
 }
+
+/// How long a `git clone` may take.
+const CLONE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Settings of the workspace lifecycle.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -312,6 +320,122 @@ impl Workspaces {
                 reason: format!("mkdir failed: {}", out.stderr_text().trim()),
             })
         }
+    }
+
+    /// Clones `url` into a checkout directory of workspace `id` (named by [`checkout_name`])
+    /// and then runs `sync`, so the clone is on the volume before this returns: a VMM kill
+    /// within seconds of a clone could otherwise lose the whole repository (T-112 finding 2:
+    /// directory entries aren't covered by `core.fsync=committed` until the first fsync).
+    /// Runs as `user` (the sandbox's default user if `None`), with the sandbox's own
+    /// environment (the proxy settings). Returns the checkout's path.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkspaceError::Clone`] when `git clone` fails (nothing is synced);
+    /// [`WorkspaceError::Sync`] when the sync fails (the clone exists but isn't known to be on
+    /// disk); [`WorkspaceError::Layout`]; [`WorkspaceError::Runtime`].
+    pub async fn clone_checkout<S: Sandbox>(
+        &self,
+        sandbox: &S,
+        id: &WorkspaceId,
+        url: &str,
+        user: Option<&str>,
+    ) -> Result<GuestPath, WorkspaceError> {
+        let layout = Layout::new(id)?;
+        let checkout = layout.checkout(&checkout_name(url))?;
+        let mut request = layout.clone_request(url)?.with_timeout(CLONE_TIMEOUT);
+        if let Some(user) = user {
+            request = request.as_user(user);
+        }
+        let out = sandbox
+            .exec(request)
+            .await
+            .map_err(|e| WorkspaceError::runtime("clone", id, e))?;
+        if !out.status.success() {
+            return Err(WorkspaceError::Clone {
+                workspace: id.to_string(),
+                reason: format!(
+                    "git exited {}: {}",
+                    out.status.code,
+                    tail(&out.stderr_text())
+                ),
+            });
+        }
+        self.sync(sandbox, id).await?;
+        info!(workspace = %id, "checkout cloned and synced");
+        Ok(checkout)
+    }
+
+    /// Runs `sync` in `sandbox` (see [`Layout::sync_request`]); call it after anything that
+    /// must survive a hard kill at once (a `git init`, a clone).
+    ///
+    /// # Errors
+    ///
+    /// [`WorkspaceError::Sync`]; [`WorkspaceError::Runtime`].
+    pub async fn sync<S: Sandbox>(
+        &self,
+        sandbox: &S,
+        id: &WorkspaceId,
+    ) -> Result<(), WorkspaceError> {
+        let out = sandbox
+            .exec(Layout::sync_request())
+            .await
+            .map_err(|e| WorkspaceError::runtime("sync", id, e))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(WorkspaceError::Sync {
+                workspace: id.to_string(),
+                reason: format!(
+                    "sync exited {}: {}",
+                    out.status.code,
+                    tail(&out.stderr_text())
+                ),
+            })
+        }
+    }
+
+    /// Removes the stale git lock files a crash left in workspace `id`'s checkouts, so the user
+    /// doesn't meet "Another git process seems to be running". Run it right after a boot (see
+    /// [`Workspaces::after_boot`]): nothing removed while a `git` process runs in the guest
+    /// ([`LockReport::skipped_busy`]).
+    ///
+    /// # Errors
+    ///
+    /// [`WorkspaceError::Locks`] when the script fails or its output can't be read;
+    /// [`WorkspaceError::Runtime`].
+    pub async fn clear_stale_locks<S: Sandbox>(
+        &self,
+        sandbox: &S,
+        id: &WorkspaceId,
+    ) -> Result<LockReport, WorkspaceError> {
+        let report = locks::run(sandbox, id).await?;
+        if report.skipped_busy {
+            info!(workspace = %id, "git is running; stale lock files left alone");
+        } else if report.removed_count() > 0 {
+            info!(workspace = %id, removed = report.removed_count(), "stale git locks cleared");
+        }
+        Ok(report)
+    }
+
+    /// What every boot of a sandbox with workspace `id` runs: [`Workspaces::prepare_layout`],
+    /// then [`Workspaces::clear_stale_locks`]. A lock failure is logged and doesn't fail the
+    /// boot; it is in the report.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Workspaces::prepare_layout`].
+    pub async fn after_boot<S: Sandbox>(
+        &self,
+        sandbox: &S,
+        id: &WorkspaceId,
+    ) -> Result<Result<LockReport, WorkspaceError>, WorkspaceError> {
+        self.prepare_layout(sandbox, id).await?;
+        let locks = self.clear_stale_locks(sandbox, id).await;
+        if let Err(e) = &locks {
+            warn!(workspace = %id, error = %e, "clearing stale git locks failed");
+        }
+        Ok(locks)
     }
 
     /// Trims workspace `id` in `sandbox`, which must be running and have it mounted.

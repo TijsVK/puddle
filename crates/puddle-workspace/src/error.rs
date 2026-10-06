@@ -59,6 +59,31 @@ pub enum WorkspaceError {
         /// Why (the command's stderr, shortened).
         reason: String,
     },
+    /// `git clone` failed in the guest.
+    #[error("cannot clone into workspace {workspace:?}: {reason}")]
+    Clone {
+        /// The workspace.
+        workspace: String,
+        /// Why (git's stderr, shortened).
+        reason: String,
+    },
+    /// `sync` failed in the guest, so a fresh clone isn't known to be on disk.
+    #[error("cannot sync workspace {workspace:?}: {reason}")]
+    Sync {
+        /// The workspace.
+        workspace: String,
+        /// Why.
+        reason: String,
+    },
+    /// Clearing the stale git locks failed (the script couldn't run or its output couldn't be
+    /// read).
+    #[error("cannot clear stale git locks of workspace {workspace:?}: {reason}")]
+    Locks {
+        /// The workspace.
+        workspace: String,
+        /// Why.
+        reason: String,
+    },
     /// The confirmation was for another workspace.
     #[error("the delete confirmation is for workspace {confirmed:?}, not {workspace:?}")]
     WrongConfirmation {

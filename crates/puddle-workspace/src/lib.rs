@@ -11,6 +11,8 @@
 //! | one writer: refuse a second attach naming the holder | built into `prepare`: [`WorkspaceError::InUse`] |
 //! | a failed create leaves nothing (record, stale dir, new volume) | [`Attachment::abort`] |
 //! | paths in the guest, the clone command | [`Layout`], [`checkout_name`] |
+//! | clone a checkout and `sync` it (a VMM kill right after a clone can lose the repo) | [`Workspaces::clone_checkout`] |
+//! | after every boot: puddle's directory, and stale git locks of a crash cleared | [`Workspaces::after_boot`] ([`Workspaces::clear_stale_locks`]) |
 //! | `fstrim` before stop; "reclaim space" | [`Workspaces::stop`], [`Workspaces::reclaim_space`] |
 //! | delete after listing unsaved work, with explicit confirmation | [`Workspaces::check_delete`] → [`DeleteReport::confirm`] → [`Workspaces::delete`] |
 //! | reconcile after a restart (T-113) | [`Workspaces::adopt`], [`is_maintenance_name`] |
@@ -42,6 +44,7 @@
 mod check;
 mod error;
 mod layout;
+mod locks;
 mod registry;
 mod trim;
 mod workspaces;
@@ -54,6 +57,7 @@ pub use error::WorkspaceError;
 pub use layout::{
     FALLBACK_CHECKOUT, LOST_AND_FOUND, Layout, PUDDLE_DIR, WORKSPACES_ROOT, checkout_name,
 };
+pub use locks::{CLEAR_LOCKS_SH, CLEAR_LOCKS_TIMEOUT, LockReport, MAX_LOCKS};
 pub use registry::{HoldKind, Holder};
 pub use trim::{TRIM_TIMEOUT, TrimReport};
 pub use workspaces::{

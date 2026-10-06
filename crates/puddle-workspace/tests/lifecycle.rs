@@ -817,3 +817,161 @@ async fn prepare_layout_makes_the_puddle_dir() {
             .any(|c| c.detail.as_deref() == Some("mkdir -p -m 0700 /workspaces/acme/.puddle"))
     );
 }
+
+/// Records every exec's program (and first args) in order, answering with `code` for `program`.
+fn record_execs(
+    rt: &FakeRuntime,
+    answers: &'static [(&'static str, i32, &'static str)],
+) -> Arc<Mutex<Vec<String>>> {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let s = seen.clone();
+    rt.on_exec(move |_: &mut ExecContext<'_>, r: &ExecRequest| {
+        let answer = answers.iter().find(|(p, _, _)| *p == r.program)?;
+        s.lock().unwrap().push(format!(
+            "{} {} [{}]",
+            r.program,
+            r.args.join(" "),
+            r.user.as_deref().unwrap_or("default")
+        ));
+        Some(ExecOutput::new(answer.1, "", answer.2))
+    });
+    seen
+}
+
+#[tokio::test]
+async fn a_clone_is_synced_before_it_is_reported_done() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    let seen = record_execs(&rt, &[("git", 0, ""), ("sync", 0, "")]);
+    let dir = w
+        .clone_checkout(&sb, &id, "https://h.example/acme/api.git", Some("root"))
+        .await
+        .unwrap();
+    assert_eq!(dir.as_str(), "/workspaces/acme/api");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            "git clone -- https://h.example/acme/api.git /workspaces/acme/api [root]",
+            "sync  [root]"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_failed_clone_is_an_error_and_is_not_synced() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    let seen = record_execs(
+        &rt,
+        &[
+            ("git", 128, "fatal: repository not found\n"),
+            ("sync", 0, ""),
+        ],
+    );
+    let err = w
+        .clone_checkout(&sb, &id, "https://h.example/acme/api.git", None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, WorkspaceError::Clone { .. }), "{err}");
+    assert!(err.to_string().contains("repository not found"), "{err}");
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        1,
+        "sync ran after a failed clone"
+    );
+    assert!(seen.lock().unwrap()[0].ends_with("[default]"));
+}
+
+#[tokio::test]
+async fn a_failed_sync_is_an_error_not_a_silent_success() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    record_execs(&rt, &[("git", 0, ""), ("sync", 1, "sync: I/O error\n")]);
+    let err = w
+        .clone_checkout(&sb, &id, "https://h.example/acme/api.git", None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, WorkspaceError::Sync { .. }), "{err}");
+    assert!(err.to_string().contains("I/O error"), "{err}");
+}
+
+/// Answers the lock-clearing script with `output`.
+fn stub_clear_locks(rt: &FakeRuntime, code: i32, output: &'static str) {
+    rt.on_exec(move |ctx: &mut ExecContext<'_>, r: &ExecRequest| {
+        (r.program == "sh"
+            && r.args.get(1).map(String::as_str) == Some(puddle_workspace::CLEAR_LOCKS_SH))
+        .then(|| {
+            assert_eq!(r.user.as_deref(), Some("root"));
+            assert_eq!(r.args.get(3).map(String::as_str), Some("/workspaces/acme"));
+            let _ = ctx;
+            ExecOutput::new(code, output, "")
+        })
+    });
+}
+
+#[tokio::test]
+async fn after_a_boot_the_layout_is_made_and_stale_locks_are_cleared() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    record_execs(&rt, &[("mkdir", 0, "")]);
+    stub_clear_locks(&rt, 0, "L\tapi/.git/index.lock\nL\tapi/.git/HEAD.lock\nD\n");
+    let report = w.after_boot(&sb, &id).await.unwrap().unwrap();
+    assert_eq!(
+        report.removed,
+        ["api/.git/index.lock", "api/.git/HEAD.lock"]
+    );
+    assert!(!report.skipped_busy);
+    let programs: Vec<_> = rt
+        .calls()
+        .into_iter()
+        .filter_map(|c| c.detail)
+        .filter(|d| d.starts_with("mkdir") || d.starts_with("sh -c"))
+        .map(|d| d.split(' ').next().unwrap().to_owned())
+        .collect();
+    assert_eq!(programs, ["mkdir", "sh"], "layout first, then the locks");
+}
+
+#[tokio::test]
+async fn a_lock_clearing_failure_does_not_fail_the_boot() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    record_execs(&rt, &[("mkdir", 0, "")]);
+    stub_clear_locks(&rt, 3, "E\t.\tcannot enter /workspaces/acme\n");
+    let locks = w.after_boot(&sb, &id).await.unwrap();
+    let err = locks.unwrap_err();
+    assert!(matches!(err, WorkspaceError::Locks { .. }), "{err}");
+    assert!(err.to_string().contains("cannot enter"), "{err}");
+    // Garbage output fails closed too.
+    let rt2 = FakeRuntime::new();
+    let sb2 = w
+        .create(&rt2, &ws("other"), spec("box2"), None)
+        .await
+        .unwrap();
+    rt2.on_exec(|_: &mut ExecContext<'_>, r: &ExecRequest| {
+        (r.program == "sh").then(|| ExecOutput::new(0, "L\tx.lock\n", ""))
+    });
+    let err = w.clear_stale_locks(&sb2, &ws("other")).await.unwrap_err();
+    assert!(err.to_string().contains("no end marker"), "{err}");
+}
+
+#[tokio::test]
+async fn a_busy_guest_keeps_its_locks() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    stub_clear_locks(&rt, 0, "B\nD\n");
+    let report = w.clear_stale_locks(&sb, &id).await.unwrap();
+    assert!(report.skipped_busy);
+    assert_eq!(report.removed_count(), 0);
+}

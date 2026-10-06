@@ -5,6 +5,10 @@
 //!   local git server) survives stop, sandbox removal and a new sandbox on the same workspace;
 //! - a VMM kill during commits, with the boot hook's `core.fsync=committed`, leaves a repository
 //!   that passes `git fsck --full`, 5 of 5 times;
+//! - a VMM kill right after `Workspaces::clone_checkout` keeps the clone (T-139: the clone is
+//!   synced before it is reported done);
+//! - a VMM kill in the middle of commits leaves git locks; the next boot's
+//!   `Workspaces::after_boot` clears them and `git commit` works again (T-139);
 //! - `fstrim` on stop and "reclaim space" (in the running holder and in a maintenance sandbox)
 //!   each return more than 80 % of a deleted 1 GiB to the host's disk image.
 //!
@@ -158,7 +162,7 @@ impl Boot {
         match self.hook.create(rt, spec, &self.plan, &self.gate).await {
             Ok(sb) => {
                 attachment.commit();
-                w.prepare_layout(sb.ungated(), id).await.unwrap();
+                w.after_boot(sb.ungated(), id).await.unwrap().unwrap();
                 sb
             }
             Err(e) => {
@@ -710,6 +714,180 @@ async fn vm_trim_returns_deleted_space_to_the_host_image() {
         "the maintenance sandbox is gone"
     );
 
+    rt.remove(&name).await.unwrap();
+    w.sandbox_removed(&name);
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+}
+
+/// Kills the VM of `name` hard, waits until msb sees it down, and starts it again through the
+/// boot hook.
+async fn kill_and_restart(
+    rt: &MsbRuntime,
+    settings: &Settings,
+    boot: &Boot,
+    name: &SandboxName,
+    sb: GatedSandbox<puddle_compute_msb::MsbSandbox>,
+) -> GatedSandbox<puddle_compute_msb::MsbSandbox> {
+    let pid = vm_pid(settings, name).await;
+    kill_hard(pid);
+    drop(sb);
+    wait_down(rt, name).await;
+    boot.hook
+        .start(rt, name, &boot.plan, &boot.gate)
+        .await
+        .expect("start after the kill")
+}
+
+/// A VMM kill right after a clone: the checkout survives when it went through
+/// `Workspaces::clone_checkout` (clone, then `sync`). A control clone without the sync is killed
+/// first and only reported: whether it survives is up to the guest's writeback timing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_kill_right_after_a_synced_clone_keeps_the_repo() {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let (id, name) = names(&settings, "clonekill");
+    let files = tempfile::tempdir().unwrap();
+    let head = host_repo(files.path());
+    let server = serve_files(files.path().to_path_buf()).await;
+    let url = format!("http://{GIT_HOST}:{}/repo.git", server.port());
+    let ipc = IpcRoot::new().unwrap();
+    let route = proxy_route(&ipc, &name);
+    let env = proxy_env();
+    let boot = Boot::new(rt, "clonekill", &env, true).await;
+    let w = workspaces();
+    let layout = Layout::new(&id).unwrap();
+    let mount = layout.mount().to_string();
+    let spec = base_spec(&name)
+        .with_env(&env)
+        .with_route(VsockRoute::new(ROUTE_PORT, route.endpoint().path()));
+    let mut sb = boot.create(rt, &w, &id, spec).await;
+
+    // Control: a plain clone, killed at once.
+    let control = format!("{mount}/control");
+    let out = sb
+        .ungated()
+        .exec(
+            ExecRequest::new("git", ["clone", "-q", "--", url.as_str(), control.as_str()])
+                .as_user("root"),
+        )
+        .await
+        .unwrap();
+    assert!(out.status.success(), "control clone: {}", out.stderr_text());
+    sb = kill_and_restart(rt, &settings, &boot, &name, sb).await;
+    let survived = sh(sb.ungated(), &format!("git -C {control} rev-parse HEAD")).await;
+    eprintln!(
+        "control (clone without sync, killed at once): {}",
+        if survived.status.success() {
+            "survived"
+        } else {
+            "LOST"
+        }
+    );
+    w.after_boot(sb.ungated(), &id).await.unwrap().unwrap();
+
+    // The product path, five times: clone_checkout returns, the VM is killed at once.
+    let mut kept = 0;
+    for round in 1..=5 {
+        let checkout = format!("{mount}/repo");
+        sh_ok(sb.ungated(), &format!("rm -rf {checkout} && sync")).await;
+        let dir = w
+            .clone_checkout(sb.ungated(), &id, &url, Some("root"))
+            .await
+            .unwrap();
+        assert_eq!(dir.as_str(), checkout);
+        sb = kill_and_restart(rt, &settings, &boot, &name, sb).await;
+        let got = sh(sb.ungated(), &format!("git -C {checkout} rev-parse HEAD")).await;
+        let fsck = sh(sb.ungated(), &format!("git -C {checkout} fsck --full")).await;
+        let ok = got.status.success() && got.stdout_text().trim() == head && fsck.status.success();
+        eprintln!(
+            "round {round}: clone synced, killed at once: {} ({})",
+            if ok { "repo intact" } else { "REPO LOST" },
+            got.stderr_text().trim()
+        );
+        kept += usize::from(ok);
+        w.after_boot(sb.ungated(), &id).await.unwrap().unwrap();
+    }
+    w.stop(sb.ungated()).await.unwrap();
+    drop(sb);
+    rt.remove(&name).await.unwrap();
+    w.sandbox_removed(&name);
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+    route.shutdown().await;
+    assert_eq!(
+        kept, 5,
+        "repo intact after {kept} of 5 kills right after a clone"
+    );
+}
+
+/// A VMM kill in the middle of a commit loop leaves git locks (planted too, so the test doesn't
+/// depend on timing); the next boot's `after_boot` removes them and `git commit` works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_kill_mid_commit_then_boot_clears_the_locks() {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let (id, name) = names(&settings, "locks");
+    let boot = Boot::new(rt, "locks", &GuestEnv::new(), false).await;
+    let w = workspaces();
+    let repo = Layout::new(&id).unwrap().checkout("repo").unwrap();
+    let repo = repo.as_str();
+    let mut sb = boot.create(rt, &w, &id, base_spec(&name)).await;
+    sh_ok(
+        sb.ungated(),
+        &format!("git init -q -b main {repo} && cd {repo} && echo 0 > f && git add f && git commit -qm c0 && sync"),
+    )
+    .await;
+    sh_ok(
+        sb.ungated(),
+        &format!(
+            "cd {repo} && setsid sh -c 'i=0; while :; do i=$((i+1)); echo $i > f$((i % 64)); \
+             git add -A && git commit -qm l-$i; done' </dev/null >/tmp/commit-loop.log 2>&1 &"
+        ),
+    )
+    .await;
+    wait_for_commits(sb.ungated(), repo, 1, 25).await;
+    // Locks a killed git would have left (the loop stalls on them, which is what a kill does).
+    sh_ok(
+        sb.ungated(),
+        &format!(
+            "cd {repo}/.git && touch index.lock HEAD.lock refs/heads/main.lock packed-refs.lock && sync"
+        ),
+    )
+    .await;
+    sb = kill_and_restart(rt, &settings, &boot, &name, sb).await;
+    let before = sh_ok(
+        sb.ungated(),
+        &format!("find {repo}/.git -name '*.lock' | sort"),
+    )
+    .await;
+    eprintln!("locks after the kill, before the boot step:\n{before}");
+    assert!(
+        before.lines().count() >= 4,
+        "the kill left no locks: {before:?}"
+    );
+    let blocked = sh(
+        sb.ungated(),
+        &format!("git -C {repo} commit --allow-empty -qm blocked"),
+    )
+    .await;
+    assert!(
+        !blocked.status.success() && blocked.stderr_text().contains(".lock"),
+        "git didn't refuse with the locks present: {}",
+        blocked.stderr_text()
+    );
+
+    let report = w.after_boot(sb.ungated(), &id).await.unwrap().unwrap();
+    eprintln!("cleared: {report:?}");
+    assert!(!report.skipped_busy);
+    assert!(report.removed_count() >= 4, "{report:?}");
+    let after = sh_ok(sb.ungated(), &format!("find {repo}/.git -name '*.lock'")).await;
+    assert_eq!(after, "", "locks left after the boot step");
+    sh_ok(sb.ungated(), &format!("cd {repo} && echo post > post.txt && git add -A && git commit -qm after-the-crash && git fsck --full")).await;
+    assert_eq!(
+        sh_ok(sb.ungated(), &format!("git -C {repo} log -1 --format=%s")).await,
+        "after-the-crash"
+    );
+    w.stop(sb.ungated()).await.unwrap();
+    drop(sb);
     rt.remove(&name).await.unwrap();
     w.sandbox_removed(&name);
     rt.remove_volume(&id.volume_name()).await.unwrap();
