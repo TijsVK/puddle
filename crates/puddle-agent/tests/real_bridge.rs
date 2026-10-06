@@ -142,15 +142,13 @@ async fn a_real_bridge_that_comes_goes_and_returns_is_followed_by_the_agent_bina
         Duration::from_secs(90),
         Command::new(runner[0])
             .args(&runner[1..])
+            // `env` sets the variables inside the namespace: `sudo` would drop them.
+            .arg("env")
+            .arg(format!("AGENT={}", env!("CARGO_BIN_EXE_puddle-agent")))
+            .arg(format!("ECHO={echo_addr}"))
+            .arg(format!("PUDDLE_AGENT_TARGET=unix://{}", socket.display()))
+            .args(["PUDDLE_AGENT_OOM=0", "PUDDLE_AGENT_BRIDGE_POLL_MS=20"])
             .args(["bash", "-c", SCRIPT])
-            .env("AGENT", env!("CARGO_BIN_EXE_puddle-agent"))
-            .env("ECHO", echo_addr.to_string())
-            .env(
-                "PUDDLE_AGENT_TARGET",
-                format!("unix://{}", socket.display()),
-            )
-            .env("PUDDLE_AGENT_OOM", "0")
-            .env("PUDDLE_AGENT_BRIDGE_POLL_MS", "20")
             .kill_on_drop(true)
             .output(),
     )
