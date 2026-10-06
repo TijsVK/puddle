@@ -26,8 +26,8 @@ env:
   # Line tables only: backtraces keep file:line, builds and the cache stay much smaller.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, HG-01/02, memory),
-  # the boot hook (T-108), the workspace lifecycle (T-112).
-  VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace
+  # the boot hook (T-108), the workspace lifecycle (T-112), shutdown and reconcile (T-113).
+  VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle
 
 jobs:
   changed:
