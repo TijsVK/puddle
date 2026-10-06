@@ -292,6 +292,32 @@ fn proxy_env() -> GuestEnv {
     env
 }
 
+/// The volume root holds `.puddle`, so a clone into it fails; reports whether ext4 made a
+/// `lost+found` there.
+async fn volume_root_refuses_a_clone<S: Sandbox>(sb: &S, mount: &str, url: &str) {
+    let root = sh_ok(sb, &format!("ls -A {mount}")).await;
+    eprintln!(
+        "volume root holds: {:?} (lost+found {})",
+        root.lines().collect::<Vec<_>>(),
+        if root.lines().any(|l| l == "lost+found") {
+            "present"
+        } else {
+            "absent"
+        }
+    );
+    assert!(root.lines().any(|l| l == ".puddle"), "volume root: {root}");
+    let into_root = sh(sb, &format!("git clone -q {url} {mount}")).await;
+    assert!(
+        !into_root.status.success(),
+        "a clone into the volume root worked"
+    );
+    assert!(
+        into_root.stderr_text().contains("not an empty directory"),
+        "{}",
+        into_root.stderr_text()
+    );
+}
+
 /// Clone through the route ⇒ stop ⇒ remove the sandbox ⇒ a new sandbox on the same workspace:
 /// HEAD and an untracked marker are intact. Also: a clone into the volume root fails (it holds
 /// `.puddle`; msb 0.7.7's ext4 has no `lost+found`, which the test reports), so the checkout goes
@@ -320,27 +346,7 @@ async fn vm_clone_through_the_route_survives_a_sandbox_rebuild() {
     let mount = layout.mount().to_string();
 
     let sb = boot.create(rt, &w, &id, spec()).await;
-    let root = sh_ok(sb.ungated(), &format!("ls -A {mount}")).await;
-    eprintln!(
-        "volume root holds: {:?} (lost+found {})",
-        root.lines().collect::<Vec<_>>(),
-        if root.lines().any(|l| l == "lost+found") {
-            "present"
-        } else {
-            "absent"
-        }
-    );
-    assert!(root.lines().any(|l| l == ".puddle"), "volume root: {root}");
-    let into_root = sh(sb.ungated(), &format!("git clone -q {url} {mount}")).await;
-    assert!(
-        !into_root.status.success(),
-        "a clone into the volume root worked"
-    );
-    assert!(
-        into_root.stderr_text().contains("not an empty directory"),
-        "{}",
-        into_root.stderr_text()
-    );
+    volume_root_refuses_a_clone(sb.ungated(), &mount, &url).await;
 
     let clone = layout.clone_request(&url).unwrap().as_user("root");
     let checkout = layout.checkout("repo").unwrap();
@@ -457,6 +463,40 @@ async fn wait_down(rt: &MsbRuntime, name: &SandboxName) {
     }
 }
 
+/// Waits until the repo at `repo` has `target` commits; on a stall, fails with the leftover git
+/// locks and the commit loop's log.
+async fn wait_for_commits<S: Sandbox>(sb: &S, repo: &str, round: usize, target: u64) {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let now = sh(sb, &format!("git -C {repo} rev-list --count HEAD")).await;
+        if now.status.success()
+            && now
+                .stdout_text()
+                .trim()
+                .parse::<u64>()
+                .is_ok_and(|n| n >= target)
+        {
+            return;
+        }
+        if Instant::now() >= deadline {
+            let diag = sh(
+                sb,
+                &format!(
+                    "cd {repo}; find .git -name '*.lock'; git status --short | head; \
+                     tail -n 20 /tmp/commit-loop.log"
+                ),
+            )
+            .await;
+            panic!(
+                "round {round}: the commit loop doesn't commit\n{}{}",
+                diag.stdout_text(),
+                diag.stderr_text()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// A VMM kill in the middle of a commit loop, five times: with `core.fsync=committed` (written by
 /// the boot hook) the repository passes `git fsck --full` after every restart.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -498,33 +538,7 @@ async fn vm_vmm_kill_during_commits_leaves_git_consistent() {
             ),
         )
         .await;
-        let deadline = Instant::now() + Duration::from_secs(120);
-        loop {
-            let now = sh(
-                sb.ungated(),
-                &format!("git -C {repo} rev-list --count HEAD"),
-            )
-            .await;
-            if now.status.success() && count(now.stdout_text().trim().to_owned()) >= before + 25 {
-                break;
-            }
-            if Instant::now() >= deadline {
-                let diag = sh(
-                    sb.ungated(),
-                    &format!(
-                        "cd {repo}; find .git -name '*.lock'; git status --short | head; \
-                         tail -n 20 /tmp/commit-loop.log"
-                    ),
-                )
-                .await;
-                panic!(
-                    "round {round}: the commit loop doesn't commit\n{}{}",
-                    diag.stdout_text(),
-                    diag.stderr_text()
-                );
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        wait_for_commits(sb.ungated(), repo, round, before + 25).await;
         let pid = vm_pid(&settings, &name).await;
         kill_hard(pid);
         drop(sb);
