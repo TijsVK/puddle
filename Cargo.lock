@@ -4042,6 +4042,8 @@ dependencies = [
  "proptest",
  "puddle-agent-proto",
  "puddle-types",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "tokio-yamux",
@@ -4163,6 +4165,7 @@ version = "0.0.0"
 dependencies = [
  "proptest",
  "puddle-types",
+ "serde_json",
  "thiserror",
 ]
 

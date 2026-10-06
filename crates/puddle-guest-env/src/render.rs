@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 use std::net::SocketAddr;
 
-use puddle_types::{GuestEnv, GuestFile, GuestPath};
+use puddle_types::{GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec};
 
 use crate::settings::{java_ip, loopback_entries};
 use crate::{ConfigError, NoProxyEntry, ProxySettings};
@@ -26,6 +26,9 @@ pub const MAVEN_SETTINGS_GUEST: &str = "/etc/puddle/maven/settings.xml";
 pub const GRADLE_INIT_RELATIVE: &str = "init.d/puddle-proxy.gradle";
 
 const SUDOERS_MODE: u32 = 0o440;
+
+/// Mode of a Docker CLI config puddle creates: `docker login` stores credentials in it later.
+const DOCKER_CONFIG_MODE: u32 = 0o600;
 
 /// Header of every generated file (the boot hook rewrites them at every boot).
 const GENERATED: &str = "Written by puddle at every boot; changes here are overwritten.";
@@ -134,10 +137,13 @@ pub fn guest_proxy_config(
     if let Some(container) = settings.container_proxy {
         let docker_dir = image_dir(image("DOCKER_CONFIG"))
             .map_or_else(|| format!("{}/.docker", home(settings)), str::to_owned);
-        files.push(file(
-            &format!("{docker_dir}/config.json"),
-            docker_cli_config(container, &no_proxy),
-        )?);
+        let path =
+            GuestPath::new(&format!("{docker_dir}/config.json")).map_err(|e| path_error(&e))?;
+        files.push(
+            GuestFile::merged(path, docker_cli_config(container, &no_proxy)?)
+                .with_mode(DOCKER_CONFIG_MODE)
+                .map_err(|e| path_error(&e))?,
+        );
     }
     Ok(GuestProxyConfig { env, files })
 }
@@ -306,19 +312,21 @@ fn gradle_init(proxy: SocketAddr, java_bypass: &str) -> String {
 
 /// The Docker CLI passes these to every container and build it starts. Containers reach the
 /// guest's proxy at the bridge gateway, not at loopback; the bypass list is the guest's.
-fn docker_cli_config(container: SocketAddr, no_proxy: &str) -> String {
+///
+/// The file is the user's (`docker login` keeps `auths` and `credHelpers` in it), so puddle owns
+/// only `proxies.default` and merges it in (T-097); other daemons' `proxies` entries stay too.
+fn docker_cli_config(container: SocketAddr, no_proxy: &str) -> Result<MergeSpec, ConfigError> {
     let proxy = url(container);
-    format!(
-        "{{\n  \
-         \"proxies\": {{\n    \
-         \"default\": {{\n      \
-         \"httpProxy\": \"{proxy}\",\n      \
-         \"httpsProxy\": \"{proxy}\",\n      \
-         \"noProxy\": \"{no_proxy}\"\n    \
-         }}\n  \
-         }}\n\
-         }}\n"
+    let default = serde_json::json!({
+        "httpProxy": proxy,
+        "httpsProxy": proxy,
+        "noProxy": no_proxy,
+    });
+    MergeSpec::new(
+        MergeFormat::Json,
+        vec![MergeEntry::json(&["proxies", "default"], &default)],
     )
+    .map_err(|e| path_error(&e))
 }
 
 #[cfg(test)]
@@ -398,7 +406,7 @@ mod tests {
                 (SUDOERS_GUEST, 0o440),
                 (MAVEN_SETTINGS_GUEST, 0o644),
                 ("/root/.gradle/init.d/puddle-proxy.gradle", 0o644),
-                ("/root/.docker/config.json", 0o644),
+                ("/root/.docker/config.json", 0o600),
             ]
         );
     }
@@ -516,15 +524,42 @@ http_proxy https_proxy no_proxy\"
             text(file_at(&c, "/root/.docker/config.json")),
             "\
 {
-  \"proxies\": {
-    \"default\": {
-      \"httpProxy\": \"http://172.17.0.1:3128\",
-      \"httpsProxy\": \"http://172.17.0.1:3128\",
-      \"noProxy\": \"localhost,127.0.0.1,::1,172.17.0.1\"
-    }
-  }
+\t\"proxies\": {
+\t\t\"default\": {
+\t\t\t\"httpProxy\": \"http://172.17.0.1:3128\",
+\t\t\t\"httpsProxy\": \"http://172.17.0.1:3128\",
+\t\t\t\"noProxy\": \"localhost,127.0.0.1,::1,172.17.0.1\"
+\t\t}
+\t}
 }
 "
+        );
+    }
+
+    #[test]
+    fn docker_cli_config_is_merged_so_a_docker_login_survives() {
+        let c = default_config();
+        let f = file_at(&c, "/root/.docker/config.json");
+        let puddle_types::ApplyKind::Merge(spec) = f.apply() else {
+            panic!("the Docker CLI config must be merged, not replaced")
+        };
+        assert_eq!(
+            spec.keys(),
+            [vec!["proxies".to_owned(), "default".to_owned()]]
+        );
+        let login = "{\n\t\"auths\": {\n\t\t\"registry.example.test\": {\n\t\t\t\"auth\": \"dTpw\"\n\t\t}\n\t}\n}\n";
+        let puddle_types::Merged::Write(out) = spec.apply(Some(login.as_bytes()), &[]).unwrap()
+        else {
+            panic!("nothing merged")
+        };
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.starts_with("{\n\t\"auths\": {\n\t\t\"registry.example.test\": {\n\t\t\t\"auth\": \"dTpw\"\n\t\t}\n\t},\n\t\"proxies\": {"), "{out}");
+        // Only puddle's other files are written whole.
+        assert!(
+            c.files
+                .iter()
+                .filter(|g| g.path() != f.path())
+                .all(|g| *g.apply() == puddle_types::ApplyKind::Replace)
         );
     }
 

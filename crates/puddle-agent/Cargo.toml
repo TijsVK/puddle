@@ -14,6 +14,8 @@ publish.workspace = true
 futures-util = { workspace = true }
 puddle-agent-proto = { workspace = true }
 puddle-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-yamux = { workspace = true }

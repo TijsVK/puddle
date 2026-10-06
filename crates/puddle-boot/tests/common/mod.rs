@@ -30,7 +30,19 @@ echo "update-ca-certificates" >>"$PUDDLE_ROOT/calls"
 if [ -f "$PUDDLE_ROOT/fail-update-ca" ]; then echo "boom: bad certificate" >&2; exit 1; fi
 "#;
 
+/// The agent binary: `merge-file` logs `merge-file <action> <guest path> [mode]`, keeps the
+/// last spec in `merge-spec` and answers with the contents of `merge-answer` (default
+/// `changed`; `fail` exits 1). Anything else plays the agent.
 const AGENT_STUB: &str = r#"#!/bin/sh
+if [ "${1:-}" = merge-file ]; then
+    echo "merge-file $2 $4${6:+ $6}" >>"$PUDDLE_ROOT/calls"
+    if [ "$2" = apply ]; then cat >"$PUDDLE_ROOT/merge-spec"; fi
+    answer=changed
+    if [ -f "$PUDDLE_ROOT/merge-answer" ]; then answer=$(cat "$PUDDLE_ROOT/merge-answer"); fi
+    if [ "$answer" = fail ]; then echo "disk full" >&2; exit 1; fi
+    echo "$answer"
+    exit 0
+fi
 echo $$ >>"$PUDDLE_ROOT/agent.pids"
 grep -q 0C38 "$PUDDLE_ROOT/proc/net/tcp" || echo "   0: 0100007F:0C38 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1" >>"$PUDDLE_ROOT/proc/net/tcp"
 exec sleep 1000

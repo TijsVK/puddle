@@ -8,6 +8,7 @@
 //! |---|---|
 //! | [`SandboxName`], [`WorkspaceId`], [`VolumeName`], [`ImageRef`] | validated names; sandbox, workspace and volume names are DNS labels |
 //! | [`GuestPath`], [`GuestFile`], [`GuestEnv`] | what providers put into a guest; the boot hook applies them |
+//! | [`ApplyKind`], [`MergeSpec`], [`unmerge`] | merged files: puddle owns only some keys of a user's file (T-097); the engine `puddle-agent` runs in the guest |
 //! | [`MemoryMib`] | guest memory size: 256 MiB to 1 TiB, default 8 GiB (the setting is in `puddle-settings`) |
 //! | [`SandboxStatus`], [`Event`], [`EventSink`] | sandbox states and the user-facing event stream (incl. [`Event::OomKill`]) |
 //! | [`Host`], [`DomainName`] | a normalised egress destination (the proxy normalises, everyone else validates) |
@@ -27,6 +28,7 @@ mod guest;
 mod host;
 mod local;
 mod memory;
+mod merge;
 mod name;
 mod policy;
 
@@ -36,10 +38,13 @@ pub use connection::{
 };
 pub use error::ValidationError;
 pub use event::{CollectingSink, Event, EventSink, NullSink, SandboxStatus};
-pub use guest::{GuestEnv, GuestFile, GuestPath};
+pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};
 pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
 pub use local::LocalCategory;
 pub use memory::MemoryMib;
+pub use merge::{
+    MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged, unmerge,
+};
 pub use name::{
     ImageRef, RESERVED_SANDBOX_NAMES, SandboxName, VolumeName, WORKSPACE_VOLUME_PREFIX, WorkspaceId,
 };

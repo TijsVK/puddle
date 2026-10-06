@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The command line: `puddle-agent` runs the agent, `puddle-agent --version` prints the version.
-//! `puddle-agent connect` is reserved for the ssh `ProxyCommand` (T-021, a `connect` stream).
+//! `puddle-agent merge-file ...` applies a merged guest file for the boot hook
+//! ([`crate::merge_file`]). `puddle-agent connect` is reserved for the ssh `ProxyCommand` (T-021,
+//! a `connect` stream).
+
+use crate::merge_file;
 
 /// What the command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9,6 +13,8 @@ pub enum Command {
     Run,
     /// Print the version line.
     Version,
+    /// Apply, remove or forget a merged guest file.
+    MergeFile(merge_file::Request),
     /// A subcommand that is reserved but not built yet.
     Reserved(&'static str),
     /// Anything else: print this usage error, exit 2.
@@ -26,6 +32,9 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Command {
         [] => Command::Run,
         [one] if matches!(one.as_ref(), "--version" | "-V") => Command::Version,
         [first, ..] if first.as_ref() == "connect" => Command::Reserved("connect"),
+        [first, rest @ ..] if first.as_ref() == "merge-file" => {
+            merge_file::Request::parse(rest).map_or_else(Command::Usage, Command::MergeFile)
+        }
         [first, ..] => Command::Usage(format!(
             "unknown argument {:?}\n{USAGE}",
             first.as_ref().chars().take(64).collect::<String>()
@@ -48,5 +57,10 @@ mod tests {
         };
         assert!(msg.contains("--help") && msg.contains(USAGE));
         assert!(matches!(parse(&["--version", "x"]), Command::Usage(_)));
+        assert!(matches!(
+            parse(&["merge-file", "forget", "/s", "/g"]),
+            Command::MergeFile(_)
+        ));
+        assert!(matches!(parse(&["merge-file"]), Command::Usage(_)));
     }
 }

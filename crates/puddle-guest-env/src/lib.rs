@@ -20,10 +20,12 @@
 //! | Cargo git dependencies | `CARGO_NET_GIT_FETCH_WITH_CLI=true` |
 //! | apt | `/etc/apt/apt.conf.d/99puddle-proxy` |
 //! | sudo | `/etc/sudoers.d/puddle-proxy`: `env_keep` for every variable above |
-//! | containers (Docker CLI) | `~/.docker/config.json` `proxies`, at the bridge gateway |
+//! | containers (Docker CLI) | `~/.docker/config.json` `proxies.default`, at the bridge gateway, merged |
 //!
-//! Every file is one puddle owns outright, except the Docker CLI config: no user file is
-//! rewritten (Maven's goes in through `-gs`, Gradle's is an init script next to the user's).
+//! Every file is one puddle owns outright, except the Docker CLI config, where puddle owns only
+//! `proxies.default` and the boot hook merges it in (`docker login`'s `auths` survive a restart,
+//! T-097). No other user file is touched (Maven's goes in through `-gs`, Gradle's is an init
+//! script next to the user's).
 
 #![forbid(unsafe_code)]
 

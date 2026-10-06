@@ -19,7 +19,7 @@ use puddle_boot::{
     GitIdentity, MACHINE_SETTINGS_GUEST, PATH_FILE_GUEST, PLAN_HEADER,
 };
 use puddle_compute::ImageConfig;
-use puddle_types::{GuestEnv, GuestFile, GuestPath};
+use puddle_types::{GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec};
 
 const IMAGE_PATH: &str = "/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin";
 
@@ -493,4 +493,178 @@ async fn boot_hook_through_the_fake_runtime_runs_the_real_script() {
         "no provider sent a CA file"
     );
     sb.stop().await.unwrap();
+}
+
+const DOCKER: &str = "/root/.docker/config.json";
+
+fn merged(path: &str) -> GuestFile {
+    let spec = MergeSpec::new(
+        MergeFormat::Json,
+        vec![MergeEntry::json(
+            &["proxies", "default"],
+            &serde_json::json!({"httpProxy": "http://172.17.0.1:3128"}),
+        )],
+    )
+    .unwrap();
+    GuestFile::merged(GuestPath::new(path).unwrap(), spec)
+        .with_mode(0o600)
+        .unwrap()
+}
+
+fn plan_with(files: Vec<GuestFile>) -> BootPlan {
+    BootPlan::builder(&ImageConfig::default())
+        .files(files)
+        .build()
+        .unwrap()
+}
+
+fn merge_calls(fr: &FakeRoot) -> Vec<String> {
+    fr.calls()
+        .into_iter()
+        .filter(|c| c.starts_with("merge-file"))
+        .collect()
+}
+
+#[test]
+fn merged_files_go_through_the_merge_tool_and_lose_only_puddles_keys_when_dropped() {
+    for sh in shells() {
+        let fr = FakeRoot::new(&sh);
+        let file = merged(DOCKER);
+        let out = fr.run(&plan_with(vec![file.clone()]));
+        assert!(out.status.success(), "{}", show(&out));
+        assert_eq!(
+            merge_calls(&fr),
+            [format!("merge-file apply {DOCKER} 0600")]
+        );
+        let puddle_types::ApplyKind::Merge(spec) = file.apply() else {
+            panic!("not merged")
+        };
+        let sent: MergeSpec = serde_json::from_str(&fr.read("/merge-spec")).unwrap();
+        assert_eq!(&sent, spec);
+        assert!(fr.path("/root/.docker").is_dir());
+        assert_eq!(
+            fr.read("/var/lib/puddle/merge-files"),
+            format!("{DOCKER}\n")
+        );
+        assert!(!fr.read("/var/lib/puddle/boot-files").contains(DOCKER));
+
+        // The provider stops listing it: the tool removes puddle's keys; the file isn't deleted
+        // by the hook.
+        let out = fr.run(&plan_with(vec![]));
+        assert!(out.status.success(), "{}", show(&out));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains(&format!(
+                "puddle's keys removed from {DOCKER} (no longer in the plan): changed"
+            )),
+            "{stdout}"
+        );
+        assert_eq!(
+            merge_calls(&fr).last().unwrap(),
+            &format!("merge-file remove {DOCKER}")
+        );
+        assert_eq!(fr.read("/var/lib/puddle/merge-files"), "");
+        let out = fr.run(&plan_with(vec![]));
+        assert!(out.status.success());
+        assert_eq!(merge_calls(&fr).len(), 2, "nothing left to remove");
+    }
+}
+
+#[test]
+fn a_file_the_tool_cannot_parse_is_left_and_the_boot_goes_on() {
+    let fr = FakeRoot::new(&shells()[0]);
+    std::fs::write(
+        fr.path("/merge-answer"),
+        "left: the file is not valid JSON: EOF while parsing at line 1 column 1\n",
+    )
+    .unwrap();
+    let out = fr.run(&plan_with(vec![merged(DOCKER)]));
+    assert!(out.status.success(), "{}", show(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(&format!(
+            "{DOCKER} left as it is: the file is not valid JSON: EOF while parsing"
+        )),
+        "{stdout}"
+    );
+    assert!(stdout.contains("files applied (3 changed)"), "{stdout}");
+}
+
+#[test]
+fn a_failing_or_odd_merge_tool_fails_the_boot_with_its_message() {
+    let fr = FakeRoot::new(&shells()[0]);
+    std::fs::write(fr.path("/merge-answer"), "fail").unwrap();
+    let out = fr.run(&plan_with(vec![merged(DOCKER)]));
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!("cannot merge {DOCKER}: disk full")),
+        "{stderr}"
+    );
+    std::fs::write(fr.path("/merge-answer"), "maybe").unwrap();
+    let out = fr.run(&plan_with(vec![merged(DOCKER)]));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unexpected answer from the merge tool"),
+        "{stderr}"
+    );
+    std::fs::remove_file(fr.path("/puddle/puddle-agent")).unwrap();
+    let out = fr.run(&plan_with(vec![merged(DOCKER)]));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("the merge tool /puddle/puddle-agent is missing"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn switching_a_file_between_replace_and_merge_keeps_it() {
+    let fr = FakeRoot::new(&shells()[0]);
+    // T-109's whole-file Docker config, then the merged one (an upgrade): the file stays.
+    assert!(
+        fr.run(&plan_with(vec![file(DOCKER, b"{}")]))
+            .status
+            .success()
+    );
+    let out = fr.run(&plan_with(vec![merged(DOCKER)]));
+    assert!(out.status.success(), "{}", show(&out));
+    assert_eq!(fr.read(DOCKER), "{}");
+    assert_eq!(
+        merge_calls(&fr),
+        [format!("merge-file apply {DOCKER} 0600")]
+    );
+    // Back to whole-file: the tool only forgets its record.
+    let out = fr.run(&plan_with(vec![file(DOCKER, b"{\"x\":1}")]));
+    assert!(out.status.success(), "{}", show(&out));
+    assert_eq!(
+        merge_calls(&fr).last().unwrap(),
+        &format!("merge-file forget {DOCKER}")
+    );
+    assert_eq!(fr.read(DOCKER), "{\"x\":1}");
+}
+
+#[test]
+fn without_the_merge_tool_the_removal_waits_for_a_later_boot() {
+    let fr = FakeRoot::new(&shells()[0]);
+    assert!(fr.run(&plan_with(vec![merged(DOCKER)])).status.success());
+    std::fs::rename(fr.path("/puddle/puddle-agent"), fr.path("/agent.saved")).unwrap();
+    let bare = BootPlan::builder(&ImageConfig::default())
+        .no_agent()
+        .build()
+        .unwrap();
+    let out = fr.run(&bare);
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).contains(&format!(
+        "puddle's keys stay in {DOCKER} for now: no merge tool at /puddle/puddle-agent"
+    )));
+    assert_eq!(
+        fr.read("/var/lib/puddle/merge-files"),
+        format!("{DOCKER}\n")
+    );
+    std::fs::rename(fr.path("/agent.saved"), fr.path("/puddle/puddle-agent")).unwrap();
+    assert!(fr.run(&bare).status.success());
+    assert_eq!(
+        merge_calls(&fr).last().unwrap(),
+        &format!("merge-file remove {DOCKER}")
+    );
 }

@@ -10,6 +10,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::ValidationError;
+use crate::merge::MergeSpec;
 
 /// Longest accepted guest path (Linux `PATH_MAX`).
 const MAX_PATH_LEN: usize = 4096;
@@ -123,7 +124,8 @@ impl From<GuestPath> for String {
     }
 }
 
-/// A file the boot hook writes into the guest: path, contents and permission bits.
+/// A file the boot hook writes into the guest: path, contents, permission bits and how it is
+/// applied ([`ApplyKind`]).
 ///
 /// Contents are public material only (configs, CA certificates). Never put a secret in a
 /// `GuestFile`: it is logged in `Debug` and copied into the guest's root disk.
@@ -140,6 +142,23 @@ pub struct GuestFile {
     path: GuestPath,
     contents: Vec<u8>,
     mode: u32,
+    #[serde(default)]
+    apply: ApplyKind,
+}
+
+/// How the boot hook applies a [`GuestFile`] (T-020 C-4).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ApplyKind {
+    /// puddle owns the whole file: written atomically at every boot, replacing what is there,
+    /// and deleted when no provider lists it any more.
+    #[default]
+    Replace,
+    /// The file is the user's; puddle owns only the keys in the spec (T-097). They are set at
+    /// every boot and removed when no provider lists the file any more; everything else stays.
+    /// A file that can't be parsed is left alone. The file's mode applies when puddle creates it.
+    Merge(MergeSpec),
 }
 
 impl GuestFile {
@@ -153,6 +172,27 @@ impl GuestFile {
             path,
             contents,
             mode: Self::DEFAULT_MODE,
+            apply: ApplyKind::Replace,
+        }
+    }
+
+    /// A merged file at `path`: puddle owns only the keys in `spec` (see [`ApplyKind::Merge`]).
+    /// [`GuestFile::contents`] is the file as puddle writes it when none exists.
+    ///
+    /// ```
+    /// use puddle_types::{ApplyKind, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec};
+    /// let spec = MergeSpec::new(MergeFormat::Json, vec![MergeEntry::json(&["a"], &serde_json::json!(1))]).unwrap();
+    /// let f = GuestFile::merged(GuestPath::new("/root/.docker/config.json").unwrap(), spec);
+    /// assert_eq!(f.contents(), b"{\n\t\"a\": 1\n}\n");
+    /// assert!(matches!(f.apply(), ApplyKind::Merge(_)));
+    /// ```
+    #[must_use]
+    pub fn merged(path: GuestPath, spec: MergeSpec) -> Self {
+        Self {
+            path,
+            contents: spec.fresh(),
+            mode: Self::DEFAULT_MODE,
+            apply: ApplyKind::Merge(spec),
         }
     }
 
@@ -189,6 +229,12 @@ impl GuestFile {
     #[must_use]
     pub fn mode(&self) -> u32 {
         self.mode
+    }
+
+    /// How the boot hook applies the file.
+    #[must_use]
+    pub fn apply(&self) -> &ApplyKind {
+        &self.apply
     }
 }
 

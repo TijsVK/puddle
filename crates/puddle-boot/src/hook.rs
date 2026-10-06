@@ -146,9 +146,13 @@ impl BootHook {
         plan: &BootPlan,
         gate: &Gate,
     ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
+        let merge_tool = plan.merge_tool();
         let mut needed = vec![BOOT_SH_GUEST, AGENT_SUPERVISE_GUEST];
         if let Some(agent) = plan.agent() {
             needed.push(agent.binary.as_str());
+        }
+        if plan.has_merged_files() {
+            needed.push(merge_tool.as_str());
         }
         for guest in needed {
             if !spec.file_mounts.iter().any(|m| m.guest.as_str() == guest) {

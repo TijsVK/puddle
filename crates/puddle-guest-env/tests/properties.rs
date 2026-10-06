@@ -58,7 +58,13 @@ proptest! {
         for f in &c.files {
             let text = std::str::from_utf8(f.contents()).unwrap();
             prop_assert!(text.ends_with('\n'));
-            prop_assert!(!text.chars().any(|ch| ch.is_control() && ch != '\n'), "{}", f.path());
+            // Tabs only as the merged JSON's indent (the Docker CLI's own layout).
+            let tab_ok = matches!(f.apply(), puddle_types::ApplyKind::Merge(_));
+            prop_assert!(
+                !text.chars().any(|ch| ch.is_control() && ch != '\n' && !(tab_ok && ch == '\t')),
+                "{}",
+                f.path()
+            );
         }
         let file = |p: &str| {
             let f = c.files.iter().find(|f| f.path().as_str() == p).unwrap();

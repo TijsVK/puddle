@@ -45,9 +45,10 @@ fi
 
 mkdir -p "$RUN" "$STATE" || die "cannot create $RUN and $STATE"
 : >"$LOG"
-rm -f "$RUN/boot.done" "$RUN/triggers" "$RUN/entry-env" "$RUN/changed" "$RUN/files.new"
+rm -f "$RUN/boot.done" "$RUN/triggers" "$RUN/entry-env" "$RUN/changed" "$RUN/files.new" "$RUN/merge.new"
 : >"$RUN/changed"
 : >"$RUN/files.new"
+: >"$RUN/merge.new"
 : >"$RUN/triggers"
 
 
@@ -103,13 +104,27 @@ setk kernel.unprivileged_bpf_disabled 1
 say "sysctls set"
 
 # --- 3. Files, applied in plan order ----------------------------------------------------------
+# Two kinds: puddle_file writes a whole file puddle owns; puddle_merge sets only puddle's keys in
+# a file that belongs to the user (T-097), through the agent binary's `merge-file`, which parses
+# the file (this script can't) and leaves one it can't parse untouched.
 GIT_INCLUDE=
+MERGE_TOOL=
 AGENT=
 AGENT_PORT=
 ENTRY_CWD=
 PLAN_DONE=
 
 same() { command -v cmp >/dev/null 2>&1 && cmp -s "$1" "$2"; }
+
+# Records what the merge tool did with <path>: one word, or "left: <reason>".
+merge_result() { # merge_result <path> <tool output>
+    case $2 in
+    changed | removed) printf '%s\n' "$1" >>"$RUN/changed" ;;
+    unchanged) ;;
+    left:*) say "$1 left as it is: ${2#left: }" ;;
+    *) die "unexpected answer from the merge tool for $1: $2" ;;
+    esac
+}
 
 # shellcheck disable=SC2329 # the plan calls these
 {
@@ -135,6 +150,20 @@ same() { command -v cmp >/dev/null 2>&1 && cmp -s "$1" "$2"; }
         mv -f "$tmp" "$dst" || die "cannot move $1 into place"
         printf '%s\n' "$1" >>"$RUN/files.new"
     }
+    puddle_merge_tool() { MERGE_TOOL=$1; }
+    puddle_merge() { # puddle_merge <path> <octal mode> <printf format of the merge spec (JSON)>
+        [ -n "$MERGE_TOOL" ] && [ -x "$ROOT$MERGE_TOOL" ] ||
+            die "cannot merge $1: the merge tool ${MERGE_TOOL:-(none)} is missing or not executable"
+        dst=$ROOT$1
+        dir=${dst%/*}
+        mkdir -p "${dir:-/}" || die "cannot create the directory for $1"
+        # shellcheck disable=SC2059 # as in puddle_file
+        (umask 077 && printf "$3" >"$RUN/merge.spec") || die "cannot write the merge spec for $1"
+        out=$("$ROOT$MERGE_TOOL" merge-file apply "$STATE/merge" "$1" "$dst" "$2" <"$RUN/merge.spec" 2>&1) ||
+            die "cannot merge $1: $out"
+        merge_result "$1" "$out"
+        printf '%s\n' "$1" >>"$RUN/merge.new"
+    }
     puddle_on_change() { printf '%s %s\n' "$1" "$2" >>"$RUN/triggers"; }
     puddle_git_include() { GIT_INCLUDE=$1; }
     puddle_agent() { AGENT=$1 AGENT_PORT=$2; }
@@ -147,17 +176,42 @@ same() { command -v cmp >/dev/null 2>&1 && cmp -s "$1" "$2"; }
 . "$PLAN"
 [ "$PLAN_DONE" = 1 ] || die "the plan did not reach puddle_plan_end" 2
 
-# Files an earlier plan wrote that this one doesn't: remove them (a provider was switched off).
+# Files an earlier plan wrote whole that this one doesn't: remove them (a provider was switched
+# off). One that is merged now stays (the merge kept its content).
 if [ -f "$STATE/boot-files" ]; then
     while IFS= read -r p; do
         [ -n "$p" ] || continue
         grep -Fxq -- "$p" "$RUN/files.new" && continue
+        grep -Fxq -- "$p" "$RUN/merge.new" && continue
         rm -f "$ROOT$p" || die "cannot remove $p"
         printf '%s\n' "$p" >>"$RUN/changed"
         say "removed $p (no longer in the plan)"
     done <"$STATE/boot-files"
 fi
 mv -f "$RUN/files.new" "$STATE/boot-files" || die "cannot record the files written"
+
+# Merged files an earlier plan listed and this one doesn't: remove only puddle's keys (and the
+# file, if puddle created it and nothing else is left). One that is written whole now only loses
+# its record. Without the tool, the record waits for a boot that has it.
+if [ -f "$STATE/merge-files" ]; then
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        grep -Fxq -- "$p" "$RUN/merge.new" && continue
+        if [ -z "$MERGE_TOOL" ] || [ ! -x "$ROOT$MERGE_TOOL" ]; then
+            say "puddle's keys stay in $p for now: no merge tool at ${MERGE_TOOL:-(none)}"
+            printf '%s\n' "$p" >>"$RUN/merge.new"
+        elif grep -Fxq -- "$p" "$STATE/boot-files"; then
+            out=$("$ROOT$MERGE_TOOL" merge-file forget "$STATE/merge" "$p" </dev/null 2>&1) ||
+                die "cannot drop the merge record of $p: $out"
+        else
+            out=$("$ROOT$MERGE_TOOL" merge-file remove "$STATE/merge" "$p" "$ROOT$p" </dev/null 2>&1) ||
+                die "cannot remove puddle's keys from $p: $out"
+            merge_result "$p" "$out"
+            case $out in left:*) ;; *) say "puddle's keys removed from $p (no longer in the plan): $out" ;; esac
+        fi
+    done <"$STATE/merge-files"
+fi
+mv -f "$RUN/merge.new" "$STATE/merge-files" || die "cannot record the files merged"
 say "files applied ($(grep -c '' "$RUN/changed") changed)"
 
 # git reads puddle's settings through one include in the system config, which works whether or

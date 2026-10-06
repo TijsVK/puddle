@@ -19,7 +19,9 @@ use puddle_compute::fake::{Call, ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{
     ComputeError, ExecOutput, ExecRequest, FileMount, ImageConfig, Runtime, Sandbox, SandboxSpec,
 };
-use puddle_types::{GuestPath, ImageRef, SandboxName, SandboxStatus};
+use puddle_types::{
+    GuestFile, GuestPath, ImageRef, MergeEntry, MergeFormat, MergeSpec, SandboxName, SandboxStatus,
+};
 use tokio::io::AsyncReadExt as _;
 
 fn name(n: &str) -> SandboxName {
@@ -292,7 +294,23 @@ async fn missing_mounts_are_refused_before_anything_is_created() {
         None,
     );
     let err = BootHook::new()
-        .create(&rt, no_agent_mount, &plan(), &Gate::new())
+        .create(&rt, no_agent_mount.clone(), &plan(), &Gate::new())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("/puddle/puddle-agent"), "{err}");
+    // A plan without the agent still needs its binary when it merges a file (T-097).
+    let spec =
+        MergeSpec::new(MergeFormat::Json, vec![MergeEntry::json(&["a"], &1.into())]).unwrap();
+    let merging = BootPlan::builder(&ImageConfig::default())
+        .no_agent()
+        .file(GuestFile::merged(
+            GuestPath::new("/root/a.json").unwrap(),
+            spec,
+        ))
+        .build()
+        .unwrap();
+    let err = BootHook::new()
+        .create(&rt, no_agent_mount, &merging, &Gate::new())
         .await
         .unwrap_err();
     assert!(err.to_string().contains("/puddle/puddle-agent"), "{err}");

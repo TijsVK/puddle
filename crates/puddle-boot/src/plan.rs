@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use puddle_compute::{ExecRequest, ImageConfig};
-use puddle_types::{GuestEnv, GuestFile, GuestPath};
+use puddle_types::{ApplyKind, GuestEnv, GuestFile, GuestPath};
 
 use crate::assets::{AGENT_GUEST, BOOT_SH_GUEST, MOUNT_DIR_GUEST, guest_path};
 use crate::machine::machine_settings;
@@ -41,23 +41,6 @@ pub const DEFAULT_AGENT_PORT: u16 = 3128;
 const RESERVED_ENV_PREFIX: &str = "PUDDLE_";
 
 const GENERATED: &str = "# Written by puddle at every boot; changes here are overwritten.\n";
-
-/// How the hook applies a [`GuestFile`]. Only [`ApplyKind::Replace`] exists today; T-020 C-4
-/// plans more (an append-once kind for the CA bundle or `ssh_config`), which arrive as a field
-/// on `GuestFile` in `puddle-types` and a new arm in [`BootPlan::render`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ApplyKind {
-    /// Write the whole file, atomically, replacing what is there.
-    Replace,
-}
-
-/// The [`ApplyKind`] of `file` (always [`ApplyKind::Replace`] until `GuestFile` carries one).
-#[must_use]
-pub fn apply_kind(file: &GuestFile) -> ApplyKind {
-    let _ = file;
-    ApplyKind::Replace
-}
 
 /// Why a plan can't be built. Every variant names the offending item.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -94,6 +77,12 @@ pub enum PlanError {
         field: &'static str,
         /// What is wrong.
         reason: &'static str,
+    },
+    /// A file asks for an [`ApplyKind`] this hook doesn't know.
+    #[error("boot file {path} has an apply kind this boot hook can't apply")]
+    UnknownApplyKind {
+        /// The path.
+        path: String,
     },
     /// A value from the image can't be passed on.
     #[error("the image's {what} contains a NUL or newline")]
@@ -247,19 +236,49 @@ impl BootPlan {
         self.agent.as_ref()
     }
 
+    /// The binary that applies merged files (`puddle-agent merge-file`, T-097): the agent's,
+    /// or [`AGENT_GUEST`] when the plan starts no agent. It must be mounted when
+    /// [`BootPlan::has_merged_files`]; the hook also needs it to remove the keys of a merged file
+    /// an earlier plan listed, and keeps that record for a later boot when it is missing.
+    #[must_use]
+    pub fn merge_tool(&self) -> GuestPath {
+        self.agent
+            .as_ref()
+            .map_or_else(|| guest_path(AGENT_GUEST), |a| a.binary.clone())
+    }
+
+    /// Whether any file is applied with [`ApplyKind::Merge`].
+    #[must_use]
+    pub fn has_merged_files(&self) -> bool {
+        self.files
+            .iter()
+            .any(|f| matches!(f.apply(), ApplyKind::Merge(_)))
+    }
+
     /// The plan as `boot.sh` reads it on stdin.
     #[must_use]
     pub fn render(&self) -> Vec<u8> {
-        let mut lines = vec![PLAN_HEADER.to_owned()];
+        let mut lines = vec![
+            PLAN_HEADER.to_owned(),
+            format!("puddle_merge_tool {}", sh_word(self.merge_tool().as_str())),
+        ];
         for f in &self.files {
-            match apply_kind(f) {
-                ApplyKind::Replace => lines.push(format!(
-                    "puddle_file {} {:04o} {}",
-                    sh_word(f.path().as_str()),
-                    f.mode(),
-                    printf_format(f.contents())
-                )),
-            }
+            let (call, body) = match f.apply() {
+                ApplyKind::Merge(spec) => (
+                    "puddle_merge",
+                    // A spec of strings always serialises; an empty one would fail the boot
+                    // loudly ("bad merge spec"), never write a wrong file.
+                    serde_json::to_vec(spec).unwrap_or_default(),
+                ),
+                // `build` refuses kinds this hook doesn't know.
+                _ => ("puddle_file", f.contents().to_vec()),
+            };
+            lines.push(format!(
+                "{call} {} {:04o} {}",
+                sh_word(f.path().as_str()),
+                f.mode(),
+                printf_format(&body)
+            ));
         }
         lines.push(format!(
             "puddle_on_change {} update-ca-certificates",
@@ -389,6 +408,11 @@ impl BootPlanBuilder {
             }
             if path.is_within(&mounts) {
                 return Err(PlanError::ReservedPath {
+                    path: path.to_string(),
+                });
+            }
+            if !matches!(f.apply(), ApplyKind::Replace | ApplyKind::Merge(_)) {
+                return Err(PlanError::UnknownApplyKind {
                     path: path.to_string(),
                 });
             }
@@ -702,12 +726,13 @@ mod tests {
         ));
         assert!(r.contains("puddle_git_include '/etc/puddle/gitconfig'\n"));
         assert!(r.contains("puddle_agent '/opt/agent' 4000\n"));
+        assert_eq!(lines.get(1), Some(&"puddle_merge_tool '/opt/agent'"));
         assert!(r.contains(&format!(
             "puddle_entrypoint_env '{ENV_FILE_GUEST}'\npuddle_entrypoint_env '{PATH_FILE_GUEST}'\n"
         )));
         assert_eq!(plan.agent().unwrap().port, 4000);
         // Every line is one call: content newlines are escaped.
-        assert_eq!(lines.len(), 1 + plan.files().len() + 6);
+        assert_eq!(lines.len(), 2 + plan.files().len() + 6);
         // The agent's port is the one VS Code is told to ignore.
         assert!(text(&plan, MACHINE_SETTINGS_GUEST).contains("\"4000\""));
     }
@@ -720,7 +745,37 @@ mod tests {
             .unwrap();
         assert!(plan.agent().is_none());
         let r = String::from_utf8(plan.render()).unwrap();
-        assert!(!r.contains("puddle_agent"));
+        assert!(!r.contains("puddle_agent "));
+        // Merged files still have their tool: the agent binary's default mount.
+        assert!(r.contains("puddle_merge_tool '/puddle/puddle-agent'\n"));
         assert!(text(&plan, MACHINE_SETTINGS_GUEST).contains("\"3128\""));
+    }
+
+    #[test]
+    fn merged_files_render_their_spec_and_are_counted() {
+        use puddle_types::{MergeEntry, MergeFormat, MergeSpec};
+        let spec = MergeSpec::new(
+            MergeFormat::Json,
+            vec![MergeEntry::json(&["a"], &serde_json::json!("50%"))],
+        )
+        .unwrap();
+        let merged = GuestFile::merged(GuestPath::new("/root/c.json").unwrap(), spec)
+            .with_mode(0o600)
+            .unwrap();
+        let without = BootPlan::builder(&ImageConfig::default()).build().unwrap();
+        assert!(!without.has_merged_files());
+        let plan = BootPlan::builder(&ImageConfig::default())
+            .file(merged)
+            .build()
+            .unwrap();
+        assert!(plan.has_merged_files());
+        assert_eq!(plan.merge_tool().as_str(), AGENT_GUEST);
+        let r = String::from_utf8(plan.render()).unwrap();
+        assert!(
+            r.contains(
+                r#"puddle_merge '/root/c.json' 0600 '{"format":"json","entries":[{"key":["a"],"value":"\134"50\045\134""}]}'"#
+            ),
+            "{r}"
+        );
     }
 }

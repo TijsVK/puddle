@@ -20,6 +20,18 @@ fn main() -> ExitCode {
             println!("{}", puddle_types::version_line("puddle-agent"));
             ExitCode::SUCCESS
         }
+        Command::MergeFile(request) => {
+            match puddle_agent::merge_file::run(&request, std::io::stdin().lock()) {
+                Ok(outcome) => {
+                    println!("{outcome}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("puddle-agent merge-file: {err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Reserved(name) => {
             eprintln!("puddle-agent {name}: not available in this version");
             ExitCode::from(2)

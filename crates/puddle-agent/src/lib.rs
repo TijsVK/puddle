@@ -8,6 +8,8 @@
 //!   ([`oom`], [`control`]), which the host turns into
 //!   [`puddle_types::Event::OomKill`].
 //!
+//! It also applies merged guest files for the boot hook ([`merge_file`], T-097).
+//!
 //! The wire protocol is in `puddle-agent-proto`. Settings come from environment variables
 //! ([`config`]). The binary's `main` only parses the command line ([`cli`]) and starts an
 //! [`Agent`].
@@ -15,6 +17,7 @@
 pub mod cli;
 pub mod config;
 pub mod control;
+pub mod merge_file;
 pub mod oom;
 pub mod serve;
 pub mod upstream;
