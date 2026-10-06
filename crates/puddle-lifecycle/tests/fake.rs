@@ -103,12 +103,15 @@ async fn every_sandbox_is_trimmed_then_stopped_and_records_stopped() {
         let stop = ops.iter().position(|o| *o == Op::Stop).unwrap();
         assert!(exec < stop, "{n}: {ops:?}");
     }
-    let mut trims = trims.lock().unwrap().clone();
+    // The trim-all script (sh -c ...) ran once per sandbox.
+    let mut trims: Vec<String> = trims
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|t| t.split(" -c").next().unwrap().to_owned())
+        .collect();
     trims.sort();
-    assert_eq!(
-        trims,
-        ["a: fstrim -a -v", "b: fstrim -a -v", "c: fstrim -a -v"]
-    );
+    assert_eq!(trims, ["a: sh", "b: sh", "c: sh"]);
     assert_eq!(lc.managed().len(), 0);
 }
 

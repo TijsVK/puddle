@@ -7,12 +7,21 @@ use std::time::Duration;
 use puddle_compute::{ExecOutput, ExecRequest};
 use puddle_types::GuestPath;
 
+/// Trims every mounted filesystem: util-linux `fstrim -a`; busybox (alpine) has no `-a`, so
+/// then each mounted ext2/3/4, xfs, btrfs or f2fs filesystem from `/proc/mounts` in turn.
+const TRIM_ALL: &str = r#"fstrim -a -v 2>/dev/null && exit 0
+rc=0
+for m in $(awk '$3 ~ /^(ext[234]|xfs|btrfs|f2fs)$/ { print $2 }' /proc/mounts); do
+  fstrim -v "$m" || rc=$?
+done
+exit $rc"#;
+
 /// The command that trims `paths` (one `fstrim -v` each, as root), or every mounted filesystem
-/// that supports it (`fstrim -a -v`) when `paths` is empty. `timeout` bounds the whole run.
+/// that supports it when `paths` is empty. `timeout` bounds the whole run.
 #[must_use]
 pub fn trim_request(paths: &[GuestPath], timeout: Duration) -> ExecRequest {
     let request = if paths.is_empty() {
-        ExecRequest::new("fstrim", ["-a", "-v"])
+        ExecRequest::sh(TRIM_ALL)
     } else {
         // Every path is trimmed even if an earlier one fails; the exit status is the last
         // failure's. Paths are passed as arguments, never spliced into the script.
@@ -80,8 +89,9 @@ mod tests {
     #[test]
     fn no_paths_trims_every_mounted_filesystem() {
         let r = trim_request(&[], Duration::from_secs(7));
-        assert_eq!(r.program, "fstrim");
-        assert_eq!(r.args, ["-a", "-v"]);
+        assert_eq!(r.program, "sh");
+        assert_eq!(r.args, ["-c", TRIM_ALL]);
+        assert!(TRIM_ALL.starts_with("fstrim -a -v"), "util-linux first");
         assert_eq!(r.user.as_deref(), Some("root"));
         assert_eq!(r.timeout, Duration::from_secs(7));
     }
