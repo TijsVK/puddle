@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Proxy discovery: which route a request takes to leave the machine.
 //!
-//! Order for [`Mode::System`] (T-026 section 2a): a loopback destination goes direct; then the
-//! user's WinINet settings, as WinHTTP reads them: a PAC script or WPAD is evaluated per URL by
-//! Windows' own engine, and a static `ProxyServer` with its `ProxyOverride` list follows; then the
-//! machine-wide WinHTTP proxy; then the `HTTP(S)_PROXY` variables with `NO_PROXY`; else direct.
-//! A PAC that answers (even `DIRECT`) is final; a PAC that fails falls through to the next step.
+//! Order for [`Mode::System`] (T-026 section 2a): a loopback destination goes direct; then what
+//! the [`OsProxy`] reports: a PAC script or WPAD evaluated per URL, else the static proxies with
+//! their bypass list; else direct. On Windows the OS layer is the user's WinINet settings as
+//! WinHTTP reads them (PAC and WPAD by Windows' own engine), then the machine-wide WinHTTP proxy,
+//! then the `HTTP(S)_PROXY` variables; on Unix it is the variables alone. A PAC that answers
+//! (even `DIRECT`) is final; a PAC that fails falls through to the static proxies.
 //!
 //! Decisions are cached per destination for one *network epoch*. The epoch ends when the OS says
 //! the proxy settings or the network changed (debounced, because a VPN or security client can flap
@@ -28,10 +29,9 @@ use tokio::sync::{Notify, OnceCell, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use crate::env::EnvProxy;
 use crate::hop::{Destination, Hop, ProxyAddr, Route};
-use crate::os::{OsProxy, OsSettings, PacError, PacQuery, WatchGuard};
-use crate::parse::{BypassList, ProxyServer};
+use crate::os::{Origin, OsProxy, PacError, PacQuery, ProxyConfig, WatchGuard};
+use crate::parse::{BypassList, ProxyRules};
 
 /// Where the proxy setting comes from.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -49,9 +49,9 @@ pub enum Mode {
 /// A proxy chosen in puddle's settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManualProxy {
-    /// WinINet `ProxyServer` syntax: `host:port` or `http=h:p;https=h:p`.
+    /// Proxy list: `host:port` for every scheme, or `http=h:p;https=h:p`.
     pub proxy_server: String,
-    /// WinINet `ProxyOverride` syntax.
+    /// Bypass list: `;` separated names, `*` wildcards, `<local>` ([`BypassList::parse`]).
     pub bypass: String,
 }
 
@@ -96,10 +96,8 @@ pub enum RouteSource {
     Pac,
     /// A PAC answered with entries puddle cannot use only (SOCKS, HTTPS proxy): direct instead.
     PacUnsupported,
-    /// The static WinINet proxy.
-    WinInet,
-    /// The machine-wide WinHTTP proxy.
-    MachineWinHttp,
+    /// The operating system's static proxy.
+    System,
     /// `HTTP(S)_PROXY`.
     Env,
     /// A bypass list exempted the destination.
@@ -124,7 +122,7 @@ type Resolved = (Route, RouteSource);
 #[derive(Debug)]
 struct Epoch {
     number: u64,
-    settings: OnceCell<OsSettings>,
+    config: OnceCell<ProxyConfig>,
     routes: Mutex<HashMap<Destination, Arc<OnceCell<Resolved>>>>,
     pac_down_until: Mutex<Option<Instant>>,
     bad: Mutex<HashMap<ProxyAddr, Instant>>,
@@ -134,7 +132,7 @@ impl Epoch {
     fn new(number: u64) -> Arc<Self> {
         Arc::new(Self {
             number,
-            settings: OnceCell::new(),
+            config: OnceCell::new(),
             routes: Mutex::default(),
             pac_down_until: Mutex::new(None),
             bad: Mutex::default(),
@@ -146,7 +144,6 @@ impl Epoch {
 #[derive(Debug)]
 pub struct Discovery {
     os: Arc<dyn OsProxy>,
-    env: EnvProxy,
     config: Config,
     current: RwLock<Arc<Epoch>>,
     counter: AtomicU64,
@@ -154,13 +151,12 @@ pub struct Discovery {
 }
 
 impl Discovery {
-    /// Discovery over `os` with `env` as the last fallback.
+    /// Discovery over `os`.
     #[must_use]
-    pub fn new(os: Arc<dyn OsProxy>, env: EnvProxy, config: Config) -> Arc<Self> {
+    pub fn new(os: Arc<dyn OsProxy>, config: Config) -> Arc<Self> {
         let (epochs, _) = watch::channel(0);
         Arc::new(Self {
             os,
-            env,
             config,
             current: RwLock::new(Epoch::new(0)),
             counter: AtomicU64::new(0),
@@ -168,15 +164,10 @@ impl Discovery {
         })
     }
 
-    /// Discovery for this machine: the OS layer of the platform, the process environment and the
-    /// default configuration.
+    /// Discovery for this machine: the OS layer of the platform and the default configuration.
     #[must_use]
     pub fn system() -> Arc<Self> {
-        Self::new(
-            crate::os::system_os(),
-            EnvProxy::from_process(),
-            Config::default(),
-        )
+        Self::new(crate::os::system_os(), Config::default())
     }
 
     /// The current network epoch number.
@@ -302,18 +293,18 @@ impl Discovery {
         dest: &Destination,
     ) -> Result<Resolved, Resolved> {
         let settings = epoch
-            .settings
+            .config
             .get_or_init(|| async {
                 let os = Arc::clone(&self.os);
-                match tokio::task::spawn_blocking(move || os.settings()).await {
-                    Ok(Ok(settings)) => settings,
+                match tokio::task::spawn_blocking(move || os.config()).await {
+                    Ok(Ok(config)) => config,
                     Ok(Err(err)) => {
-                        tracing::warn!(error = %err, "system proxy settings unreadable; using the environment");
-                        OsSettings::default()
+                        tracing::warn!(error = %err, "system proxy settings unreadable; going direct");
+                        ProxyConfig::default()
                     }
                     Err(err) => {
                         tracing::error!(error = %err, "settings task failed");
-                        OsSettings::default()
+                        ProxyConfig::default()
                     }
                 }
             })
@@ -326,7 +317,7 @@ impl Discovery {
                 PacOutcome::Unavailable => degraded = true,
             }
         }
-        let resolved = self.static_route(settings, dest);
+        let resolved = Self::static_route(settings, dest);
         if degraded {
             Err(resolved)
         } else {
@@ -337,7 +328,7 @@ impl Discovery {
     async fn pac(
         &self,
         epoch: &Arc<Epoch>,
-        settings: &OsSettings,
+        settings: &ProxyConfig,
         dest: &Destination,
     ) -> PacOutcome {
         let now = Instant::now();
@@ -390,27 +381,16 @@ impl Discovery {
         }
     }
 
-    fn static_route(&self, settings: &OsSettings, dest: &Destination) -> Resolved {
-        if let Some(value) = &settings.proxy_server {
-            return static_choice(
-                value,
-                settings.bypass.as_deref(),
-                dest,
-                RouteSource::WinInet,
-            );
-        }
-        if let Some(value) = &settings.machine_proxy {
-            return static_choice(
-                value,
-                settings.machine_bypass.as_deref(),
-                dest,
-                RouteSource::MachineWinHttp,
-            );
-        }
-        match self.env.proxy_for(dest.scheme()) {
-            Some(_) if self.env.bypassed(dest) => (Route::direct(), RouteSource::Bypass),
-            Some(proxy) => (Route::via(proxy.clone()), RouteSource::Env),
-            None => (Route::direct(), RouteSource::NoProxy),
+    fn static_route(settings: &ProxyConfig, dest: &Destination) -> Resolved {
+        let source = match settings.origin {
+            Origin::Environment => RouteSource::Env,
+            _ => RouteSource::System,
+        };
+        match settings.rules.for_scheme(dest.scheme()) {
+            _ if settings.rules.is_empty() => (Route::direct(), RouteSource::NoProxy),
+            _ if settings.bypass.matches(dest) => (Route::direct(), RouteSource::Bypass),
+            Some(proxy) => (Route::via(proxy.clone()), source),
+            None => (Route::direct(), source),
         }
     }
 }
@@ -422,34 +402,13 @@ enum PacOutcome {
 }
 
 fn manual_route(manual: &ManualProxy, dest: &Destination) -> Resolved {
-    let (route, source) = static_choice(
-        &manual.proxy_server,
-        Some(&manual.bypass),
-        dest,
-        RouteSource::Manual,
-    );
-    (
-        route,
-        if source == RouteSource::Bypass {
-            source
-        } else {
-            RouteSource::Manual
-        },
-    )
-}
-
-fn static_choice(
-    value: &str,
-    bypass: Option<&str>,
-    dest: &Destination,
-    source: RouteSource,
-) -> Resolved {
-    if bypass.is_some_and(|list| BypassList::parse(list).matches(dest)) {
+    let rules = ProxyRules::parse(&manual.proxy_server);
+    if BypassList::parse(&manual.bypass).matches(dest) {
         return (Route::direct(), RouteSource::Bypass);
     }
-    match ProxyServer::parse(value).for_scheme(dest.scheme()) {
-        Some(proxy) => (Route::via(proxy.clone()), source),
-        None => (Route::direct(), source),
+    match rules.for_scheme(dest.scheme()) {
+        Some(proxy) => (Route::via(proxy.clone()), RouteSource::Manual),
+        None => (Route::direct(), RouteSource::Manual),
     }
 }
 

@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_upstream::{
-    Config, Destination, Discovery, EnvProxy, Hop, OsProxy, PacError, PacQuery, ProxyAddr,
-    RouteSource, Scheme, WinOs,
+    Config, Destination, Discovery, EnvFallback, EnvOs, Hop, OsProxy, PacError, PacQuery,
+    ProxyAddr, RouteSource, Scheme, WinOs,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -156,12 +156,12 @@ async fn parallel_pac_lookups_all_answer() {
 
 #[test]
 fn the_settings_call_works_on_any_machine_and_never_panics() {
-    let settings = WinOs::new().settings().unwrap();
+    let settings = WinOs::new().config().unwrap();
     eprintln!(
         "auto_detect={} pac={} static={}",
         settings.auto_detect,
         settings.pac_url.is_some(),
-        settings.proxy_server.is_some()
+        !settings.rules.is_empty()
     );
 }
 
@@ -222,12 +222,11 @@ async fn settings_and_discovery_follow_the_registry_end_to_end() {
     }
     let pac = pac_server().await;
     let _url = RegValue::set("AutoConfigURL", "REG_SZ", &pac);
-    let settings = WinOs::new().settings().unwrap();
+    let settings = WinOs::new().config().unwrap();
     assert_eq!(settings.pac_url.as_deref(), Some(pac.as_str()));
 
     let discovery = Discovery::new(
-        Arc::new(WinOs::new()),
-        EnvProxy::default(),
+        Arc::new(EnvFallback::new(Arc::new(WinOs::new()), EnvOs::default())),
         Config::default(),
     );
     let decision = discovery
@@ -252,9 +251,19 @@ async fn the_proxy_enable_switch_hides_a_static_proxy() {
     let _server = RegValue::set("ProxyServer", "REG_SZ", "static.corp:3128");
     let _bypass = RegValue::set("ProxyOverride", "REG_SZ", "*.corp.test;<local>");
     let _on = RegValue::set("ProxyEnable", "REG_DWORD", "1");
-    let on = WinOs::new().settings().unwrap();
-    assert_eq!(on.proxy_server.as_deref(), Some("static.corp:3128"));
-    assert_eq!(on.bypass.as_deref(), Some("*.corp.test;<local>"));
+    let on = WinOs::new().config().unwrap();
+    assert_eq!(
+        on.rules.for_scheme(Scheme::Https),
+        Some(&ProxyAddr::new("static.corp", 3128))
+    );
+    assert!(
+        on.bypass
+            .matches(&Destination::new(Scheme::Https, "wiki.corp.test", 443))
+    );
+    assert!(
+        on.bypass
+            .matches(&Destination::new(Scheme::Https, "intranet", 443))
+    );
     assert!(reg(&[
         "add",
         KEY,
@@ -266,11 +275,8 @@ async fn the_proxy_enable_switch_hides_a_static_proxy() {
         "0",
         "/f"
     ]));
-    let off = WinOs::new().settings().unwrap();
-    assert_eq!(
-        off.proxy_server, None,
-        "ProxyEnable=0 means no static proxy"
-    );
+    let off = WinOs::new().config().unwrap();
+    assert!(off.rules.is_empty(), "ProxyEnable=0 means no static proxy");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -282,7 +288,10 @@ async fn a_registry_change_ends_the_epoch_once_after_the_debounce() {
         debounce: Duration::from_millis(300),
         ..Config::default()
     };
-    let discovery = Discovery::new(Arc::new(WinOs::new()), EnvProxy::default(), config);
+    let discovery = Discovery::new(
+        Arc::new(EnvFallback::new(Arc::new(WinOs::new()), EnvOs::default())),
+        config,
+    );
     let mut epochs = discovery.subscribe();
     let watching = discovery
         .watch()

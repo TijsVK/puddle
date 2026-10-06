@@ -13,14 +13,59 @@ use windows_sys::Win32::System::Registry::{
 };
 
 use super::{read_wide, wide};
-use crate::os::{OsSettings, SettingsError};
+use crate::os::{Origin, ProxyConfig, SettingsError};
+use crate::parse::{BypassList, ProxyRules};
 
 pub(super) const INTERNET_SETTINGS: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 const POLICY_SETTINGS: &str =
     r"Software\Policies\Microsoft\Windows\CurrentVersion\Internet Settings";
 
-pub(super) fn read() -> Result<OsSettings, SettingsError> {
+/// The settings as WinINet and WinHTTP name them. Never leaves this module: [`read`] turns it into
+/// the neutral [`ProxyConfig`].
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WinSettings {
+    /// "Automatically detect settings" (WPAD).
+    auto_detect: bool,
+    /// `AutoConfigURL`.
+    auto_config_url: Option<String>,
+    /// `ProxyServer`, already dropped when `ProxyEnable` is off.
+    proxy_server: Option<String>,
+    /// `ProxyOverride`.
+    proxy_override: Option<String>,
+    /// The machine-wide WinHTTP proxy list and bypass (`netsh winhttp`).
+    machine_proxy: Option<String>,
+    machine_bypass: Option<String>,
+    /// Group policy `ProxySettingsPerUser=0`: WinINet should read the machine's settings.
+    per_machine_policy: bool,
+}
+
+/// The user's proxy first (WinINet), the machine's WinHTTP proxy when the user has none.
+fn to_config(win: WinSettings) -> ProxyConfig {
+    if win.per_machine_policy {
+        tracing::debug!(
+            "ProxySettingsPerUser=0 is set; the user's WinINet settings are used as WinHTTP reports them"
+        );
+    }
+    let (list, bypass) = match (win.proxy_server, win.machine_proxy) {
+        (Some(user), _) => (Some(user), win.proxy_override),
+        (None, Some(machine)) => (Some(machine), win.machine_bypass),
+        (None, None) => (None, None),
+    };
+    ProxyConfig {
+        auto_detect: win.auto_detect,
+        pac_url: win.auto_config_url,
+        rules: list.as_deref().map(ProxyRules::parse).unwrap_or_default(),
+        bypass: bypass.as_deref().map(BypassList::parse).unwrap_or_default(),
+        origin: Origin::System,
+    }
+}
+
+pub(super) fn read() -> Result<ProxyConfig, SettingsError> {
+    read_win().map(to_config)
+}
+
+fn read_win() -> Result<WinSettings, SettingsError> {
     let mut config = WINHTTP_CURRENT_USER_IE_PROXY_CONFIG {
         fAutoDetect: 0,
         lpszAutoConfigUrl: std::ptr::null_mut(),
@@ -44,11 +89,11 @@ pub(super) fn read() -> Result<OsSettings, SettingsError> {
         proxy_server = None;
     }
     let (machine_proxy, machine_bypass) = machine_proxy();
-    Ok(OsSettings {
+    Ok(WinSettings {
         auto_detect: config.fAutoDetect != 0,
-        pac_url,
+        auto_config_url: pac_url,
         proxy_server,
-        bypass,
+        proxy_override: bypass,
         machine_proxy,
         machine_bypass,
         per_machine_policy: registry_dword(
@@ -110,4 +155,58 @@ pub(super) fn registry_dword(
         )
     };
     (status == ERROR_SUCCESS).then_some(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hop::{Destination, ProxyAddr, Scheme};
+
+    #[test]
+    fn the_users_proxy_wins_over_the_machines_and_keeps_its_own_bypass() {
+        let config = to_config(WinSettings {
+            proxy_server: Some("http=a:1;https=b:2".into()),
+            proxy_override: Some("*.corp.test;<local>".into()),
+            machine_proxy: Some("m:9".into()),
+            machine_bypass: Some("*.m.test".into()),
+            auto_config_url: Some("http://pac/p.pac".into()),
+            auto_detect: true,
+            per_machine_policy: true,
+        });
+        assert_eq!(config.pac_url.as_deref(), Some("http://pac/p.pac"));
+        assert!(config.auto_detect);
+        assert_eq!(
+            config.rules.for_scheme(Scheme::Https),
+            Some(&ProxyAddr::new("b", 2))
+        );
+        assert!(
+            config
+                .bypass
+                .matches(&Destination::new(Scheme::Https, "wiki.corp.test", 443))
+        );
+        assert!(
+            !config
+                .bypass
+                .matches(&Destination::new(Scheme::Https, "a.m.test", 443))
+        );
+    }
+
+    #[test]
+    fn the_machine_proxy_is_used_when_the_user_has_none() {
+        let config = to_config(WinSettings {
+            machine_proxy: Some("m:9".into()),
+            machine_bypass: Some("*.m.test".into()),
+            ..WinSettings::default()
+        });
+        assert_eq!(
+            config.rules.for_scheme(Scheme::Http),
+            Some(&ProxyAddr::new("m", 9))
+        );
+        assert!(
+            config
+                .bypass
+                .matches(&Destination::new(Scheme::Https, "a.m.test", 443))
+        );
+        assert!(to_config(WinSettings::default()).rules.is_empty());
+    }
 }

@@ -6,18 +6,18 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::hop::Hop;
 use crate::os::{
-    ChangeCallback, OsProxy, OsSettings, PacError, PacQuery, SettingsError, WatchGuard,
+    ChangeCallback, OsProxy, PacError, PacQuery, ProxyConfig, SettingsError, WatchGuard,
 };
 
 type PacFn = dyn Fn(&PacQuery) -> Result<Vec<Hop>, PacError> + Send + Sync;
 
-/// A scripted [`OsProxy`]: settings and the PAC function are set by the test, calls are counted,
+/// A scripted [`OsProxy`]: config and the PAC function are set by the test, calls are counted,
 /// and [`FakeOs::fire_change`] plays a network change.
 pub struct FakeOs {
-    settings: Mutex<Result<OsSettings, SettingsError>>,
+    config: Mutex<Result<ProxyConfig, SettingsError>>,
     pac: Mutex<Arc<PacFn>>,
     callback: Arc<Mutex<Option<ChangeCallback>>>,
-    settings_calls: AtomicUsize,
+    config_calls: AtomicUsize,
     pac_calls: AtomicUsize,
     can_watch: bool,
 }
@@ -29,18 +29,18 @@ impl std::fmt::Debug for FakeOs {
 }
 
 impl FakeOs {
-    /// A fake that reports `settings` and answers every PAC query with `DIRECT`.
+    /// A fake that reports `config` and answers every PAC query with `DIRECT`.
     #[must_use]
-    pub fn new(settings: OsSettings) -> Arc<Self> {
-        Arc::new(Self::build(settings, true))
+    pub fn new(config: ProxyConfig) -> Arc<Self> {
+        Arc::new(Self::build(config, true))
     }
 
-    fn build(settings: OsSettings, can_watch: bool) -> Self {
+    fn build(config: ProxyConfig, can_watch: bool) -> Self {
         Self {
-            settings: Mutex::new(Ok(settings)),
+            config: Mutex::new(Ok(config)),
             pac: Mutex::new(Arc::new(|_| Ok(vec![Hop::Direct]))),
             callback: Arc::default(),
-            settings_calls: AtomicUsize::new(0),
+            config_calls: AtomicUsize::new(0),
             pac_calls: AtomicUsize::new(0),
             can_watch,
         }
@@ -48,18 +48,18 @@ impl FakeOs {
 
     /// Like [`FakeOs::new`], but `watch` is unsupported.
     #[must_use]
-    pub fn without_watch(settings: OsSettings) -> Arc<Self> {
-        Arc::new(Self::build(settings, false))
+    pub fn without_watch(config: ProxyConfig) -> Arc<Self> {
+        Arc::new(Self::build(config, false))
     }
 
-    /// Replaces the settings.
-    pub fn set_settings(&self, settings: OsSettings) {
-        *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = Ok(settings);
+    /// Replaces the config.
+    pub fn set_config(&self, config: ProxyConfig) {
+        *self.config.lock().unwrap_or_else(PoisonError::into_inner) = Ok(config);
     }
 
-    /// Makes `settings()` fail.
-    pub fn fail_settings(&self, message: &str) {
-        *self.settings.lock().unwrap_or_else(PoisonError::into_inner) =
+    /// Makes `config()` fail.
+    pub fn fail_config(&self, message: &str) {
+        *self.config.lock().unwrap_or_else(PoisonError::into_inner) =
             Err(SettingsError(message.into()));
     }
 
@@ -81,10 +81,10 @@ impl FakeOs {
         callback.map(|cb| cb()).is_some()
     }
 
-    /// How often `settings()` was called.
+    /// How often `config()` was called.
     #[must_use]
-    pub fn settings_calls(&self) -> usize {
-        self.settings_calls.load(Ordering::SeqCst)
+    pub fn config_calls(&self) -> usize {
+        self.config_calls.load(Ordering::SeqCst)
     }
 
     /// How often `resolve_pac()` was called.
@@ -120,9 +120,9 @@ impl Drop for FakeGuard {
 }
 
 impl OsProxy for FakeOs {
-    fn settings(&self) -> Result<OsSettings, SettingsError> {
-        self.settings_calls.fetch_add(1, Ordering::SeqCst);
-        self.settings
+    fn config(&self) -> Result<ProxyConfig, SettingsError> {
+        self.config_calls.fetch_add(1, Ordering::SeqCst);
+        self.config
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()

@@ -1,31 +1,40 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The seam to the operating system: what Windows says about proxies. Discovery only talks to
-//! [`OsProxy`], so every decision path is tested with [`crate::FakeOs`] and the Windows
-//! implementation ([`crate::WinOs`]) stays a thin layer over WinHTTP.
+//! The seam to the operating system: what the OS says about proxies, in neutral terms. Discovery
+//! only talks to [`OsProxy`], so every decision path is tested with [`crate::FakeOs`]. The
+//! Windows implementation (WinINet and WinHTTP, `windows/`) keeps its own field names and syntax
+//! inside itself; Unix is the environment ([`crate::EnvOs`], T-148 L-2).
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::env::{EnvFallback, EnvOs};
 use crate::hop::Hop;
+use crate::parse::{BypassList, ProxyRules};
 
-/// The user's proxy settings as WinINet stores them (`WinHttpGetIEProxyConfigForCurrentUser`).
+/// Where [`ProxyConfig::rules`] came from. For diagnostics and [`crate::RouteSource`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Origin {
+    /// The operating system's own settings.
+    #[default]
+    System,
+    /// `HTTP(S)_PROXY` variables.
+    Environment,
+}
+
+/// What the OS says about proxies, whatever the OS calls its fields.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct OsSettings {
-    /// "Automatically detect settings" (WPAD) is on.
+pub struct ProxyConfig {
+    /// "Find the PAC script by itself" (WPAD) is on.
     pub auto_detect: bool,
-    /// `AutoConfigURL`: the PAC script's address.
+    /// A PAC script's address.
     pub pac_url: Option<String>,
-    /// `ProxyServer` (when `ProxyEnable` is on), in the WinINet syntax.
-    pub proxy_server: Option<String>,
-    /// `ProxyOverride`.
-    pub bypass: Option<String>,
-    /// The machine-wide WinHTTP proxy (`netsh winhttp`), proxy list.
-    pub machine_proxy: Option<String>,
-    /// The machine-wide WinHTTP bypass list.
-    pub machine_bypass: Option<String>,
-    /// Group policy `ProxySettingsPerUser=0` makes WinINet read the machine's settings instead of
-    /// the user's. Reported, not yet followed (diagnostics only).
-    pub per_machine_policy: bool,
+    /// Static proxies per scheme.
+    pub rules: ProxyRules,
+    /// Destinations that skip the static proxies. Not applied to PAC answers: the script decides.
+    pub bypass: BypassList,
+    /// Where the rules came from.
+    pub origin: Origin,
 }
 
 /// One PAC / WPAD evaluation to run.
@@ -75,7 +84,7 @@ pub trait OsProxy: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     /// [`SettingsError`] when the OS call fails.
-    fn settings(&self) -> Result<OsSettings, SettingsError>;
+    fn config(&self) -> Result<ProxyConfig, SettingsError>;
 
     /// Runs the PAC script or WPAD for `query.url` and returns the full hop list, `DIRECT`
     /// included.
@@ -89,59 +98,20 @@ pub trait OsProxy: Send + Sync + std::fmt::Debug {
     fn watch(&self, on_change: ChangeCallback) -> Option<Box<dyn WatchGuard>>;
 }
 
-/// An OS layer for platforms without system proxy settings: no settings, no PAC, no watch.
-/// Discovery then falls back to the environment variables.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NoOs;
-
-impl OsProxy for NoOs {
-    fn settings(&self) -> Result<OsSettings, SettingsError> {
-        Ok(OsSettings::default())
-    }
-
-    fn resolve_pac(&self, _query: &PacQuery) -> Result<Vec<Hop>, PacError> {
-        Err(PacError::Unavailable(
-            "no system proxy support on this platform".into(),
-        ))
-    }
-
-    fn watch(&self, _on_change: ChangeCallback) -> Option<Box<dyn WatchGuard>> {
-        None
-    }
-}
-
-/// The OS layer of the current platform: WinHTTP on Windows, [`NoOs`] elsewhere.
+/// The OS layer of the current platform: WinHTTP with the environment as a fallback on Windows,
+/// the environment alone elsewhere (no PAC, no change notification yet).
 #[must_use]
 pub fn system_os() -> Arc<dyn OsProxy> {
     #[cfg(windows)]
     {
-        Arc::new(crate::windows::WinOs::new())
+        Arc::new(EnvFallback::new(
+            Arc::new(crate::windows::WinOs::new()),
+            EnvOs::from_process(),
+        ))
     }
     #[cfg(not(windows))]
     {
-        Arc::new(NoOs)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_portable_layer_has_no_settings_no_pac_and_no_watch() {
-        let os = NoOs;
-        assert_eq!(os.settings().unwrap(), OsSettings::default());
-        let query = PacQuery {
-            pac_url: None,
-            auto_detect: true,
-            url: "http://x/".into(),
-            timeout: Duration::from_secs(1),
-        };
-        assert!(matches!(
-            os.resolve_pac(&query),
-            Err(PacError::Unavailable(_))
-        ));
-        assert!(os.watch(Arc::new(|| {})).is_none());
-        let _ = system_os();
+        let _ = EnvFallback::new; // the wrapper is Windows' fallback; Unix needs none
+        Arc::new(EnvOs::from_process())
     }
 }

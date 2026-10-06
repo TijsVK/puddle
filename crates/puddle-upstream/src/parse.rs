@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Readers for the text formats proxies are described in: PAC answers, the WinINet
-//! `ProxyServer` value, and the `ProxyOverride` bypass list.
+//! `ProxyRules` value, and the `ProxyOverride` bypass list.
+
+use std::net::IpAddr;
 
 use crate::hop::{Destination, Hop, ProxyAddr, Scheme};
 
@@ -36,17 +38,30 @@ pub fn parse_pac_answer(text: &str) -> PacAnswer {
     answer
 }
 
-/// The WinINet `ProxyServer` value: `host:port` for every scheme, or
-/// `http=h:p;https=h:p;ftp=h:p;socks=h:p`. Machine WinHTTP uses the same syntax.
+/// Which proxy serves which scheme. Read from the common list syntax (`host:port` for every
+/// scheme, or `http=h:p;https=h:p;ftp=h:p;socks=h:p`, as WinINet and WinHTTP store it and as a
+/// puddle setting may spell it), or built from environment variables.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ProxyServer {
+pub struct ProxyRules {
     all: Option<ProxyAddr>,
     http: Option<ProxyAddr>,
     https: Option<ProxyAddr>,
 }
 
-impl ProxyServer {
-    /// Reads the value. Entries puddle cannot use (`ftp=`, `socks=`, bad ports) are ignored.
+impl ProxyRules {
+    /// Rules from explicit proxies: `http` and `https` for their scheme, `all` for the rest.
+    #[must_use]
+    pub fn new(http: Option<ProxyAddr>, https: Option<ProxyAddr>, all: Option<ProxyAddr>) -> Self {
+        Self { all, http, https }
+    }
+
+    /// True when no scheme has a proxy.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.all.is_none() && self.http.is_none() && self.https.is_none()
+    }
+
+    /// Reads the list syntax. Entries puddle cannot use (`ftp=`, `socks=`, bad ports) are ignored.
     #[must_use]
     pub fn parse(text: &str) -> Self {
         let mut server = Self::default();
@@ -88,6 +103,12 @@ impl ProxyServer {
 enum Entry {
     /// `<local>`: a name without a dot.
     Local,
+    /// `*` in `NO_PROXY`: everything.
+    All,
+    /// A `NO_PROXY` domain: the name itself and every subdomain, optionally on one port.
+    Suffix { domain: String, port: Option<u16> },
+    /// A `NO_PROXY` address range.
+    Cidr { net: IpAddr, bits: u8 },
     /// A host pattern, `*` matching any run of characters, with an optional scheme and port.
     Pattern {
         scheme: Option<Scheme>,
@@ -120,10 +141,37 @@ impl BypassList {
         Self { entries }
     }
 
+    /// Reads the `NO_PROXY` syntax: comma separated; `*` is everything; `corp.test`, `.corp.test`
+    /// and `*.corp.test` cover the domain and its subdomains; `host:port` narrows to a port;
+    /// `10.0.0.0/8` is an address range.
+    #[must_use]
+    pub fn parse_no_proxy(text: &str) -> Self {
+        let entries = text
+            .split(',')
+            .map(|e| e.trim().to_ascii_lowercase())
+            .filter(|e| !e.is_empty())
+            .filter_map(|e| parse_no_proxy_entry(&e))
+            .collect();
+        Self { entries }
+    }
+
     /// True when `dest` skips the proxy.
     #[must_use]
     pub fn matches(&self, dest: &Destination) -> bool {
         self.entries.iter().any(|entry| match entry {
+            Entry::All => true,
+            Entry::Suffix { domain, port } => {
+                port.is_none_or(|p| p == dest.port())
+                    && (dest.host() == domain
+                        || dest
+                            .host()
+                            .strip_suffix(domain.as_str())
+                            .is_some_and(|rest| rest.ends_with('.')))
+            }
+            Entry::Cidr { net, bits } => dest
+                .host()
+                .parse::<IpAddr>()
+                .is_ok_and(|ip| in_cidr(*net, *bits, ip)),
             Entry::Local => {
                 !dest.host().contains('.') && dest.host().parse::<std::net::Ipv6Addr>().is_err()
             }
@@ -138,6 +186,40 @@ impl BypassList {
                     && (glob_match(glob, dest.host()) || bare.as_deref() == Some(dest.host()))
             }
         })
+    }
+}
+
+fn parse_no_proxy_entry(entry: &str) -> Option<Entry> {
+    if entry == "*" {
+        return Some(Entry::All);
+    }
+    if let Some((net, bits)) = entry.split_once('/') {
+        let (net, bits) = (net.parse::<IpAddr>().ok()?, bits.parse::<u8>().ok()?);
+        let max = if net.is_ipv4() { 32 } else { 128 };
+        return (bits <= max).then_some(Entry::Cidr { net, bits });
+    }
+    let (host, port) = match entry.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') => (host, Some(port.parse::<u16>().ok()?)),
+        _ => (entry, None),
+    };
+    let domain = host.trim_start_matches("*.").trim_start_matches('.');
+    (!domain.is_empty()).then(|| Entry::Suffix {
+        domain: domain.to_string(),
+        port,
+    })
+}
+
+fn in_cidr(net: IpAddr, bits: u8, ip: IpAddr) -> bool {
+    match (net, ip) {
+        (IpAddr::V4(n), IpAddr::V4(i)) => {
+            let mask = u32::MAX.checked_shl(32 - u32::from(bits)).unwrap_or(0);
+            u32::from(n) & mask == u32::from(i) & mask
+        }
+        (IpAddr::V6(n), IpAddr::V6(i)) => {
+            let mask = u128::MAX.checked_shl(128 - u32::from(bits)).unwrap_or(0);
+            u128::from(n) & mask == u128::from(i) & mask
+        }
+        _ => false,
     }
 }
 
@@ -235,8 +317,8 @@ mod tests {
     }
 
     #[test]
-    fn proxy_server_value_per_scheme() {
-        let split = ProxyServer::parse("http=a:1;https=b:2;ftp=c:3;socks=d:4");
+    fn proxy_rules_per_scheme() {
+        let split = ProxyRules::parse("http=a:1;https=b:2;ftp=c:3;socks=d:4");
         assert_eq!(
             split.for_scheme(Scheme::Https),
             Some(&ProxyAddr::new("b", 2))
@@ -245,17 +327,14 @@ mod tests {
             split.for_scheme(Scheme::Http),
             Some(&ProxyAddr::new("a", 1))
         );
-        let one = ProxyServer::parse("a:1");
+        let one = ProxyRules::parse("a:1");
         assert_eq!(one.for_scheme(Scheme::Https), Some(&ProxyAddr::new("a", 1)));
-        let https_only = ProxyServer::parse("https=b:2");
+        let https_only = ProxyRules::parse("https=b:2");
         assert_eq!(https_only.for_scheme(Scheme::Http), None);
-        assert_eq!(
-            ProxyServer::parse("ftp=a:1").for_scheme(Scheme::Https),
-            None
-        );
-        assert_eq!(ProxyServer::parse("").for_scheme(Scheme::Http), None);
+        assert_eq!(ProxyRules::parse("ftp=a:1").for_scheme(Scheme::Https), None);
+        assert_eq!(ProxyRules::parse("").for_scheme(Scheme::Http), None);
         // WinHTTP's machine list is space separated and may carry a default plus overrides.
-        let mixed = ProxyServer::parse("x:1 https=y:2");
+        let mixed = ProxyRules::parse("x:1 https=y:2");
         assert_eq!(
             mixed.for_scheme(Scheme::Https),
             Some(&ProxyAddr::new("y", 2))
@@ -296,6 +375,41 @@ mod tests {
     }
 
     #[test]
+    fn no_proxy_forms() {
+        let list = BypassList::parse_no_proxy(
+            "corp.test, .dotted.test,*.star.test,exact.example,host.test:8443,10.0.0.0/8,fd00::/8, ,bad:x,/8,1.2.3.4/33",
+        );
+        for (host, port, expected) in [
+            ("corp.test", 443, true),
+            ("a.corp.test", 443, true),
+            ("evilcorp.test", 443, false),
+            ("a.dotted.test", 443, true),
+            ("dotted.test", 443, true),
+            ("a.star.test", 443, true),
+            ("x.exact.example", 443, true),
+            ("host.test", 8443, true),
+            ("host.test", 443, false),
+            ("10.9.9.9", 443, true),
+            ("11.0.0.1", 443, false),
+            ("fd12::1", 443, true),
+            ("fe80::1", 443, false),
+            ("github.com", 443, false),
+        ] {
+            assert_eq!(
+                list.matches(&Destination::new(Scheme::Https, host, port)),
+                expected,
+                "{host}:{port}"
+            );
+        }
+        assert!(BypassList::parse_no_proxy("*").matches(&dest("anything")));
+        assert!(!BypassList::parse_no_proxy("").matches(&dest("anything")));
+        let all = BypassList::parse_no_proxy("0.0.0.0/0,1.2.3.4/32");
+        assert!(all.matches(&dest("200.1.1.1")));
+        assert!(!BypassList::parse_no_proxy("1.2.3.4/32").matches(&dest("1.2.3.5")));
+        assert!(!BypassList::parse_no_proxy("10.0.0.0/8").matches(&dest("fd00::1")));
+    }
+
+    #[test]
     fn glob_handles_stars_anywhere() {
         assert!(glob_match("*", ""));
         assert!(glob_match("a*b*c", "aXXbYYc"));
@@ -313,7 +427,7 @@ mod tests {
             #[test]
             fn parsers_never_panic(text in "\\PC{0,80}") {
                 let _ = parse_pac_answer(&text);
-                let _ = ProxyServer::parse(&text);
+                let _ = ProxyRules::parse(&text);
                 let list = BypassList::parse(&text);
                 let _ = list.matches(&Destination::new(Scheme::Https, &text, 443));
                 let _ = ProxyAddr::parse(&text);

@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use puddle_upstream::{
-    Config, Destination, Discovery, EnvProxy, FakeOs, Hop, ManualProxy, Mode, OsSettings, PacError,
-    ProxyAddr, RouteSource, Scheme,
+    BypassList, Config, Destination, Discovery, EnvFallback, EnvOs, FakeOs, Hop, ManualProxy, Mode,
+    PacError, ProxyAddr, ProxyConfig, ProxyRules, RouteSource, Scheme,
 };
 
 fn proxy(host: &str, port: u16) -> Hop {
@@ -20,23 +20,32 @@ fn https(host: &str) -> Destination {
     Destination::new(Scheme::Https, host, 443)
 }
 
-fn env(pairs: &[(&str, &str)]) -> EnvProxy {
-    EnvProxy::from_vars(
+fn env(pairs: &[(&str, &str)]) -> EnvOs {
+    EnvOs::from_vars(
         pairs
             .iter()
             .map(|(k, v)| (OsString::from(k), OsString::from(v))),
     )
 }
 
-fn pac_settings() -> OsSettings {
-    OsSettings {
+fn pac_settings() -> ProxyConfig {
+    ProxyConfig {
         pac_url: Some("http://pac.corp/p.pac".into()),
-        ..OsSettings::default()
+        ..ProxyConfig::default()
     }
 }
 
-fn discovery(os: &Arc<FakeOs>, env: EnvProxy, config: Config) -> Arc<Discovery> {
-    Discovery::new(os.clone(), env, config)
+fn static_config(servers: &str, bypass: &str) -> ProxyConfig {
+    ProxyConfig {
+        rules: ProxyRules::parse(servers),
+        bypass: BypassList::parse(bypass),
+        ..ProxyConfig::default()
+    }
+}
+
+/// Discovery over the fake OS with the environment behind it, as on Windows.
+fn discovery(os: &Arc<FakeOs>, env: EnvOs, config: Config) -> Arc<Discovery> {
+    Discovery::new(Arc::new(EnvFallback::new(os.clone(), env)), config)
 }
 
 #[tokio::test]
@@ -48,13 +57,13 @@ async fn loopback_goes_direct_without_asking_anyone() {
         assert!(decision.route.is_direct());
         assert_eq!(decision.source, RouteSource::Loopback);
     }
-    assert_eq!((os.settings_calls(), os.pac_calls()), (0, 0));
+    assert_eq!((os.config_calls(), os.pac_calls()), (0, 0));
 }
 
 #[tokio::test]
 async fn pac_answer_is_the_route_and_a_direct_answer_is_final() {
-    let os = FakeOs::new(OsSettings {
-        proxy_server: Some("static:1".into()),
+    let os = FakeOs::new(ProxyConfig {
+        rules: ProxyRules::parse("static:1"),
         ..pac_settings()
     });
     os.set_pac(|q| {
@@ -81,9 +90,9 @@ async fn pac_answer_is_the_route_and_a_direct_answer_is_final() {
 
 #[tokio::test]
 async fn auto_detect_asks_wpad_and_an_empty_answer_goes_direct() {
-    let os = FakeOs::new(OsSettings {
+    let os = FakeOs::new(ProxyConfig {
         auto_detect: true,
-        ..OsSettings::default()
+        ..ProxyConfig::default()
     });
     os.set_pac(|q| {
         assert!(q.auto_detect && q.pac_url.is_none());
@@ -96,18 +105,13 @@ async fn auto_detect_asks_wpad_and_an_empty_answer_goes_direct() {
 }
 
 #[tokio::test]
-async fn static_wininet_proxy_with_bypass_then_machine_proxy_then_env() {
-    let os = FakeOs::new(OsSettings {
-        proxy_server: Some("http=a:1;https=b:2".into()),
-        bypass: Some("*.corp.test;<local>".into()),
-        machine_proxy: Some("m:9".into()),
-        ..OsSettings::default()
-    });
+async fn static_proxy_with_bypass_then_environment() {
+    let os = FakeOs::new(static_config("http=a:1;https=b:2", "*.corp.test;<local>"));
     let d = discovery(&os, env(&[("HTTPS_PROXY", "e:5")]), Config::default());
     let d1 = d.route(&https("github.com")).await;
     assert_eq!(
         (d1.route.to_string(), d1.source),
-        ("PROXY b:2".into(), RouteSource::WinInet)
+        ("PROXY b:2".into(), RouteSource::System)
     );
     let d2 = d.route(&https("wiki.corp.test")).await;
     assert_eq!(
@@ -116,26 +120,12 @@ async fn static_wininet_proxy_with_bypass_then_machine_proxy_then_env() {
     );
     let d3 = d.route(&Destination::new(Scheme::Http, "x.test", 80)).await;
     assert_eq!(d3.route.to_string(), "PROXY a:1");
-    let d4 = d.route(&https("intranet")).await;
-    assert_eq!(d4.source, RouteSource::Bypass);
-
-    os.set_settings(OsSettings {
-        machine_proxy: Some("m:9".into()),
-        machine_bypass: Some("*.m.test".into()),
-        ..OsSettings::default()
-    });
-    d.bump_epoch();
-    let m = d.route(&https("x.test")).await;
     assert_eq!(
-        (m.route.to_string(), m.source),
-        ("PROXY m:9".into(), RouteSource::MachineWinHttp)
-    );
-    assert_eq!(
-        d.route(&https("a.m.test")).await.source,
+        d.route(&https("intranet")).await.source,
         RouteSource::Bypass
     );
 
-    os.set_settings(OsSettings::default());
+    os.set_config(ProxyConfig::default());
     d.bump_epoch();
     let e = d.route(&https("x.test")).await;
     assert_eq!(
@@ -159,11 +149,47 @@ async fn static_wininet_proxy_with_bypass_then_machine_proxy_then_env() {
 }
 
 #[tokio::test]
-async fn wininet_proxy_without_an_entry_for_the_scheme_goes_direct() {
-    let os = FakeOs::new(OsSettings {
-        proxy_server: Some("https=b:2".into()),
-        ..OsSettings::default()
-    });
+async fn the_environment_alone_is_the_unix_os_layer() {
+    let vars = [
+        ("HTTPS_PROXY", "http://u:pw@p.corp:3128"),
+        ("HTTP_PROXY", "q:80"),
+        ("NO_PROXY", "corp.test,10.0.0.0/8"),
+    ];
+    let d = Discovery::new(Arc::new(env(&vars)), Config::default());
+    let via = d.route(&https("github.com")).await;
+    assert_eq!(
+        (via.route.to_string(), via.source),
+        ("PROXY p.corp:3128".into(), RouteSource::Env)
+    );
+    assert_eq!(
+        d.route(&Destination::new(Scheme::Http, "x.test", 80))
+            .await
+            .route
+            .to_string(),
+        "PROXY q:80"
+    );
+    assert_eq!(
+        d.route(&https("git.corp.test")).await.source,
+        RouteSource::Bypass
+    );
+    assert_eq!(
+        d.route(&https("10.1.2.3")).await.source,
+        RouteSource::Bypass
+    );
+    assert!(
+        d.watch().is_none(),
+        "no change notification from the environment"
+    );
+    let empty = Discovery::new(Arc::new(env(&[])), Config::default());
+    assert_eq!(
+        empty.route(&https("x.test")).await.source,
+        RouteSource::NoProxy
+    );
+}
+
+#[tokio::test]
+async fn static_proxy_without_an_entry_for_the_scheme_goes_direct() {
+    let os = FakeOs::new(static_config("https=b:2", ""));
     let d = discovery(&os, env(&[]), Config::default());
     let decision = d.route(&Destination::new(Scheme::Http, "x.test", 80)).await;
     assert!(decision.route.is_direct());
@@ -171,10 +197,15 @@ async fn wininet_proxy_without_an_entry_for_the_scheme_goes_direct() {
 
 #[tokio::test]
 async fn unreadable_settings_fall_back_to_the_environment() {
-    let os = FakeOs::new(OsSettings::default());
-    os.fail_settings("boom");
+    let os = FakeOs::new(ProxyConfig::default());
+    os.fail_config("boom");
     let d = discovery(&os, env(&[("HTTPS_PROXY", "e:5")]), Config::default());
     assert_eq!(d.route(&https("x.test")).await.source, RouteSource::Env);
+    let bare = Discovery::new(os.clone(), Config::default());
+    assert_eq!(
+        bare.route(&https("x.test")).await.source,
+        RouteSource::NoProxy
+    );
 }
 
 #[tokio::test]
@@ -213,7 +244,7 @@ async fn modes_direct_and_manual_ignore_the_system() {
         d.route(&https("a.corp.test")).await.source,
         RouteSource::Bypass
     );
-    assert_eq!((os.settings_calls(), os.pac_calls()), (0, 0));
+    assert_eq!((os.config_calls(), os.pac_calls()), (0, 0));
 }
 
 #[tokio::test]
@@ -225,12 +256,12 @@ async fn decisions_are_cached_per_destination_until_the_epoch_ends() {
     }
     d.route(&https("b.test")).await;
     assert_eq!(os.pac_calls(), 2);
-    assert_eq!(os.settings_calls(), 1);
+    assert_eq!(os.config_calls(), 1);
     let before = d.epoch();
     d.bump_epoch();
     assert_eq!(d.epoch(), before + 1);
     d.route(&https("a.test")).await;
-    assert_eq!((os.pac_calls(), os.settings_calls()), (3, 2));
+    assert_eq!((os.pac_calls(), os.config_calls()), (3, 2));
 }
 
 #[tokio::test]
@@ -259,9 +290,9 @@ async fn a_hundred_parallel_connections_share_one_pac_lookup() {
 
 #[tokio::test(start_paused = true)]
 async fn wpad_failure_is_remembered_for_every_host_then_retried() {
-    let os = FakeOs::new(OsSettings {
+    let os = FakeOs::new(ProxyConfig {
         auto_detect: true,
-        ..OsSettings::default()
+        ..ProxyConfig::default()
     });
     os.set_pac(|_| Err(PacError::Unavailable("12180".into())));
     let d = discovery(&os, env(&[("HTTPS_PROXY", "e:5")]), Config::default());
@@ -291,9 +322,9 @@ async fn wpad_failure_is_remembered_for_every_host_then_retried() {
 
 #[tokio::test(start_paused = true)]
 async fn a_new_epoch_retries_a_failed_wpad_at_once() {
-    let os = FakeOs::new(OsSettings {
+    let os = FakeOs::new(ProxyConfig {
         auto_detect: true,
-        ..OsSettings::default()
+        ..ProxyConfig::default()
     });
     os.set_pac(|_| Err(PacError::Timeout));
     let d = discovery(&os, env(&[]), Config::default());
@@ -400,7 +431,7 @@ async fn change_notifications_are_debounced_into_one_epoch() {
 
 #[tokio::test]
 async fn without_os_watch_support_watch_is_none() {
-    let os = FakeOs::without_watch(OsSettings::default());
+    let os = FakeOs::without_watch(ProxyConfig::default());
     let d = discovery(&os, env(&[]), Config::default());
     assert!(d.watch().is_none());
 }

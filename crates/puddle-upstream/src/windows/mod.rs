@@ -13,7 +13,7 @@ mod watch;
 
 use crate::hop::Hop;
 use crate::os::{
-    ChangeCallback, OsProxy, OsSettings, PacError, PacQuery, SettingsError, WatchGuard,
+    ChangeCallback, OsProxy, PacError, PacQuery, ProxyConfig, SettingsError, WatchGuard,
 };
 
 /// WinHTTP and registry backed [`OsProxy`].
@@ -29,7 +29,7 @@ impl WinOs {
 }
 
 impl OsProxy for WinOs {
-    fn settings(&self) -> Result<OsSettings, SettingsError> {
+    fn config(&self) -> Result<ProxyConfig, SettingsError> {
         settings::read()
     }
 
