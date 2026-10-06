@@ -4301,6 +4301,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-workspace"
+version = "0.0.0"
+dependencies = [
+ "microsandbox",
+ "puddle-boot",
+ "puddle-compute",
+ "puddle-compute-msb",
+ "puddle-ipc",
+ "puddle-proxy",
+ "puddle-types",
+ "puddle-vm-tests",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

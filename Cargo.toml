@@ -33,6 +33,7 @@ puddle-ca = { path = "crates/puddle-ca" }
 puddle-guest-env = { path = "crates/puddle-guest-env" }
 puddle-ssh = { path = "crates/puddle-ssh" }
 puddle-certs = { path = "crates/puddle-certs" }
+puddle-workspace = { path = "crates/puddle-workspace" }
 
 # External
 # msb SDK, exact pin: the SDK and the bundled runtime move together (D-19). Default features
