@@ -4290,8 +4290,13 @@ name = "puddle-vm-tests"
 version = "0.0.0"
 dependencies = [
  "microsandbox",
+ "puddle-boot",
+ "puddle-ca",
+ "puddle-certs",
+ "puddle-compute",
  "puddle-guest-env",
  "puddle-types",
+ "rcgen",
  "serde_json",
  "thiserror",
  "tokio",
