@@ -63,6 +63,15 @@ impl Settings {
         self.root.join(self.prefix.as_str())
     }
 
+    /// A second, empty msb home beside the run's: `<root>/<prefix>-<tag>`. For a test that needs
+    /// an image cache nothing else has filled. It stays a sibling (not below [`Self::home`]) and
+    /// the tag should be a few characters, because msb derives Unix socket paths from the home
+    /// and refuses 108 bytes or more.
+    #[must_use]
+    pub fn scratch_home(&self, tag: &str) -> PathBuf {
+        self.root.join(format!("{}-{tag}", self.prefix.as_str()))
+    }
+
     /// Finds the runtime pair, creates the private home and writes its `config.json`.
     ///
     /// # Errors
@@ -305,6 +314,25 @@ pub(crate) mod tests {
         assert_eq!(settings.runtime_dir, PathBuf::from("/rt"));
         assert_eq!(settings.prefix.as_str(), "r9-1");
         assert_eq!(settings.home(), PathBuf::from("/vm").join("r9-1"));
+    }
+
+    #[test]
+    fn a_scratch_home_is_a_short_sibling_of_the_run_home() {
+        let settings = Settings::from_lookup(lookup(&[
+            (RUNTIME_DIR_VAR, "/rt"),
+            (PREFIX_VAR, "r9-1"),
+            (ROOT_VAR, "/vm"),
+        ]))
+        .unwrap();
+        let scratch = settings.scratch_home("pp");
+        assert_eq!(scratch, PathBuf::from("/vm").join("r9-1-pp"));
+        // Not below the run home, and only the tag longer: msb derives Unix socket paths from
+        // the home and refuses 108 bytes or more (CI's root is already 29 bytes).
+        assert!(!scratch.starts_with(settings.home()));
+        assert_eq!(
+            scratch.as_os_str().len(),
+            settings.home().as_os_str().len() + 3
+        );
     }
 
     #[test]

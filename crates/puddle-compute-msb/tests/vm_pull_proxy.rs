@@ -74,7 +74,7 @@ fn vm_image_pulls_through_the_pull_proxy_from_docker_hub_and_mcr() {
     rt.block_on(async {
         let route = proxy.serve().unwrap();
         let pair = settings.prepare().expect("msb runtime pair");
-        let home = settings.home().join("t116-pull-proxy");
+        let home = settings.scratch_home("pp");
         let _ = std::fs::remove_dir_all(&home);
         let msb = MsbRuntime::open(
             MsbConfig::new(&home, pair.msb, pair.libkrunfw, home.join("guest-share"))
@@ -110,7 +110,7 @@ fn vm_image_pulls_through_the_pull_proxy_from_docker_hub_and_mcr() {
         );
 
         // The pulled image boots: create finds it in the cache.
-        let name = settings.prefix.sandbox_name("t116pull").unwrap();
+        let name = settings.prefix.sandbox_name("pp").unwrap();
         let spec = SandboxSpec::new(name.clone(), alpine).with_memory(MemoryMib::new(512).unwrap());
         let sb = msb
             .create(spec)

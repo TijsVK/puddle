@@ -224,8 +224,17 @@ mod tests {
             ("HTTP_PROXY", Some(URL)),
             ("NO_PROXY", Some("puddle.invalid")),
         ] {
+            // Windows folds names: `http_proxy` removed, then `HTTP_PROXY` set, stays one entry
+            // under the first spelling, so names compare ignoring case there.
+            let same = |key: &str| {
+                if cfg!(windows) {
+                    key.eq_ignore_ascii_case(name)
+                } else {
+                    key == name
+                }
+            };
             assert!(
-                envs.contains(&(name.to_owned(), value.map(str::to_owned))),
+                envs.iter().any(|(k, v)| same(k) && v.as_deref() == value),
                 "{name}: {envs:?}"
             );
         }
