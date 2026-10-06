@@ -2,9 +2,10 @@
 //! The compute-plane traits: [`Runtime`] (sandboxes, volumes, images) and [`Sandbox`] (one
 //! running VM).
 
+use std::collections::BTreeMap;
 use std::future::Future;
 
-use puddle_types::{ImageRef, SandboxName, SandboxStatus, VolumeName};
+use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus, VolumeName};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec};
@@ -69,7 +70,9 @@ impl VolumeInfo {
 }
 
 /// An image's OCI config, as far as puddle needs it (the boot hook chains `entrypoint` and uses
-/// the image `PATH`). All values come from the image and are untrusted.
+/// the image `PATH`; `user` and `labels` carry the image's `USER` and `devcontainer.metadata`,
+/// T-020 C-8). All values come from the image and are untrusted. Build it with
+/// `..ImageConfig::default()` so new fields don't break callers.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ImageConfig {
     /// `ENTRYPOINT`; empty if the image declares none.
@@ -80,6 +83,10 @@ pub struct ImageConfig {
     pub env: Vec<(String, String)>,
     /// `WORKDIR`, if set.
     pub working_dir: Option<String>,
+    /// `USER`, if set (`uid`, `uid:gid`, `name` or `name:group`).
+    pub user: Option<String>,
+    /// `LABEL`s, sorted by key.
+    pub labels: BTreeMap<String, String>,
 }
 
 impl ImageConfig {
@@ -110,10 +117,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> SshStream for T {}
 /// Sandbox lifecycle:
 ///
 /// ```text
-///  create ──► Running ──stop──► Stopped ──start──► Running
-///                │                  │
-///                │ owning handle    └──remove──► (gone; owned disks gone, named volumes kept)
-///                ▼ dropped / VM died
+///  create ──► Running ──stop / owning handle dropped (msb 0.7.7)──► Stopped ──start──► Running
+///                │                                                  │
+///                │ VM died (owning handle dropped on msb 0.7.6)     └──remove──► (gone; owned
+///                ▼                                                     disks gone, named volumes kept)
 ///             Crashed ──start──► Running        Crashed ──remove──► (gone)
 /// ```
 pub trait Runtime: Send + Sync + 'static {
@@ -138,8 +145,9 @@ pub trait Runtime: Send + Sync + 'static {
     ) -> impl Future<Output = Result<ImageConfig, ComputeError>> + Send;
 
     /// Creates a sandbox and boots it; returns an **owning** handle (`Running`). Dropping that
-    /// handle without [`Sandbox::stop`] kills the VM and leaves the sandbox `Crashed` (T-028 L1),
-    /// so puddle stops every sandbox at shutdown. Pulls the image if needed. Named volumes with
+    /// handle without [`Sandbox::stop`] shuts the VM down: the record reads `Stopped` on msb 0.7.7
+    /// (T-106) and read `Crashed` on 0.7.6 (T-028 L1). puddle still stops every sandbox itself at
+    /// shutdown (`fstrim` first, ADR 0006). Pulls the image if needed. Named volumes with
     /// [`crate::VolumeMount::ensure_size`] are created if missing.
     ///
     /// On failure nothing is created, except that, without
@@ -181,6 +189,19 @@ pub trait Runtime: Send + Sync + 'static {
         &self,
         name: &SandboxName,
     ) -> impl Future<Output = Result<Self::Sandbox, ComputeError>> + Send;
+
+    /// Sets the guest memory a sandbox boots with from its **next** start on (the memory setting,
+    /// `--memory`). A running sandbox keeps its current size until it is stopped and started
+    /// again; puddle never sets a max-memory.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::NotFound`].
+    fn set_memory(
+        &self,
+        name: &SandboxName,
+        memory: MemoryMib,
+    ) -> impl Future<Output = Result<(), ComputeError>> + Send;
 
     /// Every sandbox the runtime knows, in name order, including ones puddle didn't create.
     ///

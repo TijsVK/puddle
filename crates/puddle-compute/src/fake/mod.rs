@@ -5,7 +5,8 @@
 //! What it reproduces (each pinned by a case in [`crate::contract`]):
 //!
 //! - `create` boots the sandbox and returns an owning handle; dropping it without `stop` leaves
-//!   the sandbox `Crashed` (T-028 L1). `get` re-adopts a running sandbox without owning it.
+//!   the sandbox `Stopped`, as msb 0.7.7 does (T-106; 0.7.6 said `Crashed`, T-028 L1). `get`
+//!   re-adopts a running sandbox without owning it.
 //! - Exit codes come through exactly; a signal-killed command reports `-1`.
 //! - File mounts are read-only (`tee` reports `Read-only file system`).
 //! - Root disk and owned disks survive stop/start and die with `remove`; named volumes survive
@@ -16,6 +17,8 @@
 //! - A create that fails its volume check (missing volume, size mismatch) leaves a stale
 //!   directory that blocks the name, unless [`FakeConfig::stale_dir_fixed`] (msb T-039).
 //! - The SSH server writes an `SSH-2.0-` identification line first.
+//! - Every boot writes `/proc/meminfo` with `MemTotal` = the spec's memory, so a
+//!   [`Runtime::set_memory`] shows only after the next start.
 //!
 //! Test controls: [`FakeRuntime::inject`] makes the next matching call(s) fail
 //! ([`Fault`]), [`FakeRuntime::calls`] returns every call in order, [`FakeRuntime::on_exec`]
@@ -47,7 +50,7 @@ mod exec;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use puddle_types::{ImageRef, SandboxName, SandboxStatus, VolumeName};
+use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus, VolumeName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub use self::exec::{ExecContext, ExecHandler, FsError};
@@ -75,6 +78,8 @@ pub enum Op {
     Start,
     /// [`Runtime::get`].
     Get,
+    /// [`Runtime::set_memory`].
+    SetMemory,
     /// [`Runtime::list`].
     List,
     /// [`Runtime::remove`].
@@ -198,6 +203,22 @@ struct SandboxRecord {
     boot: u64,
     files: Files,
 }
+
+impl SandboxRecord {
+    /// The guest's view of its memory at boot, like the kernel's `/proc/meminfo`.
+    fn boot(&mut self, boot: u64) {
+        self.status = SandboxStatus::Running;
+        self.boot = boot;
+        let kib = u64::from(self.spec.memory.get()) * 1024;
+        self.files.insert(
+            MEMINFO.to_owned(),
+            format!("MemTotal:       {kib} kB\n").into_bytes(),
+        );
+    }
+}
+
+/// Where the fake writes `MemTotal` at every boot.
+const MEMINFO: &str = "/proc/meminfo";
 
 #[derive(Default)]
 struct State {
@@ -335,7 +356,7 @@ impl FakeRuntime {
             entrypoint: entrypoint.iter().map(|s| (*s).to_owned()).collect(),
             cmd: cmd.iter().map(|s| (*s).to_owned()).collect(),
             env: vec![("PATH".into(), path.into())],
-            working_dir: None,
+            ..ImageConfig::default()
         };
         state
             .images
@@ -511,15 +532,14 @@ impl Runtime for FakeRuntime {
             }
         }
         let boot = state.next_boot();
-        state.sandboxes.insert(
-            name.to_string(),
-            SandboxRecord {
-                spec,
-                status: SandboxStatus::Running,
-                boot,
-                files: Files::new(),
-            },
-        );
+        let mut record = SandboxRecord {
+            spec,
+            status: SandboxStatus::Created,
+            boot: 0,
+            files: Files::new(),
+        };
+        record.boot(boot);
+        state.sandboxes.insert(name.to_string(), record);
         Ok(self.handle(&name, boot, true))
     }
 
@@ -553,8 +573,7 @@ impl Runtime for FakeRuntime {
         state.check_holders(&record.spec)?;
         let boot = state.next_boot();
         if let Some(r) = state.sandboxes.get_mut(name.as_str()) {
-            r.status = SandboxStatus::Running;
-            r.boot = boot;
+            r.boot(boot);
         }
         Ok(self.handle(name, boot, true))
     }
@@ -574,6 +593,21 @@ impl Runtime for FakeRuntime {
             }),
             Some(r) => Ok(self.handle(name, r.boot, false)),
         }
+    }
+
+    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
+    async fn set_memory(&self, name: &SandboxName, memory: MemoryMib) -> Result<(), ComputeError> {
+        let mut state = self.lock();
+        state.enter(Op::SetMemory, Some(name.as_str()), None)?;
+        let record =
+            state
+                .sandboxes
+                .get_mut(name.as_str())
+                .ok_or_else(|| ComputeError::NotFound {
+                    sandbox: name.to_string(),
+                })?;
+        record.spec.memory = memory;
+        Ok(())
     }
 
     #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
@@ -830,7 +864,8 @@ impl Sandbox for FakeSandbox {
 }
 
 impl Drop for FakeSandbox {
-    /// Like the SDK: dropping an owning handle kills the VM; the record says `Crashed`.
+    /// Like the SDK (msb 0.7.7): dropping an owning handle shuts the VM down; the record says
+    /// `Stopped`.
     fn drop(&mut self) {
         if !self.owned {
             return;
@@ -840,7 +875,7 @@ impl Drop for FakeSandbox {
             && r.boot == self.boot
             && r.status == SandboxStatus::Running
         {
-            r.status = SandboxStatus::Crashed;
+            r.status = SandboxStatus::Stopped;
         }
     }
 }

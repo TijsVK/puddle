@@ -473,7 +473,7 @@ mod tests {
             env: path
                 .map(|p| vec![("PATH".to_owned(), p.to_owned())])
                 .unwrap_or_default(),
-            working_dir: None,
+            ..ImageConfig::default()
         }
     }
 

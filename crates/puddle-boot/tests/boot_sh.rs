@@ -28,7 +28,7 @@ fn image(entrypoint: &[String], cmd: &[&str]) -> ImageConfig {
         entrypoint: entrypoint.to_vec(),
         cmd: cmd.iter().map(|s| (*s).to_owned()).collect(),
         env: vec![("PATH".into(), IMAGE_PATH.into())],
-        working_dir: None,
+        ..ImageConfig::default()
     }
 }
 

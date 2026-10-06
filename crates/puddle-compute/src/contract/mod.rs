@@ -516,7 +516,7 @@ macro_rules! contract_tests {
             create_refuses_a_taken_name,
             invalid_spec_is_refused_before_anything_exists,
             stop_then_start_boots_again,
-            dropping_the_owning_handle_crashes_the_sandbox,
+            dropping_the_owning_handle_stops_the_vm,
             get_readopts_a_running_sandbox_without_owning_it,
             unknown_names_are_not_found,
             remove_needs_a_stopped_sandbox_and_frees_the_name,
@@ -536,6 +536,7 @@ macro_rules! contract_tests {
             missing_volume_fails_create,
             ssh_server_speaks_first,
             routes_and_no_network_are_accepted,
+            memory_change_applies_at_next_start,
         );
     };
     (@cases $env:path; $($case:ident),* $(,)?) => {

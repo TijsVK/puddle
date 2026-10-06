@@ -37,7 +37,8 @@ macro_rules! cases {
 
         pub(super) async fn dispatch<R: Runtime>(case: &Case<'_, R>, name: &str) -> Outcome {
             match name {
-                $(stringify!($name) => $name(case).await,)*
+                // Boxed: one inline future per case would make this one as large as the largest.
+                $(stringify!($name) => Box::pin($name(case)).await,)*
                 _ => Err(format!("no such contract case {name}")),
             }
         }
@@ -52,7 +53,7 @@ cases! {
     create_refuses_a_taken_name => "assumed",
     invalid_spec_is_refused_before_anything_exists => "puddle-side check (SandboxSpec::validate)",
     stop_then_start_boots_again => "T-028 sdk.stopped_status, restart; stop twice: assumed",
-    dropping_the_owning_handle_crashes_the_sandbox => "T-028 lifecycle L1",
+    dropping_the_owning_handle_stops_the_vm => "T-028 lifecycle L1 (0.7.6: Crashed); msb 0.7.7: Stopped (T-106); the case accepts either",
     get_readopts_a_running_sandbox_without_owning_it => "T-028 reconcile re-adoption",
     unknown_names_are_not_found => "T-028 sdk.removed (not found after remove); others assumed",
     remove_needs_a_stopped_sandbox_and_frees_the_name => "T-028 sdk.removed; refusal while running: assumed",
@@ -72,6 +73,7 @@ cases! {
     missing_volume_fails_create => "assumed",
     ssh_server_speaks_first => "T-028 ssh.serve_connection_exec (banner part; full SSH exec is T-114's VM test)",
     routes_and_no_network_are_accepted => "T-028 net.* (spec accepted; guest network behaviour is T-106's VM test)",
+    memory_change_applies_at_next_start => "T-106 (the memory setting: modify().memory().next_start() on msb)",
 }
 
 /// Awaits a runtime call with [`STEP_TIMEOUT`] and turns its error into a case failure.
@@ -289,14 +291,14 @@ async fn stop_then_start_boots_again<R: Runtime>(c: &Case<'_, R>) -> Outcome {
     Ok(())
 }
 
-async fn dropping_the_owning_handle_crashes_the_sandbox<R: Runtime>(c: &Case<'_, R>) -> Outcome {
+async fn dropping_the_owning_handle_stops_the_vm<R: Runtime>(c: &Case<'_, R>) -> Outcome {
     let rt = c.runtime();
     let name = c.sandbox("a")?;
     drop(step("create", rt.create(spec(c, &name))).await?);
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let listed = status_in_list(rt, &name).await?;
-        if listed == Some(SandboxStatus::Crashed) {
+        if listed.is_some_and(SandboxStatus::is_down) {
             break;
         }
         check!(
@@ -810,5 +812,50 @@ async fn routes_and_no_network_are_accepted<R: Runtime>(c: &Case<'_, R>) -> Outc
     let sb = step("create with routes", c.runtime().create(s)).await?;
     let out = sh(&sb, "exit 0").await?;
     check!(out.status.success(), "exec in a routed sandbox failed");
+    Ok(())
+}
+
+/// `MemTotal` from the guest's `/proc/meminfo`, in KiB.
+async fn mem_total_kib<S: Sandbox>(sb: &S) -> Result<u64, String> {
+    let meminfo = read_file(sb, "/proc/meminfo")
+        .await?
+        .ok_or("can't read /proc/meminfo")?;
+    meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))
+        .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse().ok())
+        .ok_or_else(|| format!("no MemTotal in {meminfo:?}"))
+}
+
+async fn memory_change_applies_at_next_start<R: Runtime>(c: &Case<'_, R>) -> Outcome {
+    let rt = c.runtime();
+    let name = c.sandbox("a")?;
+    let bigger = MemoryMib::new(1024).map_err(|e| e.to_string())?;
+    let sb = step("create with 512 MiB", rt.create(spec(c, &name))).await?;
+    // msb's guest sees a little more than the configured size (529224 KiB for 512 MiB), so the
+    // check is on the difference: +512 MiB, give or take 64 MiB.
+    let before = mem_total_kib(&sb).await?;
+    step("set memory to 1024 MiB", rt.set_memory(&name, bigger)).await?;
+    let running = mem_total_kib(&sb).await?;
+    check!(
+        running == before,
+        "the running sandbox changed size: {before} -> {running} KiB"
+    );
+    step("stop", sb.stop()).await?;
+    let sb = step("start", rt.start(&name)).await?;
+    let after = mem_total_kib(&sb).await?;
+    check!(
+        after.abs_diff(before + 512 * 1024) <= 64 * 1024,
+        "after the restart MemTotal is {after} KiB (was {before} KiB at 512 MiB, want +512 MiB)"
+    );
+    let err = fails(
+        "set memory of an unknown sandbox",
+        rt.set_memory(&c.sandbox("nope")?, MemoryMib::MIN),
+    )
+    .await?;
+    check!(
+        matches!(err, ComputeError::NotFound { .. }),
+        "want NotFound, got {err:?}"
+    );
     Ok(())
 }
