@@ -96,7 +96,11 @@ impl Root {
                 tx.clone(),
             ));
         }
-        Ok(Listener { rx, tasks })
+        Ok(Listener {
+            rx,
+            tasks,
+            path: path.to_path_buf(),
+        })
     }
 
     fn create(&self, path: &Path, first: bool) -> io::Result<NamedPipeServer> {
@@ -172,12 +176,16 @@ pub(crate) struct Listener {
     /// Dropping the set aborts the acceptors, which closes every idle instance once the runtime
     /// gets to them; [`Listener::close`] waits for that.
     tasks: JoinSet<()>,
+    path: PathBuf,
 }
 
 impl Listener {
     pub(crate) async fn close(mut self) {
         self.rx.close();
         self.tasks.shutdown().await;
+        // Instances accepted but never handed out are connected, not listening; close them now.
+        while self.rx.try_recv().is_ok() {}
+        drain_listening(&self.path);
     }
 
     pub(crate) async fn accept(&mut self, endpoint: &Path) -> Result<Stream, IpcError> {
@@ -214,6 +222,27 @@ pub(crate) async fn connect(path: &Path) -> Result<Stream, IpcError> {
             Err(err) => return Err(crate::client_error(path, err)),
         }
     }
+}
+
+/// An aborted acceptor's instance stays open, and listening, until the I/O driver dequeues its
+/// cancelled connect: mio keeps the handle alive for that pending overlapped operation. So
+/// connect to each such instance and hang up, until a client finds no listening instance
+/// (`NotFound` once every handle is closed, busy while one is still on its way out or a client
+/// still holds a connection). Bounded: aborted acceptors create no new instances.
+fn drain_listening(path: &Path) {
+    let mut options = ClientOptions::new();
+    options.security_qos_flags(SECURITY_IDENTIFICATION | SECURITY_SQOS_PRESENT);
+    for _ in 0..=PIPE_ACCEPTORS {
+        match options.open(path) {
+            Ok(client) => drop(client),
+            Err(err) if err.kind() == io::ErrorKind::NotFound || is_busy(&err) => return,
+            Err(err) => {
+                tracing::debug!(endpoint = %path.display(), %err, "pipe close probe failed");
+                return;
+            }
+        }
+    }
+    tracing::debug!(endpoint = %path.display(), "pipe still listening after close");
 }
 
 fn is_busy(err: &io::Error) -> bool {

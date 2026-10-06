@@ -211,13 +211,17 @@ async fn a_large_transfer_arrives_intact() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn closing_the_listener_closes_the_endpoint() {
     let root = root();
-    let listener = root.listen().unwrap();
-    let endpoint = listener.endpoint().clone();
-    listener.close().await;
-    let err = connect(endpoint.path()).await.unwrap_err();
-    assert!(matches!(err, IpcError::NotFound { .. }), "{err}");
-    // The name is free again for puddle (not for anyone else: it was random).
-    let _again = root.bind(&endpoint).unwrap();
+    // Repeated: the Windows race this pins (an aborted acceptor's instance still listening
+    // after `close`) shows only now and then.
+    for _ in 0..50 {
+        let listener = root.listen().unwrap();
+        let endpoint = listener.endpoint().clone();
+        listener.close().await;
+        let err = connect(endpoint.path()).await.unwrap_err();
+        assert!(matches!(err, IpcError::NotFound { .. }), "{err}");
+        // The name is free again for puddle (not for anyone else: it was random).
+        root.bind(&endpoint).unwrap().close().await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
