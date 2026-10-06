@@ -151,8 +151,9 @@ pub enum ProtocolHint {
 /// Whether suffix allow rules count for this request (R-14).
 ///
 /// After resolving an allowed name to a local address whose toggle is on, the proxy asks again
-/// with [`SuffixAllows::Ignore`] unless "wildcards reach local addresses" is on; the request then
-/// needs an exact allow, and goes pending for the exact name otherwise. Suffix *deny* rules
+/// with [`SuffixAllows::Ignore`] unless "wildcards reach local addresses" is on or an exact rule
+/// for the address allows it ([`Policy::lookup`]); the request then needs an exact allow, and
+/// goes pending for the exact name otherwise. Suffix *deny* rules
 /// always count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuffixAllows {
@@ -219,6 +220,24 @@ pub trait Policy: Send + Sync {
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
     ) -> Result<Decision, PolicyError>;
+
+    /// The rule that decides `request` now, without recording anything: `Some` allow or deny,
+    /// or `None` when no rule matches. A miss never writes a pending row.
+    ///
+    /// The proxy uses it for R-14: after a wildcard allow, an exact allow of a resolved local
+    /// address (an IP rule) admits that address (D-44). The default answers `None`, so a policy
+    /// that doesn't implement it admits no address this way (fails closed).
+    ///
+    /// # Errors
+    /// Returns [`PolicyError`] when the rules could not be read; treat it as no match.
+    fn lookup(
+        &self,
+        request: &EgressRequest,
+        suffix_allows: SuffixAllows,
+    ) -> Result<Option<Decision>, PolicyError> {
+        let _ = (request, suffix_allows);
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
