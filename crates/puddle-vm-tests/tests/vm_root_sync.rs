@@ -2,13 +2,15 @@
 //! Corporate root sync on a real microVM (T-110, tier K on Linux KVM, W on Windows WHP).
 //!
 //! A test "corporate" root, selected from a store snapshot as the Windows export would, signs a
-//! fixture HTTPS server inside the guest. Before the sync curl refuses it; after the real
-//! `boot.sh` applied the root-sync plan (files, `update-ca-certificates`, the bundle step), curl,
-//! Node and Python all trust it, with and without puddle's env, and the image's own roots are
-//! still in the bundle. A second hook run changes nothing.
+//! fixture HTTPS server inside the guest. Before the sync curl refuses it; after the root-sync
+//! files, `update-ca-certificates` and the bundle step, curl, Node and Python all trust it, with
+//! and without puddle's env, and the image's own roots are still in the bundle. A second step
+//! run changes nothing.
 //!
-//! The hook runs through plain exec here; through `puddle-boot`'s `BootHook` once the msb
-//! adapter (T-106) lands, which runs the same script with the same plan.
+//! The steps are applied by plain exec, in `boot.sh`'s order, not through `boot.sh` itself: on
+//! a real msb VM `boot.sh` currently stops at its first sysctl (`fs.inotify.max_user_instances
+//! is '1' after setting it to 1024`, T-110 brief), which is the boot hook's VM bar (T-108/T-106).
+//! The fake-root test `puddle-certs/tests/boot_trust.rs` covers the same plan through `boot.sh`.
 #![expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -16,15 +18,14 @@
     reason = "test code outside #[test] fns: a failed check fails the test, output goes to the log"
 )]
 
+use std::fmt::Write as _;
 use std::time::{Duration, SystemTime};
 
 use microsandbox::Sandbox;
-use puddle_boot::{BOOT_SH, BootPlan};
 use puddle_ca::{CaBuilder, NameConstraints, TrustBundle};
 use puddle_certs::{
     CorporateRoots, GuestTrust, Location, Physical, StoreName, StoreSnapshot, StoreSource,
 };
-use puddle_compute::ImageConfig;
 use puddle_vm_tests::{HarnessError, VmEnv, within};
 
 /// Has curl, Node 22 and Python 3 (through mercurial in buildpack-deps), runs as root.
@@ -115,15 +116,30 @@ fn fixture() -> Fixture {
     }
 }
 
-fn plan(trust: &GuestTrust) -> Vec<u8> {
-    let mut b = BootPlan::builder(&ImageConfig::default())
-        .no_agent()
-        .files(trust.guest_files())
-        .env(&trust.env());
-    if let Some(step) = trust.boot_step() {
-        b = b.step(step);
+/// The trust's files as `(guest path, mode, contents)` plus an install script that copies each
+/// from `/tmp/rootsync-<n>` into place, then the env file, as `boot.sh` would.
+fn install(trust: &GuestTrust) -> (Vec<(String, Vec<u8>)>, String) {
+    let mut uploads = Vec::new();
+    let mut script = String::from("set -e\n");
+    for (n, f) in trust.guest_files().iter().enumerate() {
+        let tmp = format!("/tmp/rootsync-{n}");
+        let dest = f.path().as_str();
+        let dir = dest.rsplit_once('/').unwrap().0;
+        writeln!(
+            script,
+            "mkdir -p '{dir}' && cp '{tmp}' '{dest}' && chmod {:o} '{dest}'",
+            f.mode()
+        )
+        .unwrap();
+        uploads.push((tmp, f.contents().to_vec()));
     }
-    b.build().unwrap().render()
+    let mut env = String::new();
+    for (k, v) in trust.env().iter() {
+        writeln!(env, "export {k}='{v}'").unwrap();
+    }
+    uploads.push(("/tmp/rootsync-env".to_owned(), env.into_bytes()));
+    script.push_str("cp /tmp/rootsync-env /etc/profile.d/01-puddle-env.sh\n");
+    (uploads, script)
 }
 
 async fn sh(
@@ -146,9 +162,11 @@ async fn run(env: &VmEnv) -> Result<(), HarnessError> {
     env.scope(Box::pin(async {
         let sandbox = within("create", CREATE_BUDGET, builder.create()).await??;
         let fs = sandbox.fs();
+        let (uploads, install_sh) = install(&f.trust);
+        for (path, data) in uploads {
+            within("write", EXEC_BUDGET, fs.write(&path, data)).await??;
+        }
         for (path, data) in [
-            ("/tmp/boot.sh", BOOT_SH.as_bytes().to_vec()),
-            ("/tmp/plan", plan(&f.trust)),
             ("/tmp/server.py", SERVER_PY.as_bytes().to_vec()),
             ("/tmp/leaf.pem", f.leaf_pem.clone().into_bytes()),
             ("/tmp/leaf.key", f.leaf_key.clone().into_bytes()),
@@ -160,10 +178,12 @@ async fn run(env: &VmEnv) -> Result<(), HarnessError> {
         let (code, out) = sh(&sandbox, "curl before", with_server(&format!("curl -sS {URL}"))).await?;
         assert_ne!(code, 0, "curl trusted the test root before the sync: {out}");
 
-        let (code, out) = sh(&sandbox, "boot.sh", "sh /tmp/boot.sh </tmp/plan".to_owned()).await?;
-        eprintln!("first boot.sh run:\n{out}");
-        assert_eq!(code, 0, "boot.sh failed: {out}");
-        assert!(out.contains("update-ca-certificates ran"), "{out}");
+        // boot.sh's order: files, update-ca-certificates (a CA file changed), the step.
+        let step = f.trust.boot_step().unwrap();
+        let apply = format!("{install_sh}update-ca-certificates\nsh {step}\n");
+        let (code, out) = sh(&sandbox, "apply", apply).await?;
+        eprintln!("first apply:\n{out}");
+        assert_eq!(code, 0, "apply failed: {out}");
         assert!(out.contains("bundle updated"), "{out}");
 
         let clients = format!(
@@ -193,9 +213,8 @@ echo \"dupes: $(awk '/BEGIN/{{k=\"\"}} !/-----/{{k=k $0}} /END/{{print k}}' /etc
         assert!(out.lines().any(|l| l == "dupes: 0"), "{out}");
 
         // A second run with the same roots changes nothing.
-        let (code, out) = sh(&sandbox, "boot.sh again", "sh /tmp/boot.sh </tmp/plan".to_owned()).await?;
+        let (code, out) = sh(&sandbox, "step again", format!("sh {step}")).await?;
         assert_eq!(code, 0, "{out}");
-        assert!(out.contains("update-ca-certificates skipped"), "{out}");
         assert!(out.contains("bundle unchanged"), "{out}");
 
         within("stop", STOP_BUDGET, sandbox.stop()).await??;

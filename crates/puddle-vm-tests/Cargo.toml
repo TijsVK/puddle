@@ -18,10 +18,8 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
-puddle-boot = { workspace = true }
 puddle-ca = { workspace = true }
 puddle-certs = { workspace = true }
-puddle-compute = { workspace = true }
 puddle-guest-env = { workspace = true }
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
