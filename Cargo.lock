@@ -4148,6 +4148,7 @@ dependencies = [
  "puddle-proxy",
  "puddle-store",
  "puddle-types",
+ "serde_json",
  "tokio",
 ]
 

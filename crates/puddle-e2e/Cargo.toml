@@ -18,6 +18,7 @@ puddle-ipc = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
 puddle-store = { workspace = true }
 puddle-types = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
 
 [lints]

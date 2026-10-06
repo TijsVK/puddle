@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! L2 end to end, no VM: a guest TCP client → the real guest agent → yamux over the sandbox's
 //! real endpoint (`puddle-ipc`, a Unix socket) → the real proxy → local servers, with the real
-//! SQLite rules engine (`puddle-store`) as the policy.
+//! SQLite rules engine (`puddle-store`) as the policy and as the proxy's connection log, so every
+//! connection ends as a `connection` audit record (R-24).
 //!
 //! The only doubles are the resolver (`*.test` names point at loopback) and the address check
 //! (loopback is where the test servers are).
@@ -25,6 +26,7 @@ use puddle_store::{
     Actor, Effect, Limits, NewRule, Pattern, PendingState, Resolution, Scope, Store, SystemClock,
 };
 use puddle_types::{NullSink, SandboxName};
+use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -50,6 +52,7 @@ async fn rig() -> Rig {
         .with("new.test", &[LOCAL]);
     let proxy = Arc::new(
         Proxy::new(store.clone(), Arc::new(NullSink))
+            .with_connection_log(store.clone())
             .with_resolver(Arc::new(resolver))
             .with_address_check(Arc::new(AnyAddress)),
     );
@@ -80,6 +83,34 @@ fn allow(store: &Store, host: &str) {
             created_by: Actor::Cli,
         })
         .unwrap();
+}
+
+/// The `connection` audit records so far, oldest first.
+fn connection_records(store: &Store) -> Vec<Value> {
+    store
+        .audit_lines(0, 100_000)
+        .unwrap()
+        .into_iter()
+        .map(|(_, line)| serde_json::from_str::<Value>(&line).unwrap())
+        .filter(|v| v["type"] == "connection")
+        .collect()
+}
+
+/// Waits up to 5 s for at least `count` `connection` records (one is written when its
+/// connection ends, after the guest has its answer).
+async fn wait_for_records(store: &Store, count: usize) -> Vec<Value> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let records = connection_records(store);
+        if records.len() >= count || Instant::now() >= deadline {
+            assert!(
+                records.len() >= count,
+                "{count} records expected: {records:?}"
+            );
+            return records;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 /// An echo server: sends back everything, then closes after the client's FIN.
@@ -189,6 +220,114 @@ async fn parallel_connects_256_through_agent_proxy_and_store() {
         "slowest connection took {slowest:?}"
     );
     assert_eq!(rig.store.open_pending(None).unwrap().len(), 0);
+
+    // Every connection is in the audit: written, or counted in a `suppressed` summary once its
+    // second is over (200 records per sandbox per second, R-26).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let accounted = loop {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        rig.store.sweep().unwrap();
+        let records = connection_records(&rig.store);
+        let written = records.iter().filter(|r| r["reason"] == "rule").count() as u64;
+        let summarised: u64 = records.iter().filter_map(|r| r["count"].as_u64()).sum();
+        if written + summarised >= 256 || Instant::now() >= deadline {
+            break written + summarised;
+        }
+    };
+    assert_eq!(accounted, 256);
+}
+
+/// R-24/R-25 end to end: the proxy's connection events land in the store's audit with decision,
+/// rule or pending row, address and bytes, and no query string.
+#[tokio::test]
+async fn connections_land_in_the_store_audit() {
+    const CANARY: &str = "CANARY-e2e-5b7d";
+    let rig = rig().await;
+    let echo = echo_server().await;
+    let agent = rig.agent.local_addr();
+
+    let pending = format!("new.test:{}", echo.port());
+    let (code, _) = connect_via(agent, &pending).await.unwrap();
+    assert_eq!(code, 403);
+    let row = rig.store.open_pending(Some(&sandbox())).unwrap()[0].id;
+    wait_for_records(&rig.store, 1).await;
+
+    let mut conn = TcpStream::connect(agent).await.unwrap();
+    conn.write_all(
+        format!(
+            "GET http://{pending}/p/q?token={CANARY}#{CANARY} HTTP/1.1\r\nHost: new.test\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut answer = String::new();
+    conn.read_to_string(&mut answer).await.unwrap();
+    assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+    wait_for_records(&rig.store, 2).await;
+
+    allow(&rig.store, "echo.test");
+    let authority = format!("echo.test:{}", echo.port());
+    let (code, mut conn) = connect_via(agent, &authority).await.unwrap();
+    assert_eq!(code, 200);
+    conn.get_mut().write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    conn.read_exact(&mut back).await.unwrap();
+    conn.get_mut().shutdown().await.unwrap();
+    let mut rest = Vec::new();
+    conn.read_to_end(&mut rest).await.unwrap();
+    let records = wait_for_records(&rig.store, 3).await;
+
+    let fields = |r: &Value| {
+        (
+            r["sandbox_id"].clone(),
+            r["host"].clone(),
+            r["decision"].clone(),
+            r["reason"].clone(),
+            r["pending_id"].clone(),
+        )
+    };
+    let pending_record = |r: &Value| {
+        (
+            Value::from("e2e"),
+            Value::from("new.test"),
+            Value::from("pending"),
+            Value::from("no_rule"),
+            Value::from(row.0),
+        ) == fields(r)
+    };
+    assert!(pending_record(&records[0]), "{}", records[0]);
+    assert!(pending_record(&records[1]), "{}", records[1]);
+    assert!(records[0]["method"].is_null());
+    assert_eq!(
+        (&records[1]["method"], &records[1]["path"]),
+        (&Value::from("GET"), &Value::from("/p/q"))
+    );
+
+    let allowed = &records[2];
+    assert_eq!(
+        (
+            &allowed["host"],
+            &allowed["decision"],
+            &allowed["reason"],
+            &allowed["resolved_ip"]
+        ),
+        (
+            &Value::from("echo.test"),
+            &Value::from("allow"),
+            &Value::from("rule"),
+            &Value::from("127.0.0.1")
+        )
+    );
+    assert!(allowed["rule_id"].is_i64());
+    let head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n");
+    let established = "HTTP/1.1 200 Connection Established\r\n\r\n";
+    assert_eq!(allowed["bytes_up"], head.len() + 4);
+    assert_eq!(allowed["bytes_down"], established.len() + 4);
+
+    for (_, line) in rig.store.audit_lines(0, 1000).unwrap() {
+        assert!(!line.contains(CANARY), "{line}");
+    }
 }
 
 /// Deny ⇒ 403 and a pending row in the store; approving the row ⇒ the next attempt passes
