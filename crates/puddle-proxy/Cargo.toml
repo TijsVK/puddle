@@ -13,6 +13,7 @@ publish.workspace = true
 [dependencies]
 puddle-agent-proto = { workspace = true }
 puddle-ipc = { workspace = true }
+puddle-netpolicy = { workspace = true }
 puddle-types = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing = { workspace = true }
