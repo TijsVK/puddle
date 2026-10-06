@@ -570,6 +570,50 @@ fn r14_suffix_allow_is_no_match_when_an_exact_allow_is_required() {
 }
 
 #[test]
+fn r14_lookup_finds_an_exact_ip_rule_and_never_writes_a_pending_row() {
+    let (clock, store) = fixture();
+    let ip = add(&store, Some("a"), "192.168.1.20", Effect::Allow);
+    let deny = add(&store, None, "192.168.1.21", Effect::Deny);
+    let expiring = store
+        .add_rule(&NewRule {
+            expires_at: Some(T0 + DAY),
+            ..rule(None, "192.168.1.22", Effect::Allow)
+        })
+        .unwrap()
+        .id;
+    let lookup = |sandbox: &str, host: &str| {
+        Policy::lookup(&store, &req(sandbox, host, 443), SuffixAllows::Ignore).unwrap()
+    };
+    assert_eq!(
+        lookup("a", "192.168.1.20"),
+        Some(Decision::Allow {
+            rule_id: ip,
+            pattern: PatternKind::Exact
+        })
+    );
+    assert_eq!(
+        lookup("a", "192.168.1.21"),
+        Some(Decision::Deny {
+            rule_id: deny,
+            pattern: PatternKind::Exact
+        })
+    );
+    assert_eq!(
+        lookup("a", "192.168.1.22"),
+        Some(Decision::Allow {
+            rule_id: expiring,
+            pattern: PatternKind::Exact
+        })
+    );
+    // Another sandbox's rule, an unlisted neighbour and an expired rule: no match, no row.
+    assert_eq!(lookup("b", "192.168.1.20"), None);
+    assert_eq!(lookup("a", "192.168.1.23"), None);
+    clock.advance(DAY);
+    assert_eq!(lookup("a", "192.168.1.22"), None);
+    assert_eq!(store.open_pending(None).unwrap().len(), 0);
+}
+
+#[test]
 fn r15_approve_defaults_to_this_sandbox_exact_host_permanent() {
     let (_, store) = fixture();
     let id = new_pending(decide(&store, "a", "api.example.com"));

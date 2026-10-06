@@ -799,6 +799,14 @@ impl Policy for Store {
             reason: err.to_string(),
         })
     }
+
+    fn lookup(
+        &self,
+        request: &EgressRequest,
+        suffix_allows: SuffixAllows,
+    ) -> Result<Option<Decision>, PolicyError> {
+        Ok(self.match_rules(request, self.clock.now_ms(), suffix_allows))
+    }
 }
 
 fn audit_bytes(conn: &Connection) -> Result<u64, StoreError> {
