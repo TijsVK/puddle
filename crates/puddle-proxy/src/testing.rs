@@ -183,7 +183,16 @@ impl Policy for StaticPolicy {
 pub struct AnyAddress;
 
 impl AddressCheck for AnyAddress {
-    fn check(&self, _sandbox: &SandboxName, _addr: IpAddr) -> AddressVerdict {
+    fn check_target(
+        &self,
+        _sandbox: &SandboxName,
+        _target: &puddle_netpolicy::Target,
+        _port: u16,
+    ) -> Option<puddle_types::BlockReason> {
+        None
+    }
+
+    fn check(&self, _sandbox: &SandboxName, _addr: SocketAddr) -> AddressVerdict {
         AddressVerdict::Allow
     }
 }

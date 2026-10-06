@@ -23,9 +23,11 @@ use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tracing::Instrument;
 
-use crate::destination::{AddressCheck, AddressVerdict, PublicOnly, Resolver, SystemResolver};
+use puddle_netpolicy::{LocalAccess, LocalCategory, NetPolicy, block_message, normalise_host};
+
+use crate::destination::{AddressCheck, AddressVerdict, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
-use crate::target::{Target, normalise_host};
+use crate::target::Target;
 
 /// Limits and timeouts. The defaults suit a real guest; tests shorten them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,14 +132,17 @@ impl std::fmt::Debug for Proxy {
 }
 
 impl Proxy {
-    /// A proxy that asks `policy`, resolves with the OS resolver, connects to public addresses
-    /// only ([`PublicOnly`]) and reports agent events (OOM kills) to `sink`.
+    /// A proxy that asks `policy`, resolves with the OS resolver, and reports agent events (OOM
+    /// kills) to `sink`. Its address check is a [`NetPolicy`] with every local toggle off and no
+    /// registered endpoints: public addresses only. The host program passes its own
+    /// [`NetPolicy`] (settings-backed toggles, puddle's endpoint registry) with
+    /// [`Self::with_address_check`].
     #[must_use]
     pub fn new(policy: Arc<dyn Policy>, sink: Arc<dyn EventSink>) -> Self {
         Self {
             policy,
             resolver: Arc::new(SystemResolver),
-            addresses: Arc::new(PublicOnly),
+            addresses: Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE))),
             sink,
             config: ProxyConfig::default(),
         }
@@ -378,7 +383,8 @@ fn parse_request(head: &Head) -> Result<(Target, Option<String>, Body), Refusal>
             )
         })?;
     let host = normalise_host(&host)
-        .map_err(|why| Refusal::new("400 Bad Request", format!("bad host: {why}")))?;
+        .map_err(|why| Refusal::new("400 Bad Request", why.to_string()))?
+        .into_host();
     let body = if head.is_connect() {
         Body::None
     } else {
@@ -394,6 +400,15 @@ pub(crate) async fn admit(
 ) -> Result<Vec<SocketAddr>, Refusal> {
     let host = &request.host;
     let port = request.port;
+    // Name stage: a literal or a name that is blocked by itself never reaches the rules, so it
+    // never becomes a pending row (R-14).
+    let target = puddle_netpolicy::Target::from_host(host.clone());
+    if let Some(reason) = proxy
+        .addresses
+        .check_target(&request.sandbox, &target, port)
+    {
+        return Err(block(request, &[reason]));
+    }
     let pattern = allowed(request, proxy.decide(request, SuffixAllows::Count).await)?;
     let addrs = match host {
         Host::Ip(ip) => vec![SocketAddr::new(*ip, port)],
@@ -429,30 +444,55 @@ pub(crate) async fn admit(
     }
     let mut usable = Vec::new();
     let mut exact_only = Vec::new();
-    let mut blocked = None;
+    let mut categories: Vec<LocalCategory> = Vec::new();
+    let mut blocked = Vec::new();
     for addr in addrs {
-        match proxy.addresses.check(&request.sandbox, addr.ip()) {
+        match proxy.addresses.check(&request.sandbox, addr) {
             AddressVerdict::Allow => usable.push(addr),
-            AddressVerdict::ExactOnly => exact_only.push(addr),
-            AddressVerdict::Block(reason) => {
-                blocked.get_or_insert(reason);
+            AddressVerdict::ExactOnly(category) => {
+                exact_only.push(addr);
+                categories.push(category);
+            }
+            AddressVerdict::Block(reason) => blocked.push(reason),
+            other => {
+                tracing::warn!(%addr, verdict = ?other, "unknown address verdict, address dropped");
+                blocked.push(BlockReason::LocalAddress);
             }
         }
     }
-    if !exact_only.is_empty() && usable.is_empty() {
-        // Only local addresses whose toggle is on: they need an exact allow (R-14, D-44).
-        if pattern == PatternKind::Suffix {
-            let again = proxy.decide(request, SuffixAllows::Ignore).await;
-            if allowed(request, again)? != PatternKind::Exact {
-                return Err(block(request, BlockReason::LocalAddress));
-            }
+    if pattern == PatternKind::Exact {
+        // An exact allow reaches local addresses whose toggle is on (D-37).
+        usable.extend(exact_only);
+    } else if usable.is_empty() && !exact_only.is_empty() {
+        // Only local addresses whose toggle is on, after a wildcard allow: they need an exact
+        // allow (R-14, D-44). Asking again without suffix allows writes the pending row for the
+        // exact name.
+        let again = proxy.decide(request, SuffixAllows::Ignore).await;
+        if allowed(request, again).map_err(|r| wildcard_note(r, &categories))? != PatternKind::Exact
+        {
+            return Err(block(request, &[BlockReason::LocalAddress]));
         }
         usable = exact_only;
     }
     if usable.is_empty() {
-        return Err(block(request, blocked.unwrap_or(BlockReason::LocalAddress)));
+        if blocked.is_empty() {
+            blocked.push(BlockReason::LocalAddress);
+        }
+        return Err(block(request, &blocked));
     }
     Ok(usable)
+}
+
+/// Adds to a pending refusal why the wildcard allow didn't count (D-44).
+fn wildcard_note(mut refusal: Refusal, categories: &[LocalCategory]) -> Refusal {
+    if let Some(category) = categories.first() {
+        refusal.message = format!(
+            "{} (it resolves to a {} address, and wildcard rules don't reach local addresses: approve the exact name, or turn on \"wildcards reach local addresses\")",
+            refusal.message,
+            category.describe()
+        );
+    }
+    refusal
 }
 
 /// The pattern kind of an allow, or the refusal for anything else.
@@ -496,7 +536,7 @@ fn allowed(
                 None => refusal,
             })
         }
-        Ok(Decision::Blocked { reason }) => Err(block(request, reason)),
+        Ok(Decision::Blocked { reason }) => Err(block(request, &[reason])),
         Ok(other) => {
             tracing::warn!(%sandbox, %host, port, decision = ?other, "unknown decision, refused");
             Err(
@@ -514,19 +554,23 @@ fn allowed(
     }
 }
 
-fn block(request: &EgressRequest, reason: BlockReason) -> Refusal {
+/// The refusal for a blocked request; `reasons` holds every address's reason (at least one).
+/// The header names the first toggle if any (turning it on would help), else the first reason.
+fn block(request: &EgressRequest, reasons: &[BlockReason]) -> Refusal {
     let host = &request.host;
+    let reason = reasons
+        .iter()
+        .find(|r| matches!(r, BlockReason::LocalToggle(_)))
+        .or_else(|| reasons.first())
+        .copied()
+        .unwrap_or(BlockReason::LocalAddress);
     tracing::info!(sandbox = %request.sandbox, %host, port = request.port, %reason, "blocked");
-    let message = match reason {
-        BlockReason::SshUnsupported => "SSH is not supported yet, use HTTPS".to_owned(),
-        BlockReason::PuddleEndpoint => format!("{host} is one of puddle's own endpoints"),
-        _ => format!(
-            "{host} resolves only to local addresses (loopback, private network, link-local, metadata), which this version of puddle never connects to"
-        ),
-    };
-    Refusal::new("403 Forbidden", message)
-        .header("x-puddle-decision", "blocked")
-        .header("x-puddle-blocked", reason.code())
+    Refusal::new(
+        "403 Forbidden",
+        block_message(host, &request.sandbox, reasons),
+    )
+    .header("x-puddle-decision", "blocked")
+    .header("x-puddle-blocked", reason.code())
 }
 
 /// Connects to the first address that answers within `per_address`.

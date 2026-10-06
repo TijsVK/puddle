@@ -8,14 +8,18 @@
 //!
 //! 1. **Head**: at most 64 KiB (`431` over it) within [`ProxyConfig::head_timeout`] (`408`).
 //! 2. **Target**: `CONNECT host:port` or an absolute-form `http://` request; the host is
-//!    normalised into a [`puddle_types::Host`]; anything else is a `400`.
+//!    normalised into a [`puddle_types::Host`] (`puddle_netpolicy::normalise_host`: IDNA, LDH,
+//!    canonical IPs); anything else is a `400`. A literal address or a name that is blocked by
+//!    itself (toggle off, puddle's own endpoint) is refused here, before the rules.
 //! 3. **Decision**: the [`puddle_types::Policy`] decides on the name before it is resolved
 //!    (R-10). Deny, pending and blocked are a `403` that says which, with an
 //!    `x-puddle-decision` header (and `x-puddle-pending: <id>` / `x-puddle-blocked: <reason>`);
 //!    a policy error is a `503`: the proxy fails closed.
 //! 4. **Addresses**: an allowed name is resolved once; every address goes through the
-//!    [`AddressCheck`] (default [`PublicOnly`]) and only an address that passed is connected to
-//!    (R-14: local addresses need an exact allow).
+//!    [`AddressCheck`] (`puddle_netpolicy::NetPolicy`: address classes, local toggles, puddle's
+//!    own endpoints) and only an address that passed is connected to. A local address needs its
+//!    toggle on and an exact allow, unless "wildcards reach local addresses" is on (R-14, D-44);
+//!    a block names the toggle that would allow it.
 //! 5. **Relay**: `CONNECT` is spliced both ways, an abort on either side reaching the other as a
 //!    reset (T-048); a plain-HTTP request is forwarded once with `Host` rewritten to the checked
 //!    target and its body framed exactly, so nothing unchecked rides along.
@@ -38,8 +42,6 @@ mod target;
 #[cfg(feature = "testing")]
 pub mod testing;
 
-pub use destination::{
-    AddressCheck, AddressVerdict, BoxFuture, PublicOnly, Resolver, SystemResolver, is_public,
-};
+pub use destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver, SystemResolver};
 pub use proxy::{Proxy, ProxyConfig, SandboxHandler};
 pub use route::Route;

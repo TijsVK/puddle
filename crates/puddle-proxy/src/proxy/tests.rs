@@ -16,7 +16,7 @@ fn sandbox() -> SandboxName {
 }
 
 fn host(h: &str) -> Host {
-    normalise_host(h).unwrap()
+    normalise_host(h).unwrap().into_host()
 }
 
 fn request(h: &str) -> EgressRequest {
@@ -70,9 +70,11 @@ where
 struct Toggles;
 
 impl AddressCheck for Toggles {
-    fn check(&self, _: &SandboxName, addr: IpAddr) -> AddressVerdict {
-        match addr {
-            IpAddr::V4(a) if a.octets()[0] == 10 => AddressVerdict::ExactOnly,
+    fn check(&self, _: &SandboxName, addr: SocketAddr) -> AddressVerdict {
+        match addr.ip() {
+            IpAddr::V4(a) if a.octets()[0] == 10 => {
+                AddressVerdict::ExactOnly(LocalCategory::Private)
+            }
             IpAddr::V4(a) if a.is_loopback() => AddressVerdict::Block(BlockReason::PuddleEndpoint),
             _ => AddressVerdict::Allow,
         }
@@ -219,8 +221,17 @@ async fn local_addresses_of_an_allowed_name_are_blocked_by_default() {
     );
     let refusal = admit(&p, &request("rebind.example")).await.unwrap_err();
     assert_eq!(refusal.status, "403 Forbidden");
-    assert_eq!(header(&refusal, "x-puddle-blocked"), Some("local_address"));
-    assert!(refusal.message.contains("local addresses"));
+    assert_eq!(
+        header(&refusal, "x-puddle-blocked"),
+        Some("toggle:loopback")
+    );
+    assert!(
+        refusal
+            .message
+            .contains("turn on 'loopback' (host loopback) or 'metadata' (cloud metadata)"),
+        "{}",
+        refusal.message
+    );
 }
 
 #[tokio::test]
@@ -230,7 +241,7 @@ async fn an_allowed_ip_literal_is_checked_without_resolving() {
     policy.allow(&host("1.1.1.1"));
     let p = proxy(policy, StaticResolver::new());
     let refusal = admit(&p, &request("10.1.2.3")).await.unwrap_err();
-    assert_eq!(header(&refusal, "x-puddle-blocked"), Some("local_address"));
+    assert_eq!(header(&refusal, "x-puddle-blocked"), Some("toggle:private"));
     let addrs = admit(&p, &request("1.1.1.1")).await.unwrap();
     assert_eq!(addrs, vec![SocketAddr::new(ip("1.1.1.1"), 443)]);
 }
@@ -406,4 +417,284 @@ fn config_builders_set_their_field() {
     assert!(format!("{p:?}").contains("max_streams_per_sandbox: 7"));
     let handler = Arc::new(p).handler(sandbox());
     assert_eq!(handler.sandbox(), &sandbox());
+}
+
+// T-132: the real guard (`puddle_netpolicy::NetPolicy`) in the proxy. Ports of T-005's HG-06 to
+// HG-08, T-052's D-37 and T-059's D-44 cases, and D-26.
+
+mod guard {
+    use std::sync::atomic::AtomicUsize;
+
+    use puddle_netpolicy::{EndpointKind, LocalAccess, NetPolicy, PuddleEndpoints};
+
+    use super::*;
+
+    fn all_on() -> LocalAccess {
+        LocalCategory::ALL
+            .into_iter()
+            .fold(LocalAccess::NONE, |a, c| a.with_toggle(c, true))
+    }
+
+    fn guarded(policy: Arc<dyn Policy>, resolver: StaticResolver, access: LocalAccess) -> Proxy {
+        proxy(policy, resolver).with_address_check(Arc::new(NetPolicy::new(Arc::new(access))))
+    }
+
+    fn blocked(refusal: &Refusal) -> Option<&str> {
+        assert_eq!(refusal.status, "403 Forbidden");
+        assert_eq!(header(refusal, "x-puddle-pending"), None);
+        header(refusal, "x-puddle-blocked")
+    }
+
+    #[tokio::test]
+    async fn hostile_hg06_local_targets_blocked_with_every_toggle_off() {
+        let policy = Arc::new(StaticPolicy::new());
+        let resolver = StaticResolver::new()
+            .with("ten.nip.example", &[ip("10.0.0.1")])
+            .with("lo.nip.example", &[ip("127.0.0.1")])
+            .with("imds.nip.example", &[ip("169.254.169.254")]);
+        let cases = [
+            ("169.254.169.254", "toggle:metadata"),
+            ("metadata.google.internal", "toggle:metadata"),
+            ("168.63.129.16", "toggle:metadata"),
+            ("fd00:ec2::254", "toggle:metadata"),
+            ("64:ff9b::a9fe:a9fe", "toggle:metadata"),
+            ("169.254.1.1", "toggle:link_local"),
+            ("192.168.1.1", "toggle:private"),
+            ("100.64.0.1", "toggle:private"),
+            ("127.0.0.1", "toggle:loopback"),
+            ("localhost", "toggle:loopback"),
+            ("::ffff:127.0.0.1", "toggle:loopback"),
+            ("ten.nip.example", "toggle:private"),
+            ("lo.nip.example", "toggle:loopback"),
+            ("imds.nip.example", "toggle:metadata"),
+        ];
+        // Every destination allowed by a rule: only the guard stands in the way.
+        for (h, _) in cases {
+            policy.allow(&host(h));
+        }
+        let p = guarded(policy.clone(), resolver, LocalAccess::NONE);
+        for (h, want) in cases {
+            let refusal = admit(&p, &request(h)).await.unwrap_err();
+            assert_eq!(blocked(&refusal), Some(want), "{h}");
+            assert!(
+                refusal.message.contains("toggle is off"),
+                "{h}: {}",
+                refusal.message
+            );
+        }
+        assert_eq!(policy.pending().len(), 0);
+        // Literals and category names never reached the rules; the three names did.
+        assert_eq!(policy.decisions(), 3);
+    }
+
+    /// A resolver that answers public, then loopback, then public, ... (DNS rebinding).
+    struct Rebinding(AtomicUsize);
+
+    impl Resolver for Rebinding {
+        fn resolve<'a>(
+            &'a self,
+            _: &'a puddle_types::DomainName,
+            port: u16,
+        ) -> crate::BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
+            let n = self.0.fetch_add(1, Ordering::SeqCst);
+            let ip = if n.is_multiple_of(2) {
+                ip("93.184.215.14")
+            } else {
+                ip("127.0.0.1")
+            };
+            Box::pin(async move { Ok(vec![SocketAddr::new(ip, port)]) })
+        }
+    }
+
+    #[tokio::test]
+    async fn hostile_hg07_rebinding_connects_only_to_checked_addresses() {
+        let policy = Arc::new(StaticPolicy::new());
+        policy.allow(&host("rebind.example"));
+        let resolver = Arc::new(Rebinding(AtomicUsize::new(0)));
+        let p = Proxy::new(policy, Arc::new(NullSink))
+            .with_resolver(resolver.clone())
+            .with_address_check(Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE))));
+        let (mut ok, mut refused) = (0, 0);
+        for _ in 0..50 {
+            match admit(&p, &request("rebind.example")).await {
+                Ok(addrs) => {
+                    assert_eq!(addrs, vec![SocketAddr::new(ip("93.184.215.14"), 443)]);
+                    ok += 1;
+                }
+                Err(refusal) => {
+                    assert_eq!(blocked(&refusal), Some("toggle:loopback"));
+                    refused += 1;
+                }
+            }
+        }
+        assert_eq!((ok, refused), (25, 25));
+        // One lookup per request: the checked answer is the one connected to.
+        assert_eq!(resolver.0.load(Ordering::SeqCst), 50);
+    }
+
+    #[tokio::test]
+    async fn hostile_hg08_mixed_answer_connects_to_the_public_address_only() {
+        let policy = Arc::new(StaticPolicy::new());
+        policy.allow(&host("mixed.example"));
+        let resolver = StaticResolver::new().with(
+            "mixed.example",
+            &[
+                ip("127.0.0.1"),
+                ip("169.254.169.254"),
+                ip("8.8.8.8"),
+                ip("10.0.0.1"),
+            ],
+        );
+        let p = guarded(policy, resolver, LocalAccess::NONE);
+        assert_eq!(
+            admit(&p, &request("mixed.example")).await.unwrap(),
+            vec![SocketAddr::new(ip("8.8.8.8"), 443)]
+        );
+    }
+
+    #[tokio::test]
+    async fn d37_toggle_on_unlisted_local_destination_goes_to_approval_not_through() {
+        let policy = Arc::new(StaticPolicy::new());
+        let resolver = StaticResolver::new().with("nas.lan.example", &[ip("192.168.1.20")]);
+        let p = guarded(policy.clone(), resolver, all_on());
+        for h in [
+            "10.1.2.3",
+            "fd00::5",
+            "nas.lan.example",
+            "localhost",
+            "127.0.0.1",
+        ] {
+            let refusal = admit(&p, &request(h)).await.unwrap_err();
+            assert_eq!(
+                header(&refusal, "x-puddle-decision"),
+                Some("pending"),
+                "{h}"
+            );
+        }
+        assert_eq!(policy.pending().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn d37_toggle_on_and_exactly_allowed_local_destination_is_allowed() {
+        let policy = Arc::new(StaticPolicy::new());
+        for h in ["10.1.2.3", "nas.lan.example", "localhost"] {
+            policy.allow(&host(h));
+        }
+        let resolver = StaticResolver::new()
+            .with("nas.lan.example", &[ip("192.168.1.20")])
+            .with("localhost", &[ip("127.0.0.1"), ip("::1")]);
+        let p = guarded(policy, resolver, all_on());
+        assert_eq!(
+            admit(&p, &request("10.1.2.3")).await.unwrap(),
+            vec![SocketAddr::new(ip("10.1.2.3"), 443)]
+        );
+        assert_eq!(
+            admit(&p, &request("nas.lan.example")).await.unwrap(),
+            vec![SocketAddr::new(ip("192.168.1.20"), 443)]
+        );
+        assert_eq!(admit(&p, &request("localhost")).await.unwrap().len(), 2);
+        // The neighbouring address still needs its own allow.
+        let refusal = admit(&p, &request("10.1.2.4")).await.unwrap_err();
+        assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
+    }
+
+    #[tokio::test]
+    async fn d37_toggle_off_allowed_local_destination_is_blocked_naming_the_toggle() {
+        let policy = Arc::new(StaticPolicy::new());
+        policy.allow(&host("10.1.2.3"));
+        let p = guarded(
+            policy,
+            StaticResolver::new(),
+            all_on().with_toggle(LocalCategory::Private, false),
+        );
+        let refusal = admit(&p, &request("10.1.2.3")).await.unwrap_err();
+        assert_eq!(blocked(&refusal), Some("toggle:private"));
+        assert!(
+            refusal
+                .message
+                .contains("turn on 'private' (local/private network) globally or for sandbox box"),
+            "{}",
+            refusal.message
+        );
+    }
+
+    #[tokio::test]
+    async fn d44_wildcard_allow_does_not_reach_a_local_address_with_the_setting_off() {
+        let policy = Arc::new(StaticPolicy::new());
+        // StaticPolicy answers "suffix match" per host, standing in for a `.nip.example` rule.
+        for h in ["nas.nip.example", "both.nip.example", "pub.nip.example"] {
+            policy.allow_as_suffix(&host(h));
+        }
+        let resolver = || {
+            StaticResolver::new()
+                .with("nas.nip.example", &[ip("192.168.1.20")])
+                .with("both.nip.example", &[ip("192.168.1.20"), ip("8.8.8.8")])
+                .with("pub.nip.example", &[ip("8.8.8.8")])
+        };
+        let p = guarded(policy.clone(), resolver(), all_on());
+        let refusal = admit(&p, &request("nas.nip.example")).await.unwrap_err();
+        assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
+        assert!(
+            refusal
+                .message
+                .contains("wildcard rules don't reach local addresses"),
+            "{}",
+            refusal.message
+        );
+        assert_eq!(policy.pending().len(), 1);
+        assert_eq!(policy.pending()[0].host, host("nas.nip.example"));
+        // Mixed public/local under a wildcard: the public address only.
+        assert_eq!(
+            admit(&p, &request("both.nip.example")).await.unwrap(),
+            vec![SocketAddr::new(ip("8.8.8.8"), 443)]
+        );
+        // A wildcard to a public address is unchanged.
+        assert_eq!(
+            admit(&p, &request("pub.nip.example")).await.unwrap().len(),
+            1
+        );
+        // Setting on: the wildcard reaches the local address.
+        let p = guarded(
+            policy.clone(),
+            resolver(),
+            all_on().with_wildcards_reach_local(true),
+        );
+        assert_eq!(
+            admit(&p, &request("nas.nip.example")).await.unwrap(),
+            vec![SocketAddr::new(ip("192.168.1.20"), 443)]
+        );
+        // Setting on, toggle off: still blocked; the setting never replaces the toggle.
+        let p = guarded(
+            policy,
+            resolver(),
+            LocalAccess::NONE.with_wildcards_reach_local(true),
+        );
+        let refusal = admit(&p, &request("nas.nip.example")).await.unwrap_err();
+        assert_eq!(blocked(&refusal), Some("toggle:private"));
+    }
+
+    #[tokio::test]
+    async fn d26_puddle_endpoints_are_blocked_whatever_the_toggles_and_rules_say() {
+        let endpoints = PuddleEndpoints::new();
+        let _api = endpoints.register(SocketAddr::new(ip("127.0.0.1"), 443), EndpointKind::Api);
+        let policy = Arc::new(StaticPolicy::new());
+        for h in ["127.0.0.1", "localhost", "self.example"] {
+            policy.allow(&host(h));
+        }
+        let guard = NetPolicy::new(Arc::new(all_on().with_wildcards_reach_local(true)))
+            .with_endpoints(endpoints);
+        let p = proxy(
+            policy.clone(),
+            StaticResolver::new().with("self.example", &[ip("127.0.0.1")]),
+        )
+        .with_address_check(Arc::new(guard));
+        for h in ["127.0.0.1", "localhost", "self.example"] {
+            let refusal = admit(&p, &request(h)).await.unwrap_err();
+            assert_eq!(blocked(&refusal), Some("puddle_endpoint"), "{h}");
+            assert!(refusal.message.contains("puddle's own endpoints"), "{h}");
+        }
+        assert_eq!(policy.pending().len(), 0);
+        // Literal and `localhost` were refused before the rules.
+        assert_eq!(policy.decisions(), 1);
+    }
 }

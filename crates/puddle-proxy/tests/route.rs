@@ -414,7 +414,7 @@ async fn requests_that_are_not_for_a_proxy_get_400() {
         "GET https://a.test/ HTTP/1.1\r\n\r\n",
         "CONNECT a.test HTTP/1.1\r\n\r\n",
         "CONNECT user@a.test:443 HTTP/1.1\r\n\r\n",
-        "CONNECT bücher.test:443 HTTP/1.1\r\n\r\n",
+        "CONNECT under_score.test:443 HTTP/1.1\r\n\r\n",
         "CONNECT 0x7f.1:443 HTTP/1.1\r\n\r\n",
         "POST http://a.test/ HTTP/1.1\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n",
         "GET http://a.test/ HTTP/9\r\n\r\n",
@@ -550,9 +550,11 @@ async fn the_default_address_check_blocks_loopback_even_when_allowed() {
     assert_eq!(code, 403);
     assert_eq!(
         header_value(&headers, "x-puddle-blocked").as_deref(),
-        Some("local_address")
+        Some("toggle:loopback")
     );
+    // Blocked at the name stage: the rules were never asked, nothing went pending (R-14).
     assert_eq!(policy.pending().len(), 0);
+    assert_eq!(policy.decisions(), 0);
 }
 
 /// HO-3: the sandbox is the route's. Two routes, the same request: each pending item names the
