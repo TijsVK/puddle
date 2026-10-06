@@ -8,6 +8,11 @@ pub enum Command {
     Version,
     /// Print usage.
     Help,
+    /// Relay stdio to a sandbox's SSH endpoint (`ProxyCommand`), see [`crate::cmd::ssh_bridge`].
+    SshBridge {
+        /// The sandbox's endpoint (named pipe or Unix socket path).
+        endpoint: std::path::PathBuf,
+    },
 }
 
 /// Arguments that don't form a valid command.
@@ -19,10 +24,13 @@ pub enum UsageError {
     /// No command given.
     #[error("no command given")]
     Missing,
+    /// A command lacks its argument; holds the usage of that command.
+    #[error("missing argument: {0}")]
+    MissingArgument(&'static str),
 }
 
 /// Usage text for `--help` and for usage errors.
-pub const USAGE: &str = "usage: puddle [--version | --help]";
+pub const USAGE: &str = "usage: puddle [--version | --help | ssh-bridge <endpoint>]";
 
 /// Parse the arguments after the program name.
 ///
@@ -40,6 +48,7 @@ where
         Some(arg) => match arg.as_ref() {
             "--version" | "-V" => Command::Version,
             "--help" | "-h" => Command::Help,
+            "ssh-bridge" => return crate::cmd::ssh_bridge::parse(args),
             other => return Err(UsageError::UnknownArgument(other.to_owned())),
         },
     };

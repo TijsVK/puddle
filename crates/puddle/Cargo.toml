@@ -11,8 +11,16 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+puddle-ssh = { workspace = true }
 puddle-types = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-std", "net", "rt", "time"] }
+
+[dev-dependencies]
+puddle-compute = { workspace = true }
+puddle-ipc = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

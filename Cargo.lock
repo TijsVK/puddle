@@ -4024,8 +4024,13 @@ checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 name = "puddle"
 version = "0.0.0"
 dependencies = [
+ "puddle-compute",
+ "puddle-ipc",
+ "puddle-ssh",
  "puddle-types",
+ "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -4216,6 +4221,20 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "puddle-ssh"
+version = "0.0.0"
+dependencies = [
+ "puddle-boot",
+ "puddle-compute",
+ "puddle-ipc",
+ "puddle-types",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
