@@ -90,6 +90,12 @@ pub enum PlanError {
         /// `ENV PATH` or `ENTRYPOINT/CMD`.
         what: &'static str,
     },
+    /// A provider step names a script the plan doesn't write.
+    #[error("boot step {path} is not a file of this plan")]
+    StepNotInPlan {
+        /// The step's path.
+        path: String,
+    },
 }
 
 /// The git identity puddle writes into the sandbox (D-4: a basic identities feature; the user
@@ -185,6 +191,7 @@ impl Default for AgentConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootPlan {
     files: Vec<GuestFile>,
+    steps: Vec<GuestPath>,
     entry_env: Vec<GuestPath>,
     entrypoint: Vec<String>,
     entrypoint_cwd: Option<GuestPath>,
@@ -198,6 +205,7 @@ pub struct BootPlanBuilder {
     image: ImageConfig,
     env: GuestEnv,
     files: Vec<GuestFile>,
+    steps: Vec<GuestPath>,
     git: Option<GitIdentity>,
     agent: Option<AgentConfig>,
 }
@@ -211,6 +219,7 @@ impl BootPlan {
             image: image.clone(),
             env: GuestEnv::new(),
             files: Vec::new(),
+            steps: Vec::new(),
             git: None,
             agent: Some(AgentConfig::default()),
         }
@@ -220,6 +229,13 @@ impl BootPlan {
     #[must_use]
     pub fn files(&self) -> &[GuestFile] {
         &self.files
+    }
+
+    /// Provider steps: scripts of this plan the hook runs with `/bin/sh` at every boot, in this
+    /// order, after the files and `update-ca-certificates`.
+    #[must_use]
+    pub fn steps(&self) -> &[GuestPath] {
+        &self.steps
     }
 
     /// The command the hook chains after setup: the image's ENTRYPOINT + CMD, or `None` when the
@@ -284,6 +300,9 @@ impl BootPlan {
             "puddle_on_change {} update-ca-certificates",
             sh_word(CA_DIR_GUEST)
         ));
+        for step in &self.steps {
+            lines.push(format!("puddle_step {}", sh_word(step.as_str())));
+        }
         lines.push(format!("puddle_git_include {}", sh_word(GIT_CONFIG_GUEST)));
         if let Some(agent) = &self.agent {
             lines.push(format!(
@@ -341,6 +360,17 @@ impl BootPlanBuilder {
         self
     }
 
+    /// Runs `script`, one of the plan's provider files, with `/bin/sh` at every boot after the
+    /// files and `update-ca-certificates` (a provider's own setup that needs the guest's state,
+    /// such as merging the image's CA bundle, T-110). Steps run in the order added; a step added
+    /// twice runs once. A failing step fails the boot with its output.
+    pub fn step(mut self, script: GuestPath) -> Self {
+        if !self.steps.contains(&script) {
+            self.steps.push(script);
+        }
+        self
+    }
+
     /// Sets `user.name` and `user.email` for the sandbox.
     pub fn git_identity(mut self, identity: GitIdentity) -> Self {
         self.git = Some(identity);
@@ -367,7 +397,8 @@ impl BootPlanBuilder {
     ///   puddle's own paths);
     /// - [`PlanError::ReservedPath`], [`PlanError::UnsafePath`]: a file path is unusable;
     /// - [`PlanError::ReservedEnv`]: an env name starts with `PUDDLE_`;
-    /// - [`PlanError::ImageValue`]: the image's `PATH` or ENTRYPOINT/CMD holds a NUL or newline.
+    /// - [`PlanError::ImageValue`]: the image's `PATH` or ENTRYPOINT/CMD holds a NUL or newline;
+    /// - [`PlanError::StepNotInPlan`]: a step names no file of the plan.
     pub fn build(self) -> Result<BootPlan, PlanError> {
         if let Some((name, _)) = self
             .env
@@ -423,6 +454,12 @@ impl BootPlanBuilder {
             }
         }
 
+        if let Some(step) = self.steps.iter().find(|s| !seen.contains(s.as_str())) {
+            return Err(PlanError::StepNotInPlan {
+                path: step.to_string(),
+            });
+        }
+
         let entrypoint = if self.image.entrypoint.is_empty() {
             Vec::new()
         } else {
@@ -451,6 +488,7 @@ impl BootPlanBuilder {
 
         Ok(BootPlan {
             files,
+            steps: self.steps,
             entry_env,
             entrypoint,
             entrypoint_cwd,
@@ -735,6 +773,43 @@ mod tests {
         assert_eq!(lines.len(), 2 + plan.files().len() + 6);
         // The agent's port is the one VS Code is told to ignore.
         assert!(text(&plan, MACHINE_SETTINGS_GUEST).contains("\"4000\""));
+    }
+
+    #[test]
+    fn steps_run_after_the_ca_trigger_once_each_and_must_be_plan_files() {
+        let step = GuestPath::new("/usr/local/lib/puddle/step.sh").unwrap();
+        let other = GuestPath::new("/usr/local/lib/puddle/other.sh").unwrap();
+        let plan = BootPlan::builder(&ImageConfig::default())
+            .file(file(step.as_str(), "true\n"))
+            .file(file(other.as_str(), "true\n"))
+            .step(other.clone())
+            .step(step.clone())
+            .step(other.clone())
+            .build()
+            .unwrap();
+        assert_eq!(plan.steps(), [other.clone(), step.clone()]);
+        let r = String::from_utf8(plan.render()).unwrap();
+        let trigger = r.find("puddle_on_change").unwrap();
+        let first = r
+            .find("puddle_step '/usr/local/lib/puddle/other.sh'\n")
+            .unwrap();
+        let second = r
+            .find("puddle_step '/usr/local/lib/puddle/step.sh'\n")
+            .unwrap();
+        assert!(trigger < first && first < second, "{r}");
+        assert_eq!(r.matches("puddle_step ").count(), 2);
+
+        let err = BootPlan::builder(&ImageConfig::default())
+            .step(step.clone())
+            .build()
+            .unwrap_err();
+        assert_eq!(
+            err,
+            PlanError::StepNotInPlan {
+                path: step.to_string()
+            }
+        );
+        assert!(err.to_string().contains("/usr/local/lib/puddle/step.sh"));
     }
 
     #[test]

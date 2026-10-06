@@ -668,3 +668,47 @@ fn without_the_merge_tool_the_removal_waits_for_a_later_boot() {
         &format!("merge-file remove {DOCKER}")
     );
 }
+
+#[test]
+fn provider_steps_run_every_boot_after_the_ca_trigger_and_fail_the_boot_when_they_fail() {
+    let step = "/usr/local/lib/puddle/step.sh";
+    let plan = |script: &str| {
+        BootPlan::builder(&image(&[], &["bash"]))
+            .no_agent()
+            .file(file(CA, b"CA\n"))
+            .file(file(step, script.as_bytes()))
+            .step(GuestPath::new(step).unwrap())
+            .build()
+            .unwrap()
+    };
+    let ok = "echo step >>\"$PUDDLE_ROOT/calls\"; echo merged\n";
+    for sh in shells() {
+        let fr = FakeRoot::new(&sh);
+        for _ in 0..2 {
+            let out = fr.run(&plan(ok));
+            assert!(out.status.success(), "{}", show(&out));
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(stdout.contains(&format!("step {step}: merged")), "{stdout}");
+        }
+        // Every boot, after update-ca-certificates (which ran on the first boot only).
+        assert_eq!(fr.calls().iter().filter(|c| *c == "step").count(), 2);
+        let calls = fr.calls();
+        let first_step = calls.iter().position(|c| c == "step").unwrap();
+        let update = calls
+            .iter()
+            .position(|c| c == "update-ca-certificates")
+            .unwrap();
+        assert!(update < first_step, "{calls:?}");
+
+        let out = fr.run(&plan("echo 'no bundle here' >&2; exit 4\n"));
+        assert_eq!(out.status.code(), Some(1), "{}", show(&out));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!(
+                "puddle-boot: error: step {step} failed: no bundle here"
+            )),
+            "{stderr}"
+        );
+        assert!(!fr.path("/run/puddle/boot.done").exists());
+    }
+}

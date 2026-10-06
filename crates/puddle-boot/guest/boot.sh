@@ -45,11 +45,12 @@ fi
 
 mkdir -p "$RUN" "$STATE" || die "cannot create $RUN and $STATE"
 : >"$LOG"
-rm -f "$RUN/boot.done" "$RUN/triggers" "$RUN/entry-env" "$RUN/changed" "$RUN/files.new" "$RUN/merge.new"
+rm -f "$RUN/boot.done" "$RUN/triggers" "$RUN/steps" "$RUN/entry-env" "$RUN/changed" "$RUN/files.new" "$RUN/merge.new"
 : >"$RUN/changed"
 : >"$RUN/files.new"
 : >"$RUN/merge.new"
 : >"$RUN/triggers"
+: >"$RUN/steps"
 
 
 boot_id=unknown
@@ -165,6 +166,7 @@ merge_result() { # merge_result <path> <tool output>
         printf '%s\n' "$1" >>"$RUN/merge.new"
     }
     puddle_on_change() { printf '%s %s\n' "$1" "$2" >>"$RUN/triggers"; }
+    puddle_step() { printf '%s\n' "$1" >>"$RUN/steps"; }
     puddle_git_include() { GIT_INCLUDE=$1; }
     puddle_agent() { AGENT=$1 AGENT_PORT=$2; }
     puddle_entrypoint_env() { printf '%s\n' "$1" >>"$RUN/entry-env"; }
@@ -240,6 +242,14 @@ while read -r dir cmd; do
         say "$cmd ran"
     fi
 done <"$RUN/triggers"
+
+# Provider steps: scripts the plan itself wrote, run at every boot in plan order, after the
+# triggers so they see the updated system CA store (T-110 merges the image's CA bundle here).
+while IFS= read -r step; do
+    [ -n "$step" ] || continue
+    out=$(/bin/sh "$ROOT$step" </dev/null 2>&1) || die "step $step failed: $out"
+    say "step $step: ${out:-done}"
+done <"$RUN/steps"
 
 # --- 4. puddle-agent under a supervisor that restarts it ----------------------------------------
 if [ -n "$AGENT" ]; then

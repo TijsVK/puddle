@@ -16,7 +16,7 @@
 //! (every boot: the guest resets them); the plan's files (atomic, unchanged files detected, files
 //! dropped from the plan removed); one include of `/etc/puddle/gitconfig` in `/etc/gitconfig`;
 //! `update-ca-certificates` only when a file under `/usr/local/share/ca-certificates` changed;
-//! `puddle-agent` under a restarting supervisor, waiting until it listens; `boot.d/*.sh`
+//! provider steps (scripts the plan wrote, every boot); `puddle-agent` under a restarting supervisor, waiting until it listens; `boot.d/*.sh`
 //! extension steps; the image ENTRYPOINT (+CMD) when the image declares one.
 //!
 //! ```
