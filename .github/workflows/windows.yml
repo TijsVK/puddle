@@ -54,7 +54,9 @@ jobs:
     needs: changed
     if: needs.changed.outputs.run == 'true'
     runs-on: windows-2025
-    timeout-minutes: 40
+    # A cold cache (any Cargo.lock change) takes ~40 min: clippy 6, tests 14, release build 15,
+    # then the cache save (T-117, run 37431418875 was cut off at 40 while saving).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Toolchain (from rust-toolchain.toml)
