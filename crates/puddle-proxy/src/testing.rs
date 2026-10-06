@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Test doubles (feature `testing`). Never use them in product code: [`AnyAddress`] connects
-//! anywhere, and [`StaticPolicy`] keeps its rules in memory.
+//! anywhere, [`StaticPolicy`] keeps its rules in memory, and [`CollectingConnectionLog`] keeps
+//! the audit in memory.
 
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Mutex, PoisonError};
+use std::time::Duration;
 
 use puddle_types::{
-    Decision, DomainName, EgressRequest, Host, PatternKind, PendingId, PendingOutcome, Policy,
-    PolicyError, RuleId, SandboxName, SuffixAllows,
+    ConnectionEvent, ConnectionLog, Decision, DomainName, EgressRequest, Host, PatternKind,
+    PendingId, PendingOutcome, Policy, PolicyError, RuleId, SandboxName, SuffixAllows,
 };
 
 use crate::destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver};
@@ -186,6 +188,51 @@ impl Policy for StaticPolicy {
             Some(&(rule_id, false, pattern)) => Some(Decision::Deny { rule_id, pattern }),
             _ => None,
         })
+    }
+}
+
+/// A [`ConnectionLog`] that keeps every event in memory.
+#[derive(Debug, Default)]
+pub struct CollectingConnectionLog {
+    events: Mutex<Vec<ConnectionEvent>>,
+}
+
+impl CollectingConnectionLog {
+    /// Nothing recorded yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The events so far, oldest first.
+    #[must_use]
+    pub fn events(&self) -> Vec<ConnectionEvent> {
+        self.events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Waits up to `limit` until at least `count` events are in, and returns them all. A
+    /// connection is recorded when it ends, after the guest has its answer.
+    pub async fn wait_for(&self, count: usize, limit: Duration) -> Vec<ConnectionEvent> {
+        let deadline = tokio::time::Instant::now() + limit;
+        loop {
+            let events = self.events();
+            if events.len() >= count || tokio::time::Instant::now() >= deadline {
+                return events;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+}
+
+impl ConnectionLog for CollectingConnectionLog {
+    fn record(&self, event: &ConnectionEvent) {
+        self.events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(event.clone());
     }
 }
 

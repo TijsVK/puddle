@@ -23,6 +23,10 @@
 //! 5. **Relay**: `CONNECT` is spliced both ways, an abort on either side reaching the other as a
 //!    reset (T-048); a plain-HTTP request is forwarded once with `Host` rewritten to the checked
 //!    target and its body framed exactly, so nothing unchecked rides along.
+//! 6. **Audit**: every request that got as far as a destination ends as one
+//!    [`puddle_types::ConnectionEvent`] (decision, reason, rule or pending row, address connected
+//!    to, method and path of a plain-HTTP request, bytes each way) handed to the
+//!    [`puddle_types::ConnectionLog`] set with [`Proxy::with_connection_log`] (the store, R-24).
 //!
 //! The sandbox is the route's, never anything the guest says (HO-3). Each sandbox has a cap on
 //! open connections and each route on agent sessions ([`ProxyConfig`]), far above what real tools
@@ -31,9 +35,11 @@
 //! # Features
 //!
 //! - `testing`: in-memory doubles ([`testing::StaticPolicy`], [`testing::AnyAddress`],
-//!   [`testing::StaticResolver`]) for tests. Never use them in product code.
+//!   [`testing::StaticResolver`], [`testing::CollectingConnectionLog`]) for tests. Never use
+//!   them in product code.
 #![forbid(unsafe_code)]
 
+mod counted;
 mod destination;
 mod http;
 mod proxy;

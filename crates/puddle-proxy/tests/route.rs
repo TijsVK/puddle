@@ -15,9 +15,12 @@ use futures_util::StreamExt;
 use puddle_agent_proto::tokio_yamux::{Control, Session, StreamHandle};
 use puddle_agent_proto::yamux::client_config;
 use puddle_ipc::IpcRoot;
-use puddle_proxy::testing::{AnyAddress, StaticPolicy, StaticResolver};
+use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, ProxyConfig, Route};
-use puddle_types::{Host, NullSink, PendingId, SandboxName};
+use puddle_types::{
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, NullSink, PendingId,
+    SandboxName,
+};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -35,6 +38,7 @@ fn sandbox(name: &str) -> SandboxName {
 /// A proxy serving one route, its policy and IPC root.
 struct Rig {
     policy: Arc<StaticPolicy>,
+    log: Arc<CollectingConnectionLog>,
     proxy: Arc<Proxy>,
     root: IpcRoot,
     route: Route,
@@ -48,8 +52,10 @@ impl Rig {
     /// `*.test` names from `resolver`, every address allowed (the servers are on loopback).
     fn with_resolver(config: ProxyConfig, resolver: StaticResolver) -> Self {
         let policy = Arc::new(StaticPolicy::new());
+        let log = Arc::new(CollectingConnectionLog::new());
         let proxy = Arc::new(
             Proxy::new(policy.clone(), Arc::new(NullSink))
+                .with_connection_log(log.clone())
                 .with_resolver(Arc::new(resolver))
                 .with_address_check(Arc::new(AnyAddress))
                 .with_config(config),
@@ -58,6 +64,7 @@ impl Rig {
         let route = proxy.serve_route(root.listen().unwrap(), sandbox("box"));
         Self {
             policy,
+            log,
             proxy,
             root,
             route,
@@ -66,6 +73,16 @@ impl Rig {
 
     async fn guest(&self) -> Guest {
         Guest::connect(&self.route).await
+    }
+
+    /// The first `count` connection events, waiting up to 5 s for them.
+    async fn events(&self, count: usize) -> Vec<ConnectionEvent> {
+        let events = self.log.wait_for(count, Duration::from_secs(5)).await;
+        assert!(
+            events.len() >= count,
+            "{count} events expected, got {events:?}"
+        );
+        events
     }
 }
 
@@ -464,6 +481,23 @@ async fn a_plain_http_request_is_forwarded_once_with_the_checked_host() {
         )
     );
     assert_eq!(rest, b"body", "the pipelined request must not be forwarded");
+    let event = &rig.events(1).await[0];
+    let http = event.http.as_ref().unwrap();
+    assert_eq!((http.method(), http.path()), ("POST", "/up"));
+    assert_eq!(
+        (
+            event.decision,
+            event.resolved_ip,
+            event.bytes_up,
+            event.bytes_down
+        ),
+        (
+            ConnectionDecision::Allow,
+            Some(LOCAL),
+            request.len() as u64,
+            response.len() as u64
+        )
+    );
 }
 
 #[tokio::test]
@@ -739,4 +773,177 @@ async fn a_server_reset_during_a_plain_http_request_reaches_the_guest_as_an_erro
         .await
         .unwrap();
     assert!(got.is_err(), "the guest saw a clean end: {got:?}");
+}
+
+/// R-24: a connection that ends is reported once, with its rule, the address connected to and
+/// the bytes each way as the guest saw them.
+#[tokio::test]
+async fn an_allowed_connect_is_reported_with_address_and_bytes() {
+    let echo = echo_server().await;
+    let rig = Rig::with_resolver(
+        ProxyConfig::default(),
+        StaticResolver::new().with("echo.test", &[LOCAL]),
+    );
+    let rule = rig.policy.allow(&host("echo.test"));
+    let mut guest = rig.guest().await;
+    let head = format!(
+        "CONNECT echo.test:{0} HTTP/1.1\r\nHost: echo.test:{0}\r\n\r\n",
+        echo.port()
+    );
+    let mut stream = guest.stream().await;
+    stream.write_all(head.as_bytes()).await.unwrap();
+    let mut reader = BufReader::new(stream);
+    assert_eq!(status(&mut reader).await.unwrap(), 200);
+    reader.get_mut().write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    reader.read_exact(&mut back).await.unwrap();
+    assert!(
+        rig.log.events().is_empty(),
+        "recorded before the connection ended"
+    );
+    reader.get_mut().shutdown().await.unwrap();
+    read_all(&mut reader).await.unwrap();
+
+    let events = rig.events(1).await;
+    let event = &events[0];
+    assert_eq!(
+        (event.sandbox.as_str(), event.host.to_string(), event.port),
+        ("box", "echo.test".to_owned(), echo.port())
+    );
+    assert_eq!(
+        (
+            event.decision,
+            event.reason,
+            event.rule_id,
+            event.pending_id
+        ),
+        (
+            ConnectionDecision::Allow,
+            ConnectionReason::Rule,
+            Some(rule),
+            None
+        )
+    );
+    assert_eq!(event.resolved_ip, Some(LOCAL));
+    assert_eq!(event.http, None, "a tunnel has no request line");
+    let established = "HTTP/1.1 200 Connection Established\r\n\r\n".len() as u64;
+    assert_eq!(
+        (event.bytes_up, event.bytes_down),
+        (head.len() as u64 + 4, established + 4)
+    );
+}
+
+/// Every refusal after the destination is known is reported with its decision and reason; one
+/// refused before that (no destination) is not.
+#[tokio::test]
+async fn refused_connections_are_reported_with_decision_and_reason() {
+    let closed = {
+        let l = TcpListener::bind((LOCAL, 0)).await.unwrap();
+        l.local_addr().unwrap()
+    };
+    let rig = Rig::new(ProxyConfig::default());
+    let deny = rig.policy.deny_host(&host("bad.test"));
+    let allow = rig.policy.allow(&host("127.0.0.1"));
+    let mut guest = rig.guest().await;
+
+    let (code, _) = guest
+        .request("GET /not-a-proxy-request HTTP/1.1\r\n\r\n")
+        .await;
+    assert_eq!(code, 400);
+    let (code, _) = guest.connect_to("bad.test:443").await;
+    assert_eq!(code, 403);
+    rig.events(1).await;
+    let (code, _) = guest.connect_to("new.test:443").await;
+    assert_eq!(code, 403);
+    rig.events(2).await;
+    let (code, _) = guest.connect_to(&closed.to_string()).await;
+    assert_eq!(code, 502);
+    rig.events(3).await;
+    rig.policy.set_unavailable(true);
+    let (code, _) = guest.connect_to("127.0.0.1:443").await;
+    assert_eq!(code, 503);
+
+    let events = rig.events(4).await;
+    let got: Vec<_> = events
+        .iter()
+        .map(|e| {
+            (
+                e.host.to_string(),
+                e.decision,
+                e.reason,
+                e.rule_id,
+                e.resolved_ip,
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                "bad.test".to_owned(),
+                ConnectionDecision::Deny,
+                ConnectionReason::Rule,
+                Some(deny),
+                None
+            ),
+            (
+                "new.test".to_owned(),
+                ConnectionDecision::Pending,
+                ConnectionReason::NoRule,
+                None,
+                None
+            ),
+            (
+                "127.0.0.1".to_owned(),
+                ConnectionDecision::Allow,
+                ConnectionReason::Rule,
+                Some(allow),
+                None
+            ),
+            (
+                "127.0.0.1".to_owned(),
+                ConnectionDecision::Blocked,
+                ConnectionReason::PolicyUnavailable,
+                None,
+                None
+            ),
+        ]
+    );
+    assert_eq!(events[1].pending_id, Some(rig.policy.pending()[0].id));
+    assert!(events.iter().all(|e| e.bytes_up > 0 && e.bytes_down > 0));
+}
+
+/// A name that resolves only to loopback under the default address check is blocked after the
+/// allow; the record keeps the rule that allowed the name and names the toggle.
+#[tokio::test]
+async fn a_block_after_an_allow_is_reported_with_the_rule_and_the_toggle() {
+    let policy = Arc::new(StaticPolicy::new());
+    let rule = policy.allow(&host("web.test"));
+    let log = Arc::new(CollectingConnectionLog::new());
+    let proxy = Arc::new(
+        Proxy::new(policy, Arc::new(NullSink))
+            .with_connection_log(log.clone())
+            .with_resolver(Arc::new(StaticResolver::new().with("web.test", &[LOCAL]))),
+    );
+    let root = IpcRoot::new().unwrap();
+    let route = proxy.serve_route(root.listen().unwrap(), sandbox("box"));
+    let mut guest = Guest::connect(&route).await;
+    let (code, _) = guest
+        .request("GET http://web.test/a?token=CANARY-route-1 HTTP/1.1\r\n\r\n")
+        .await;
+    assert_eq!(code, 403);
+    let events = log.wait_for(1, Duration::from_secs(5)).await;
+    let event = &events[0];
+    assert_eq!(event.decision, ConnectionDecision::Blocked);
+    assert!(
+        matches!(
+            event.reason,
+            ConnectionReason::Blocked(BlockReason::LocalToggle(_))
+        ),
+        "{:?}",
+        event.reason
+    );
+    assert_eq!((event.rule_id, event.resolved_ip), (Some(rule), None));
+    assert_eq!(event.http.as_ref().unwrap().path(), "/a");
+    assert!(!format!("{event:?}").contains("CANARY"));
 }

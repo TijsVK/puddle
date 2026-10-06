@@ -15,8 +15,9 @@ use std::time::Duration;
 use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler};
 use puddle_agent_proto::relay::splice;
 use puddle_types::{
-    BlockReason, Decision, EgressRequest, EventSink, Host, PatternKind, PendingOutcome, Policy,
-    PolicyError, ProtocolHint, SandboxName, SuffixAllows,
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
+    EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, PatternKind,
+    PendingOutcome, Policy, PolicyError, ProtocolHint, SandboxName, SuffixAllows,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -25,6 +26,7 @@ use tracing::Instrument;
 
 use puddle_netpolicy::{LocalAccess, LocalCategory, NetPolicy, block_message, normalise_host};
 
+use crate::counted::Counted;
 use crate::destination::{AddressCheck, AddressVerdict, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
 use crate::target::Target;
@@ -119,6 +121,7 @@ pub struct Proxy {
     policy: Arc<dyn Policy>,
     resolver: Arc<dyn Resolver>,
     addresses: Arc<dyn AddressCheck>,
+    log: Arc<dyn ConnectionLog>,
     pub(crate) sink: Arc<dyn EventSink>,
     pub(crate) config: ProxyConfig,
 }
@@ -136,13 +139,15 @@ impl Proxy {
     /// kills) to `sink`. Its address check is a [`NetPolicy`] with every local toggle off and no
     /// registered endpoints: public addresses only. The host program passes its own
     /// [`NetPolicy`] (settings-backed toggles, puddle's endpoint registry) with
-    /// [`Self::with_address_check`].
+    /// [`Self::with_address_check`], and its audit (the store) with
+    /// [`Self::with_connection_log`]; until then connections are not recorded.
     #[must_use]
     pub fn new(policy: Arc<dyn Policy>, sink: Arc<dyn EventSink>) -> Self {
         Self {
             policy,
             resolver: Arc::new(SystemResolver),
             addresses: Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE))),
+            log: Arc::new(NullConnectionLog),
             sink,
             config: ProxyConfig::default(),
         }
@@ -159,6 +164,15 @@ impl Proxy {
     #[must_use]
     pub fn with_address_check(mut self, check: Arc<dyn AddressCheck>) -> Self {
         self.addresses = check;
+        self
+    }
+
+    /// Reports every connection that got as far as a destination to `log` (the store's
+    /// `connection` audit records, R-24): one event when it ends, with its decision, the address
+    /// connected to and the bytes each way.
+    #[must_use]
+    pub fn with_connection_log(mut self, log: Arc<dyn ConnectionLog>) -> Self {
+        self.log = log;
         self
     }
 
@@ -206,6 +220,17 @@ impl Proxy {
                     reason: "policy task failed".into(),
                 })
             })
+    }
+
+    /// Hands `event` to the connection log on a blocking thread (it may write to SQLite).
+    async fn record(&self, event: ConnectionEvent) {
+        let log = Arc::clone(&self.log);
+        if tokio::task::spawn_blocking(move || log.record(&event))
+            .await
+            .is_err()
+        {
+            tracing::warn!("connection log panicked; record lost");
+        }
     }
 }
 
@@ -287,6 +312,7 @@ async fn refuse<S: AsyncWrite + Unpin>(stream: &mut S, refusal: &Refusal) {
 
 async fn serve(handler: &SandboxHandler, stream: GuestStream) {
     let proxy = &handler.proxy;
+    let (stream, counts) = Counted::new(stream);
     let mut reader = BufReader::new(stream);
     let Ok(_permit) = Arc::clone(&handler.streams).try_acquire_owned() else {
         tracing::warn!(
@@ -320,11 +346,32 @@ async fn serve(handler: &SandboxHandler, stream: GuestStream) {
     if path.is_some() {
         request = request.with_protocol(ProtocolHint::Http);
     }
-    let addrs = match admit(proxy, &request).await {
+    let mut event = relay(proxy, reader, &request, &head, &target, path, body).await;
+    event.bytes_up = counts.read();
+    event.bytes_down = counts.written();
+    proxy.record(event).await;
+}
+
+/// Decides, connects and relays one request whose destination is known; returns what the audit
+/// records about it (bytes are filled in by the caller once the stream is gone).
+async fn relay(
+    proxy: &Proxy,
+    mut reader: GuestReader,
+    request: &EgressRequest,
+    head: &Head,
+    target: &Target,
+    path: Option<String>,
+    body: Body,
+) -> ConnectionEvent {
+    let (admitted, mut event) = admit(proxy, request).await;
+    if let Some(path) = &path {
+        event.http = Some(HttpRequestLine::new(head.method.as_str(), path));
+    }
+    let addrs = match admitted {
         Ok(addrs) => addrs,
         Err(refusal) => {
             refuse(reader.get_mut(), &refusal).await;
-            return;
+            return event;
         }
     };
     let (server, addr) = match connect_first(&addrs, proxy.config.connect_timeout).await {
@@ -336,22 +383,24 @@ async fn serve(handler: &SandboxHandler, stream: GuestStream) {
                 format!("could not connect to {}:{}", target.host, target.port),
             );
             refuse(reader.get_mut(), &refusal).await;
-            return;
+            return event;
         }
     };
     tracing::debug!(host = %target.host, port = target.port, %addr, "connected");
+    event.resolved_ip = Some(addr.ip());
     match path {
         None => tunnel(reader, server).await,
-        Some(path) => forward(reader, server, &head, &path, &target, body).await,
+        Some(path) => forward(reader, server, head, &path, target, body).await,
     }
+    event
 }
+
+/// The guest side of one proxied stream, counted for the audit.
+type GuestReader = BufReader<Counted<GuestStream>>;
 
 /// Reads the head within `limit`. `Err(None)`: the guest closed or failed before a request, so
 /// there is no one to answer.
-async fn read_request(
-    reader: &mut BufReader<GuestStream>,
-    limit: Duration,
-) -> Result<Head, Option<Refusal>> {
+async fn read_request(reader: &mut GuestReader, limit: Duration) -> Result<Head, Option<Refusal>> {
     match tokio::time::timeout(limit, http::read_head(reader)).await {
         Err(_) => Err(Some(Refusal::new(
             "408 Request Timeout",
@@ -393,10 +442,50 @@ fn parse_request(head: &Head) -> Result<(Target, Option<String>, Body), Refusal>
     Ok((Target { host, port }, path, body))
 }
 
-/// Decides the request and, if allowed, returns the addresses it may connect to (R-10, R-14).
+/// Decides the request and, if allowed, returns the addresses it may connect to (R-10, R-14),
+/// with the audit event for the decision.
 pub(crate) async fn admit(
     proxy: &Proxy,
     request: &EgressRequest,
+) -> (Result<Vec<SocketAddr>, Refusal>, ConnectionEvent) {
+    // Replaced by the first step that decides; a path that forgets to stays fail-closed in the
+    // audit too.
+    let mut event = ConnectionEvent::new(
+        request,
+        ConnectionDecision::Blocked,
+        ConnectionReason::PolicyUnavailable,
+    );
+    let admitted = admit_into(proxy, request, &mut event).await;
+    (admitted, event)
+}
+
+/// Records each decision `admit` takes in `event`.
+fn note(
+    event: &mut ConnectionEvent,
+    request: &EgressRequest,
+    decided: &Result<Decision, PolicyError>,
+) {
+    *event = match decided {
+        Ok(decision) => ConnectionEvent::decided(request, decision),
+        Err(_) => ConnectionEvent::new(
+            request,
+            ConnectionDecision::Blocked,
+            ConnectionReason::PolicyUnavailable,
+        ),
+    };
+}
+
+/// Marks `event` blocked for `reason`, keeping the rule that allowed the name, if any.
+fn note_block(event: &mut ConnectionEvent, reason: BlockReason) {
+    event.decision = ConnectionDecision::Blocked;
+    event.reason = ConnectionReason::Blocked(reason);
+    event.pending_id = None;
+}
+
+async fn admit_into(
+    proxy: &Proxy,
+    request: &EgressRequest,
+    event: &mut ConnectionEvent,
 ) -> Result<Vec<SocketAddr>, Refusal> {
     let host = &request.host;
     let port = request.port;
@@ -407,9 +496,12 @@ pub(crate) async fn admit(
         .addresses
         .check_target(&request.sandbox, &target, port)
     {
+        note_block(event, reason);
         return Err(block(request, &[reason]));
     }
-    let pattern = allowed(request, proxy.decide(request, SuffixAllows::Count).await)?;
+    let decided = proxy.decide(request, SuffixAllows::Count).await;
+    note(event, request, &decided);
+    let pattern = allowed(request, decided)?;
     let addrs = match host {
         Host::Ip(ip) => vec![SocketAddr::new(*ip, port)],
         Host::Name(name) => {
@@ -476,8 +568,10 @@ pub(crate) async fn admit(
         // Otherwise only an exact allow of the name counts. Asking again without suffix allows
         // writes the pending row for the exact name.
         let again = proxy.decide(request, SuffixAllows::Ignore).await;
+        note(event, request, &again);
         if allowed(request, again).map_err(|r| wildcard_note(r, &categories))? != PatternKind::Exact
         {
+            note_block(event, BlockReason::LocalAddress);
             return Err(block(request, &[BlockReason::LocalAddress]));
         }
         usable = exact_only;
@@ -486,6 +580,7 @@ pub(crate) async fn admit(
         if blocked.is_empty() {
             blocked.push(BlockReason::LocalAddress);
         }
+        note_block(event, shown_reason(&blocked));
         return Err(block(request, &blocked));
     }
     Ok(usable)
@@ -586,12 +681,7 @@ fn allowed(
 /// The header names the first toggle if any (turning it on would help), else the first reason.
 fn block(request: &EgressRequest, reasons: &[BlockReason]) -> Refusal {
     let host = &request.host;
-    let reason = reasons
-        .iter()
-        .find(|r| matches!(r, BlockReason::LocalToggle(_)))
-        .or_else(|| reasons.first())
-        .copied()
-        .unwrap_or(BlockReason::LocalAddress);
+    let reason = shown_reason(reasons);
     tracing::info!(sandbox = %request.sandbox, %host, port = request.port, %reason, "blocked");
     Refusal::new(
         "403 Forbidden",
@@ -599,6 +689,16 @@ fn block(request: &EgressRequest, reasons: &[BlockReason]) -> Refusal {
     )
     .header("x-puddle-decision", "blocked")
     .header("x-puddle-blocked", reason.code())
+}
+
+/// The reason a block names: the first toggle if any (turning it on would help), else the first.
+fn shown_reason(reasons: &[BlockReason]) -> BlockReason {
+    reasons
+        .iter()
+        .find(|r| matches!(r, BlockReason::LocalToggle(_)))
+        .or_else(|| reasons.first())
+        .copied()
+        .unwrap_or(BlockReason::LocalAddress)
 }
 
 /// Connects to the first address that answers within `per_address`.
@@ -625,7 +725,7 @@ async fn connect_first(
 /// `CONNECT`: answer `200`, pass on bytes the guest sent early, splice. On an error both ends
 /// reset (T-048): [`splice`] sets zero linger on the server socket, and the guest stream is dropped
 /// without a shutdown.
-async fn tunnel(reader: BufReader<GuestStream>, mut server: TcpStream) {
+async fn tunnel(reader: GuestReader, mut server: TcpStream) {
     let early = reader.buffer().to_vec();
     let mut guest = reader.into_inner();
     let opened = async {
@@ -652,7 +752,7 @@ async fn tunnel(reader: BufReader<GuestStream>, mut server: TcpStream) {
 /// Plain HTTP: one request per connection, `Host` rewritten to the checked target, body framed
 /// exactly, so a second request can't ride on the checked connection.
 async fn forward(
-    mut reader: BufReader<GuestStream>,
+    mut reader: GuestReader,
     mut server: TcpStream,
     head: &Head,
     path: &str,

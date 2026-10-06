@@ -31,6 +31,11 @@ fn proxy(policy: Arc<dyn Policy>, resolver: StaticResolver) -> Proxy {
     Proxy::new(policy, Arc::new(NullSink)).with_resolver(Arc::new(resolver))
 }
 
+/// The addresses or refusal of [`super::admit`], without its audit event.
+async fn admit(proxy: &Proxy, request: &EgressRequest) -> Result<Vec<SocketAddr>, Refusal> {
+    super::admit(proxy, request).await.0
+}
+
 fn header<'a>(refusal: &'a Refusal, name: &str) -> Option<&'a str> {
     refusal
         .headers
@@ -319,6 +324,97 @@ async fn a_suffix_allow_reasked_without_suffixes_follows_the_second_answer() {
     let p = proxy(policy, resolver()).with_address_check(Arc::new(Toggles));
     let refusal = admit(&p, &request("nas.example")).await.unwrap_err();
     assert_eq!(header(&refusal, "x-puddle-blocked"), Some("local_address"));
+}
+
+/// The audit event follows the last decision `admit` took (R-24).
+#[tokio::test]
+async fn the_audit_event_follows_each_admit_path() {
+    let resolver = || StaticResolver::new().with("nas.example", &[ip("10.0.0.5")]);
+    let kind = |e: &ConnectionEvent| (e.decision, e.reason, e.rule_id, e.pending_id);
+
+    // Name stage: SSH never reaches the rules.
+    let p = proxy(Arc::new(StaticPolicy::new()), resolver());
+    let req = request("nas.example").with_protocol(ProtocolHint::Ssh);
+    let (_, e) = super::admit(&p, &req).await;
+    assert_eq!(
+        kind(&e),
+        (
+            ConnectionDecision::Blocked,
+            ConnectionReason::Blocked(BlockReason::SshUnsupported),
+            None,
+            None
+        )
+    );
+    // Name stage: a literal blocked by the address check.
+    let p = proxy(Arc::new(StaticPolicy::new()), resolver());
+    let (_, e) = super::admit(&p, &request("127.0.0.1")).await;
+    assert_eq!(e.decision, ConnectionDecision::Blocked);
+    assert_eq!(e.reason.to_string(), "toggle:loopback");
+
+    // Suffix allow, local address, re-asked: pending for the exact name.
+    let policy = Arc::new(StaticPolicy::new());
+    policy.allow_as_suffix(&host("nas.example"));
+    let p = proxy(policy.clone(), resolver()).with_address_check(Arc::new(Toggles));
+    let (_, e) = super::admit(&p, &request("nas.example")).await;
+    assert_eq!(
+        kind(&e),
+        (
+            ConnectionDecision::Pending,
+            ConnectionReason::NoRule,
+            None,
+            Some(policy.pending()[0].id)
+        )
+    );
+    // Re-asked and a suffix allow again: blocked, keeping the rule.
+    let suffix = Decision::Allow {
+        rule_id: RuleId(1),
+        pattern: PatternKind::Suffix,
+    };
+    let p =
+        proxy(FnPolicy::new(move |_| Ok(suffix)), resolver()).with_address_check(Arc::new(Toggles));
+    let (_, e) = super::admit(&p, &request("nas.example")).await;
+    assert_eq!(
+        kind(&e),
+        (
+            ConnectionDecision::Blocked,
+            ConnectionReason::Blocked(BlockReason::LocalAddress),
+            Some(RuleId(1)),
+            None
+        )
+    );
+    // Allowed, then every address blocked by the address check: blocked, keeping the rule.
+    let policy = Arc::new(StaticPolicy::new());
+    let rule = policy.allow(&host("self.example"));
+    let p = proxy(
+        policy,
+        StaticResolver::new().with("self.example", &[ip("127.0.0.1")]),
+    )
+    .with_address_check(Arc::new(Toggles));
+    let (_, e) = super::admit(&p, &request("self.example")).await;
+    assert_eq!(
+        kind(&e),
+        (
+            ConnectionDecision::Blocked,
+            ConnectionReason::Blocked(BlockReason::PuddleEndpoint),
+            Some(rule),
+            None
+        )
+    );
+    // Allowed and admitted: the allow.
+    let policy = Arc::new(StaticPolicy::new());
+    let rule = policy.allow(&host("nas.example"));
+    let p = proxy(policy, resolver()).with_address_check(Arc::new(Toggles));
+    let (admitted, e) = super::admit(&p, &request("nas.example")).await;
+    assert!(admitted.is_ok());
+    assert_eq!(
+        kind(&e),
+        (
+            ConnectionDecision::Allow,
+            ConnectionReason::Rule,
+            Some(rule),
+            None
+        )
+    );
 }
 
 #[tokio::test]
