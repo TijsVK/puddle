@@ -361,7 +361,14 @@ impl Runtime for MsbRuntime {
         &self,
         image: &ImageRef,
     ) -> impl Future<Output = Result<ImageConfig, ComputeError>> + Send {
-        Box::pin(async move { Box::pin(image::pull(&self.inner.local, image)).await })
+        Box::pin(async move {
+            Box::pin(image::pull(
+                &self.inner.local,
+                &self.inner.config.registry_roots,
+                image,
+            ))
+            .await
+        })
     }
 
     fn create(

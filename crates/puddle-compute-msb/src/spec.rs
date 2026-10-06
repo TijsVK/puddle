@@ -162,7 +162,17 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "SandboxBuilder::registry",
         "anonymous, system roots",
-        "public images; pulls through puddle's proxy are T-116",
+        "the adapter pulls first (pull_image), so create finds the image cached",
+    ),
+    set(
+        "RegistryBuilder::extra_ca_certs (pull_image)",
+        "msb's configured roots + MsbConfig::registry_roots",
+        "corporate roots, so pulls work behind a TLS-intercepting proxy (T-116)",
+    ),
+    set(
+        "registry client proxy (process env HTTPS_PROXY / HTTP_PROXY / NO_PROXY)",
+        "puddle's image-pull proxy with a per-run token (puddle_runtime::PullProxyEnv)",
+        "pulls take puddle's way out; msb has no proxy setting of its own (T-116)",
     ),
     default("SandboxBuilder::slug", "unset", "cloud only"),
     default(

@@ -25,6 +25,8 @@ tracing-subscriber = { workspace = true }
 microsandbox-runtime = { workspace = true }
 puddle-compute = { workspace = true, features = ["contract"] }
 puddle-ipc = { workspace = true }
+puddle-netpolicy = { workspace = true }
+puddle-proxy = { workspace = true }
 puddle-vm-tests = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "time"] }
 

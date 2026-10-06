@@ -3,7 +3,11 @@
 //!
 //! The SDK 0.7.7 pulls only inside `create`; its image crate does the work, so the adapter calls
 //! it the same way `create` does: cache first, then the registry with the backend's registry
-//! settings (anonymous unless puddle's `config.json` says otherwise, which it doesn't).
+//! settings (anonymous unless puddle's `config.json` says otherwise, which it doesn't), plus
+//! puddle's registry roots ([`crate::MsbConfig::registry_roots`]).
+//!
+//! The registry client takes its proxy from the process environment, which puddle points at its
+//! image-pull proxy (`puddle_runtime::PullProxyEnv`, `puddle_proxy::PullProxy`, T-116).
 
 use std::collections::BTreeMap;
 
@@ -16,6 +20,7 @@ use puddle_types::ImageRef;
 /// Makes sure `image` is in `local`'s cache and returns its config.
 pub(crate) async fn pull(
     local: &LocalBackend,
+    roots: &[String],
     image: &ImageRef,
 ) -> Result<ImageConfig, ComputeError> {
     let fail = |reason: String| ComputeError::ImagePull {
@@ -26,28 +31,51 @@ pub(crate) async fn pull(
         .as_str()
         .parse()
         .map_err(|e| fail(format!("invalid image reference: {e}")))?;
-    let cache = GlobalCache::new(&local.cache_dir()).map_err(|e| fail(e.to_string()))?;
+    let cache = GlobalCache::new(&local.cache_dir()).map_err(|e| fail(chain(&e)))?;
     let options = PullOptions::default();
     if let Some((result, _)) = Registry::pull_cached_async(&cache, &reference, &options)
         .await
-        .map_err(|e| fail(e.to_string()))?
+        .map_err(|e| fail(chain(&e)))?
     {
         return Ok(convert(result.config));
     }
     let settings = local
         .registry_config(reference.registry(), RegistryOptions::default())
         .await
-        .map_err(|e| fail(e.to_string()))?;
+        .map_err(|e| fail(chain(&e)))?;
     let registry = Registry::builder(Platform::host_linux(), cache)
         .auth(settings.auth)
-        .extra_ca_certs(settings.ca_certs)
+        .extra_ca_certs(with_roots(settings.ca_certs, roots))
         .add_insecure_registries(settings.insecure_registries)
         .build()
-        .map_err(|e| fail(e.to_string()))?;
+        .map_err(|e| fail(chain(&e)))?;
     let result = Box::pin(registry.pull(&reference, &options))
         .await
-        .map_err(|e| fail(e.to_string()))?;
+        .map_err(|e| fail(chain(&e)))?;
     Ok(convert(result.config))
+}
+
+/// `err` and its causes, `: `-separated. The registry client's top-level error is only "error
+/// sending request"; the cause says why (an unknown certificate issuer behind an intercepting
+/// proxy, a refused proxy, a DNS failure), which is what the user needs to see.
+fn chain(err: &dyn std::error::Error) -> String {
+    let mut text = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        if !text.ends_with(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
+}
+
+/// msb's configured CA certificates (PEM each) followed by puddle's registry roots.
+fn with_roots(mut configured: Vec<Vec<u8>>, roots: &[String]) -> Vec<Vec<u8>> {
+    configured.extend(roots.iter().map(|pem| pem.as_bytes().to_vec()));
+    configured
 }
 
 /// The OCI config as puddle's [`ImageConfig`]. `ENV` entries without `=` are kept with an empty
@@ -108,6 +136,51 @@ mod tests {
             c.labels.keys().collect::<Vec<_>>(),
             ["a", "devcontainer.metadata"]
         );
+    }
+
+    #[derive(Debug)]
+    struct Layer(&'static str, Option<Box<Layer>>);
+
+    impl std::fmt::Display for Layer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for Layer {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.1.as_deref().map(|l| l as _)
+        }
+    }
+
+    #[test]
+    fn an_error_shows_its_causes_once_each() {
+        let err = Layer(
+            "error sending request",
+            Some(Box::new(Layer(
+                "client error (Connect)",
+                Some(Box::new(Layer(
+                    "invalid peer certificate: UnknownIssuer",
+                    None,
+                ))),
+            ))),
+        );
+        assert_eq!(
+            chain(&err),
+            "error sending request: client error (Connect): invalid peer certificate: UnknownIssuer"
+        );
+        let repeats = Layer("registry error: boom", Some(Box::new(Layer("boom", None))));
+        assert_eq!(chain(&repeats), "registry error: boom");
+    }
+
+    #[test]
+    fn puddles_roots_come_after_msbs_own() {
+        let roots = ["-----BEGIN CERTIFICATE-----\nA\n".to_owned()];
+        assert_eq!(
+            with_roots(vec![b"msb".to_vec()], &roots),
+            [b"msb".to_vec(), roots[0].as_bytes().to_vec()]
+        );
+        assert_eq!(with_roots(Vec::new(), &[]), Vec::<Vec<u8>>::new());
     }
 
     #[test]

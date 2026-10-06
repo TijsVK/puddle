@@ -29,6 +29,10 @@ pub struct MsbConfig {
     pub guest_share: PathBuf,
     /// SSH server settings.
     pub ssh: SshConfig,
+    /// Extra roots the registry client trusts for image pulls, as PEM: the corporate roots
+    /// (`puddle-certs`), so pulls work behind a TLS-intercepting company proxy (T-116, T-033 P1).
+    /// Added to the platform's roots, never instead of them.
+    pub registry_roots: Vec<String>,
 }
 
 impl MsbConfig {
@@ -47,7 +51,16 @@ impl MsbConfig {
             libkrunfw: libkrunfw.into(),
             guest_share: guest_share.into(),
             ssh: SshConfig::default(),
+            registry_roots: Vec::new(),
         }
+    }
+
+    /// The same config, with image pulls also trusting `roots` (PEM, one or more certificates
+    /// each).
+    #[must_use]
+    pub fn with_registry_roots(mut self, roots: impl IntoIterator<Item = String>) -> Self {
+        self.registry_roots.extend(roots);
+        self
     }
 
     /// The same config, accepting SSH logins with `key` (an OpenSSH public key line).
