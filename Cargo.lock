@@ -520,6 +520,14 @@ dependencies = [
 [[package]]
 name = "puddle-e2e"
 version = "0.0.0"
+dependencies = [
+ "puddle-agent",
+ "puddle-ipc",
+ "puddle-proxy",
+ "puddle-store",
+ "puddle-types",
+ "tokio",
+]
 
 [[package]]
 name = "puddle-ipc"

@@ -12,5 +12,13 @@ publish.workspace = true
 
 [dependencies]
 
+[dev-dependencies]
+puddle-agent = { workspace = true }
+puddle-ipc = { workspace = true }
+puddle-proxy = { workspace = true, features = ["testing"] }
+puddle-store = { workspace = true }
+puddle-types = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+
 [lints]
 workspace = true

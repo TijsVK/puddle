@@ -21,6 +21,7 @@ puddle-proxy = { path = "crates/puddle-proxy" }
 puddle-store = { path = "crates/puddle-store" }
 puddle-api = { path = "crates/puddle-api" }
 puddle-boot = { path = "crates/puddle-boot" }
+puddle-agent = { path = "crates/puddle-agent" }
 puddle-agent-proto = { path = "crates/puddle-agent-proto" }
 puddle-runtime = { path = "crates/puddle-runtime" }
 puddle-ipc = { path = "crates/puddle-ipc" }
