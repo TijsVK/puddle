@@ -12,6 +12,7 @@
 //! | [`SandboxStatus`], [`Event`], [`EventSink`] | sandbox states and the user-facing event stream (incl. [`Event::OomKill`]) |
 //! | [`Host`], [`DomainName`] | a normalised egress destination (the proxy normalises, everyone else validates) |
 //! | [`EgressRequest`], [`Decision`], [`Policy`] | what the proxy asks the rules engine and what it gets back |
+//! | [`ConnectionEvent`], [`ConnectionLog`] | one connection as the proxy reports it for the audit, and where it goes (the store) |
 //! | [`LocalCategory`] | the local-destination categories (D-1): one toggle each, classified by `puddle-netpolicy` |
 //! | [`ValidationError`] | the one error every checked constructor returns |
 //!
@@ -19,6 +20,7 @@
 //! type is always valid. Names are compared and hashed as plain strings.
 #![forbid(unsafe_code)]
 
+mod connection;
 mod error;
 mod event;
 mod guest;
@@ -28,6 +30,10 @@ mod memory;
 mod name;
 mod policy;
 
+pub use connection::{
+    ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, HttpRequestLine,
+    NullConnectionLog, request_path,
+};
 pub use error::ValidationError;
 pub use event::{CollectingSink, Event, EventSink, NullSink, SandboxStatus};
 pub use guest::{GuestEnv, GuestFile, GuestPath};

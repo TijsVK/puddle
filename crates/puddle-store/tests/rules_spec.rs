@@ -13,12 +13,12 @@ use std::time::Duration;
 
 use proptest::prelude::*;
 use puddle_store::{
-    Actor, AuditRecord, ConnectionDecision, ConnectionEvent, ConnectionReason, Effect,
-    HttpRequestLine, Limits, ManualClock, NewRule, Pattern, PatternChoice, PatternError,
+    Actor, AuditRecord, Effect, Limits, ManualClock, NewRule, Pattern, PatternChoice, PatternError,
     PendingState, Resolution, Scope, ScopeChoice, Store, StoreError, Sweeper,
 };
 use puddle_types::{
-    Decision, EgressRequest, Host, PatternKind, PendingId, PendingOutcome, Policy, RuleId,
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
+    EgressRequest, Host, HttpRequestLine, PatternKind, PendingId, PendingOutcome, Policy, RuleId,
     SandboxName, SuffixAllows,
 };
 use serde_json::Value;
@@ -1026,24 +1026,21 @@ fn r24_the_store_writes_each_record_type_it_owns() {
 }
 
 fn connection(sandbox: &str) -> ConnectionEvent {
-    ConnectionEvent {
-        sandbox: sb(sandbox),
-        host: Host::parse_normalised("api.example.com").unwrap(),
-        port: 443,
-        resolved_ip: Some("93.184.216.34".parse().unwrap()),
-        decision: ConnectionDecision::Allow,
-        reason: ConnectionReason::Rule,
-        rule_id: Some(RuleId(1)),
-        pending_id: None,
-        binding_id: Some("gh".into()),
-        injected: true,
-        http: Some(HttpRequestLine {
-            method: "GET".into(),
-            target: "/repos".into(),
-        }),
-        bytes_up: 1,
-        bytes_down: 2,
-    }
+    let request = EgressRequest::new(
+        sb(sandbox),
+        Host::parse_normalised("api.example.com").unwrap(),
+        443,
+    );
+    let mut event =
+        ConnectionEvent::new(&request, ConnectionDecision::Allow, ConnectionReason::Rule);
+    event.resolved_ip = Some("93.184.216.34".parse().unwrap());
+    event.rule_id = Some(RuleId(1));
+    event.binding_id = Some("gh".into());
+    event.injected = true;
+    event.http = Some(HttpRequestLine::new("GET", "/repos"));
+    event.bytes_up = 1;
+    event.bytes_down = 2;
+    event
 }
 
 #[test]
@@ -1051,10 +1048,10 @@ fn r25_no_secret_reaches_the_audit() {
     const CANARY: &str = "CANARY-r25-9d1e";
     let (_, store) = fixture();
     let mut event = connection("a");
-    event.http = Some(HttpRequestLine {
-        method: "POST".into(),
-        target: format!("https://x:{CANARY}@api.example.com/o/a?access_token={CANARY}#{CANARY}"),
-    });
+    event.http = Some(HttpRequestLine::new(
+        "POST",
+        &format!("https://x:{CANARY}@api.example.com/o/a?access_token={CANARY}#{CANARY}"),
+    ));
     store.record_connection(&event).unwrap();
     for (_, line) in store.audit_lines(0, 100).unwrap() {
         assert!(!line.contains(CANARY), "{line}");
@@ -1063,6 +1060,21 @@ fn r25_no_secret_reaches_the_audit() {
     assert_eq!(record["path"], "/o/a");
     assert_eq!(record["binding_id"], "gh");
     assert_eq!(record["injected"], true);
+}
+
+#[test]
+fn r24_the_store_serves_as_the_proxy_connection_log() {
+    let (_, store) = fixture();
+    let log: &dyn ConnectionLog = &store;
+    let mut event = connection("a");
+    event.decision = ConnectionDecision::Blocked;
+    event.reason = ConnectionReason::Blocked(BlockReason::PuddleEndpoint);
+    log.record(&event);
+    let records = audit_of(&store, "connection");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["decision"], "blocked");
+    assert_eq!(records[0]["reason"], "puddle_endpoint");
+    assert_eq!(records[0]["path"], "/repos");
 }
 
 #[test]
@@ -1105,10 +1117,10 @@ fn r26_connection_records_are_limited_per_sandbox_per_second() {
 fn r26_every_line_fits_the_cap() {
     let (_, store) = fixture();
     let mut event = connection("a");
-    event.http = Some(HttpRequestLine {
-        method: "\u{1}".repeat(3000),
-        target: format!("/{}", "\u{85}".repeat(5000)),
-    });
+    event.http = Some(HttpRequestLine::new(
+        "\u{1}".repeat(3000),
+        &format!("/{}", "\u{85}".repeat(5000)),
+    ));
     event.binding_id = Some("x".repeat(5000));
     store.record_connection(&event).unwrap();
     for (_, line) in store.audit_lines(0, 10).unwrap() {

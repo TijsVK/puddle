@@ -11,14 +11,14 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
 use puddle_types::{
-    Decision, EgressRequest, Host, PendingId, PendingOutcome, Policy, PolicyError, RuleId,
-    SandboxName, SuffixAllows,
+    ConnectionEvent, ConnectionLog, Decision, EgressRequest, Host, PendingId, PendingOutcome,
+    Policy, PolicyError, RuleId, SandboxName, SuffixAllows,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use crate::audit::{
-    AuditRecord, ConnectionEvent, ConnectionRecord, ConnectionWindow, PendingExpiryReason,
-    PendingWire, RuleDeleteReason, RuleWire, actor_str,
+    AuditRecord, ConnectionRecord, ConnectionWindow, PendingExpiryReason, PendingWire,
+    RuleDeleteReason, RuleWire, actor_str,
 };
 use crate::clock::Clock;
 use crate::engine::RuleSet;
@@ -806,6 +806,17 @@ impl Policy for Store {
         suffix_allows: SuffixAllows,
     ) -> Result<Option<Decision>, PolicyError> {
         Ok(self.match_rules(request, self.clock.now_ms(), suffix_allows))
+    }
+}
+
+/// The proxy's [`ConnectionLog`]: each event becomes a `connection` record through
+/// [`Store::record_connection`]. A failed write is logged and dropped; the connection it describes
+/// has already been handled.
+impl ConnectionLog for Store {
+    fn record(&self, event: &ConnectionEvent) {
+        if let Err(err) = self.record_connection(event) {
+            tracing::warn!(sandbox = %event.sandbox, error = %err, "connection record not written");
+        }
     }
 }
 

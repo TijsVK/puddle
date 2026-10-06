@@ -6,11 +6,11 @@
 //! one place a record becomes text. Nothing secret is representable: there are no header, body,
 //! query-string or credential fields (R-25).
 
-use std::fmt;
 use std::io;
-use std::net::IpAddr;
 
-use puddle_types::{Host, PendingId, RuleId, SandboxName};
+use puddle_types::{
+    ConnectionDecision, ConnectionEvent, ConnectionReason, SandboxName, request_path,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -32,94 +32,6 @@ pub enum AuditError {
     /// The record is over the line cap with every string already empty.
     #[error("audit record exceeds {MAX_LINE_BYTES} bytes without its strings")]
     TooLarge,
-}
-
-/// How the proxy handled a connection (R-24).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum ConnectionDecision {
-    /// Let through.
-    Allow,
-    /// Refused by a deny rule.
-    Deny,
-    /// Refused while waiting for the user.
-    Pending,
-    /// Refused regardless of rules (toggle off, puddle's own endpoint, unsupported protocol).
-    Blocked,
-}
-
-/// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`,
-/// `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `suppressed`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ConnectionReason {
-    /// A rule decided.
-    Rule,
-    /// No rule matched.
-    NoRule,
-    /// A local-destination toggle is off; names the category (R-14).
-    Toggle(String),
-    /// puddle's own endpoints are always blocked (D-26).
-    PuddleEndpoint,
-    /// SSH through the proxy isn't supported.
-    SshUnsupported,
-    /// Summary of connection records over the per-sandbox limit (R-26).
-    Suppressed,
-}
-
-impl fmt::Display for ConnectionReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Rule => f.write_str("rule"),
-            Self::NoRule => f.write_str("no_rule"),
-            Self::Toggle(category) => write!(f, "toggle:{category}"),
-            Self::PuddleEndpoint => f.write_str("puddle_endpoint"),
-            Self::SshUnsupported => f.write_str("ssh_unsupported"),
-            Self::Suppressed => f.write_str("suppressed"),
-        }
-    }
-}
-
-/// The request line of a terminated HTTP request. Only the method and the path reach the audit:
-/// the query string, fragment, scheme and authority (with any userinfo) are dropped.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpRequestLine {
-    /// `GET`, `POST`, ...
-    pub method: String,
-    /// The request target as received (origin form or absolute form).
-    pub target: String,
-}
-
-/// One connection as the proxy (W2) reports it; the store stamps the time.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConnectionEvent {
-    /// The sandbox it came from.
-    pub sandbox: SandboxName,
-    /// The requested host.
-    pub host: Host,
-    /// The requested port.
-    pub port: u16,
-    /// The address connected to, once resolved.
-    pub resolved_ip: Option<IpAddr>,
-    /// What happened.
-    pub decision: ConnectionDecision,
-    /// Why.
-    pub reason: ConnectionReason,
-    /// The deciding rule.
-    pub rule_id: Option<RuleId>,
-    /// The pending row, when pending.
-    pub pending_id: Option<PendingId>,
-    /// The credential binding used, by id only (D-11). Never the credential.
-    pub binding_id: Option<String>,
-    /// Whether a credential was injected.
-    pub injected: bool,
-    /// Method and target, on terminated hosts only.
-    pub http: Option<HttpRequestLine>,
-    /// Bytes from the guest.
-    pub bytes_up: u64,
-    /// Bytes to the guest.
-    pub bytes_down: u64,
 }
 
 /// A `connection` record (R-24). `host`, `port` and `decision` are `null` only on a
@@ -165,10 +77,7 @@ pub struct ConnectionRecord {
 impl ConnectionRecord {
     pub(crate) fn from_event(ts: u64, event: &ConnectionEvent) -> Self {
         let (method, path) = event.http.as_ref().map_or((None, None), |http| {
-            (
-                Some(http.method.clone()),
-                Some(path_only(&http.target).to_owned()),
-            )
+            (Some(http.method().to_owned()), Some(http.path().to_owned()))
         });
         Self {
             ts,
@@ -211,21 +120,6 @@ impl ConnectionRecord {
             bytes_down: 0,
             count: Some(count),
         }
-    }
-}
-
-/// The path of a request target, without scheme, authority, query string or fragment.
-fn path_only(target: &str) -> &str {
-    let end = target.find(['?', '#']).unwrap_or(target.len());
-    let target = target.get(..end).unwrap_or_default();
-    match target.find("://") {
-        Some(scheme_end) => {
-            let rest = target.get(scheme_end + 3..).unwrap_or_default();
-            rest.find('/')
-                .and_then(|slash| rest.get(slash..))
-                .unwrap_or("/")
-        }
-        None => target,
     }
 }
 
@@ -495,7 +389,7 @@ impl AuditRecord {
         let path = value
             .get("path")
             .and_then(Value::as_str)
-            .map(|p| path_only(p).to_owned());
+            .map(|p| request_path(p).to_owned());
         if let (Some(path), Some(slot)) = (path, value.get_mut("path")) {
             *slot = Value::String(path);
         }
@@ -651,6 +545,7 @@ mod tests {
     use super::*;
     use crate::pending::PendingState;
     use proptest::prelude::*;
+    use puddle_types::{BlockReason, EgressRequest, Host, HttpRequestLine, LocalCategory, RuleId};
 
     const CANARY: &str = "CANARY-7f3a9c";
 
@@ -659,24 +554,21 @@ mod tests {
     }
 
     fn event() -> ConnectionEvent {
-        ConnectionEvent {
-            sandbox: sb(),
-            host: Host::parse_normalised("api.example.com").unwrap(),
-            port: 443,
-            resolved_ip: Some("93.184.216.34".parse().unwrap()),
-            decision: ConnectionDecision::Allow,
-            reason: ConnectionReason::Rule,
-            rule_id: Some(RuleId(4)),
-            pending_id: None,
-            binding_id: Some("github".into()),
-            injected: true,
-            http: Some(HttpRequestLine {
-                method: "GET".into(),
-                target: "/v1/items?id=1".into(),
-            }),
-            bytes_up: 10,
-            bytes_down: 20,
-        }
+        let request = EgressRequest::new(
+            sb(),
+            Host::parse_normalised("api.example.com").unwrap(),
+            443,
+        );
+        let mut event =
+            ConnectionEvent::new(&request, ConnectionDecision::Allow, ConnectionReason::Rule);
+        event.resolved_ip = Some("93.184.216.34".parse().unwrap());
+        event.rule_id = Some(RuleId(4));
+        event.binding_id = Some("github".into());
+        event.injected = true;
+        event.http = Some(HttpRequestLine::new("GET", "/v1/items?id=1"));
+        event.bytes_up = 10;
+        event.bytes_down = 20;
+        event
     }
 
     fn rule_wire() -> RuleWire {
@@ -844,27 +736,25 @@ mod tests {
     }
 
     #[test]
-    fn r24_reasons_serialise_as_documented() {
-        let reasons = [
-            (ConnectionReason::Rule, "rule"),
-            (ConnectionReason::NoRule, "no_rule"),
-            (ConnectionReason::Toggle("lan".into()), "toggle:lan"),
-            (ConnectionReason::PuddleEndpoint, "puddle_endpoint"),
-            (ConnectionReason::SshUnsupported, "ssh_unsupported"),
-            (ConnectionReason::Suppressed, "suppressed"),
-        ];
-        for (reason, text) in reasons {
-            assert_eq!(reason.to_string(), text);
-        }
+    fn r24_reason_and_decision_reach_the_record_as_codes() {
+        let mut e = event();
+        e.decision = ConnectionDecision::Blocked;
+        e.reason = ConnectionReason::Blocked(BlockReason::LocalToggle(LocalCategory::Private));
+        let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+            .to_line()
+            .unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["decision"], "blocked");
+        assert_eq!(value["reason"], "toggle:private");
     }
 
     #[test]
     fn r25_no_secrets_in_connection_records() {
         let mut e = event();
-        e.http = Some(HttpRequestLine {
-            method: "POST".into(),
-            target: format!("https://user:{CANARY}@api.example.com/login?token={CANARY}#{CANARY}"),
-        });
+        e.http = Some(HttpRequestLine::new(
+            "POST",
+            &format!("https://user:{CANARY}@api.example.com/login?token={CANARY}#{CANARY}"),
+        ));
         let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
             .to_line()
             .unwrap();
@@ -900,21 +790,12 @@ mod tests {
     }
 
     #[test]
-    fn path_only_strips_everything_but_the_path() {
-        assert_eq!(path_only("/a/b?c=d"), "/a/b");
-        assert_eq!(path_only("/a#frag"), "/a");
-        assert_eq!(path_only("http://h.example/x/y?z"), "/x/y");
-        assert_eq!(path_only("http://u:p@h.example"), "/");
-        assert_eq!(path_only("*"), "*");
-    }
-
-    #[test]
     fn r26_path_cut_to_1kib_and_flagged() {
         let mut e = event();
-        e.http = Some(HttpRequestLine {
-            method: "GET".into(),
-            target: format!("/{}", "é".repeat(2000)),
-        });
+        e.http = Some(HttpRequestLine::new(
+            "GET",
+            &format!("/{}", "é".repeat(2000)),
+        ));
         let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
             .to_line()
             .unwrap();
@@ -928,11 +809,7 @@ mod tests {
         let mut e = event();
         let nasty = "\u{1}".repeat(1024);
         e.binding_id = Some(nasty.clone());
-        e.reason = ConnectionReason::Toggle(nasty.clone());
-        e.http = Some(HttpRequestLine {
-            method: nasty.clone(),
-            target: format!("/{nasty}"),
-        });
+        e.http = Some(HttpRequestLine::new(nasty.clone(), &format!("/{nasty}")));
         let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
             .to_line()
             .unwrap();
@@ -964,12 +841,10 @@ mod tests {
             binding in ".{0,1500}",
             target in ".{0,3000}",
             method in ".{0,1500}",
-            category in ".{0,1500}",
         ) {
             let mut e = event();
             e.binding_id = Some(binding);
-            e.reason = ConnectionReason::Toggle(category);
-            e.http = Some(HttpRequestLine { method, target });
+            e.http = Some(HttpRequestLine::new(method, &target));
             let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e)).to_line().unwrap();
             prop_assert!(line.len() <= MAX_LINE_BYTES);
             prop_assert!(!line.chars().any(char::is_control));

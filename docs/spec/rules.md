@@ -130,11 +130,17 @@ readable as JSONL (one record per line).
   every line parses with `jq`.
 - **R-24 Record types** in W3: `connection` (written by W2: `sandbox_id`, `host`, `port`,
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `reason` (`rule`, `no_rule`,
-  `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `suppressed`, ...), `rule_id`,
-  `pending_id`, `binding_id`, `injected`, `method` and `path` on terminated hosts only, `bytes_up`,
-  `bytes_down`, per T-029 AU-3), `pending_created`, `pending_decided`, `pending_expired`,
+  `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `local_address`,
+  `policy_unavailable`, `suppressed`, ...), `rule_id`, `pending_id`, `binding_id`, `injected`,
+  `method` and `path` on terminated hosts and plain-HTTP requests only, `bytes_up`, `bytes_down`,
+  per T-029 AU-3), `pending_created`, `pending_decided`, `pending_expired`,
   `pending_suppressed` (`sandbox_id`, `count`), `rule_created`, `rule_updated`, `rule_deleted`,
   `rule_expired` (with the full rule), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`).
+  The proxy writes one `connection` record per request whose destination it parsed, when the
+  connection ends; a request refused before that (bad request, head too large or too slow, the
+  sandbox over its connection limit) has no destination and only goes to the log. `resolved_ip`
+  is the address connected to (`null` if none was), and the bytes are counted on the guest side,
+  proxy responses included.
 - **R-25 No secrets.** Never header values, credential material, query strings or request bodies;
   credentials appear only as `binding_id` and `injected: true|false`. Every audit struct has a test
   that serialises it with canary values in every secret-bearing input and asserts the canary is

@@ -19,9 +19,8 @@ mod store;
 mod sweeper;
 
 pub use audit::{
-    AuditError, AuditRecord, ConnectionDecision, ConnectionEvent, ConnectionReason,
-    ConnectionRecord, HttpRequestLine, MAX_FIELD_BYTES, MAX_LINE_BYTES, PendingExpiryReason,
-    PendingWire, RuleDeleteReason, RuleWire,
+    AuditError, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
+    PendingExpiryReason, PendingWire, RuleDeleteReason, RuleWire,
 };
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use engine::RuleSet;
