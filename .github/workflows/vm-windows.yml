@@ -27,6 +27,9 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   # The msb runtime the tests boot on; its archive checksum is pinned in ci/msb-runtime.sha256.
   MSB_TAG: v0.7.7
+  # Crates with VM tests: the harness smoke, the msb adapter (contract suite, HG-01/02, memory),
+  # the boot hook (T-108).
+  VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot
 
 jobs:
   changed:
@@ -59,8 +62,8 @@ jobs:
     needs: changed
     if: needs.changed.outputs.run == 'true'
     runs-on: windows-2025
-    # A cold build of the SDK takes ~10 min on windows-2025; the tests have their own 15-minute cap.
-    timeout-minutes: 30
+    # A cold build of the SDK takes ~10 min on windows-2025; the tests have their own 30-minute cap.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: WHP preflight (infrastructure)
@@ -100,18 +103,23 @@ jobs:
           ci/fetch-msb.sh "$MSB_TAG" "$(cygpath -u "$RUNNER_TEMP")/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
+      - name: guest agent (static musl build)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: echo "PUDDLE_AGENT_BIN=$(cygpath -w "$PWD/$(ci/build-agent.sh --locked)")" >> "$GITHUB_ENV"
       - name: build the VM tests
         if: steps.whp.outputs.ok == 'true'
         shell: bash
-        run: cargo nextest run -p puddle-vm-tests --profile vm --locked --no-run
+        run: cargo nextest run $VM_CRATES --profile vm --locked --no-run
       - name: VM tests (tier W)
         if: steps.whp.outputs.ok == 'true'
-        timeout-minutes: 15
+        # ~40 VM tests since T-106 (contract suite, adapter bars, boot hook).
+        timeout-minutes: 30
         shell: bash
         run: |
           # Laptop-only tests (vm_laptop_*) run in ci/windows-e2e.ps1, not here.
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            cargo nextest run -p puddle-vm-tests --profile vm --locked \
+            cargo nextest run $VM_CRATES --profile vm --locked \
             -E 'not test(/(^|::)vm_laptop_/)'
       - name: upload test results and msb logs
         if: ${{ !cancelled() && steps.whp.outputs.ok == 'true' }}

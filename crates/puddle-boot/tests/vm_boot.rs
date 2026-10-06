@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The boot hook on real microVMs (K on Linux KVM, W on Windows WHP): the T-108 VM bar.
 //!
-//! **Pending T-106 and T-111.** These tests need the msb adapter (`puddle-compute-msb`, T-106)
-//! and the `puddle-agent` binary (T-111). Until both land they are `#[ignore]`d and
-//! [`runtime`] is a placeholder. To wire them: make [`runtime`] build the adapter with a private
-//! `MSB_HOME` (T-102's harness), point [`agent_binary`] at the built agent, and drop the
-//! `#[ignore]`s. The checks themselves only use the `Runtime` trait and are complete.
+//! Runs on the msb adapter (`puddle-compute-msb`, T-106) over the VM harness's private msb home
+//! (T-102), with the static `puddle-agent` from `PUDDLE_AGENT_BIN` (built by
+//! `ci/build-agent.sh`). The checks themselves only use the `Runtime` trait.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::panic,
     reason = "test helpers outside #[test] fns: a failed setup fails the test"
 )]
 
@@ -22,18 +19,44 @@ use puddle_boot::{
 };
 use puddle_compute::fake::FakeRuntime;
 use puddle_compute::{ExecRequest, Runtime, Sandbox, SandboxSpec};
+use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, SandboxName};
+use puddle_vm_tests::Settings;
 
-const PENDING: &str = "pending T-106 (msb adapter) and T-111 (puddle-agent)";
-
-/// The runtime under test. Placeholder until T-106: the fake can't run shell scripts.
-fn runtime() -> FakeRuntime {
-    panic!("{PENDING}: build puddle-compute-msb's runtime with a private MSB_HOME here")
+/// The adapter on the run's private msb home (T-102 harness), and the run's settings.
+async fn runtime() -> (MsbRuntime, Settings) {
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .try_init();
+    let settings = Settings::from_lookup(|var| std::env::var(var).ok()).expect("VM test settings");
+    let pair = settings.prepare().expect("msb runtime pair");
+    let home = settings.home();
+    let config = MsbConfig::new(&home, pair.msb, pair.libkrunfw, home.join("guest-share"));
+    (MsbRuntime::open(config).await.expect("open msb"), settings)
 }
 
-/// The guest agent binary on the host (T-111's static musl build).
-fn agent_binary() -> PathBuf {
-    PathBuf::from(std::env::var_os("PUDDLE_AGENT_BIN").expect(PENDING))
+/// Where a test writes its boot assets: under the guest-share root, the only place mounts may
+/// come from (T-020 C-7).
+fn assets_dir(rt: &MsbRuntime, tag: &str) -> PathBuf {
+    rt.config().guest_share.join(format!("t108-{tag}"))
+}
+
+/// A run-prefixed sandbox name.
+fn sandbox_name(settings: &Settings, tag: &str) -> SandboxName {
+    SandboxName::new(&format!("{}-t108-{tag}", settings.prefix)).unwrap()
+}
+
+/// The guest agent binary (T-111's static build, `ci/build-agent.sh`), copied into `dir` so the
+/// mount source is under the guest-share root.
+fn agent_binary(dir: &std::path::Path) -> PathBuf {
+    let built = PathBuf::from(
+        std::env::var_os("PUDDLE_AGENT_BIN")
+            .expect("PUDDLE_AGENT_BIN: the static puddle-agent (ci/build-agent.sh)"),
+    );
+    let copy = dir.join("puddle-agent");
+    std::fs::copy(&built, &copy).expect("copy the agent into the guest-share root");
+    copy
 }
 
 async fn sh<S: Sandbox>(sb: &GatedSandbox<S>, script: &str) -> (i32, String) {
@@ -46,7 +69,9 @@ async fn sh<S: Sandbox>(sb: &GatedSandbox<S>, script: &str) -> (i32, String) {
 
 /// Boots `image` with a CA file from a "provider", a git identity and the proxy env, and checks
 /// every VM item of the T-108 bar, after create and again after stop + start.
-async fn check_image<R: Runtime>(rt: &R, image: &str, tag: &str) {
+async fn check_image(image: &str, tag: &str) {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
     let image = ImageRef::new(image).unwrap();
     let config = rt.pull_image(&image).await.unwrap();
     let mut env = GuestEnv::new();
@@ -62,20 +87,23 @@ async fn check_image<R: Runtime>(rt: &R, image: &str, tag: &str) {
         .git_identity(GitIdentity::new("VM Test", "vm@example.org").unwrap())
         .build()
         .unwrap();
-    let assets = write_assets(&std::env::temp_dir().join(format!("puddle-t108-{tag}"))).unwrap();
-    let name = SandboxName::new(&format!("t108-{tag}")).unwrap();
+    let dir = assets_dir(rt, tag);
+    let assets = write_assets(&dir).unwrap();
+    let name = sandbox_name(&settings, tag);
     let spec = with_boot_mounts(
         SandboxSpec::new(name.clone(), image).with_env(&env),
         assets,
-        Some(&agent_binary()),
+        Some(&agent_binary(&dir)),
     );
     let gate = Gate::new();
     let hook = BootHook::new();
     let sb = hook.create(rt, spec, &plan, &gate).await.unwrap();
+    // alpine:3 ships the CA bundle without update-ca-certificates; the hook skips the step.
+    let report = &sb.boot_report().stdout;
     assert!(
-        sb.boot_report()
-            .stdout
-            .contains("update-ca-certificates ran")
+        report.contains("update-ca-certificates ran")
+            || report.contains("update-ca-certificates skipped (not in this image)"),
+        "{report}"
     );
 
     check_boot(&sb, &config, "create").await;
@@ -166,34 +194,30 @@ async fn check_entrypoint<S: Sandbox>(sb: &GatedSandbox<S>, config: &puddle_comp
     }
 }
 
-#[tokio::test]
-#[ignore = "pending T-106 (msb adapter) and T-111 (puddle-agent)"]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_boot_hook_debian_devcontainer() {
-    check_image(&runtime(), FakeRuntime::DEBIAN, "deb").await;
+    Box::pin(check_image(FakeRuntime::DEBIAN, "deb")).await;
 }
 
-#[tokio::test]
-#[ignore = "pending T-106 (msb adapter) and T-111 (puddle-agent)"]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_boot_hook_alpine() {
-    check_image(&runtime(), FakeRuntime::ALPINE, "alp").await;
+    Box::pin(check_image(FakeRuntime::ALPINE, "alp")).await;
 }
 
-#[tokio::test]
-#[ignore = "pending T-106 (msb adapter) and T-111 (puddle-agent)"]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_boot_hook_docker_dind() {
-    check_image(&runtime(), FakeRuntime::DIND, "dind").await;
+    Box::pin(check_image(FakeRuntime::DIND, "dind")).await;
 }
 
-#[tokio::test]
-#[ignore = "pending T-106 (msb adapter) and T-111 (puddle-agent)"]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_image_without_sh_gives_a_clear_error() {
-    let rt = runtime();
+    let (rt, settings) = runtime().await;
     let image = ImageRef::new("gcr.io/distroless/static-debian12").unwrap();
     let config = rt.pull_image(&image).await.unwrap();
     let plan = BootPlan::builder(&config).no_agent().build().unwrap();
-    let assets = write_assets(&std::env::temp_dir().join("puddle-t108-nosh")).unwrap();
+    let assets = write_assets(&assets_dir(&rt, "nosh")).unwrap();
     let spec = with_boot_mounts(
-        SandboxSpec::new(SandboxName::new("t108-nosh").unwrap(), image),
+        SandboxSpec::new(sandbox_name(&settings, "nosh"), image),
         assets,
         None,
     );
