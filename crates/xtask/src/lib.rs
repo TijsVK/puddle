@@ -7,6 +7,9 @@
 //!   the third-party notices of msb's and puddle's dependency trees.
 //! - `notices`: puddle's own third-party notices; `--check` only verifies that every shipped
 //!   dependency has a licence entry (a `scripts/check.sh` gate).
+//! - `openapi`: writes the API contract (`openapi.json`) and its TypeScript types
+//!   ([`openapi`]); `--check` fails when either committed file is stale (a `scripts/check.sh`
+//!   gate).
 //!
 //! Needs `cargo-about` (`cargo install cargo-about --locked --features cli`); `runtime` also needs
 //! `gh` and `git` unless `--from` points at a folder with the parts ([`source::DirSource`]).
@@ -17,6 +20,7 @@ pub mod checksums;
 pub mod error;
 pub mod inventory;
 pub mod notice;
+pub mod openapi;
 pub mod source;
 pub mod tools;
 
@@ -46,7 +50,10 @@ commands:
   notices   puddle's third-party notices
             --check                only check that every dependency has a licence entry
             --out <file>           output file (default: <target>/THIRD-PARTY-puddle.txt)
-            --offline              no network for cargo";
+            --offline              no network for cargo
+  openapi   write crates/puddle-api/openapi/{openapi.json,schema.d.ts} (needs Node for the types)
+            --check                only check that both are current (types skipped without Node
+                                   unless CI is set)";
 
 /// The default fork (D-53).
 pub const DEFAULT_FORK: &str = "TijsVK/microsandbox";
@@ -144,9 +151,31 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
             &["--out"],
             &["--check", "--offline"],
         )?),
+        "openapi" => openapi_command(&Options::parse(args, &[], &["--check"])?),
         "help" | "--help" | "-h" => Ok(USAGE.to_owned()),
         other => Err(XtaskError::Usage(format!("unknown command {other}"))),
     }
+}
+
+fn openapi_command(opts: &Options) -> Result<String> {
+    let dir = workspace_root().join(openapi::CONTRACT_DIR);
+    let types = if std::env::var_os("CI").is_some() {
+        openapi::Types::Required
+    } else {
+        openapi::Types::IfNodePresent
+    };
+    let generator = openapi::NodeGenerator {
+        dir: dir.clone(),
+        work: target_dir().join("xtask-openapi"),
+    };
+    let report = openapi::openapi(
+        &dir,
+        &puddle_api::openapi_json(),
+        opts.has("--check"),
+        types,
+        &generator,
+    )?;
+    Ok(report.line())
 }
 
 /// puddle's own inventory, computed with cargo-about.

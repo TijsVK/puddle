@@ -64,6 +64,14 @@ rustls-webpki = { version = "0.103", default-features = false, features = ["ring
 time = { version = "0.3", default-features = false, features = ["std"] }
 # OpenAPI schemas for the API's wire types (T-137, ADR 0004).
 utoipa = { version = "6.0.0", default-features = false, features = ["macros"] }
+# Local HTTP API (T-137): axum on loopback; utoipa-axum registers routes and spec together.
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "macros", "query", "tokio", "tracing"] }
+# Served through hyper directly (not `axum::serve`) for a header-read timeout and owned connection tasks.
+hyper = { version = "1.11", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["http1", "server", "server-graceful", "service", "tokio"] }
+utoipa-axum = "0.3.0"
+tower-http = { version = "0.7.1", default-features = false, features = ["timeout"] }
+subtle = { version = "2.6.1", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless it needs FFI

@@ -25,7 +25,7 @@ different crates and rarely collides.
 | `crates/puddle-ca` | lib | The per-sandbox CA for credential injection (T-133, D-11): name constraints as a builder input, a key that is never exported or serialised, a bounded leaf cache per sandbox (HO-4), the guest trust bundle as a list of CAs. In memory only, no I/O | W2 |
 | `crates/puddle-proxy` | lib | Egress proxy: CONNECT/HTTP, pending requests, toggles, credential injection, upstream chaining, transparent capture | W2 |
 | `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper | W3 |
-| `crates/puddle-api` | lib | axum API, SSE, auth token, OpenAPI generation (ADR 0004) | W4 |
+| `crates/puddle-api` | lib | axum API on 127.0.0.1, SSE, bearer token and Host/Origin guard, the OpenAPI contract and its generated TypeScript (`openapi/`, ADR 0004) | W4 |
 | `crates/puddle-agent` | bin | Guest agent (static musl binary, ADR 0005): vsock to the host proxy | W1/W2 |
 | `crates/puddle-agent-proto` | lib | Agent ↔ host wire protocol: yamux settings, stream kinds, control messages, host session, reset-preserving splice | W1/W2 |
 | `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI, daemon, wiring of the crates above | W7 |
@@ -64,6 +64,12 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   `clang-cl` and uses the toolchain's `llvm-tools` as `llvm-lib`.
 - Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli`, `cargo-xwin`, `shellcheck`, `cargo-about` (with `--features cli`) (versions pinned in
   `.github/workflows/ci.yml`; use the same or newer locally).
+- **Node** (22 or newer, CI uses 24) for one gate: `scripts/check.sh openapi` regenerates the API
+  contract's TypeScript types with `openapi-typescript` (pinned in
+  `crates/puddle-api/openapi/package-lock.json`) and compares them with the committed
+  `schema.d.ts`. Without Node the gate checks `openapi.json` only and says so; CI (`CI` set)
+  fails instead. After changing a route or a wire type, run `cargo xtask openapi` and commit
+  both files.
 - **Shared build cache** (optional, local only): `scripts/check.sh` runs Cargo as `$CARGO`
   (default `cargo`). With [mbx](https://mr-boxington.jdx.dev/) installed, run
   `CARGO=mbx MBX_CACHE_DIR=<one shared dir> scripts/check.sh` (and `mbx build|test|...` instead of
@@ -172,7 +178,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
-| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, rustdoc | `scripts/check.sh` | every push, every PR |
+| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; MWE behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: by hand on any branch, nightly on `develop` |

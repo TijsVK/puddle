@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, clippy, clippy-windows, deny, notices, test, doc, coverage
+#   fmt, typos, spdx, shellcheck, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage
 #   fast  = fmt typos spdx shellcheck            (pre-commit hook)
-#   all   = fast clippy clippy-windows deny notices doc coverage   (pre-push hook, CI; coverage runs the tests)
+#   all   = fast clippy clippy-windows deny notices openapi doc coverage   (pre-push hook, CI; coverage runs the tests)
 # Set CARGO to run every Cargo command through a wrapper, e.g. CARGO=mbx for the shared build
 # cache (docs/STANDARDS.md, "Shared build cache"); unset, it runs plain cargo.
 # Coverage thresholds live here (docs/STANDARDS.md, "Coverage"); raise them, never lower them
@@ -53,6 +53,12 @@ run_gate() {
         # Every shipped dependency has a licence entry in the third-party notices (cargo-about).
         "$cargo" run --quiet --locked -p xtask -- notices --check
         ;;
+    openapi)
+        # The committed API contract (openapi.json, schema.d.ts) matches the routes (ADR 0004).
+        # The TypeScript half needs Node; without it locally the gate says so and checks the JSON
+        # only. In CI (CI set) a missing Node fails.
+        "$cargo" run --quiet --locked -p xtask -- openapi --check
+        ;;
     test) "$cargo" nextest run --workspace --all-features --locked ;;
     doc)
         "$cargo" test --doc --workspace --all-features --locked
@@ -76,7 +82,7 @@ run_gate() {
 for arg in "$@"; do
     case "$arg" in
     fast) for g in fmt typos spdx shellcheck; do run_gate "$g"; done ;;
-    all) for g in fmt typos spdx shellcheck clippy clippy-windows deny notices doc coverage; do run_gate "$g"; done ;;
+    all) for g in fmt typos spdx shellcheck clippy clippy-windows deny notices openapi doc coverage; do run_gate "$g"; done ;;
     *) run_gate "$arg" ;;
     esac
 done

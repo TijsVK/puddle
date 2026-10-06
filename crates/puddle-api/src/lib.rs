@@ -1,5 +1,58 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Local HTTP API: axum routes, SSE, auth token, the generated `OpenAPI` contract (ADR 0004; MWE plan W4).
+//! puddle's local HTTP API (MWE plan W4): axum on `127.0.0.1`, an SSE event stream, and the
+//! `OpenAPI` contract the UI and CLI are generated from (ADR 0004).
 //!
-//! Placeholder: no code yet. See `docs/STANDARDS.md` ("Workspace layout") for what belongs here.
+//! # Security (T-029 AP-1, AP-2)
+//!
+//! Every request, the spec included, passes three checks before any handler runs, in this
+//! order, and each refusal is a JSON [`ApiErrorBody`]:
+//!
+//! 1. **`Host`** must be `127.0.0.1:<port>` or `localhost:<port>` for the bound port (421
+//!    otherwise). This defeats DNS rebinding: a page on `evil.example` that rebinds its name to
+//!    `127.0.0.1` still sends `Host: evil.example`.
+//! 2. **`Origin`**, when present, must be the API's own origin or one listed in
+//!    [`ApiConfig::extra_origins`] (403 otherwise; `null` is refused). There is no CORS: a
+//!    cross-origin page gets no preflight answer, so it can't send the token header at all.
+//! 3. **`Authorization: Bearer <token>`** must carry the token from the user-only connection
+//!    file ([`ConnectionInfo`]), compared in constant time (401 otherwise). The token never goes
+//!    into a guest, a mount or a URL.
+//!
+//! The listener binds `127.0.0.1` only; there is no setting for another address. State changes
+//! are `POST`/`PUT`/`DELETE` and the ones with a body accept only `application/json`, so no
+//! "simple" cross-site request can reach them.
+//!
+//! # Use
+//!
+//! ```no_run
+//! # async fn run(services: puddle_api::Services) -> Result<(), Box<dyn std::error::Error>> {
+//! use puddle_api::{ApiConfig, ApiServer, ApiToken};
+//!
+//! let server = ApiServer::bind(ApiConfig::default(), ApiToken::generate()?, services).await?;
+//! server.connection_info().write(std::path::Path::new("/run/user/1000/puddle/api.json"))?;
+//! let running = server.spawn();
+//! // ... later
+//! running.shutdown().await;
+//! # Ok(()) }
+//! ```
+//!
+//! Events reach SSE subscribers through [`EventHub`], which implements
+//! [`puddle_types::EventSink`]: hand the same hub to the components that emit events.
 #![forbid(unsafe_code)]
+
+mod auth;
+mod error;
+mod events;
+mod extract;
+mod openapi;
+mod routes;
+mod server;
+mod settings;
+mod token;
+pub mod wire;
+
+pub use error::{ApiErrorBody, ErrorCode};
+pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
+pub use openapi::{API_VERSION, openapi, openapi_json};
+pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
+pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
+pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};

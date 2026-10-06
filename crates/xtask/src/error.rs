@@ -69,6 +69,9 @@ pub enum XtaskError {
         /// `name version` of each package without an entry.
         packages: Vec<String>,
     },
+    /// A committed generated file differs from what the generator makes now.
+    #[error("{} is stale: run `cargo xtask openapi` and commit the result", .0.display())]
+    Stale(PathBuf),
     /// The output folder already has content.
     #[error("output folder {0} exists and is not empty; remove it or pick another --out")]
     OutputExists(PathBuf),

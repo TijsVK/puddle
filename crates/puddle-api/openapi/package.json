@@ -1,0 +1,9 @@
+{
+  "name": "puddle-api-codegen",
+  "private": true,
+  "description": "Pins openapi-typescript, which turns openapi.json into schema.d.ts (cargo xtask openapi; ADR 0004)",
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {
+    "openapi-typescript": "7.13.0"
+  }
+}

@@ -1,0 +1,2850 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "puddle",
+    "description": "puddle's local API: pending requests, rules, audit, settings, consents and the event stream. Listens on 127.0.0.1 only. Every request needs `Authorization: Bearer <token>` (from the connection file), a `Host` of `127.0.0.1:<port>` or `localhost:<port>`, and no foreign `Origin`.",
+    "contact": {
+      "name": "Tijs van Kampen",
+      "email": "puddle@tijsvankampen.be"
+    },
+    "license": {
+      "name": "GPL-3.0-or-later",
+      "identifier": "GPL-3.0-or-later"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/audit": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "A page of the audit log, oldest first.",
+        "operationId": "audit",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "description": "records after this id (default 0: from the start)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "records per page (default 100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 1000,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "audit records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "limit out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consents": {
+      "get": {
+        "tags": [
+          "consents"
+        ],
+        "summary": "Every consent and its state.",
+        "operationId": "get_consents",
+        "responses": {
+          "200": {
+            "description": "the consents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Consents"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "written by a newer puddle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consents/{kind}": {
+      "put": {
+        "tags": [
+          "consents"
+        ],
+        "summary": "Records the user's answer to a consent prompt, with the terms version shown. puddle stamps\nthe time.",
+        "operationId": "put_consent",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "which consent",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ConsentKind"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "every consent, after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Consents"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "unknown consent kind",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "written by a newer puddle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid terms version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Server-sent events: each `data:` line is one `Event` as JSON (the `Event` schema; switch on\n`type`). A subscriber that fell behind gets `event: lagged` with a `Lagged` body instead of\nthe events it missed. Comment lines keep an idle stream alive. Use a `fetch`-based reader:\n`EventSource` can't send the bearer token.",
+        "operationId": "events",
+        "parameters": [
+          {
+            "name": "sandbox",
+            "in": "query",
+            "description": "only this sandbox's events; global events always come through",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SandboxName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the event stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid sandbox name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "service"
+        ],
+        "summary": "puddle's version and the API contract's version.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "puddle is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox": {
+      "get": {
+        "tags": [
+          "pending"
+        ],
+        "summary": "Open requests grouped by registrable domain, most recent group first (R-18).",
+        "operationId": "inbox",
+        "responses": {
+          "200": {
+            "description": "the inbox",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Inbox"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pending": {
+      "get": {
+        "tags": [
+          "pending"
+        ],
+        "summary": "Open (`requested`) requests, most recent first.",
+        "operationId": "list_pending",
+        "parameters": [
+          {
+            "name": "sandbox",
+            "in": "query",
+            "description": "only this sandbox's requests",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SandboxName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "open requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid sandbox name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pending/{id}": {
+      "get": {
+        "tags": [
+          "pending"
+        ],
+        "summary": "One pending request, in any state.",
+        "operationId": "get_pending",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "pending request id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRequest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pending/{id}/approve": {
+      "post": {
+        "tags": [
+          "pending"
+        ],
+        "summary": "Approves an open request: creates an allow rule (this sandbox, exact host, permanent unless\nthe body says otherwise) and closes the other open requests it now decides.",
+        "operationId": "approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "pending request id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionOutcome"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already decided or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid suffix or expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pending/{id}/deny": {
+      "post": {
+        "tags": [
+          "pending"
+        ],
+        "summary": "Denies an open request: creates a deny rule (this sandbox, exact host, permanent unless the\nbody says otherwise) and closes the other open requests it now decides.",
+        "operationId": "deny",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "pending request id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionOutcome"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already decided or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid suffix or expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rules": {
+      "get": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Every rule, including expired ones the sweeper hasn't removed yet.",
+        "operationId": "list_rules",
+        "responses": {
+          "200": {
+            "description": "the rules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Creates a rule directly. Open requests it now decides are closed the same way.",
+        "operationId": "create_rule",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewRuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "the new rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid pattern or expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rules/{id}": {
+      "delete": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Deletes a rule.",
+        "operationId": "delete_rule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "rule id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the deleted rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rules/{id}/expiry": {
+      "put": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Changes a rule's expiry, or makes it permanent with `null`.",
+        "operationId": "set_rule_expiry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "rule id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleExpiryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the changed rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "expiry not in the future",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sandboxes/{sandbox}/suppression": {
+      "get": {
+        "tags": [
+          "pending"
+        ],
+        "summary": "Whether a sandbox's new pending requests are being suppressed (R-13), for the inbox's\n\"N requests suppressed\" line.",
+        "operationId": "suppression",
+        "parameters": [
+          {
+            "name": "sandbox",
+            "in": "path",
+            "description": "sandbox name",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SandboxName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the sandbox's suppression state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suppression"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid sandbox name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "The global settings and the effective values of a sandbox without overrides.",
+        "operationId": "get_global",
+        "responses": {
+          "200": {
+            "description": "global settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalSettingsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "written by a newer puddle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Replaces the global settings listed in the body; `null` falls back to puddle's default.\nConsents are changed through `/api/consents`.",
+        "operationId": "put_global",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GlobalSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the new global settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalSettingsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "written by a newer puddle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a value out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/sandboxes/{sandbox}": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "One sandbox's overrides and effective values. A sandbox without stored settings has no\noverrides.",
+        "operationId": "get_sandbox",
+        "parameters": [
+          {
+            "name": "sandbox",
+            "in": "path",
+            "description": "sandbox name",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SandboxName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the sandbox's settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxSettingsView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid sandbox name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "written by a newer puddle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Replaces one sandbox's overrides; `null` inherits the global value.",
+        "operationId": "put_sandbox",
+        "parameters": [
+          {
+            "name": "sandbox",
+            "in": "path",
+            "description": "sandbox name",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SandboxName"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the sandbox's new settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxSettingsView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid sandbox name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "written by a newer puddle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a value out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Actor": {
+        "type": "string",
+        "description": "Who made a change.",
+        "enum": [
+          "cli",
+          "ui",
+          "api",
+          "system"
+        ]
+      },
+      "ApiErrorBody": {
+        "type": "object",
+        "description": "The body of every error response.",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorCode",
+            "description": "Stable error code."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable, lower case, no trailing period. Never contains a token."
+          }
+        }
+      },
+      "AuditEntry": {
+        "type": "object",
+        "description": "One audit record.",
+        "required": [
+          "id",
+          "record"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Position in the log; pass the last one as `after` to read on."
+          },
+          "record": {
+            "description": "The record, as written to the JSONL audit log (`type`, `ts`, ...; see the rules spec §5)."
+          }
+        }
+      },
+      "AuditPage": {
+        "type": "object",
+        "description": "A page of the audit log, oldest first.",
+        "required": [
+          "entries",
+          "next_after"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEntry"
+            },
+            "description": "The records."
+          },
+          "next_after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `after` for the next page (the last id here, or the request's `after` if empty)."
+          }
+        }
+      },
+      "ClipboardRead": {
+        "type": "string",
+        "description": "What a programmatic clipboard read in the browser window does (D-46).",
+        "enum": [
+          "ask",
+          "allow",
+          "deny"
+        ]
+      },
+      "Consent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Never asked.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "not_asked"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Agreed.",
+            "required": [
+              "at",
+              "terms_version",
+              "state"
+            ],
+            "properties": {
+              "at": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "granted"
+                ]
+              },
+              "terms_version": {
+                "type": "string",
+                "description": "The terms version shown."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Declined.",
+            "required": [
+              "at",
+              "terms_version",
+              "state"
+            ],
+            "properties": {
+              "at": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "declined"
+                ]
+              },
+              "terms_version": {
+                "type": "string",
+                "description": "The terms version shown."
+              }
+            }
+          }
+        ],
+        "description": "What the user agreed to or declined."
+      },
+      "ConsentDecision": {
+        "type": "string",
+        "description": "The user's answer.",
+        "enum": [
+          "granted",
+          "declined"
+        ]
+      },
+      "ConsentKind": {
+        "type": "string",
+        "description": "Which consent.",
+        "enum": [
+          "telemetry",
+          "crash_reports",
+          "vscode_server"
+        ]
+      },
+      "ConsentRequest": {
+        "type": "object",
+        "description": "Records the user's answer to a consent prompt. puddle stamps the time.",
+        "required": [
+          "decision",
+          "terms_version"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/ConsentDecision",
+            "description": "Agreed or declined."
+          },
+          "terms_version": {
+            "type": "string",
+            "description": "The version of the terms shown (a date or a licence URL; 1 to 256 visible ASCII\ncharacters).",
+            "maxLength": 256,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "Consents": {
+        "type": "object",
+        "description": "Every consent puddle asks for.",
+        "required": [
+          "telemetry",
+          "crash_reports",
+          "vscode_server"
+        ],
+        "properties": {
+          "crash_reports": {
+            "$ref": "#/components/schemas/Consent",
+            "description": "Crash reports (D-18)."
+          },
+          "telemetry": {
+            "$ref": "#/components/schemas/Consent",
+            "description": "Usage telemetry (D-18)."
+          },
+          "vscode_server": {
+            "$ref": "#/components/schemas/Consent",
+            "description": "Microsoft's VS Code server and its licence terms (D-40)."
+          }
+        }
+      },
+      "DecisionOutcome": {
+        "type": "object",
+        "description": "What an approve or deny did (R-16, R-17).",
+        "required": [
+          "request",
+          "rule",
+          "also_closed"
+        ],
+        "properties": {
+          "also_closed": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Other open requests the new rule closed the same way."
+          },
+          "request": {
+            "$ref": "#/components/schemas/PendingRequest",
+            "description": "The request, now decided."
+          },
+          "rule": {
+            "$ref": "#/components/schemas/Rule",
+            "description": "The rule created."
+          }
+        }
+      },
+      "DecisionRequest": {
+        "type": "object",
+        "description": "The choices of an approve or deny (R-15). Each one left out stays at its narrowest default:\nthis sandbox, the exact host, permanent.",
+        "properties": {
+          "expires_in_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds until the rule expires; left out or `null` is permanent.",
+            "minimum": 1
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeChoice",
+            "description": "This sandbox (default) or every sandbox."
+          },
+          "suffix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A suffix of the host (`example.com`, `.example.com` or `*.example.com`) to cover every\nname under it; left out or `null` means the exact host. A public suffix is refused."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Effect": {
+        "type": "string",
+        "description": "Allow or deny.",
+        "enum": [
+          "allow",
+          "deny"
+        ]
+      },
+      "EffectiveSettings": {
+        "type": "object",
+        "description": "The values a sandbox gets: its override, else the global value, else puddle's default.",
+        "required": [
+          "memory",
+          "local_toggles",
+          "wildcards_reach_local",
+          "reconnection_grace",
+          "zoom_hotkeys",
+          "clipboard_read"
+        ],
+        "properties": {
+          "clipboard_read": {
+            "$ref": "#/components/schemas/ResolvedClipboardRead",
+            "description": "Clipboard reads."
+          },
+          "local_toggles": {
+            "$ref": "#/components/schemas/EffectiveToggles",
+            "description": "Local destination toggles."
+          },
+          "memory": {
+            "$ref": "#/components/schemas/ResolvedNumber",
+            "description": "Guest memory in MiB."
+          },
+          "reconnection_grace": {
+            "$ref": "#/components/schemas/ResolvedNumber",
+            "description": "Reconnection grace in seconds."
+          },
+          "wildcards_reach_local": {
+            "$ref": "#/components/schemas/ResolvedBool",
+            "description": "Whether suffix rules reach local addresses."
+          },
+          "zoom_hotkeys": {
+            "$ref": "#/components/schemas/ResolvedBool",
+            "description": "Zoom hotkeys."
+          }
+        }
+      },
+      "EffectiveToggles": {
+        "type": "object",
+        "description": "The effective local toggles.",
+        "required": [
+          "loopback",
+          "private",
+          "link_local",
+          "metadata",
+          "special"
+        ],
+        "properties": {
+          "link_local": {
+            "$ref": "#/components/schemas/ResolvedBool",
+            "description": "Link-local."
+          },
+          "loopback": {
+            "$ref": "#/components/schemas/ResolvedBool",
+            "description": "Loopback."
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/ResolvedBool",
+            "description": "Cloud metadata."
+          },
+          "private": {
+            "$ref": "#/components/schemas/ResolvedBool",
+            "description": "Private networks."
+          },
+          "special": {
+            "$ref": "#/components/schemas/ResolvedBool",
+            "description": "Other special-purpose ranges."
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "What went wrong, as a stable code a client can switch on.",
+        "enum": [
+          "misdirected_host",
+          "forbidden_origin",
+          "unauthorized",
+          "bad_request",
+          "unsupported_media_type",
+          "payload_too_large",
+          "invalid",
+          "not_found",
+          "conflict",
+          "newer_settings",
+          "internal"
+        ]
+      },
+      "Event": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A sandbox changed state.",
+            "required": [
+              "sandbox",
+              "status",
+              "type"
+            ],
+            "properties": {
+              "sandbox": {
+                "$ref": "#/components/schemas/SandboxName",
+                "description": "The sandbox."
+              },
+              "status": {
+                "$ref": "#/components/schemas/SandboxStatus",
+                "description": "Its new state."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "status_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The guest kernel's OOM killer ended a process (reported by the guest agent).\n\n`pid` and `process` come from the guest and are untrusted: build this variant with\n[`Event::oom_kill`], which bounds and cleans the name, and escape it when rendering.",
+            "required": [
+              "sandbox",
+              "pid",
+              "process",
+              "type"
+            ],
+            "properties": {
+              "pid": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The killed process's id inside the guest.",
+                "minimum": 0
+              },
+              "process": {
+                "type": "string",
+                "description": "The killed process's name (`comm`), cleaned by [`Event::oom_kill`]."
+              },
+              "sandbox": {
+                "$ref": "#/components/schemas/SandboxName",
+                "description": "The sandbox whose guest killed the process."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "oom_kill"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Something the user should hear about. Serialised as one internally tagged enum\n(`{\"type\":\"oom_kill\",...}`, ADR 0002).\n\nMost events are about one sandbox and carry a `sandbox` field; global ones (crash report\nwaiting, consent needed, network change, ...) carry none, and [`Event::sandbox`] returns\n`None` for them."
+      },
+      "GlobalSettingsRequest": {
+        "type": "object",
+        "description": "New global settings. Replaces every value listed here; unknown stored fields are kept.",
+        "properties": {
+          "sandbox_defaults": {
+            "$ref": "#/components/schemas/SettingsLayer",
+            "description": "Defaults for every sandbox."
+          },
+          "vscode_server": {
+            "$ref": "#/components/schemas/VsCodeServer",
+            "description": "VS Code server options."
+          }
+        },
+        "additionalProperties": false
+      },
+      "GlobalSettingsView": {
+        "type": "object",
+        "description": "The global settings, and what a sandbox without overrides gets.",
+        "required": [
+          "sandbox_defaults",
+          "vscode_server",
+          "effective",
+          "unknown_fields"
+        ],
+        "properties": {
+          "effective": {
+            "$ref": "#/components/schemas/EffectiveSettings",
+            "description": "The effective values for a sandbox with no overrides."
+          },
+          "sandbox_defaults": {
+            "$ref": "#/components/schemas/SettingsLayer",
+            "description": "Defaults for every sandbox."
+          },
+          "unknown_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields in the stored document this puddle doesn't know (written by a newer one); they\nare kept."
+          },
+          "vscode_server": {
+            "$ref": "#/components/schemas/VsCodeServer",
+            "description": "VS Code server options."
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "description": "The API's identity, for a client to check it reached puddle.",
+        "required": [
+          "version",
+          "api_version"
+        ],
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "description": "The API contract's version ([`crate::API_VERSION`])."
+          },
+          "version": {
+            "type": "string",
+            "description": "puddle's version."
+          }
+        }
+      },
+      "Inbox": {
+        "type": "object",
+        "description": "The inbox: open requests grouped by registrable domain, most recent group first.",
+        "required": [
+          "groups"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InboxGroup"
+            },
+            "description": "The groups."
+          }
+        }
+      },
+      "InboxGroup": {
+        "type": "object",
+        "description": "Open requests that share a registrable domain (R-18). Grouping is for display only.",
+        "required": [
+          "registrable_domain",
+          "requests"
+        ],
+        "properties": {
+          "registrable_domain": {
+            "type": "string",
+            "description": "`example.co.uk`, or the IP literal."
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingRequest"
+            },
+            "description": "Open requests, most recent first."
+          }
+        }
+      },
+      "Lagged": {
+        "type": "object",
+        "description": "Sent on the event stream as `event: lagged` when a subscriber fell behind and events were\ndropped for it. The client should refetch the state it shows.",
+        "required": [
+          "missed"
+        ],
+        "properties": {
+          "missed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many events were dropped.",
+            "minimum": 0
+          }
+        }
+      },
+      "LocalToggles": {
+        "type": "object",
+        "description": "Local destination categories a sandbox may approve (D-1, D-37). `null` inherits.",
+        "required": [
+          "loopback",
+          "private",
+          "link_local",
+          "metadata",
+          "special"
+        ],
+        "properties": {
+          "link_local": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Link-local addresses."
+          },
+          "loopback": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The host's loopback addresses."
+          },
+          "metadata": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Cloud metadata endpoints."
+          },
+          "private": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Private networks (RFC 1918, ULA)."
+          },
+          "special": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Other special-purpose ranges."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NewRuleRequest": {
+        "type": "object",
+        "description": "A rule to create directly (not from a pending request).",
+        "required": [
+          "scope",
+          "pattern",
+          "effect"
+        ],
+        "properties": {
+          "effect": {
+            "$ref": "#/components/schemas/Effect",
+            "description": "Allow or deny."
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms from which the rule no longer matches; left out or `null` is permanent.",
+            "minimum": 0
+          },
+          "pattern": {
+            "type": "string",
+            "description": "`example.com` (exact), or `.example.com` / `*.example.com` (suffix; a public suffix is\nrefused)."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RuleScope",
+            "description": "Global or one sandbox."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PatternKind": {
+        "type": "string",
+        "description": "How a rule's pattern matches.",
+        "enum": [
+          "exact",
+          "suffix"
+        ]
+      },
+      "PendingList": {
+        "type": "object",
+        "description": "Pending requests, most recent first.",
+        "required": [
+          "requests"
+        ],
+        "properties": {
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingRequest"
+            },
+            "description": "The requests."
+          }
+        }
+      },
+      "PendingRequest": {
+        "type": "object",
+        "description": "A connection that matched no rule and waits for the user (R-10).",
+        "required": [
+          "id",
+          "sandbox",
+          "host",
+          "port",
+          "first_seen",
+          "last_seen",
+          "attempts",
+          "state",
+          "decided_at",
+          "decided_by",
+          "rule_id"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many requests the row stands for.",
+            "minimum": 0
+          },
+          "decided_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms it was decided or expired.",
+            "minimum": 0
+          },
+          "decided_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Actor",
+                "description": "Who closed it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "first_seen": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms of the first request.",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string",
+            "description": "The requested host: a normalised name (punycode, lower case) or an IP literal. Untrusted\n(it comes from the guest): escape it when rendering."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row id, never reused."
+          },
+          "last_seen": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms of the latest request.",
+            "minimum": 0
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The requested port.",
+            "minimum": 0
+          },
+          "rule_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The rule that decided it."
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/SandboxName",
+            "description": "The requesting sandbox."
+          },
+          "state": {
+            "$ref": "#/components/schemas/PendingState",
+            "description": "Where the row is in its life."
+          }
+        }
+      },
+      "PendingState": {
+        "type": "string",
+        "description": "Where a pending request is in its life (R-12).",
+        "enum": [
+          "requested",
+          "allowed",
+          "denied",
+          "expired"
+        ]
+      },
+      "ResolvedBool": {
+        "type": "object",
+        "description": "An effective on/off value and where it came from.",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SettingSource",
+            "description": "Where it came from."
+          },
+          "value": {
+            "type": "boolean",
+            "description": "The value."
+          }
+        }
+      },
+      "ResolvedClipboardRead": {
+        "type": "object",
+        "description": "The effective clipboard-read setting and where it came from.",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SettingSource",
+            "description": "Where it came from."
+          },
+          "value": {
+            "$ref": "#/components/schemas/ClipboardRead",
+            "description": "The value."
+          }
+        }
+      },
+      "ResolvedNumber": {
+        "type": "object",
+        "description": "An effective number (MiB or seconds, see the field) and where it came from.",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SettingSource",
+            "description": "Where it came from."
+          },
+          "value": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The value.",
+            "minimum": 0
+          }
+        }
+      },
+      "Rule": {
+        "type": "object",
+        "description": "A rule.",
+        "required": [
+          "id",
+          "scope",
+          "pattern",
+          "pattern_kind",
+          "effect",
+          "expires_at",
+          "created_at",
+          "created_by",
+          "source_pending_id"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms.",
+            "minimum": 0
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/Actor",
+            "description": "Who created it."
+          },
+          "effect": {
+            "$ref": "#/components/schemas/Effect",
+            "description": "Allow or deny."
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms from which the rule no longer matches; `null` is permanent.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row id, never reused."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "`example.com` (exact) or `.example.com` (suffix)."
+          },
+          "pattern_kind": {
+            "$ref": "#/components/schemas/PatternKind",
+            "description": "Exact or suffix."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RuleScope",
+            "description": "Global or one sandbox."
+          },
+          "source_pending_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The pending request it was decided from."
+          }
+        }
+      },
+      "RuleExpiryRequest": {
+        "type": "object",
+        "description": "A rule's new expiry.",
+        "required": [
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms in the future, or `null` to make the rule permanent.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleList": {
+        "type": "object",
+        "description": "Every rule, expired ones the sweeper hasn't removed yet included.",
+        "required": [
+          "rules"
+        ],
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            },
+            "description": "The rules."
+          }
+        }
+      },
+      "RuleScope": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Every sandbox.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "global"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One sandbox.",
+            "required": [
+              "sandbox",
+              "type"
+            ],
+            "properties": {
+              "sandbox": {
+                "$ref": "#/components/schemas/SandboxName",
+                "description": "The sandbox."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sandbox"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Which sandboxes a rule applies to."
+      },
+      "SandboxName": {
+        "type": "string",
+        "description": "A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), not `tauri`, `ipc` or `asset`.",
+        "example": "my-project",
+        "maxLength": 63,
+        "minLength": 1,
+        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+      },
+      "SandboxSettingsRequest": {
+        "type": "object",
+        "description": "New overrides for one sandbox. Replaces every value listed; `null` inherits.",
+        "properties": {
+          "overrides": {
+            "$ref": "#/components/schemas/SettingsLayer",
+            "description": "The overrides."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SandboxSettingsView": {
+        "type": "object",
+        "description": "One sandbox's overrides and effective values.",
+        "required": [
+          "sandbox",
+          "overrides",
+          "effective",
+          "unknown_fields"
+        ],
+        "properties": {
+          "effective": {
+            "$ref": "#/components/schemas/EffectiveSettings",
+            "description": "What it gets."
+          },
+          "overrides": {
+            "$ref": "#/components/schemas/SettingsLayer",
+            "description": "Its overrides; `null` inherits."
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/SandboxName",
+            "description": "The sandbox."
+          },
+          "unknown_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Unknown fields in its stored document (kept)."
+          }
+        }
+      },
+      "SandboxStatus": {
+        "type": "string",
+        "description": "A sandbox's state as the runtime reports it (msb's states, one for one).",
+        "enum": [
+          "created",
+          "starting",
+          "running",
+          "draining",
+          "paused",
+          "stopped",
+          "crashed"
+        ]
+      },
+      "ScopeChoice": {
+        "type": "string",
+        "description": "Whether an approval or denial covers only the request's sandbox or every sandbox.",
+        "enum": [
+          "sandbox",
+          "global"
+        ]
+      },
+      "SettingSource": {
+        "type": "string",
+        "description": "Which level an effective value came from.",
+        "enum": [
+          "sandbox",
+          "global",
+          "default"
+        ]
+      },
+      "SettingsLayer": {
+        "type": "object",
+        "description": "The settings every sandbox has. On a global document they are the defaults for every\nsandbox; on a sandbox they override those. `null` means \"not set here\": the next level (the\nglobal value, then puddle's default) applies.",
+        "required": [
+          "memory",
+          "local_toggles",
+          "wildcards_reach_local",
+          "reconnection_grace",
+          "zoom_hotkeys",
+          "clipboard_read"
+        ],
+        "properties": {
+          "clipboard_read": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClipboardRead",
+                "description": "What a programmatic clipboard read does."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "local_toggles": {
+            "$ref": "#/components/schemas/LocalToggles",
+            "description": "Which local destination categories may be approved (all off by default)."
+          },
+          "memory": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Guest memory in MiB (256 to 1 048 576); applies at the next start.",
+            "maximum": 1048576,
+            "minimum": 256
+          },
+          "reconnection_grace": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Seconds a browser VS Code session survives a disconnect (30 to 86 400).",
+            "maximum": 86400,
+            "minimum": 30
+          },
+          "wildcards_reach_local": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a suffix rule may reach local addresses."
+          },
+          "zoom_hotkeys": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the browser window's zoom hotkeys work."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Suppression": {
+        "type": "object",
+        "description": "Whether a sandbox's new pending requests are being suppressed (R-13).",
+        "required": [
+          "sandbox",
+          "active",
+          "count"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "Whether requests are being suppressed now."
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests suppressed in the current (or last) episode.",
+            "minimum": 0
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/SandboxName",
+            "description": "The sandbox."
+          }
+        }
+      },
+      "VsCodeServer": {
+        "type": "object",
+        "description": "Options for the VS Code server in the guest. `null` means puddle's default.",
+        "required": [
+          "telemetry",
+          "auto_update"
+        ],
+        "properties": {
+          "auto_update": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether puddle updates the server (default on)."
+          },
+          "telemetry": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the server may send Microsoft telemetry (default off)."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "service",
+      "description": "Who is answering"
+    },
+    {
+      "name": "events",
+      "description": "The server-sent event stream"
+    },
+    {
+      "name": "pending",
+      "description": "Connections waiting for a decision"
+    },
+    {
+      "name": "rules",
+      "description": "Allow and deny rules"
+    },
+    {
+      "name": "audit",
+      "description": "The audit log"
+    },
+    {
+      "name": "settings",
+      "description": "Global and per-sandbox settings"
+    },
+    {
+      "name": "consents",
+      "description": "What the user agreed to"
+    }
+  ]
+}

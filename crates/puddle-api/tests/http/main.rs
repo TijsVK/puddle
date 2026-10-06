@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Integration tests over real loopback HTTP (tier L2): the guard's refusals (T-029 AP-1/AP-2),
+//! every route against a real store, and the SSE stream.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    reason = "helpers outside #[test] fns run only in tests; a panic is how a test fails"
+)]
+
+mod common;
+
+mod events;
+mod guard;
+mod routes;
+mod settings;
