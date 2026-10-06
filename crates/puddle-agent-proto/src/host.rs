@@ -13,7 +13,9 @@
 //!         # drop(stream);
 //!     }
 //! }
-//! # async fn f(conn: tokio::net::UnixStream) -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn f(
+//! #     conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+//! # ) -> Result<(), Box<dyn std::error::Error>> {
 //! let sandbox = SandboxName::new("box")?;
 //! serve_session(conn, sandbox, Arc::new(NullSink), Arc::new(Proxy), HostConfig::default()).await?;
 //! # Ok(()) }
