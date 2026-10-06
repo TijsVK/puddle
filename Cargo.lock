@@ -4297,10 +4297,13 @@ dependencies = [
  "microsandbox",
  "puddle-ca",
  "puddle-certs",
+ "puddle-doctor",
  "puddle-guest-env",
+ "puddle-runtime",
  "puddle-types",
  "rcgen",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
 ]
