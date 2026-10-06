@@ -3,7 +3,8 @@
 //!
 //! The order matters for security: the head is bounded in size and time before anything else;
 //! the rules engine decides on the normalised name **before** it is resolved (R-10, EG-8); every
-//! resolved address is checked (R-14) and the proxy connects only to an address that passed.
+//! resolved address is checked against its IP rules (R-27) and its address class (R-14), and the
+//! proxy connects only to an address that passed.
 //! Every refusal is an HTTP error response followed by a clean close (a reset could overtake the
 //! response, T-111); every failure after the connection is open is passed on as a reset (T-048).
 
@@ -17,7 +18,7 @@ use puddle_agent_proto::relay::splice;
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
     EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, PatternKind,
-    PendingOutcome, Policy, PolicyError, ProtocolHint, SandboxName, SuffixAllows,
+    PendingOutcome, Policy, PolicyError, ProtocolHint, RuleId, SandboxName, SuffixAllows,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -534,6 +535,7 @@ async fn admit_into(
             format!("{host} has no addresses"),
         ));
     }
+    let (addrs, ip_allows) = apply_ip_rules(proxy, request, addrs, event)?;
     let mut usable = Vec::new();
     let mut exact_only = Vec::new();
     let mut categories: Vec<LocalCategory> = Vec::new();
@@ -558,9 +560,13 @@ async fn admit_into(
     } else if !exact_only.is_empty() {
         // After a wildcard allow, a local address whose toggle is on needs an exact allow of its
         // own (R-14, D-44): an exact rule for the address itself admits it.
-        let (by_ip, rest): (Vec<_>, Vec<_>) = exact_only
-            .into_iter()
-            .partition(|addr| ip_allowed(proxy, request, *addr));
+        let (by_ip, rest): (Vec<_>, Vec<_>) = exact_only.into_iter().partition(|addr| {
+            let rule = ip_allows.iter().find(|(allowed, _)| allowed == addr);
+            if let Some((_, rule_id)) = rule {
+                tracing::info!(sandbox = %request.sandbox, host = %request.host, %addr, rule = %rule_id, "local address allowed by its IP rule");
+            }
+            rule.is_some()
+        });
         usable.extend(by_ip);
         exact_only = rest;
     }
@@ -586,24 +592,109 @@ async fn admit_into(
     Ok(usable)
 }
 
-/// Whether an exact allow rule for `addr`'s IP applies to `request`'s sandbox (R-14, D-44).
-/// Looks only; a miss records nothing. A policy error counts as no match.
-fn ip_allowed(proxy: &Proxy, request: &EgressRequest, addr: SocketAddr) -> bool {
-    let by_ip = EgressRequest::new(request.sandbox.clone(), Host::Ip(addr.ip()), request.port);
-    match proxy.policy.lookup(&by_ip, SuffixAllows::Ignore) {
-        Ok(Some(Decision::Allow {
-            rule_id,
-            pattern: PatternKind::Exact,
-        })) => {
-            tracing::info!(sandbox = %request.sandbox, host = %request.host, %addr, rule = %rule_id, "local address allowed by its IP rule");
-            true
-        }
-        Ok(_) => false,
-        Err(err) => {
-            tracing::warn!(%addr, error = %err, "IP rule lookup failed, address not admitted");
-            false
+/// Applies each resolved address's own rules (R-27): drops every address an IP rule denies, and
+/// returns the rest with the addresses an exact IP rule allows (for R-14). A literal was decided
+/// as itself, so only a name's addresses are looked up.
+fn apply_ip_rules(
+    proxy: &Proxy,
+    request: &EgressRequest,
+    addrs: Vec<SocketAddr>,
+    event: &mut ConnectionEvent,
+) -> Result<(Vec<SocketAddr>, Vec<IpRuleHit>), Refusal> {
+    let mut ip_allows = Vec::new();
+    if matches!(request.host, Host::Ip(_)) {
+        return Ok((addrs, ip_allows));
+    }
+    let mut ip_denies = Vec::new();
+    let mut kept = Vec::new();
+    for addr in addrs {
+        match ip_rule(proxy, request, addr) {
+            Ok(IpRule::Allow(rule_id)) => {
+                ip_allows.push((addr, rule_id));
+                kept.push(addr);
+            }
+            Ok(IpRule::Deny(rule_id)) => ip_denies.push((addr, rule_id)),
+            Ok(IpRule::NoRule) => kept.push(addr),
+            Err(err) => {
+                tracing::warn!(%addr, error = %err, "IP rule lookup failed, refused");
+                note(event, request, &Err(err));
+                return Err(unavailable());
+            }
         }
     }
+    if kept.is_empty() {
+        return Err(ip_denied(request, &ip_denies, event));
+    }
+    Ok((kept, ip_allows))
+}
+
+/// A resolved address and the IP rule that matched it.
+type IpRuleHit = (SocketAddr, RuleId);
+
+/// What the rules say about one resolved address by itself.
+enum IpRule {
+    /// No rule for the address.
+    NoRule,
+    /// An exact allow: admits a local address after a wildcard allow (R-14, D-44).
+    Allow(RuleId),
+    /// A deny: the address is never used (R-27).
+    Deny(RuleId),
+}
+
+/// The rule that decides `addr`'s IP for `request`'s sandbox. Looks only; a miss records nothing.
+fn ip_rule(
+    proxy: &Proxy,
+    request: &EgressRequest,
+    addr: SocketAddr,
+) -> Result<IpRule, PolicyError> {
+    let by_ip = EgressRequest::new(request.sandbox.clone(), Host::Ip(addr.ip()), request.port);
+    Ok(match proxy.policy.lookup(&by_ip, SuffixAllows::Ignore)? {
+        Some(Decision::Allow {
+            rule_id,
+            pattern: PatternKind::Exact,
+        }) => IpRule::Allow(rule_id),
+        Some(Decision::Deny { rule_id, .. }) => IpRule::Deny(rule_id),
+        _ => IpRule::NoRule,
+    })
+}
+
+/// The refusal when every address of an allowed name is denied by its IP rule (R-27). It is a
+/// deny, not pending: approving the name can't change it, so no pending row is written.
+fn ip_denied(
+    request: &EgressRequest,
+    denies: &[IpRuleHit],
+    event: &mut ConnectionEvent,
+) -> Refusal {
+    let host = &request.host;
+    let list = denies
+        .iter()
+        .map(|(addr, rule_id)| format!("{} (rule {rule_id})", addr.ip()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    tracing::info!(sandbox = %request.sandbox, %host, port = request.port, addresses = %list, "every address denied by its IP rule");
+    let first = denies.first();
+    event.decision = ConnectionDecision::Deny;
+    event.reason = ConnectionReason::Rule;
+    event.rule_id = first.map(|(_, rule_id)| *rule_id);
+    event.pending_id = None;
+    event.resolved_ip = first.map(|(addr, _)| addr.ip());
+    let refusal = Refusal::new(
+        "403 Forbidden",
+        format!("{host} resolves only to addresses denied by a rule: {list}"),
+    )
+    .header("x-puddle-decision", "deny");
+    match first {
+        Some((_, rule_id)) => refusal.header("x-puddle-rule", rule_id.to_string()),
+        None => refusal,
+    }
+}
+
+/// The refusal when the rules could not be checked.
+fn unavailable() -> Refusal {
+    Refusal::new(
+        "503 Service Unavailable",
+        "the rules could not be checked; the connection was refused",
+    )
 }
 
 /// Adds to a pending refusal why the wildcard allow didn't count (D-44).
@@ -669,10 +760,7 @@ fn allowed(
         }
         Err(err) => {
             tracing::error!(%sandbox, %host, port, error = %err, "policy unavailable, refused");
-            Err(Refusal::new(
-                "503 Service Unavailable",
-                "the rules could not be checked; the connection was refused",
-            ))
+            Err(unavailable())
         }
     }
 }

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9d085d324fd099cd5a5f17c3ebb8f9947644ce85cf1827136b1a64886812874c # shrinks to name = Ok(Allow { rule_id: RuleId(1), pattern: Exact }), again = Allow { rule_id: RuleId(1), pattern: Exact }, picked = ["1.1.1.1", "fd00::1"], kinds = [0, 2, 0, 0, 0, 0, 0, 0, 1, 0], toggles = [false, false, false, false, false], wildcards_reach_local = false

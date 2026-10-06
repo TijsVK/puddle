@@ -782,7 +782,7 @@ mod guard {
             policy.allow_as_suffix(&host(h));
         }
         policy.allow(&host("192.168.1.20"));
-        policy.deny_host(&host("192.168.1.30"));
+        let ip_deny = policy.deny_host(&host("192.168.1.30"));
         let resolver = || {
             StaticResolver::new()
                 .with("nas.nip.example", &[ip("192.168.1.20")])
@@ -812,27 +812,25 @@ mod guard {
             vec![SocketAddr::new(ip("192.168.1.20"), 443)]
         );
         assert_eq!(policy.pending().len(), 0);
-        // A neighbour with no IP rule, or an address with an IP deny, goes pending for the name.
-        for h in ["other.nip.example", "denied.nip.example"] {
-            let refusal = admit(&p, &request(h)).await.unwrap_err();
-            assert_eq!(
-                header(&refusal, "x-puddle-decision"),
-                Some("pending"),
-                "{h}"
-            );
-            assert!(
-                refusal
-                    .message
-                    .contains("add an exact rule for its address"),
-                "{h}: {}",
-                refusal.message
-            );
-        }
-        let pending: Vec<Host> = policy.pending().into_iter().map(|p| p.host).collect();
-        assert_eq!(
-            pending,
-            vec![host("other.nip.example"), host("denied.nip.example")]
+        // A neighbour with no IP rule goes pending for the name.
+        let refusal = admit(&p, &request("other.nip.example")).await.unwrap_err();
+        assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
+        assert!(
+            refusal
+                .message
+                .contains("add an exact rule for its address"),
+            "{}",
+            refusal.message
         );
+        // An address with an IP deny is denied by that rule, with no pending row (R-27).
+        let refusal = admit(&p, &request("denied.nip.example")).await.unwrap_err();
+        assert_eq!(header(&refusal, "x-puddle-decision"), Some("deny"));
+        assert_eq!(
+            header(&refusal, "x-puddle-rule"),
+            Some(ip_deny.to_string().as_str())
+        );
+        let pending: Vec<Host> = policy.pending().into_iter().map(|p| p.host).collect();
+        assert_eq!(pending, vec![host("other.nip.example")]);
         // The IP rule never replaces the toggle.
         let p = guarded(
             policy.clone(),
@@ -871,12 +869,14 @@ mod guard {
     #[tokio::test]
     async fn d44_failed_or_missing_ip_lookup_admits_nothing() {
         let resolver = || StaticResolver::new().with("nas.nip.example", &[ip("192.168.1.20")]);
-        // `lookup` errors: the address isn't admitted and the name goes pending.
+        // `lookup` errors: an IP deny can't be ruled out, so the request fails closed (R-27),
+        // and nothing goes pending.
         let broken = Arc::new(BrokenLookup(StaticPolicy::new()));
         let p = guarded(broken.clone(), resolver(), all_on());
-        let refusal = admit(&p, &request("nas.nip.example")).await.unwrap_err();
-        assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
-        assert_eq!(broken.0.pending().len(), 1);
+        let (refusal, event) = super::super::admit(&p, &request("nas.nip.example")).await;
+        assert_eq!(refusal.unwrap_err().status, "503 Service Unavailable");
+        assert_eq!(event.reason, ConnectionReason::PolicyUnavailable);
+        assert_eq!(broken.0.pending().len(), 0);
         // The trait's default `lookup` (no IP rules known): the same.
         let suffix = Decision::Allow {
             rule_id: RuleId(1),
@@ -918,5 +918,326 @@ mod guard {
         assert_eq!(policy.pending().len(), 0);
         // Literal and `localhost` were refused before the rules.
         assert_eq!(policy.decisions(), 1);
+    }
+
+    /// R-27 (T-095): an exact deny of an address wins over every rule for the name.
+    mod r27 {
+        use std::collections::HashMap;
+        use std::sync::atomic::AtomicBool;
+
+        use proptest::prelude::*;
+
+        use super::*;
+        use crate::proxy::admit as admit_with_event;
+
+        fn denied_by(refusal: &Refusal) -> Option<&str> {
+            assert_eq!(refusal.status, "403 Forbidden", "{}", refusal.message);
+            assert_eq!(header(refusal, "x-puddle-decision"), Some("deny"));
+            assert_eq!(header(refusal, "x-puddle-pending"), None);
+            header(refusal, "x-puddle-rule")
+        }
+
+        #[tokio::test]
+        async fn r27_ip_deny_beats_an_exact_name_allow_local_or_public() {
+            let policy = Arc::new(StaticPolicy::new());
+            policy.allow(&host("nas.example"));
+            policy.allow(&host("pub.example"));
+            let local_deny = policy.deny_host(&host("192.168.1.30"));
+            let public_deny = policy.deny_host(&host("8.8.4.4"));
+            let resolver = StaticResolver::new()
+                .with("nas.example", &[ip("192.168.1.30")])
+                .with("pub.example", &[ip("8.8.4.4")]);
+            let p = guarded(policy.clone(), resolver, all_on());
+
+            let (admitted, event) = admit_with_event(&p, &request("nas.example")).await;
+            let refusal = admitted.unwrap_err();
+            assert_eq!(denied_by(&refusal), Some(local_deny.to_string().as_str()));
+            assert!(
+                refusal.message.contains("192.168.1.30 (rule"),
+                "{}",
+                refusal.message
+            );
+            assert_eq!(
+                (
+                    event.decision,
+                    event.reason,
+                    event.rule_id,
+                    event.pending_id,
+                    event.resolved_ip
+                ),
+                (
+                    ConnectionDecision::Deny,
+                    ConnectionReason::Rule,
+                    Some(local_deny),
+                    None,
+                    Some(ip("192.168.1.30"))
+                )
+            );
+            let refusal = admit(&p, &request("pub.example")).await.unwrap_err();
+            assert_eq!(denied_by(&refusal), Some(public_deny.to_string().as_str()));
+            assert_eq!(policy.pending().len(), 0);
+        }
+
+        #[tokio::test]
+        async fn r27_ip_deny_beats_a_wildcard_allow_even_with_wildcards_reaching_local() {
+            let policy = Arc::new(StaticPolicy::new());
+            policy.allow_as_suffix(&host("nas.nip.example"));
+            policy.allow_as_suffix(&host("pub.nip.example"));
+            policy.deny_host(&host("192.168.1.30"));
+            policy.deny_host(&host("8.8.4.4"));
+            let resolver = || {
+                StaticResolver::new()
+                    .with("nas.nip.example", &[ip("192.168.1.30")])
+                    .with("pub.nip.example", &[ip("8.8.4.4")])
+            };
+            for access in [all_on(), all_on().with_wildcards_reach_local(true)] {
+                let p = guarded(policy.clone(), resolver(), access);
+                for h in ["nas.nip.example", "pub.nip.example"] {
+                    let refusal = admit(&p, &request(h)).await.unwrap_err();
+                    assert!(denied_by(&refusal).is_some(), "{h}");
+                }
+            }
+            assert_eq!(policy.pending().len(), 0);
+        }
+
+        #[tokio::test]
+        async fn r27_a_mixed_answer_drops_only_the_denied_addresses() {
+            let policy = Arc::new(StaticPolicy::new());
+            policy.allow(&host("mixed.example"));
+            policy.deny_host(&host("1.1.1.1"));
+            policy.deny_host(&host("10.0.0.5"));
+            let resolver = StaticResolver::new().with(
+                "mixed.example",
+                &[
+                    ip("8.8.8.8"),
+                    ip("1.1.1.1"),
+                    ip("10.0.0.5"),
+                    ip("192.168.1.20"),
+                ],
+            );
+            let p = guarded(policy.clone(), resolver, all_on());
+            assert_eq!(
+                admit(&p, &request("mixed.example")).await.unwrap(),
+                vec![
+                    SocketAddr::new(ip("8.8.8.8"), 443),
+                    SocketAddr::new(ip("192.168.1.20"), 443)
+                ]
+            );
+            // Denied and toggle-blocked addresses only: the toggle is named, since turning it on
+            // reaches an address no rule denies.
+            let resolver =
+                StaticResolver::new().with("mixed.example", &[ip("10.0.0.5"), ip("192.168.1.20")]);
+            let p = guarded(
+                policy,
+                resolver,
+                all_on().with_toggle(LocalCategory::Private, false),
+            );
+            let refusal = admit(&p, &request("mixed.example")).await.unwrap_err();
+            assert_eq!(blocked(&refusal), Some("toggle:private"));
+        }
+
+        #[tokio::test]
+        async fn r27_approving_the_name_never_reaches_a_denied_address() {
+            let policy = Arc::new(StaticPolicy::new());
+            let ip_deny = policy.deny_host(&host("192.168.1.30"));
+            let p = guarded(
+                policy.clone(),
+                StaticResolver::new().with("nas.example", &[ip("192.168.1.30")]),
+                all_on(),
+            );
+            // Unknown name: pending for the name, never resolved (R-10).
+            let refusal = admit(&p, &request("nas.example")).await.unwrap_err();
+            assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
+            policy.approve(policy.pending()[0].id).unwrap();
+            let refusal = admit(&p, &request("nas.example")).await.unwrap_err();
+            assert_eq!(denied_by(&refusal), Some(ip_deny.to_string().as_str()));
+            assert_eq!(policy.pending().iter().filter(|p| p.open).count(), 0);
+        }
+
+        /// An exact name allow whose IP lookup fails: refused, never connected.
+        struct ExactThenBroken;
+
+        impl Policy for ExactThenBroken {
+            fn decide(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Decision, PolicyError> {
+                Ok(Decision::Allow {
+                    rule_id: RuleId(1),
+                    pattern: PatternKind::Exact,
+                })
+            }
+
+            fn lookup(
+                &self,
+                _: &EgressRequest,
+                _: SuffixAllows,
+            ) -> Result<Option<Decision>, PolicyError> {
+                Err(PolicyError {
+                    reason: "lookup down".into(),
+                })
+            }
+        }
+
+        #[tokio::test]
+        async fn r27_a_failed_ip_lookup_fails_closed_after_an_exact_allow() {
+            let p = proxy(
+                Arc::new(ExactThenBroken),
+                StaticResolver::new().with("pub.example", &[ip("8.8.8.8")]),
+            );
+            let refusal = admit(&p, &request("pub.example")).await.unwrap_err();
+            assert_eq!(refusal.status, "503 Service Unavailable");
+            // An IP literal is decided as itself; no separate lookup.
+            assert_eq!(admit(&p, &request("8.8.8.8")).await.unwrap().len(), 1);
+        }
+
+        /// Answers the name with generated decisions and each address with its generated IP
+        /// rule; flags any decision asked about an IP (the proxy must never ask one for a name).
+        struct GenPolicy {
+            name: Result<Decision, PolicyError>,
+            again: Decision,
+            ip_rules: HashMap<IpAddr, Decision>,
+            ignore_calls: AtomicU32,
+            decided_an_ip: AtomicBool,
+        }
+
+        impl Policy for GenPolicy {
+            fn decide(
+                &self,
+                r: &EgressRequest,
+                mode: SuffixAllows,
+            ) -> Result<Decision, PolicyError> {
+                if matches!(r.host, Host::Ip(_)) {
+                    self.decided_an_ip.store(true, Ordering::SeqCst);
+                }
+                match mode {
+                    SuffixAllows::Count => self.name.clone(),
+                    SuffixAllows::Ignore => {
+                        self.ignore_calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(self.again)
+                    }
+                }
+            }
+
+            fn lookup(
+                &self,
+                r: &EgressRequest,
+                _: SuffixAllows,
+            ) -> Result<Option<Decision>, PolicyError> {
+                Ok(match r.host {
+                    Host::Ip(addr) => self.ip_rules.get(&addr).copied(),
+                    Host::Name(_) => None,
+                })
+            }
+        }
+
+        const POOL: [&str; 10] = [
+            "8.8.8.8",
+            "1.1.1.1",
+            "2001:4860:4860::8888",
+            "10.0.0.5",
+            "192.168.1.20",
+            "100.64.0.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "fd00::1",
+            "::ffff:10.0.0.6",
+        ];
+
+        fn decision() -> impl Strategy<Value = Decision> {
+            let rule = (1i64..50).prop_map(RuleId);
+            let pattern = prop_oneof![Just(PatternKind::Exact), Just(PatternKind::Suffix)];
+            prop_oneof![
+                (rule.clone(), pattern.clone())
+                    .prop_map(|(rule_id, pattern)| Decision::Allow { rule_id, pattern }),
+                (rule, pattern).prop_map(|(rule_id, pattern)| Decision::Deny { rule_id, pattern }),
+                (1i64..50).prop_map(|id| Decision::Pending(PendingOutcome::New(PendingId(id)))),
+                (1i64..50).prop_map(|id| Decision::Pending(PendingOutcome::Repeat(PendingId(id)))),
+                Just(Decision::Pending(PendingOutcome::Suppressed)),
+                Just(Decision::Blocked {
+                    reason: BlockReason::LocalAddress
+                }),
+            ]
+        }
+
+        /// 0: no IP rule, 1: exact allow, 2: exact deny.
+        fn ip_rule_kind() -> impl Strategy<Value = u8> {
+            prop_oneof![2 => Just(0u8), 1 => Just(1u8), 2 => Just(2u8)]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(2000))]
+
+            /// Whatever the name's rules answer (first ask and re-ask), whatever the toggles and
+            /// the wildcard setting, and whatever mix of addresses the name resolves to, an
+            /// address with an IP deny is never admitted; and when every address is denied, the
+            /// refusal is that deny, with no re-ask that could write a pending row.
+            #[test]
+            fn no_name_rule_reaches_an_ip_denied_address(
+                name in prop_oneof![
+                    4 => decision().prop_map(Ok),
+                    1 => Just(Err(PolicyError { reason: "down".into() })),
+                ],
+                again in decision(),
+                picked in proptest::sample::subsequence(POOL.to_vec(), 1..=POOL.len()),
+                kinds in proptest::collection::vec(ip_rule_kind(), POOL.len()),
+                toggles in proptest::collection::vec(any::<bool>(), LocalCategory::ALL.len()),
+                wildcards_reach_local in any::<bool>(),
+            ) {
+                let resolved: Vec<IpAddr> = picked.iter().map(|a| ip(a)).collect();
+                let mut ip_rules = HashMap::new();
+                let mut denied = Vec::new();
+                for (index, (addr, kind)) in POOL.iter().zip(&kinds).enumerate() {
+                    let rule_id = RuleId(100 + i64::try_from(index).unwrap());
+                    let pattern = PatternKind::Exact;
+                    match kind {
+                        1 => { ip_rules.insert(ip(addr), Decision::Allow { rule_id, pattern }); }
+                        2 => {
+                            ip_rules.insert(ip(addr), Decision::Deny { rule_id, pattern });
+                            denied.push((ip(addr), rule_id));
+                        }
+                        _ => {}
+                    }
+                }
+                let access = LocalCategory::ALL
+                    .into_iter()
+                    .zip(&toggles)
+                    .fold(LocalAccess::NONE, |a, (c, on)| a.with_toggle(c, *on))
+                    .with_wildcards_reach_local(wildcards_reach_local);
+                let policy = Arc::new(GenPolicy {
+                    name: name.clone(),
+                    again,
+                    ip_rules,
+                    ignore_calls: AtomicU32::new(0),
+                    decided_an_ip: AtomicBool::new(false),
+                });
+                let p = guarded(
+                    policy.clone(),
+                    StaticResolver::new().with("svc.example", &resolved),
+                    access,
+                );
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let (admitted, event) =
+                    runtime.block_on(admit_with_event(&p, &request("svc.example")));
+
+                prop_assert!(!policy.decided_an_ip.load(Ordering::SeqCst));
+                let is_denied = |a: &IpAddr| denied.iter().any(|(d, _)| d == a);
+                if let Ok(addrs) = &admitted {
+                    for addr in addrs {
+                        prop_assert!(resolved.contains(&addr.ip()), "{addr} was never resolved");
+                        prop_assert!(!is_denied(&addr.ip()), "{addr} is IP-denied but admitted");
+                    }
+                    prop_assert!(!event.resolved_ip.is_some_and(|a| is_denied(&a)));
+                }
+                if matches!(name, Ok(Decision::Allow { .. })) && resolved.iter().all(is_denied) {
+                    let refusal = admitted.unwrap_err();
+                    let rule = header(&refusal, "x-puddle-rule").map(str::to_owned);
+                    prop_assert_eq!(header(&refusal, "x-puddle-decision"), Some("deny"));
+                    prop_assert!(denied.iter().any(|(_, r)| Some(r.to_string()) == rule));
+                    prop_assert_eq!(policy.ignore_calls.load(Ordering::SeqCst), 0);
+                    prop_assert_eq!(event.decision, ConnectionDecision::Deny);
+                }
+            }
+        }
     }
 }
