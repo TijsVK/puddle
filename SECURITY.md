@@ -9,6 +9,9 @@ Please report security problems privately, by email to <puddle-security@tijsvank
 public issue or pull request. Include what you found, how to reproduce it, and the version or commit
 you tested.
 
+You can also use GitHub's private vulnerability reporting (the repository's Security tab, "Report a
+vulnerability").
+
 We aim to answer within a week. Once a fix is ready, we agree with you when and how the problem is
 made public, and credit you if you want.
 

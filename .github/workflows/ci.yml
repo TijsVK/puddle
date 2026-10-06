@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Linux gates on every push to develop/main and every pull request (docs/STANDARDS.md, "CI").
-# One job, so the private repo's free minutes aren't spent on per-job rounding and setup.
+# One job, so setup and per-job rounding aren't paid for several times.
 # Every gate runs even when an earlier one fails, so one run shows every problem.
 name: ci
 

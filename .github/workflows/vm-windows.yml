@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # VM tests on Windows WHP (T-032 tier W): crate puddle-vm-tests under `nextest --profile vm` on the
 # hosted windows-2025 runner, whose Hyper-V/WHP runs msb microVMs (T-041: observed, not promised by
-# GitHub). Windows minutes count double, so this runs by hand on any branch
+# GitHub). Windows runners are the slowest to queue, so this runs by hand on any branch
 # (`gh workflow run vm-windows.yml --ref <branch>`) and nightly on develop when develop moved since
 # the last green nightly. VM tests are never retried (T-032); a runner without a usable hypervisor
 # is reported as an infrastructure skip, not a test result.

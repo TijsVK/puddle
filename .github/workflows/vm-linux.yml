@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # VM tests on Linux KVM (T-032 tier K): crate puddle-vm-tests under `nextest --profile vm`, real
-# msb microVMs on the hosted runner. Free minutes are scarce (docs/STANDARDS.md, "CI"), so this runs
+# msb microVMs on the hosted runner. Runner time is shared (docs/STANDARDS.md, "CI"), so this runs
 # by hand on any branch (`gh workflow run vm-linux.yml --ref <branch>`) and nightly on develop when
 # develop moved since the last green nightly. VM tests are never retried (T-032); a runner without
 # KVM is reported as an infrastructure skip, not a test result.

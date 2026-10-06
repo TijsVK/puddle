@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Native Windows MSVC build and tests (D-35). Windows minutes count double on a private repo, so
-# this runs nightly (skipped when develop didn't change since the last green nightly), on pull
+# Native Windows MSVC build and tests (D-35). Windows runners are the slowest and
+# priciest to queue, so this runs nightly (skipped when develop didn't change since the last green nightly), on pull
 # requests to main, and by hand. Linux CI already cross-checks clippy for the msvc target.
 name: windows
 

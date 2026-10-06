@@ -54,6 +54,15 @@ from it.
 - Run `scripts/check.sh` before pushing (or enable the hooks: `git config core.hooksPath .githooks`).
   The rules your change must meet are in [docs/STANDARDS.md](docs/STANDARDS.md).
 - By submitting a pull request you confirm that your contribution falls under the CLA you signed.
+- `T-NNN` and `D-NN` numbers in code, comments and docs, and "workspace:" paths, point to the
+  maintainer's private planning notes; you don't need them to contribute.
+
+### Maintainer note: branch protection
+
+Rulesets on `main` and `develop` block force-push and deletion only (agents and the maintainer land
+by fast-forward push), and `v*` tags can't be deleted or moved. There is no required pull request or
+status check yet. Tighten that when outside contributors join: require a PR with the `linux (all gates)`
+check on `develop` and `main`, and `windows-msvc (build, clippy, tests)` on `main`.
 
 ## Licence headers
 

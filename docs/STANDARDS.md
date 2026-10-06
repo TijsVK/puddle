@@ -241,8 +241,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
 | `vm-windows.yml` | manual on any branch, nightly 03:15 UTC on `develop` (skipped if unchanged) | `windows-2025` (WHP) | VM tests, tier W; no WHP ⇒ warning, infrastructure skip |
 | Dependabot | weekly, grouped | — | opens PRs to `develop` |
 
-The repo is private, so CI shares 2 000 free minutes a month, and Windows minutes count double:
-don't add jobs or triggers without checking the budget, and keep Windows on nightly/PR-to-main.
+The repo is public, so standard hosted runners are free and have no minute quota. They are still
+shared: keep jobs lean, don't add triggers without a reason, and keep Windows on nightly/PR-to-main.
 Actions are pinned to commit SHAs; workflows get `contents: read` unless they need more.
 VM jobs never run per push: dispatch them on your task branch when your change needs K/W evidence.
 The msb runtime they boot is the SDK's fork tag (`ci/msb-tag.sh`, read from `Cargo.lock`): release
