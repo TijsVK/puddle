@@ -224,12 +224,17 @@ pub trait Policy: Send + Sync {
     /// The rule that decides `request` now, without recording anything: `Some` allow or deny,
     /// or `None` when no rule matches. A miss never writes a pending row.
     ///
-    /// The proxy uses it for R-14: after a wildcard allow, an exact allow of a resolved local
-    /// address (an IP rule) admits that address (D-44). The default answers `None`, so a policy
-    /// that doesn't implement it admits no address this way (fails closed).
+    /// The proxy asks it for every address an allowed name resolves to:
+    /// - R-27: a deny for the address (an exact IP rule) excludes that address, whatever the
+    ///   name's rules say, so a policy that holds IP rules must implement it;
+    /// - R-14: after a wildcard allow, an exact allow of a resolved local address admits that
+    ///   address (D-44).
+    ///
+    /// The default answers `None` (no IP rules): nothing is excluded or admitted this way.
     ///
     /// # Errors
-    /// Returns [`PolicyError`] when the rules could not be read; treat it as no match.
+    /// Returns [`PolicyError`] when the rules could not be read; the proxy then refuses the
+    /// connection (fails closed).
     fn lookup(
         &self,
         request: &EgressRequest,
