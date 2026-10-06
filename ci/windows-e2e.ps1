@@ -17,8 +17,8 @@ home under -Root, `cargo nextest run --profile vm`, the msb fork's regression re
 Windows PowerShell 5.1 compatible; keep this file ASCII-only.
 
 .PARAMETER RuntimeDir
-Directory with msb.exe and libkrunfw.dll (msb's release archive, e.g. from ci/fetch-msb.sh in Git
-Bash). Defaults to $env:PUDDLE_VM_RUNTIME_DIR.
+Directory with msb.exe and libkrunfw.dll (the fork tag's release assets, e.g. from ci/fetch-msb.sh
+in Git Bash). Defaults to $env:PUDDLE_VM_RUNTIME_DIR.
 
 .PARAMETER Filter
 nextest filter expression for the tests to run. Default: the laptop tests.
@@ -64,7 +64,7 @@ Known-bad commit for -Bisect. Default HEAD.
 Internal: set by -Bisect for each step.
 
 .EXAMPLE
-powershell -ExecutionPolicy Bypass -File ci\windows-e2e.ps1 -RuntimeDir C:\puddle\msb-0.7.7
+powershell -ExecutionPolicy Bypass -File ci\windows-e2e.ps1 -RuntimeDir C:\puddle\msb-0.7.7-puddle.3
 
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File ci\windows-e2e.ps1 -WhatIf

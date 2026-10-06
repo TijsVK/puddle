@@ -243,7 +243,10 @@ The repo is private, so CI shares 2 000 free minutes a month, and Windows minute
 don't add jobs or triggers without checking the budget, and keep Windows on nightly/PR-to-main.
 Actions are pinned to commit SHAs; workflows get `contents: read` unless they need more.
 VM jobs never run per push: dispatch them on your task branch when your change needs K/W evidence.
-The msb runtime they boot is pinned by tag and archive SHA-256 in `ci/msb-runtime.sha256`.
+The msb runtime they boot is the SDK's fork tag (`ci/msb-tag.sh`, read from `Cargo.lock`): release
+assets pinned by SHA-256 in `ci/msb-runtime.sha256`, and on Linux, where the fork releases no msb,
+a build of the tag's pinned commit. Bumping the fork tag: see the comment above the SDK lines in
+the root `Cargo.toml`; `puddle-runtime`'s expected version follows from the lock.
 
 ## 11. Licence headers
 

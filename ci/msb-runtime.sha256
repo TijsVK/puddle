@@ -1,6 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# SHA-256 of the msb runtime archives the VM tests run on, by release tag. ci/fetch-msb.sh refuses
-# an archive that isn't listed here. Values copied from the release's checksums.sha256 and checked
-# against a download (T-102, 2026-10-06). Moving to the fork tag (T-117) adds its lines here.
+# What ci/fetch-msb.sh may install, by release tag: `<tag> <release asset> <sha256>`, or
+# `<tag> source-commit <sha1>` for a fork tag whose Linux msb is built from source. fetch-msb.sh
+# refuses anything not listed here. Values copied from each release's checksums.sha256 and checked
+# against a download.
+#
+# Fork tag (TijsVK/microsandbox; T-117, 2026-10-06). The tag's source commit pins the Linux build.
+v0.7.7-puddle.3 msb-windows-x86_64.exe ed73bd972680da66b1807bbc5098fe3a52238015fda67c380a3c3ec86160f91e
+v0.7.7-puddle.3 libkrunfw-windows-x86_64.dll bc633c0330346fabfbfa4d91fb4e544f8a9bae2857c22dd808b4bb396bd9c44e
+v0.7.7-puddle.3 source-commit 7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7
+# Upstream v0.7.7 (superradcompany/microsandbox): the stock archives (T-102), and the firmware and
+# agentd a fork Linux build of that release uses.
 v0.7.7 microsandbox-linux-x86_64.tar.gz b3cc4a5e3f52dfdd938a6f67ac4a9a959ddfe304bab56de4964044b8613f01bb
 v0.7.7 microsandbox-windows-x86_64.tar.gz 641375e70d65ce2ac167040f8eb238c878db92202edf4f1aa91d3ddcb7fdb8d1
+v0.7.7 libkrunfw-linux-x86_64.so ce0a915daa6aff403e9a388e161671fbac9b85b0c200a99d7a9fdf0e1c03d668
+v0.7.7 agentd-x86_64 b512e8a8aa40b2cf8104eb54c597fc83db28a6cceb75a12e6bef0cfc6a1aa7ae

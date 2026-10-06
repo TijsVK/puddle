@@ -30,8 +30,6 @@ env:
   RUST_BACKTRACE: 1
   # Line tables only: backtraces keep file:line, builds and the cache stay much smaller.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  # The msb runtime the tests boot on; its archive checksum is pinned in ci/msb-runtime.sha256.
-  MSB_TAG: v0.7.7
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, HG-01/02, memory),
   # the boot hook (T-108), the workspace lifecycle (T-112).
   VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace
@@ -100,10 +98,20 @@ jobs:
         if: steps.kvm.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146
-      - name: msb runtime (download, verify, unpack)
+      # The runtime is the SDK's fork tag (ci/msb-tag.sh, from Cargo.lock). The fork releases no
+      # Linux msb, so fetch-msb.sh builds it from the tag's pinned commit; the cache keeps only the
+      # resulting binary, keyed on the pins and the script.
+      - name: msb build cache
+        if: steps.kvm.outputs.ok == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/msb-build/msb-*
+          key: msb-linux-${{ hashFiles('ci/msb-runtime.sha256', 'ci/fetch-msb.sh', 'rust-toolchain.toml') }}
+      - name: msb runtime (fork tag; download, verify, build)
         if: steps.kvm.outputs.ok == 'true'
         run: |
-          ci/fetch-msb.sh "$MSB_TAG" "$RUNNER_TEMP/msb"
+          sudo apt-get update -q && sudo apt-get install -y -q libcap-ng-dev
+          MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$RUNNER_TEMP/msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$RUNNER_TEMP/pvm" >> "$GITHUB_ENV"
       - name: guest agent (static musl build)

@@ -25,8 +25,6 @@ env:
   RUST_BACKTRACE: 1
   # Line tables only: backtraces keep file:line, builds and the cache stay much smaller.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  # The msb runtime the tests boot on; its archive checksum is pinned in ci/msb-runtime.sha256.
-  MSB_TAG: v0.7.7
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, HG-01/02, memory),
   # the boot hook (T-108), the workspace lifecycle (T-112).
   VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace
@@ -93,14 +91,14 @@ jobs:
         if: steps.whp.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146
-      - name: msb runtime (download, verify, unpack)
+      - name: msb runtime (fork tag release assets; download, verify)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         run: |
-          # Unix-style path for the script (GNU tar reads "D:" as a remote host), Windows-style
-          # for the tests.
+          # The runtime is the SDK's fork tag (ci/msb-tag.sh, from Cargo.lock). Unix-style path for
+          # the script, Windows-style for the tests.
           dir=$(cygpath -w "$RUNNER_TEMP")
-          ci/fetch-msb.sh "$MSB_TAG" "$(cygpath -u "$RUNNER_TEMP")/msb"
+          ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
       - name: guest agent (static musl build)
