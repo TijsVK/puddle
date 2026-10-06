@@ -302,3 +302,14 @@ impl Resolver for StaticResolver {
         })
     }
 }
+
+/// What Node 24 `fetch` sends through a proxy for a plain `http://` URL (`NODE_USE_ENV_PROXY=1`,
+/// `HTTP_PROXY` set): a `CONNECT host:80` tunnel, not an absolute-form request (T-109, T-098).
+/// Captured 2026-10-06 from Node v24.18.0 for
+/// `fetch("http://node.fixture.test/some/path?q=canary", { method: "POST", body: "hello" })`.
+pub mod node_fetch {
+    /// The `CONNECT` head.
+    pub const CONNECT: &str = "CONNECT node.fixture.test:80 HTTP/1.1\r\nhost: node.fixture.test\r\nconnection: close\r\nproxy-connection: keep-alive\r\n\r\n";
+    /// The bytes Node sends inside the tunnel once it is open: the request and its body.
+    pub const TUNNELED: &str = "POST /some/path?q=canary HTTP/1.1\r\nhost: node.fixture.test\r\nconnection: keep-alive\r\ncontent-type: text/plain;charset=UTF-8\r\naccept: */*\r\naccept-language: *\r\nsec-fetch-mode: cors\r\nuser-agent: node\r\naccept-encoding: gzip, deflate\r\ncontent-length: 5\r\n\r\nhello";
+}

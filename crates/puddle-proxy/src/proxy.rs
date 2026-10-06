@@ -30,6 +30,7 @@ use puddle_netpolicy::{LocalAccess, LocalCategory, NetPolicy, block_message, nor
 use crate::counted::Counted;
 use crate::destination::{AddressCheck, AddressVerdict, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
+use crate::tap::RequestTap;
 use crate::target::Target;
 
 /// Limits and timeouts. The defaults suit a real guest; tests shorten them.
@@ -390,7 +391,7 @@ async fn relay(
     tracing::debug!(host = %target.host, port = target.port, %addr, "connected");
     event.resolved_ip = Some(addr.ip());
     match path {
-        None => tunnel(reader, server).await,
+        None => event.http = tunnel(reader, server).await,
         Some(path) => forward(reader, server, head, &path, target, body).await,
     }
     event
@@ -813,9 +814,12 @@ async fn connect_first(
 /// `CONNECT`: answer `200`, pass on bytes the guest sent early, splice. On an error both ends
 /// reset (T-048): [`splice`] sets zero linger on the server socket, and the guest stream is dropped
 /// without a shutdown.
-async fn tunnel(reader: GuestReader, mut server: TcpStream) {
+///
+/// Returns the tunnel's first request line if it carried plain HTTP/1.x (Node `fetch` and Yarn
+/// Berry tunnel `http://` this way, T-098), for the audit. The bytes are relayed unchanged.
+async fn tunnel(reader: GuestReader, mut server: TcpStream) -> Option<HttpRequestLine> {
     let early = reader.buffer().to_vec();
-    let mut guest = reader.into_inner();
+    let mut guest = RequestTap::new(reader.into_inner(), &early);
     let opened = async {
         guest
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -825,7 +829,7 @@ async fn tunnel(reader: GuestReader, mut server: TcpStream) {
     if let Err(err) = opened.await {
         tracing::debug!(error = %err, "tunnel failed before the splice");
         abort(&server);
-        return;
+        return guest.request_line();
     }
     match splice(&mut server, &mut guest).await {
         Ok((up, down)) => tracing::debug!(
@@ -835,6 +839,7 @@ async fn tunnel(reader: GuestReader, mut server: TcpStream) {
         ),
         Err(err) => tracing::debug!(error = %err, "tunnel aborted"),
     }
+    guest.request_line()
 }
 
 /// Plain HTTP: one request per connection, `Host` rewritten to the checked target, body framed

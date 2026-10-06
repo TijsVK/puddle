@@ -15,7 +15,9 @@ use futures_util::StreamExt;
 use puddle_agent_proto::tokio_yamux::{Control, Session, StreamHandle};
 use puddle_agent_proto::yamux::client_config;
 use puddle_ipc::IpcRoot;
-use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
+use puddle_proxy::testing::{
+    AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver, node_fetch,
+};
 use puddle_proxy::{Proxy, ProxyConfig, Route};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, NullSink, PendingId,
@@ -946,4 +948,159 @@ async fn a_block_after_an_allow_is_reported_with_the_rule_and_the_toggle() {
     assert_eq!((event.rule_id, event.resolved_ip), (Some(rule), None));
     assert_eq!(event.http.as_ref().unwrap().path(), "/a");
     assert!(!format!("{event:?}").contains("CANARY"));
+}
+
+/// T-098: Node `fetch` and Yarn Berry send `http://` as `CONNECT host:80`. Node's exact bytes
+/// (port changed to the test server's) pass through unchanged, and the audit names the method and
+/// path as for an absolute-form request, without the query string.
+#[tokio::test]
+async fn node_fetch_connect_for_plain_http_is_relayed_unchanged_and_audited_with_method_and_path() {
+    let response = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+    let (head_part, body_part) = node_fetch::TUNNELED.split_once("\r\n\r\n").unwrap();
+    let (server, received) = http_server(response, body_part.len()).await;
+    let rig = Rig::with_resolver(
+        ProxyConfig::default(),
+        StaticResolver::new().with("node.fixture.test", &[LOCAL]),
+    );
+    let rule = rig.policy.allow(&host("node.fixture.test"));
+    let mut guest = rig.guest().await;
+    let connect = node_fetch::CONNECT.replace(
+        "node.fixture.test:80",
+        &format!("node.fixture.test:{}", server.port()),
+    );
+    let (code, mut reader) = guest.request(&connect).await;
+    assert_eq!(code, 200);
+    reader
+        .get_mut()
+        .write_all(node_fetch::TUNNELED.as_bytes())
+        .await
+        .unwrap();
+    reader.get_mut().shutdown().await.unwrap();
+    let back = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
+    assert_eq!(back, response);
+    let (head, body) = received.await.unwrap();
+    assert_eq!(
+        head,
+        format!("{head_part}\r\n\r\n"),
+        "head changed in the tunnel"
+    );
+    assert_eq!(body, body_part.as_bytes());
+
+    let event = &rig.events(1).await[0];
+    let http = event.http.as_ref().expect("method and path recorded");
+    assert_eq!((http.method(), http.path()), ("POST", "/some/path"));
+    assert_eq!(
+        (event.decision, event.rule_id, event.resolved_ip),
+        (ConnectionDecision::Allow, Some(rule), Some(LOCAL))
+    );
+    assert!(
+        !format!("{event:?}").contains("canary"),
+        "query string reached the audit: {event:?}"
+    );
+    let established = "HTTP/1.1 200 Connection Established\r\n\r\n".len();
+    assert_eq!(
+        (event.bytes_up, event.bytes_down),
+        (
+            (connect.len() + node_fetch::TUNNELED.len()) as u64,
+            (established + response.len()) as u64
+        )
+    );
+}
+
+/// T-098: `CONNECT host:80` is decided exactly like `GET http://host/`: the same pending item
+/// (counted twice), the same deny rule, and nothing resolved or connected before the decision.
+#[tokio::test]
+async fn connect_to_port_80_and_absolute_form_http_get_the_same_decision() {
+    let rig = Rig::new(ProxyConfig::default());
+    let mut guest = rig.guest().await;
+    let (code, _) = guest.request(node_fetch::CONNECT).await;
+    assert_eq!(code, 403);
+    let (code, _) = guest
+        .request(
+            "GET http://node.fixture.test/some/path HTTP/1.1\r\nHost: node.fixture.test\r\n\r\n",
+        )
+        .await;
+    assert_eq!(code, 403);
+    let items = rig.policy.pending();
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(
+        (items[0].host.to_string(), items[0].port, items[0].attempts),
+        ("node.fixture.test".to_owned(), 80, 2)
+    );
+    let events = rig.events(2).await;
+    for event in &events {
+        assert_eq!(
+            (
+                event.decision,
+                event.port,
+                event.pending_id,
+                event.resolved_ip
+            ),
+            (ConnectionDecision::Pending, 80, Some(items[0].id), None)
+        );
+    }
+
+    let rule = rig.policy.deny_host(&host("denied.test"));
+    for head in [
+        "CONNECT denied.test:80 HTTP/1.1\r\n\r\n",
+        "GET http://denied.test/ HTTP/1.1\r\n\r\n",
+    ] {
+        let (code, mut reader) = guest.request(head).await;
+        assert_eq!(code, 403, "{head}");
+        let body = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
+        assert!(body.contains(&format!("rule {rule}")), "{head}: {body}");
+    }
+}
+
+/// Hostile guest (T-098): a tunnel to an allowed name that carries a request for another host
+/// still reaches only the checked address, and is recorded under the tunnel's name. A tunnel
+/// that doesn't start with an HTTP/1.x request line is relayed as before, with no request line.
+#[tokio::test]
+async fn a_tunnel_only_ever_reaches_the_checked_address_whatever_it_carries() {
+    let response = "HTTP/1.1 204 No Content\r\n\r\n";
+    let (server, received) = http_server(response, 0).await;
+    let rig = Rig::with_resolver(
+        ProxyConfig::default(),
+        StaticResolver::new().with("web.test", &[LOCAL]),
+    );
+    rig.policy.allow(&host("web.test"));
+    let mut guest = rig.guest().await;
+    let (code, mut reader) = guest
+        .connect_to(&format!("web.test:{}", server.port()))
+        .await;
+    assert_eq!(code, 200);
+    let fronted = "GET http://evil.test/x HTTP/1.1\r\nHost: evil.test\r\n\r\n";
+    reader
+        .get_mut()
+        .write_all(fronted.as_bytes())
+        .await
+        .unwrap();
+    reader.get_mut().shutdown().await.unwrap();
+    let back = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
+    assert_eq!(back, response);
+    assert_eq!(received.await.unwrap().0, fronted);
+    let event = &rig.events(1).await[0];
+    assert_eq!(
+        (event.host.to_string(), event.resolved_ip),
+        ("web.test".to_owned(), Some(LOCAL))
+    );
+    assert_eq!(
+        event.http.as_ref().map(|h| h.path().to_owned()),
+        Some("/x".to_owned())
+    );
+    assert!(
+        rig.policy.pending().is_empty(),
+        "evil.test was never asked about"
+    );
+
+    let echo = echo_server().await;
+    rig.policy.allow(&host("127.0.0.1"));
+    let (code, mut reader) = guest.connect_to(&echo.to_string()).await;
+    assert_eq!(code, 200);
+    let ssh = b"SSH-2.0-OpenSSH_9.6p1 Ubuntu-3\r\n";
+    reader.get_mut().write_all(ssh).await.unwrap();
+    reader.get_mut().shutdown().await.unwrap();
+    assert_eq!(read_all(&mut reader).await.unwrap(), ssh);
+    let events = rig.events(2).await;
+    assert_eq!(events[1].http, None);
 }

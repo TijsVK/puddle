@@ -129,7 +129,7 @@ pub(crate) async fn read_head<R: AsyncBufRead + Unpin>(
 }
 
 /// RFC 9110 `tchar`: what a method or header name may contain.
-fn is_tchar(b: u8) -> bool {
+pub(crate) fn is_tchar(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
 }
 

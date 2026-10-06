@@ -23,9 +23,13 @@
 //! 5. **Relay**: `CONNECT` is spliced both ways, an abort on either side reaching the other as a
 //!    reset (T-048); a plain-HTTP request is forwarded once with `Host` rewritten to the checked
 //!    target and its body framed exactly, so nothing unchecked rides along.
+//!    A tunnel that carries plain HTTP (Node `fetch` and Yarn Berry send `http://` as
+//!    `CONNECT host:80`) is decided and relayed like any tunnel; only its first request line is
+//!    read, for the audit.
 //! 6. **Audit**: every request that got as far as a destination ends as one
 //!    [`puddle_types::ConnectionEvent`] (decision, reason, rule or pending row, address connected
-//!    to, method and path of a plain-HTTP request, bytes each way) handed to the
+//!    to, method and path of a plain-HTTP request or of a tunnel's first HTTP request, bytes each
+//!    way) handed to the
 //!    [`puddle_types::ConnectionLog`] set with [`Proxy::with_connection_log`] (the store, R-24).
 //!
 //! The sandbox is the route's, never anything the guest says (HO-3). Each sandbox has a cap on
@@ -44,6 +48,7 @@ mod destination;
 mod http;
 mod proxy;
 mod route;
+mod tap;
 mod target;
 #[cfg(feature = "testing")]
 pub mod testing;
