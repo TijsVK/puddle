@@ -190,11 +190,16 @@ mod tests {
         assert!(ok.starts_with("cargo "), "{ok}");
     }
 
+    // `--offline` only finds sources already downloaded, and a build fetches only the crates its
+    // own target needs: a fixed foreign triple fails on a host that never built for it (Windows
+    // CI lacked the Linux-only `caps`). The host's tree is what this test run just built.
+    const HOST: &str = "host-tuple";
+
     #[test]
     fn shipped_reads_this_workspace() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
         let shipped = Cargo::from_env(true)
-            .shipped(&root, &Features::All, &["x86_64-unknown-linux-gnu"], true)
+            .shipped(&root, &Features::All, &[HOST], true)
             .unwrap();
         assert!(shipped.iter().any(|p| p.name == "thiserror"));
         assert!(
@@ -210,12 +215,7 @@ mod tests {
         // SDK (puddle-vm-tests) needs crc32fast on its own.
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../puddle-runtime/Cargo.toml");
         let shipped = Cargo::from_env(true)
-            .shipped(
-                &manifest,
-                &Features::All,
-                &["x86_64-unknown-linux-gnu"],
-                false,
-            )
+            .shipped(&manifest, &Features::All, &[HOST], false)
             .unwrap();
         assert!(shipped.iter().any(|p| p.name == "object"));
         assert!(shipped.iter().all(|p| p.name != "crc32fast"));
