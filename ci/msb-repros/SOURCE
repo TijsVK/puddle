@@ -1,0 +1,5 @@
+Copied unchanged from https://github.com/TijsVK/microsandbox (the puddle fork of msb),
+branch puddle, commit 1d42cd58637fdc59364d7348f5aa511484a80317, directory tests/puddle/.
+The fork's CI runs the same cases on windows-2025 (.github/workflows/puddle-repros.yml) and they
+gate its releases; ci/windows-e2e.ps1 runs them on the laptop (tier L) against the bundled msb.exe.
+Update by copying the files again from the fork commit puddle's runtime is pinned to.

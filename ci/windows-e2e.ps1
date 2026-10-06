@@ -10,7 +10,8 @@ Defender, the corporate network. The tests live in crates/puddle-vm-tests and ar
 `vm_laptop_*`; -All also runs the K/W set the CI jobs run.
 
 Steps: power check (refuses on battery below -MinBattery percent), per-run prefix, private msb
-home under -Root, `cargo nextest run --profile vm`, commit status. VM tests are never retried.
+home under -Root, `cargo nextest run --profile vm`, the msb fork's regression repros
+(ci/msb-repros, see -MsbRepros), commit status. VM tests are never retried.
 -WhatIf prints every step without booting a VM or posting a status.
 
 Windows PowerShell 5.1 compatible; keep this file ASCII-only.
@@ -24,6 +25,14 @@ nextest filter expression for the tests to run. Default: the laptop tests.
 
 .PARAMETER All
 Run every VM test (laptop and CI ones) instead of -Filter.
+
+.PARAMETER MsbRepros
+Cases of ci/msb-repros/repros.ps1 to run against the runtime's msb.exe after the nextest run:
+relay, signal, scp, forward, stale-dir (default: all), or 'none'. They pin the fixes the puddle
+fork of msb carries; stock msb fails them. Not run in -Bisect steps.
+
+.PARAMETER ReproPort
+Local port for the relay repro's `ssh -L`. Default 18190; give parallel runs different ports.
 
 .PARAMETER Prefix
 Run prefix (lowercase letters, digits, '-', at most 20, starts with a letter). Default:
@@ -68,6 +77,8 @@ param(
     [string]$RuntimeDir = $env:PUDDLE_VM_RUNTIME_DIR,
     [string]$Filter = 'test(/(^|::)vm_laptop_/)',
     [switch]$All,
+    [string[]]$MsbRepros = @('relay', 'signal', 'scp', 'forward', 'stale-dir'),
+    [int]$ReproPort = 18190,
     [string]$Prefix = ('l' + (Get-Date -Format 'yyMMddHHmmss')),
     [string]$Root = (Join-Path $env:TEMP 'pvm'),
     [int]$MinBattery = 30,
@@ -231,6 +242,16 @@ Write-Step "prefix $Prefix, msb home $(Join-Path $Root $Prefix), runtime $Runtim
 
 $nextest = @('nextest', 'run', '-p', 'puddle-vm-tests', '--profile', 'vm', '--locked', '--no-tests=warn')
 if (-not $All) { $nextest += @('-E', $Filter) }
+
+# The msb fork's regression repros (vendored from the fork's tests/puddle, see ci/msb-repros/SOURCE).
+$repros = @($MsbRepros | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+if ($BisectStep -or $repros -contains 'none') { $repros = @() }
+$reproArgs = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', (Join-Path $PSScriptRoot 'msb-repros\repros.ps1'),
+    '-Msb', "$RuntimeDir\msb.exe", '-Libkrunfw', "$RuntimeDir\libkrunfw.dll",
+    '-Case', ($repros -join ','), '-Prefix', "$Prefix-r", '-LocalPort', "$ReproPort",
+    '-Work', (Join-Path $Root "$Prefix-repros"))
+$powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $postStatus = -not $dirty
 if ($postStatus) {
     Set-CommitStatus $sha 'pending' "running on $env:COMPUTERNAME ($($power.Text))"
@@ -238,6 +259,7 @@ if ($postStatus) {
 
 Write-Step "cargo $($nextest -join ' ')"
 if (-not $PSCmdlet.ShouldProcess($repoRoot, "cargo $($nextest -join ' ') (boots microVMs)")) {
+    if ($repros.Count -gt 0) { Write-Step "msb repros: $powershell $($reproArgs -join ' ')" }
     if ($postStatus) { Set-CommitStatus $sha 'success' "<result> on $env:COMPUTERNAME" }
     Write-Step 'dry run: nothing booted, no status posted'
     exit $ExitPass
@@ -256,13 +278,20 @@ try {
     Pop-Location
 }
 
+$reproCode = 0
+if ($repros.Count -gt 0) {
+    Write-Step "msb repros ($($repros -join ', ')): $powershell $($reproArgs -join ' ')"
+    $reproCode = Invoke-Native $powershell $reproArgs
+    Write-Step "msb repros exit $reproCode"
+}
+
 $power = Get-PowerState
 Write-Step "POWER at the end: $($power.Text)"
-if ($code -eq 0) {
+if ($code -eq 0 -and $reproCode -eq 0) {
     if ($postStatus) { Set-CommitStatus $sha 'success' "L tests passed on $env:COMPUTERNAME ($($power.Text))" }
     Write-Step 'PASS'
     exit $ExitPass
 }
-if ($postStatus) { Set-CommitStatus $sha 'failure' "L tests failed on $env:COMPUTERNAME (nextest exit $code)" }
-Write-Step "FAIL (nextest exit $code); msb logs stay under $(Join-Path $Root $Prefix)"
+if ($postStatus) { Set-CommitStatus $sha 'failure' "L tests failed on $env:COMPUTERNAME (nextest exit $code, msb repros exit $reproCode)" }
+Write-Step "FAIL (nextest exit $code, msb repros exit $reproCode); msb logs stay under $(Join-Path $Root $Prefix) and $(Join-Path $Root "$Prefix-repros")"
 exit $ExitFail
