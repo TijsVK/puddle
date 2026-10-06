@@ -201,7 +201,22 @@ mod tests {
             shipped.iter().all(|p| !p.name.starts_with("puddle")),
             "own crates are local"
         );
-        // object's `write` feature is only turned on by dev-dependencies: its extra deps don't ship.
+    }
+
+    #[test]
+    fn dev_only_features_do_not_ship() {
+        // object's `write` feature is only turned on by puddle-runtime's dev-dependencies: its
+        // extra deps don't ship. Checked on that one package: elsewhere in the workspace the msb
+        // SDK (puddle-vm-tests) needs crc32fast on its own.
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../puddle-runtime/Cargo.toml");
+        let shipped = Cargo::from_env(true)
+            .shipped(
+                &manifest,
+                &Features::All,
+                &["x86_64-unknown-linux-gnu"],
+                false,
+            )
+            .unwrap();
         assert!(shipped.iter().any(|p| p.name == "object"));
         assert!(shipped.iter().all(|p| p.name != "crc32fast"));
     }
