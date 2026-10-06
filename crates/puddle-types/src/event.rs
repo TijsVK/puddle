@@ -11,6 +11,7 @@ use crate::SandboxName;
 /// A sandbox's state as the runtime reports it (msb's states, one for one).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum SandboxStatus {
     /// Created but not started.
     Created,
@@ -67,6 +68,7 @@ const MAX_PROCESS_NAME_CHARS: usize = 64;
 /// `None` for them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[non_exhaustive]
 pub enum Event {
     /// A sandbox changed state.
@@ -296,6 +298,31 @@ mod tests {
         assert!(
             serde_json::from_str::<Event>(r#"{"type":"oom_kill","pid":1,"process":"x"}"#).is_err()
         );
+    }
+
+    #[cfg(feature = "openapi")]
+    #[test]
+    fn openapi_schema_is_the_tagged_union() {
+        use utoipa::PartialSchema;
+        let schema = serde_json::to_value(Event::schema()).unwrap();
+        let variants = schema["oneOf"].as_array().unwrap();
+        let tags: Vec<&str> = variants
+            .iter()
+            .map(|v| v["properties"]["type"]["enum"][0].as_str().unwrap())
+            .collect();
+        assert_eq!(tags, ["status_changed", "oom_kill", "test_global"]);
+        for v in variants {
+            let required = v["required"].as_array().unwrap();
+            assert!(required.iter().any(|r| r == "type"), "{v}");
+        }
+        let global = &variants[2];
+        assert!(global["properties"].get("sandbox").is_none());
+        assert_eq!(
+            variants[0]["properties"]["sandbox"]["$ref"],
+            "#/components/schemas/SandboxName"
+        );
+        let status = serde_json::to_value(SandboxStatus::schema()).unwrap();
+        assert_eq!(status["enum"].as_array().unwrap().len(), 7);
     }
 
     #[test]

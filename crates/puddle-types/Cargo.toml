@@ -10,9 +10,14 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# `utoipa::ToSchema` on the types the API puts on the wire (T-137, ADR 0004).
+openapi = ["dep:utoipa"]
+
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

@@ -123,6 +123,19 @@ macro_rules! string_newtype {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
+#[cfg_attr(
+    feature = "openapi",
+    derive(utoipa::ToSchema),
+    schema(
+        value_type = String,
+        min_length = 1,
+        max_length = 63,
+        pattern = "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+        example = "my-project",
+        description = "A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), \
+                       not `tauri`, `ipc` or `asset`."
+    )
+)]
 pub struct SandboxName(String);
 
 impl SandboxName {
@@ -263,6 +276,23 @@ string_newtype!(ImageRef);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "openapi")]
+    proptest::proptest! {
+        /// The pattern published in the API schema accepts only names `SandboxName::new` accepts
+        /// (the reserved names aside, which a pattern can't express).
+        #[test]
+        fn openapi_pattern_agrees_with_the_constructor(
+            name in "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+        ) {
+            use utoipa::PartialSchema;
+            let schema = serde_json::to_value(SandboxName::schema()).unwrap();
+            proptest::prop_assert_eq!(&schema["pattern"], "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$");
+            proptest::prop_assert_eq!(&schema["maxLength"], 63);
+            let reserved = RESERVED_SANDBOX_NAMES.contains(&name.as_str());
+            proptest::prop_assert_eq!(SandboxName::new(&name).is_ok(), !reserved);
+        }
+    }
 
     #[test]
     fn sandbox_name_accepts_dns_labels() {

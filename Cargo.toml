@@ -62,6 +62,8 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 time = { version = "0.3", default-features = false, features = ["std"] }
+# OpenAPI schemas for the API's wire types (T-137, ADR 0004).
+utoipa = { version = "6.0.0", default-features = false, features = ["macros"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless it needs FFI
