@@ -477,3 +477,43 @@ async fn ssh_reports_io_errors() {
     let err = sb.serve_ssh(Broken).await.unwrap_err();
     assert!(err.to_string().contains("write broke"), "{err}");
 }
+
+#[tokio::test]
+async fn foreign_sandboxes_dirs_and_volumes_are_listed_but_not_owned() {
+    let rt = FakeRuntime::new();
+    let _ours = rt.create(spec("ours")).await.unwrap();
+    rt.add_foreign_sandbox("Other_Tool", SandboxStatus::Running);
+    rt.add_foreign_sandbox("valid-but-foreign", SandboxStatus::Stopped);
+    let listed = rt.list().await.unwrap();
+    let owned: Vec<(&str, bool)> = listed
+        .iter()
+        .map(|i| (i.name.as_str(), i.puddle_owned))
+        .collect();
+    assert_eq!(
+        owned,
+        [
+            ("Other_Tool", false),
+            ("ours", true),
+            ("valid-but-foreign", false)
+        ]
+    );
+    // Only listed: other operations don't see a foreign sandbox.
+    assert!(matches!(
+        rt.get(&name("valid-but-foreign")).await,
+        Err(ComputeError::NotFound { .. })
+    ));
+
+    rt.add_stale_dir("Odd_Dir");
+    rt.add_stale_dir("left");
+    assert_eq!(rt.stale_dirs().await.unwrap(), ["Odd_Dir", "left"]);
+    rt.remove_stale_dir(&name("left")).await.unwrap();
+    assert_eq!(rt.stale_dirs().await.unwrap(), ["Odd_Dir"]);
+
+    rt.add_foreign_volume("Data_Disk", DiskSize::mib(8));
+    let vols = rt.list_volumes().await.unwrap();
+    assert_eq!(vols.len(), 1);
+    assert_eq!(vols[0].name, "Data_Disk");
+    assert_eq!(vols[0].size, DiskSize::mib(8));
+    assert!(vols[0].volume_name().is_none());
+    assert!(rt.volume(&vol("data-disk")).await.unwrap().is_none());
+}

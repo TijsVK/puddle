@@ -31,6 +31,9 @@ pub struct SandboxInfo {
     pub name: String,
     /// Its state.
     pub status: SandboxStatus,
+    /// Whether puddle created it (msb: the sandbox carries puddle's owner label). Shutdown and
+    /// reconcile only ever touch sandboxes with this set and a valid [`SandboxName`].
+    pub puddle_owned: bool,
 }
 
 impl SandboxInfo {
@@ -337,11 +340,13 @@ mod tests {
         let ours = SandboxInfo {
             name: "box".into(),
             status: SandboxStatus::Running,
+            puddle_owned: true,
         };
         assert_eq!(ours.sandbox_name().unwrap().as_str(), "box");
         let foreign = SandboxInfo {
             name: "Foreign_Box".into(),
             status: SandboxStatus::Stopped,
+            puddle_owned: false,
         };
         assert!(foreign.sandbox_name().is_none());
         let vol = VolumeInfo {

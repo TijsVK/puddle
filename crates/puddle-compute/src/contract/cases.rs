@@ -49,7 +49,7 @@ cases! {
     probe_reports_runtime_version => "T-028 runtime.version_pin (the version is readable)",
     pull_image_returns_its_config => "T-028 image.facts; unknown image fails: assumed",
     unknown_image_fails_create_cleanly => "assumed",
-    create_boots_and_returns_owning_handle => "T-028 sdk.create_owned, sdk.list",
+    create_boots_and_returns_owning_handle => "T-028 sdk.create_owned, sdk.list; puddle_owned from the owner label (T-106, T-113)",
     create_refuses_a_taken_name => "assumed",
     invalid_spec_is_refused_before_anything_exists => "puddle-side check (SandboxSpec::validate)",
     stop_then_start_boots_again => "T-028 sdk.stopped_status, restart; stop twice: assumed",
@@ -216,6 +216,12 @@ async fn create_boots_and_returns_owning_handle<R: Runtime>(c: &Case<'_, R>) -> 
         listed == Some(SandboxStatus::Running),
         "list shows {listed:?}"
     );
+    let owned = step("list", c.runtime().list())
+        .await?
+        .into_iter()
+        .find(|i| i.name == name.as_str())
+        .is_some_and(|i| i.puddle_owned);
+    check!(owned, "list doesn't mark puddle's sandbox as puddle-owned");
     Ok(())
 }
 

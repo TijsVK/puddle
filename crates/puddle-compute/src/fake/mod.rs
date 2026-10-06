@@ -224,6 +224,8 @@ const MEMINFO: &str = "/proc/meminfo";
 struct State {
     images: BTreeMap<String, ImageConfig>,
     sandboxes: BTreeMap<String, SandboxRecord>,
+    /// Sandboxes puddle didn't create ([`FakeRuntime::add_foreign_sandbox`]): listed only.
+    foreign: BTreeMap<String, SandboxStatus>,
     stale_dirs: BTreeSet<String>,
     volumes: BTreeMap<String, VolumeRecord>,
     faults: Vec<(Op, Fault)>,
@@ -423,6 +425,32 @@ impl FakeRuntime {
         }
     }
 
+    /// Adds a sandbox puddle didn't create (another tool's, or one without puddle's owner label).
+    /// [`Runtime::list`] shows it with `puddle_owned: false`; no other operation sees it, so a
+    /// test can check through [`FakeRuntime::calls`] that nothing touched it. `name` need not be
+    /// a valid [`SandboxName`].
+    pub fn add_foreign_sandbox(&self, name: &str, status: SandboxStatus) {
+        self.lock().foreign.insert(name.to_owned(), status);
+    }
+
+    /// Adds a sandbox directory without a record, as a failed create leaves it (T-039) or as
+    /// another tool might; `name` need not be a valid [`SandboxName`].
+    pub fn add_stale_dir(&self, name: &str) {
+        self.lock().stale_dirs.insert(name.to_owned());
+    }
+
+    /// Adds an empty volume under any name, including names that aren't a valid [`VolumeName`]
+    /// (another tool's volume).
+    pub fn add_foreign_volume(&self, name: &str, size: DiskSize) {
+        self.lock().volumes.insert(
+            name.to_owned(),
+            VolumeRecord {
+                size,
+                files: Files::new(),
+            },
+        );
+    }
+
     fn handle(&self, name: &SandboxName, boot: u64, owned: bool) -> FakeSandbox {
         FakeSandbox {
             runtime: self.clone(),
@@ -614,14 +642,22 @@ impl Runtime for FakeRuntime {
     async fn list(&self) -> Result<Vec<SandboxInfo>, ComputeError> {
         let mut state = self.lock();
         state.enter(Op::List, None, None)?;
-        Ok(state
+        let mut out: Vec<SandboxInfo> = state
             .sandboxes
             .iter()
             .map(|(name, r)| SandboxInfo {
                 name: name.clone(),
                 status: r.status,
+                puddle_owned: true,
             })
-            .collect())
+            .chain(state.foreign.iter().map(|(name, status)| SandboxInfo {
+                name: name.clone(),
+                status: *status,
+                puddle_owned: false,
+            }))
+            .collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
     }
 
     #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
