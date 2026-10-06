@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use puddle_types::MemoryMib;
+use puddle_types::{LocalCategory, MemoryMib};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -17,7 +17,7 @@ use crate::{ClipboardRead, ReconnectionGrace};
 ///
 /// ```
 /// use puddle_settings::SandboxLayer;
-/// use puddle_types::MemoryMib;
+/// use puddle_types::{LocalCategory, MemoryMib};
 /// let mut layer = SandboxLayer::default();
 /// layer.memory = Some(MemoryMib::new(2048).unwrap());
 /// layer.local_toggles.private = Some(true);
@@ -65,13 +65,15 @@ impl SandboxLayer {
 /// One toggle per local-destination category (D-1). A toggle only *permits* its category: the
 /// allowlist still decides each destination (D-37). puddle's default for each is off.
 ///
-/// The category names follow T-005's classifier; T-132 owns the classifier itself.
+/// One field per [`LocalCategory`], named by its [`LocalCategory::key`] (a test checks this), so
+/// the stored names and the classifier's categories can't drift apart. Read a toggle by category
+/// with [`Self::get`].
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct LocalToggles {
-    /// Host loopback (`127.0.0.0/8`, `::1`, `localhost`).
+    /// Host loopback (`127.0.0.0/8`, `::1`, `0.0.0.0`, `::`, `localhost`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loopback: Option<bool>,
-    /// Private networks (RFC 1918, unique-local IPv6, CGNAT).
+    /// Private networks (RFC 1918, CGNAT, unique-local IPv6).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private: Option<bool>,
     /// Link-local addresses (`169.254.0.0/16` except metadata, `fe80::/10`).
@@ -80,7 +82,7 @@ pub struct LocalToggles {
     /// Cloud metadata endpoints (`169.254.169.254` and their names).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<bool>,
-    /// Other special-purpose ranges (multicast, documentation, reserved).
+    /// Other special-purpose ranges (multicast, broadcast, documentation, reserved, ...).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub special: Option<bool>,
     #[serde(flatten)]
@@ -92,6 +94,30 @@ impl LocalToggles {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// The toggle for `category` at this level, `None` if unset.
+    ///
+    /// ```
+    /// use puddle_settings::LocalToggles;
+    /// use puddle_types::LocalCategory;
+    /// let mut t = LocalToggles::default();
+    /// t.link_local = Some(true);
+    /// assert_eq!(t.get(LocalCategory::LinkLocal), Some(true));
+    /// assert_eq!(t.get(LocalCategory::Private), None);
+    /// ```
+    #[must_use]
+    pub fn get(&self, category: LocalCategory) -> Option<bool> {
+        match category {
+            LocalCategory::Loopback => self.loopback,
+            LocalCategory::Private => self.private,
+            LocalCategory::LinkLocal => self.link_local,
+            LocalCategory::Metadata => self.metadata,
+            LocalCategory::Special => self.special,
+            // A category this version has no field for is unset, so it resolves to puddle's
+            // default (off). `every_category_has_its_field` fails until a field is added.
+            _ => None,
+        }
     }
 
     fn collect_unknown(&self, prefix: &str, out: &mut Vec<String>) {
@@ -175,6 +201,19 @@ mod tests {
         let back = serde_json::to_value(&l).unwrap();
         assert_eq!(back["cpus"], 4);
         assert_eq!(back["local_toggles"]["vpn"], true);
+    }
+
+    #[test]
+    fn every_category_has_its_field() {
+        for category in LocalCategory::ALL {
+            let json = format!(r#"{{"{}":true}}"#, category.key());
+            let t: LocalToggles = serde_json::from_str(&json).unwrap();
+            assert!(t.extra.is_empty(), "{category}: no field named {json}");
+            for other in LocalCategory::ALL {
+                assert_eq!(t.get(other), (other == category).then_some(true), "{other}");
+            }
+            assert_eq!(serde_json::to_string(&t).unwrap(), json);
+        }
     }
 
     #[test]

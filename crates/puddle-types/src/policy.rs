@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use crate::{Host, SandboxName};
+use crate::{Host, LocalCategory, SandboxName};
 
 /// A rule's row id. Never reused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -108,10 +108,14 @@ pub enum BlockReason {
     SshUnsupported,
     /// The destination is one of puddle's own endpoints (D-26; `puddle_endpoint`).
     PuddleEndpoint,
-    /// Every address of the destination is local (loopback, private, link-local, metadata, ...)
-    /// and no local-destination toggle exists yet to allow it (`local_address`). T-132's toggles
-    /// add a reason that names the toggle.
+    /// Every address of the destination is local and the checker has no toggles to offer
+    /// (`local_address`): the fail-closed fallback of a proxy without a toggle-aware address
+    /// check. With toggles, the reason is [`Self::LocalToggle`].
     LocalAddress,
+    /// The destination is in a local category whose toggle is off (D-1, R-14;
+    /// `toggle:<category>`). When several categories are off, this names the first one in
+    /// [`LocalCategory::ALL`] order; the block message lists them all.
+    LocalToggle(LocalCategory),
 }
 
 impl BlockReason {
@@ -122,6 +126,7 @@ impl BlockReason {
             Self::SshUnsupported => "ssh_unsupported",
             Self::PuddleEndpoint => "puddle_endpoint",
             Self::LocalAddress => "local_address",
+            Self::LocalToggle(category) => category.audit_reason(),
         }
     }
 }
@@ -238,6 +243,10 @@ mod tests {
         assert_eq!(BlockReason::SshUnsupported.to_string(), "ssh_unsupported");
         assert_eq!(BlockReason::PuddleEndpoint.code(), "puddle_endpoint");
         assert_eq!(BlockReason::LocalAddress.code(), "local_address");
+        assert_eq!(
+            BlockReason::LocalToggle(LocalCategory::LinkLocal).to_string(),
+            "toggle:link_local"
+        );
     }
 
     #[test]

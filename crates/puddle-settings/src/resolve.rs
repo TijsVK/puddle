@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Effective values: a sandbox's override over the global value over puddle's built-in default.
 
-use puddle_types::MemoryMib;
+use puddle_types::{LocalCategory, MemoryMib};
 use serde::Serialize;
 
 use crate::{ClipboardRead, GlobalSettings, LocalToggles, ReconnectionGrace, SandboxSettings};
@@ -57,6 +57,28 @@ pub struct EffectiveToggles {
     pub metadata: Resolved<bool>,
     /// Other special-purpose ranges.
     pub special: Resolved<bool>,
+}
+
+impl EffectiveToggles {
+    /// The toggle in effect for `category`.
+    ///
+    /// ```
+    /// use puddle_settings::Effective;
+    /// use puddle_types::LocalCategory;
+    /// assert!(!Effective::DEFAULTS.local_toggles.get(LocalCategory::Metadata).value);
+    /// ```
+    #[must_use]
+    pub fn get(&self, category: LocalCategory) -> Resolved<bool> {
+        match category {
+            LocalCategory::Loopback => self.loopback,
+            LocalCategory::Private => self.private,
+            LocalCategory::LinkLocal => self.link_local,
+            LocalCategory::Metadata => self.metadata,
+            LocalCategory::Special => self.special,
+            // Fails closed: a category without a toggle here is off.
+            _ => default(false),
+        }
+    }
 }
 
 impl Effective {
@@ -211,5 +233,38 @@ mod tests {
         );
         assert_eq!(v["memory"]["source"], "default");
         assert_eq!(v["local_toggles"]["private"]["value"], false);
+    }
+
+    #[test]
+    fn toggles_resolve_per_category_under_their_keys() {
+        for category in LocalCategory::ALL {
+            let mut g = GlobalSettings::default();
+            let mut s = SandboxSettings::default();
+            // The global default turns it on; the sandbox turns it off again.
+            let doc = serde_json::json!({ category.key(): true });
+            g.sandbox_defaults.local_toggles = serde_json::from_value(doc).unwrap();
+            assert_eq!(
+                resolve(&g, Some(&s)).local_toggles.get(category),
+                Resolved {
+                    value: true,
+                    source: Source::Global
+                }
+            );
+            let doc = serde_json::json!({ category.key(): false });
+            s.overrides.local_toggles = serde_json::from_value(doc).unwrap();
+            let e = resolve(&g, Some(&s));
+            assert_eq!(
+                e.local_toggles.get(category),
+                Resolved {
+                    value: false,
+                    source: Source::Sandbox
+                }
+            );
+            let v = serde_json::to_value(e).unwrap();
+            assert_eq!(v["local_toggles"][category.key()]["source"], "sandbox");
+            for other in LocalCategory::ALL.into_iter().filter(|o| *o != category) {
+                assert_eq!(e.local_toggles.get(other).source, Source::Default);
+            }
+        }
     }
 }

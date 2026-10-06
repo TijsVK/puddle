@@ -12,6 +12,7 @@
 //! | [`SandboxStatus`], [`Event`], [`EventSink`] | sandbox states and the user-facing event stream (incl. [`Event::OomKill`]) |
 //! | [`Host`], [`DomainName`] | a normalised egress destination (the proxy normalises, everyone else validates) |
 //! | [`EgressRequest`], [`Decision`], [`Policy`] | what the proxy asks the rules engine and what it gets back |
+//! | [`LocalCategory`] | the local-destination categories (D-1): one toggle each, classified by `puddle-netpolicy` |
 //! | [`ValidationError`] | the one error every checked constructor returns |
 //!
 //! Every checked type validates in its constructor *and* when deserialised, so a value of the
@@ -22,6 +23,7 @@ mod error;
 mod event;
 mod guest;
 mod host;
+mod local;
 mod memory;
 mod name;
 mod policy;
@@ -30,6 +32,7 @@ pub use error::ValidationError;
 pub use event::{CollectingSink, Event, EventSink, NullSink, SandboxStatus};
 pub use guest::{GuestEnv, GuestFile, GuestPath};
 pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
+pub use local::LocalCategory;
 pub use memory::MemoryMib;
 pub use name::{
     ImageRef, RESERVED_SANDBOX_NAMES, SandboxName, VolumeName, WORKSPACE_VOLUME_PREFIX, WorkspaceId,
