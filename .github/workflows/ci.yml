@@ -21,6 +21,10 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  # Line tables only: backtraces and coverage keep file:line, while the test binaries that link
+  # the msb SDK (puddle-vm-tests) stay small enough for the runner's disk (full debug info filled
+  # it: `ld terminated with signal 7 [Bus error]`, T-102).
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   linux:
@@ -29,6 +33,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Free disk space (preinstalled SDKs this job doesn't use)
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup
+          df -h /
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
