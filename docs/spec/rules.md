@@ -145,7 +145,8 @@ readable as JSONL (one record per line).
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `local_address`,
   `policy_unavailable`, `suppressed`, ...), `rule_id`, `pending_id`, `binding_id`, `injected`,
-  `method` and `path` on terminated hosts and plain-HTTP requests only, `bytes_up`, `bytes_down`,
+  `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
+  plain HTTP/1.x only, `bytes_up`, `bytes_down`,
   per T-029 AU-3), `pending_created`, `pending_decided`, `pending_expired`,
   `pending_suppressed` (`sandbox_id`, `count`), `rule_created`, `rule_updated`, `rule_deleted`,
   `rule_expired` (with the full rule), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`).
@@ -154,6 +155,11 @@ readable as JSONL (one record per line).
   sandbox over its connection limit) has no destination and only goes to the log. `resolved_ip`
   is the address connected to (`null` if none was), and the bytes are counted on the guest side,
   proxy responses included.
+  A `CONNECT` tunnel is decided like any request (rules see `(sandbox, host, port)`, R-2), so
+  `CONNECT host:80` and `GET http://host/` get the same decision and pending row. Node `fetch` and
+  Yarn Berry send `http://` URLs that way. When a tunnel's first bytes are an HTTP/1.x request line,
+  its record carries that request's `method` and `path` (first request only); the bytes are
+  relayed unchanged. *Added 2026-10-06 (T-098).*
 - **R-25 No secrets.** Never header values, credential material, query strings or request bodies;
   credentials appear only as `binding_id` and `injected: true|false`. Every audit struct has a test
   that serialises it with canary values in every secret-bearing input and asserts the canary is

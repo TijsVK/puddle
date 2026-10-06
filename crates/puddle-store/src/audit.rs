@@ -60,9 +60,9 @@ pub struct ConnectionRecord {
     pub binding_id: Option<String>,
     /// Whether a credential was injected.
     pub injected: bool,
-    /// HTTP method, terminated hosts only.
+    /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts.
     pub method: Option<String>,
-    /// HTTP path without query string, terminated hosts only.
+    /// HTTP path without query string, where `method` is set.
     pub path: Option<String>,
     /// Whether `path` was cut to fit (R-26).
     pub path_truncated: bool,
