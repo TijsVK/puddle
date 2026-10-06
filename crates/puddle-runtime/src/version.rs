@@ -9,9 +9,10 @@ use std::str::FromStr;
 /// `v<release>-puddle.N`). It is the Cargo package version the fork's `msb` embeds in its
 /// `.msbver` section, so the fork sets its workspace version to this string when it tags.
 ///
-/// Until the first fork tag exists this is the expected first tag (T-078); T-117 moves it to the
-/// tag puddle actually ships, together with the SDK dependency.
-pub const BUILT_FOR: &str = "0.7.7-puddle.1";
+/// Not written here: the build script takes it from the msb SDK's package version in the workspace
+/// `Cargo.lock`, which comes from the fork tag in the root `Cargo.toml` (and fails the build if
+/// the two disagree). So the SDK and the runtime it expects can't drift apart (D-19).
+pub const BUILT_FOR: &str = env!("PUDDLE_MSB_BUILT_FOR");
 
 /// The environment variable that, in builds with the `dev-override` feature, makes puddle accept a
 /// runtime of any version (value `1`).

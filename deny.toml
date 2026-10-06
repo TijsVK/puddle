@@ -10,8 +10,9 @@ all-features = true
 yanked = "deny"
 unmaintained = "all"
 ignore = [
-    # Unmaintained, not vulnerable: bincode 2 comes in through the msb SDK `=0.7.7`
-    # (microsandbox-filesystem, msb_krun). Review at each SDK/fork bump (T-117, T-118), by 2027-01-06.
+    # Unmaintained, not vulnerable: bincode 2 comes in through the msb SDK (fork tag
+    # v0.7.7-puddle.3: microsandbox-filesystem, msb_krun). Still there at T-117; review at each
+    # fork bump (T-118), by 2027-01-06.
     { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained; transitive via the pinned msb SDK" },
     # rsa timing side channel (Marvin), no fixed release. Comes in through the SDK's `ssh` feature
     # (russh, ssh-key). puddle's SSH server listens only on an owner-only local pipe/socket (T-105)
@@ -64,5 +65,11 @@ deny = []
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# puddle's own forks (msb, libkrun) become git dependencies (D-53): add
-# `allow-org = { github = ["TijsVK"] }` with the first one (left out now: unused entries warn).
+# puddle's own forks (D-53), and only these repositories: the msb SDK at its fork tag, and the
+# libkrun and russh forks that the msb fork patches in (repeated in puddle's `[patch.crates-io]`).
+# Not `allow-org`: a new repository under TijsVK must be added here on purpose.
+allow-git = [
+    "https://github.com/TijsVK/microsandbox",
+    "https://github.com/TijsVK/libkrun",
+    "https://github.com/TijsVK/russh",
+]

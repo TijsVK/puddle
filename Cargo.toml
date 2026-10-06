@@ -36,15 +36,22 @@ puddle-certs = { path = "crates/puddle-certs" }
 puddle-workspace = { path = "crates/puddle-workspace" }
 
 # External
-# msb SDK, exact pin: the SDK and the bundled runtime move together (D-19). Default features
-# off: no build-time runtime download, no keyring/dbus, no cloud client. `net` is required even
-# without guest networking: without it the SDK's launch config lacks `sandbox_slot` and a release
-# msb refuses it ("missing field `sandbox_slot`", T-102). `ssh` for the in-process SSH server.
-microsandbox = { version = "=0.7.7", default-features = false, features = ["local", "net", "ssh"] }
-# The SDK's image crate, same pin: the SDK has no public "pull without creating" call (T-106).
-microsandbox-image = { version = "=0.7.7", default-features = false }
-# Only for building the SDK's boot error in tests; same pin.
-microsandbox-runtime = { version = "=0.7.7", default-features = false }
+# msb SDK from puddle's fork (D-53), tag `v<release>-puddle.N`. The SDK and the bundled runtime
+# move together (D-19): `puddle-runtime` reads its expected runtime version from this pin in
+# Cargo.lock, and the CI VM jobs and `cargo xtask runtime` read the tag from there too
+# (`ci/msb-tag.sh`), so the three `tag =` values below are the only place the version is written.
+# To bump: change the tag on the three lines (the same string), update the libkrun/russh `rev`s in
+# `[patch.crates-io]` to the commits the new tag's Cargo.lock pins, add the tag's checksums to
+# `ci/msb-runtime.sha256`, then `cargo update -p microsandbox`.
+# Default features off: no build-time runtime download, no keyring/dbus, no cloud client. `net` is
+# required even without guest networking: without it the SDK's launch config lacks `sandbox_slot`
+# and a release msb refuses it ("missing field `sandbox_slot`", T-102). `ssh` for the in-process
+# SSH server.
+microsandbox = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.3", default-features = false, features = ["local", "net", "ssh"] }
+# The SDK's image crate: the SDK has no public "pull without creating" call (T-106).
+microsandbox-image = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.3", default-features = false }
+# Only for building the SDK's boot error in tests.
+microsandbox-runtime = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.3", default-features = false }
 object = { version = "0.40", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
@@ -111,6 +118,25 @@ undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 unwrap_used = "warn"
 wildcard_dependencies = "warn"
+
+# The msb fork's own `[patch.crates-io]` doesn't reach puddle (patches apply only in the root
+# workspace), so its libkrun and russh forks are repeated here, pinned by `rev` to the commits the
+# fork tag's Cargo.lock pins (a branch would follow later pushes, which the tag's msb wasn't built
+# with). libkrun: TijsVK/libkrun `puddle` (msb_krun 0.1.41 + fixes); russh: TijsVK/russh
+# `puddle-0.63.3` (peer-close fix, T-083).
+[patch.crates-io]
+msb_krun = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+msb_krun_arch = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+msb_krun_arch_gen = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+msb_krun_cpuid = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+msb_krun_devices = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+msb_krun_hvf = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+msb_krun_kernel = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+msb_krun_polly = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+msb_krun_smbios = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+msb_krun_utils = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+msb_krun_vmm = { git = "https://github.com/TijsVK/libkrun", rev = "5ea3fa5376b1df6ec068e89d0647bf13bee4f347" }
+russh = { git = "https://github.com/TijsVK/russh", rev = "b7e6012432378bf7662167d17ce00a152ab33d0d" }
 
 [profile.release]
 lto = "thin"
