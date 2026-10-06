@@ -293,9 +293,10 @@ fn proxy_env() -> GuestEnv {
 }
 
 /// Clone through the route ⇒ stop ⇒ remove the sandbox ⇒ a new sandbox on the same workspace:
-/// HEAD and an untracked marker are intact. Also: the volume root has `lost+found`, so a clone
-/// into it fails; the checkout goes in a subdirectory beside `.puddle`. Ends with the delete
-/// check (in the running holder, then in a maintenance sandbox) and the delete.
+/// HEAD and an untracked marker are intact. Also: a clone into the volume root fails (it holds
+/// `.puddle`; msb 0.7.7's ext4 has no `lost+found`, which the test reports), so the checkout goes
+/// in a subdirectory. Ends with the delete check (in the running holder, then in a maintenance
+/// sandbox) and the delete.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_clone_through_the_route_survives_a_sandbox_rebuild() {
     let (rt, settings) = runtime().await;
@@ -320,9 +321,14 @@ async fn vm_clone_through_the_route_survives_a_sandbox_rebuild() {
 
     let sb = boot.create(rt, &w, &id, spec()).await;
     let root = sh_ok(sb.ungated(), &format!("ls -A {mount}")).await;
-    assert!(
-        root.lines().any(|l| l == "lost+found"),
-        "volume root: {root}"
+    eprintln!(
+        "volume root holds: {:?} (lost+found {})",
+        root.lines().collect::<Vec<_>>(),
+        if root.lines().any(|l| l == "lost+found") {
+            "present"
+        } else {
+            "absent"
+        }
     );
     assert!(root.lines().any(|l| l == ".puddle"), "volume root: {root}");
     let into_root = sh(sb.ungated(), &format!("git clone -q {url} {mount}")).await;
@@ -466,7 +472,7 @@ async fn vm_vmm_kill_during_commits_leaves_git_consistent() {
     );
     sh_ok(
         sb.ungated(),
-        &format!("git init -q -b main {repo} && cd {repo} && echo 0 > f && git add f && git commit -qm c0"),
+        &format!("git init -q -b main {repo} && cd {repo} && echo 0 > f && git add f && git commit -qm c0 && sync"),
     )
     .await;
     let mut clean = 0;
@@ -595,6 +601,34 @@ fn check_reclaimed(what: &str, full: u64, after: u64) {
     );
 }
 
+/// Whether msb passes discard through to the host image. msb 0.7.7 doesn't on Linux: its
+/// bounded writeback for raw disks (on by default there) hides `VIRTIO_BLK_F_DISCARD`, so the
+/// guest's `fstrim` fails with "the discard operation is not supported". On Windows it does.
+const DISCARD: bool = cfg!(windows);
+
+/// Checks one trim: > 80 % of the deleted 1 GiB back where msb passes discard through; else the
+/// "not supported" failure (so the test notices when msb starts passing it through).
+fn expect_trim(
+    what: &str,
+    trim: Result<puddle_workspace::TrimReport, puddle_workspace::WorkspaceError>,
+    full: u64,
+    image: &Path,
+) {
+    if DISCARD {
+        let report = trim.unwrap_or_else(|e| panic!("{what}: {e}"));
+        eprintln!("{what}: {report:?}");
+        check_reclaimed(what, full, allocated(image));
+    } else {
+        let err = trim.expect_err("msb now passes discard through on Linux: make the K bar strict");
+        assert!(
+            err.to_string()
+                .contains("discard operation is not supported"),
+            "{what}: {err}"
+        );
+        eprintln!("{what}: {err} (expected on Linux with msb 0.7.7)");
+    }
+}
+
 /// `fstrim` on stop, "reclaim space" in the running holder, and "reclaim space" of a stopped
 /// workspace (maintenance sandbox) each return > 80 % of a deleted 1 GiB to the host image.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -618,25 +652,26 @@ async fn vm_trim_returns_deleted_space_to_the_host_image() {
     assert!(image.is_file(), "no disk image at {}", image.display());
     let full = fill_and_delete(&sb, &mount, &image).await;
     let report = w.stop(&sb).await.unwrap();
-    eprintln!("stop: {:?}", report.trims);
-    assert!(report.trims[0].is_ok());
     drop(sb);
-    check_reclaimed("fstrim on stop", full, allocated(&image));
+    let trim = report
+        .trims
+        .into_iter()
+        .next()
+        .expect("one workspace trimmed");
+    expect_trim("fstrim on stop", trim, full, &image);
 
     // 2. reclaim space while the sandbox runs.
     let sb = rt.start(&name).await.unwrap();
     let full = fill_and_delete(&sb, &mount, &image).await;
-    let trimmed = w.reclaim_space(rt, &id).await.unwrap();
-    eprintln!("reclaim (running): {trimmed:?}");
-    check_reclaimed("reclaim space, running", full, allocated(&image));
+    let trim = w.reclaim_space(rt, &id).await;
+    expect_trim("reclaim space, running", trim, full, &image);
 
     // 3. reclaim space of a stopped workspace: a maintenance sandbox does it.
     let full = fill_and_delete(&sb, &mount, &image).await;
     sb.stop().await.unwrap();
     drop(sb);
-    let trimmed = w.reclaim_space(rt, &id).await.unwrap();
-    eprintln!("reclaim (stopped): {trimmed:?}");
-    check_reclaimed("reclaim space, stopped", full, allocated(&image));
+    let trim = w.reclaim_space(rt, &id).await;
+    expect_trim("reclaim space, stopped", trim, full, &image);
     assert!(
         rt.list()
             .await
