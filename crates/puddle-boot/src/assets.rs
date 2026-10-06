@@ -102,4 +102,27 @@ mod tests {
             assert!(!s.contains('\r'), "CRLF would break sh in the guest");
         }
     }
+
+    #[test]
+    fn read_only_takes_regular_files_puddle_wrote() {
+        // dash's `read` takes one byte per read(2) and procfs answers a read at a non-zero
+        // offset with EOF: `read x </proc/sys/...` sees "1" for 1024 (found on msb 0.7.7, T-106).
+        // The fake-root tests use regular files and can't catch it, so `read` may only redirect
+        // from the plan or puddle's own pid files; procfs values go through `cat`.
+        for (name, script) in [
+            ("boot.sh", BOOT_SH),
+            ("agent-supervise.sh", AGENT_SUPERVISE_SH),
+        ] {
+            for line in script.lines().filter(|l| l.contains("read ")) {
+                if let Some((_, target)) = line.split_once(" <") {
+                    let target = target.split_whitespace().next().unwrap_or_default();
+                    assert!(
+                        ["\"$PLAN\"", "\"$1\""].contains(&target),
+                        "{name}: `{}` reads {target} with `read`",
+                        line.trim()
+                    );
+                }
+            }
+        }
+    }
 }

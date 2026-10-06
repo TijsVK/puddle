@@ -53,7 +53,9 @@ rm -f "$RUN/boot.done" "$RUN/triggers" "$RUN/entry-env" "$RUN/changed" "$RUN/fil
 
 boot_id=unknown
 if [ -r "$ROOT/proc/sys/kernel/random/boot_id" ]; then
-    read -r boot_id <"$ROOT/proc/sys/kernel/random/boot_id" || boot_id=unknown
+    # cat, not read: dash's read takes one byte per read(2), and procfs answers a read at a
+    # non-zero offset with EOF, so `read` would see only the first character.
+    boot_id=$(cat "$ROOT/proc/sys/kernel/random/boot_id") || boot_id=unknown
 fi
 
 # One tick of waiting. Fractional sleep isn't POSIX, but GNU and busybox both have it.
@@ -92,7 +94,7 @@ setk() { # setk <key> <value>
         printf '%s\n' "$2" >"$f" || die "cannot write $f"
     fi
     got=
-    [ -r "$f" ] && read -r got <"$f"
+    [ -r "$f" ] && got=$(cat "$f") # cat: see boot_id above
     [ "$got" = "$2" ] || die "sysctl $1 is '${got:-unreadable}' after setting it to $2"
 }
 setk fs.inotify.max_user_instances 1024
