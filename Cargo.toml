@@ -30,6 +30,7 @@ puddle-vm-tests = { path = "crates/puddle-vm-tests" }
 puddle-settings = { path = "crates/puddle-settings" }
 puddle-netpolicy = { path = "crates/puddle-netpolicy" }
 puddle-ca = { path = "crates/puddle-ca" }
+puddle-guest-env = { path = "crates/puddle-guest-env" }
 
 # External
 # msb SDK, exact pin: the SDK and the bundled runtime move together (D-19). Default features

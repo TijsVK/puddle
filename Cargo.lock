@@ -4153,6 +4153,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-guest-env"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "puddle-types",
+ "thiserror",
+]
+
+[[package]]
 name = "puddle-ipc"
 version = "0.0.0"
 dependencies = [
@@ -4241,6 +4250,7 @@ name = "puddle-vm-tests"
 version = "0.0.0"
 dependencies = [
  "microsandbox",
+ "puddle-guest-env",
  "puddle-types",
  "serde_json",
  "thiserror",
