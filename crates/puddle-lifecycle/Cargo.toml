@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-lifecycle"
+description = "Shutdown and reconcile (D-20): stop every sandbox with puddle, clean up after a puddle that died, one kill-on-close job for puddle and its VMs (W1, T-113)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+puddle-compute = { workspace = true }
+puddle-types = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-std", "io-util", "macros", "rt", "signal", "sync", "time"] }
+tracing = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Console",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+microsandbox = { workspace = true }
+puddle-compute = { workspace = true, features = ["fake"] }
+puddle-compute-msb = { workspace = true }
+puddle-vm-tests = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
+tracing-subscriber = { workspace = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Console",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[lints]
+workspace = true
