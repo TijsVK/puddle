@@ -4121,6 +4121,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-certs"
+version = "0.0.0"
+dependencies = [
+ "pem",
+ "proptest",
+ "puddle-boot",
+ "puddle-ca",
+ "puddle-compute",
+ "puddle-types",
+ "rcgen",
+ "sha2 0.11.0",
+ "thiserror",
+ "time",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "puddle-compute"
 version = "0.0.0"
 dependencies = [

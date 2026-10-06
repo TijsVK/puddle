@@ -32,6 +32,7 @@ puddle-netpolicy = { path = "crates/puddle-netpolicy" }
 puddle-ca = { path = "crates/puddle-ca" }
 puddle-guest-env = { path = "crates/puddle-guest-env" }
 puddle-ssh = { path = "crates/puddle-ssh" }
+puddle-certs = { path = "crates/puddle-certs" }
 
 # External
 # msb SDK, exact pin: the SDK and the bundled runtime move together (D-19). Default features
@@ -70,6 +71,8 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 time = { version = "0.3", default-features = false, features = ["std"] }
+# PEM for the guest CA bundle (T-110); already in the tree through rcgen.
+pem = { version = "4", default-features = false, features = ["std"] }
 # OpenAPI schemas for the API's wire types (T-137, ADR 0004).
 utoipa = { version = "6.0.0", default-features = false, features = ["macros"] }
 # Local HTTP API (T-137): axum on loopback; utoipa-axum registers routes and spec together.
