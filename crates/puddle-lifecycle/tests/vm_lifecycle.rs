@@ -214,27 +214,95 @@ async fn host_worker() -> i32 {
 // ---------------------------------------------------------------------------------------------
 // Driving a host.
 
+/// The host process: started by `std` (a console window of its own), or on Windows inside a
+/// pseudoconsole the test owns, the way Windows Terminal runs a tab.
+enum HostProcess {
+    Std(Child),
+    #[cfg(windows)]
+    Pty(win::PtyChild),
+}
+
+impl HostProcess {
+    fn id(&self) -> u32 {
+        match self {
+            Self::Std(c) => c.id(),
+            #[cfg(windows)]
+            Self::Pty(c) => c.id(),
+        }
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Std(c) => c.kill(),
+            #[cfg(windows)]
+            Self::Pty(c) => c.kill(),
+        }
+    }
+
+    fn wait(&mut self) -> Option<i32> {
+        match self {
+            Self::Std(c) => c.wait().unwrap().code(),
+            #[cfg(windows)]
+            Self::Pty(c) => c.wait(),
+        }
+    }
+}
+
 struct Host {
-    child: Child,
+    child: HostProcess,
     lines: Receiver<String>,
 }
 
+/// Echoes the host's output lines to stderr and passes them on.
+fn relay_lines(out: impl std::io::Read + Send + 'static) -> Receiver<String> {
+    let (tx, lines) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            eprintln!("host> {line}");
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    lines
+}
+
+/// The host's command line arguments after the executable.
+const HOST_ARGS: [&str; 5] = [
+    "--exact",
+    "vm_role_host",
+    "--nocapture",
+    "--test-threads",
+    "1",
+];
+
 impl Host {
+    /// Starts a host inside a pseudoconsole; [`win::PtyChild::close_console`] then closes it
+    /// like closing a Windows Terminal tab (`CTRL_CLOSE_EVENT`).
+    #[cfg(windows)]
+    fn spawn_in_pty(prefix: &str, name: &SandboxName) -> Self {
+        let exe = std::env::current_exe().unwrap();
+        let (child, out) = win::PtyChild::spawn(
+            &exe,
+            &HOST_ARGS,
+            &[(ROLE, "host"), (PREFIX, prefix), (SANDBOX, name.as_str())],
+        )
+        .expect("start host in a pseudoconsole");
+        Self {
+            child: HostProcess::Pty(child),
+            lines: relay_lines(out),
+        }
+    }
+
     fn spawn(prefix: &str, name: &SandboxName) -> Self {
         let mut cmd = Command::new(std::env::current_exe().unwrap());
-        cmd.args([
-            "--exact",
-            "vm_role_host",
-            "--nocapture",
-            "--test-threads",
-            "1",
-        ])
-        .env(ROLE, "host")
-        .env(PREFIX, prefix)
-        .env(SANDBOX, name.as_str())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        cmd.args(HOST_ARGS)
+            .env(ROLE, "host")
+            .env(PREFIX, prefix)
+            .env(SANDBOX, name.as_str())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt as _;
@@ -243,16 +311,10 @@ impl Host {
         }
         let mut child = cmd.spawn().expect("start host");
         let out = child.stdout.take().unwrap();
-        let (tx, lines) = mpsc::channel();
-        std::thread::spawn(move || {
-            for line in BufReader::new(out).lines().map_while(Result::ok) {
-                eprintln!("host> {line}");
-                if tx.send(line).is_err() {
-                    break;
-                }
-            }
-        });
-        Self { child, lines }
+        Self {
+            child: HostProcess::Std(child),
+            lines: relay_lines(out),
+        }
     }
 
     fn pid(&self) -> u32 {
@@ -295,7 +357,7 @@ impl Host {
                 }
             }
         }
-        self.child.wait().unwrap().code()
+        self.child.wait()
     }
 }
 
@@ -333,14 +395,18 @@ impl World {
     }
 }
 
-/// Runs `ITERATIONS` rounds of: start a host, let `trigger` end it, check the record is
-/// `Stopped`. `trigger` gets the host and the worker's pid and returns when the worker has
-/// exited.
-async fn graceful_rounds(suffix: &str, trigger: impl Fn(Host, u32)) {
+/// Runs `ITERATIONS` rounds of: start a host with `spawn`, let `trigger` end it, check the
+/// record is `Stopped`. `trigger` gets the host and the worker's pid and returns when the
+/// worker has exited.
+async fn graceful_rounds(
+    suffix: &str,
+    spawn: impl Fn(&str, &SandboxName) -> Host,
+    trigger: impl Fn(Host, u32),
+) {
     let world = World::new(suffix).await;
     let mut results = Vec::new();
     for round in 1..=ITERATIONS {
-        let host = Host::spawn(&world.prefix, &world.name);
+        let host = spawn(&world.prefix, &world.name);
         let worker = host.ready();
         assert_eq!(world.status().await, Some(SandboxStatus::Running));
         trigger(host, worker);
@@ -406,7 +472,7 @@ async fn hard_kill_rounds(suffix: &str, kill: impl Fn(&mut Host)) {
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_ctrl_c_stops_the_sandboxes_10_of_10() {
-    Box::pin(graceful_rounds("l1", |host, worker| {
+    Box::pin(graceful_rounds("l1", Host::spawn, |host, worker| {
         let watch = proc::Watch::new(&[worker]);
         signal_helper("ctrl-c", host.pid());
         assert!(
@@ -421,16 +487,27 @@ async fn vm_ctrl_c_stops_the_sandboxes_10_of_10() {
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_console_close_stops_the_sandboxes_10_of_10() {
-    Box::pin(graceful_rounds("l2", |host, worker| {
-        let watch = proc::Watch::new(&[worker]);
-        signal_helper("close", host.pid());
-        // Windows ends the front ~5 s after the close; the worker finishes on its own.
-        assert!(
-            watch.all_gone_within(Duration::from_secs(90)),
-            "worker still running"
-        );
-        let _ = host.exit_code(Duration::from_secs(30));
-    }))
+    // A pseudoconsole, not a console window: the hosted runner's console windows are
+    // pseudoconsoles already and ignore WM_CLOSE (class `PseudoConsoleWindow`), and closing a
+    // pseudoconsole is what Windows Terminal does when a tab closes. Both send
+    // CTRL_CLOSE_EVENT; the classic conhost window's X button is an L case (T-120).
+    Box::pin(graceful_rounds(
+        "l2",
+        Host::spawn_in_pty,
+        |mut host, worker| {
+            let watch = proc::Watch::new(&[worker]);
+            let HostProcess::Pty(pty) = &mut host.child else {
+                unreachable!("spawned in a pseudoconsole")
+            };
+            pty.close_console();
+            // Windows ends the front ~5 s after the close; the worker finishes on its own.
+            assert!(
+                watch.all_gone_within(Duration::from_secs(90)),
+                "worker still running"
+            );
+            let _ = host.exit_code(Duration::from_secs(30));
+        },
+    ))
     .await;
 }
 
@@ -443,8 +520,8 @@ async fn vm_terminate_process_ends_the_vms_within_5s_10_of_10() {
     .await;
 }
 
-/// Starts this binary as a signalling helper (`ctrl-c` or `close`) aimed at `target`'s console
-/// and waits for it.
+/// Starts this binary as a signalling helper (`ctrl-c`) aimed at `target`'s console and waits
+/// for it.
 #[cfg(windows)]
 fn signal_helper(role: &str, target: u32) {
     use std::os::windows::process::CommandExt as _;
@@ -459,7 +536,7 @@ fn signal_helper(role: &str, target: u32) {
         .creation_flags(windows_sys::Win32::System::Threading::DETACHED_PROCESS)
         .status()
         .unwrap();
-    // 3: the console has no window, 4: attach failed, 5: send failed (details on stderr).
+    // 4: attach failed, 5: send failed.
     assert_eq!(status.code(), Some(0), "{role} helper failed");
 }
 
@@ -470,9 +547,9 @@ fn vm_role_signal() {
         return;
     };
     #[cfg(windows)]
-    if role == "ctrl-c" || role == "close" {
+    if role == "ctrl-c" {
         let target: u32 = std::env::var(TARGET).unwrap().parse().unwrap();
-        std::process::exit(win::signal_console(target, role == "close"));
+        std::process::exit(win::send_ctrl_c(target));
     }
     let _ = role;
 }
@@ -492,7 +569,7 @@ fn kill(signal: &str, pid: u32) {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_sigterm_stops_the_sandboxes_10_of_10() {
-    Box::pin(graceful_rounds("l1", |host, worker| {
+    Box::pin(graceful_rounds("l1", Host::spawn, |host, worker| {
         kill("-TERM", worker);
         assert_eq!(host.exit_code(Duration::from_secs(90)), Some(0));
     }))
@@ -652,19 +729,28 @@ mod proc {
     reason = "Win32 console and process calls for the test helpers"
 )]
 mod win {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
     use std::time::{Duration, Instant};
 
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0,
+    };
     use windows_sys::Win32::System::Console::{
-        AttachConsole, CTRL_C_EVENT, FreeConsole, GenerateConsoleCtrlEvent, GetConsoleWindow,
-        SetConsoleCtrlHandler,
+        AttachConsole, COORD, CTRL_C_EVENT, ClosePseudoConsole, CreatePseudoConsole, FreeConsole,
+        GenerateConsoleCtrlEvent, HPCON, SetConsoleCtrlHandler,
     };
+    use windows_sys::Win32::System::Pipes::CreatePipe;
     use windows_sys::Win32::System::Threading::{
-        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
+        EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE,
+        InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess,
+        PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+        PROCESS_INFORMATION, PROCESS_SYNCHRONIZE, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+        TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
     };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, IsWindowVisible, PostMessageW, WM_CLOSE,
-    };
+    use windows_sys::core::BOOL;
 
     /// Makes Ctrl-C reach this process's handlers even if its parent disabled it (a process
     /// started in a new process group ignores Ctrl-C, and children inherit that).
@@ -673,44 +759,251 @@ mod win {
         unsafe { SetConsoleCtrlHandler(None, 0) };
     }
 
-    /// Attaches to `target`'s console and sends Ctrl-C to it, or closes its window. Returns the
-    /// helper's exit code: 0 sent, 3 no window, 4 attach failed, 5 send failed.
-    pub(crate) fn signal_console(target: u32, close: bool) -> i32 {
+    /// Attaches to `target`'s console and sends Ctrl-C to it. Returns the helper's exit code:
+    /// 0 sent, 4 attach failed, 5 send failed.
+    pub(crate) fn send_ctrl_c(target: u32) -> i32 {
         // SAFETY: plain console calls without pointers; this helper process does nothing else.
         unsafe {
             FreeConsole();
             if AttachConsole(target) == 0 {
                 return 4;
             }
-            if close {
-                let window = GetConsoleWindow();
-                if window.is_null() {
-                    FreeConsole();
-                    return 3;
-                }
-                let mut class = [0u16; 64];
-                let len = GetClassNameW(window, class.as_mut_ptr(), 64);
-                let class = String::from_utf16_lossy(
-                    class
-                        .get(..usize::try_from(len).unwrap_or(0))
-                        .unwrap_or_default(),
-                );
-                let posted = PostMessageW(window, WM_CLOSE, 0, 0);
-                let error = std::io::Error::last_os_error();
-                // Leave before the close event reaches the console's processes.
-                FreeConsole();
-                eprintln!(
-                    "close helper: window {window:?} class {class:?} visible {} posted {posted} ({error})",
-                    IsWindowVisible(window)
-                );
-                if posted == 0 { 5 } else { 0 }
-            } else {
-                // Ignore it here; every other process on the console gets it.
-                SetConsoleCtrlHandler(None, 1);
-                let sent = GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
-                FreeConsole();
-                if sent == 0 { 5 } else { 0 }
+            // Ignore it here; every other process on the console gets it.
+            SetConsoleCtrlHandler(None, 1);
+            let sent = GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
+            FreeConsole();
+            if sent == 0 { 5 } else { 0 }
+        }
+    }
+
+    fn check(ok: BOOL) -> std::io::Result<()> {
+        if ok == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// An anonymous pipe: (read end, write end), neither inheritable.
+    fn pipe() -> std::io::Result<(OwnedHandle, OwnedHandle)> {
+        let (mut read, mut write) = (std::ptr::null_mut(), std::ptr::null_mut());
+        // SAFETY: two out pointers to locals; no security attributes.
+        check(unsafe { CreatePipe(&raw mut read, &raw mut write, std::ptr::null(), 0) })?;
+        // SAFETY: both handles were just created and are owned from here on.
+        Ok(unsafe {
+            (
+                OwnedHandle::from_raw_handle(read),
+                OwnedHandle::from_raw_handle(write),
+            )
+        })
+    }
+
+    /// Opens a pseudoconsole and drains its screen output on a thread (a console whose output
+    /// isn't read blocks); nothing in that output matters here.
+    fn open_console() -> std::io::Result<HPCON> {
+        let (console_in, input) = pipe()?;
+        let (screen, console_out) = pipe()?;
+        let mut console: HPCON = 0;
+        // SAFETY: valid pipe handles and an out pointer to a local.
+        let hr = unsafe {
+            CreatePseudoConsole(
+                COORD { X: 120, Y: 30 },
+                console_in.as_raw_handle(),
+                console_out.as_raw_handle(),
+                0,
+                &raw mut console,
+            )
+        };
+        if hr < 0 {
+            return Err(std::io::Error::from_raw_os_error(hr));
+        }
+        // The pseudoconsole holds its own duplicates of its ends.
+        drop((console_in, console_out));
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut std::fs::File::from(screen), &mut std::io::sink());
+            drop(input);
+        });
+        Ok(console)
+    }
+
+    /// `"exe" args...`, NUL-terminated UTF-16 (the arguments need no quoting).
+    fn command_line(exe: &std::path::Path, args: &[&str]) -> Vec<u16> {
+        std::iter::once(format!("\"{}\"", exe.display()))
+            .chain(args.iter().map(|a| (*a).to_owned()))
+            .collect::<Vec<_>>()
+            .join(" ")
+            .encode_utf16()
+            .chain([0])
+            .collect()
+    }
+
+    /// This process's environment with `vars` set, as a sorted UTF-16 environment block.
+    fn env_block(vars: &[(&str, &str)]) -> Vec<u16> {
+        let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os()
+            .filter(|(k, _)| !vars.iter().any(|(v, _)| k.eq_ignore_ascii_case(v)))
+            .collect();
+        env.extend(vars.iter().map(|(k, v)| ((*k).into(), (*v).into())));
+        env.sort_by_key(|(k, _)| k.to_ascii_uppercase());
+        let mut block: Vec<u16> = Vec::new();
+        for (k, v) in &env {
+            block.extend(k.encode_wide());
+            block.push(u16::from(b'='));
+            block.extend(v.encode_wide());
+            block.push(0);
+        }
+        block.push(0);
+        block
+    }
+
+    /// A process started inside a pseudoconsole the test owns (what Windows Terminal does for
+    /// a tab). Its stdout and stderr go to a plain pipe, not through the pseudoconsole.
+    pub(crate) struct PtyChild {
+        pid: u32,
+        process: OwnedHandle,
+        console: Option<HPCON>,
+    }
+
+    impl PtyChild {
+        /// Starts `exe args` with `vars` added to this process's environment. Returns the
+        /// child and the read end of its stdout/stderr.
+        pub(crate) fn spawn(
+            exe: &std::path::Path,
+            args: &[&str],
+            vars: &[(&str, &str)],
+        ) -> std::io::Result<(Self, std::fs::File)> {
+            let console = open_console()?;
+
+            // The child's stdout and stderr: the write end, inherited (and only it).
+            let (out_read, out_write) = pipe()?;
+            // SAFETY: a handle owned above.
+            check(unsafe {
+                SetHandleInformation(
+                    out_write.as_raw_handle(),
+                    HANDLE_FLAG_INHERIT,
+                    HANDLE_FLAG_INHERIT,
+                )
+            })?;
+
+            let mut size = 0usize;
+            // SAFETY: the documented size query (fails with ERROR_INSUFFICIENT_BUFFER).
+            unsafe { InitializeProcThreadAttributeList(std::ptr::null_mut(), 2, 0, &raw mut size) };
+            let mut list = vec![0u8; size];
+            let attrs: LPPROC_THREAD_ATTRIBUTE_LIST = list.as_mut_ptr().cast();
+            // SAFETY: `list` is `size` bytes and outlives every use of `attrs`.
+            check(unsafe { InitializeProcThreadAttributeList(attrs, 2, 0, &raw mut size) })?;
+            let inherit = [out_write.as_raw_handle()];
+            // SAFETY: the values live until CreateProcessW below returns.
+            let updated = unsafe {
+                check(UpdateProcThreadAttribute(
+                    attrs,
+                    0,
+                    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize,
+                    console as *const c_void,
+                    size_of::<HPCON>(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                ))
+                .and_then(|()| {
+                    check(UpdateProcThreadAttribute(
+                        attrs,
+                        0,
+                        PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+                        inherit.as_ptr().cast(),
+                        size_of_val(&inherit),
+                        std::ptr::null_mut(),
+                        std::ptr::null(),
+                    ))
+                })
+            };
+
+            // SAFETY: a plain C struct for which all zeroes is valid.
+            let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
+            startup.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>()).unwrap();
+            startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+            startup.StartupInfo.hStdOutput = out_write.as_raw_handle();
+            startup.StartupInfo.hStdError = out_write.as_raw_handle();
+            startup.lpAttributeList = attrs;
+
+            let mut line = command_line(exe, args);
+            let block = env_block(vars);
+
+            // SAFETY: a plain C struct for which all zeroes is valid.
+            let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+            let created = updated.and_then(|()| {
+                // SAFETY: every pointer refers to a local that outlives the call.
+                check(unsafe {
+                    CreateProcessW(
+                        std::ptr::null(),
+                        line.as_mut_ptr(),
+                        std::ptr::null(),
+                        std::ptr::null(),
+                        1,
+                        EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                        block.as_ptr().cast(),
+                        std::ptr::null(),
+                        &raw const startup.StartupInfo,
+                        &raw mut info,
+                    )
+                })
+            });
+            // SAFETY: initialised above; nothing uses it after this.
+            unsafe { DeleteProcThreadAttributeList(attrs) };
+            drop(list);
+            drop(out_write);
+            if let Err(e) = created {
+                // SAFETY: created above, closed once.
+                unsafe { ClosePseudoConsole(console) };
+                return Err(e);
             }
+            // SAFETY: CreateProcessW returned both handles; the thread one isn't needed.
+            let process = unsafe {
+                CloseHandle(info.hThread);
+                OwnedHandle::from_raw_handle(info.hProcess)
+            };
+            Ok((
+                Self {
+                    pid: info.dwProcessId,
+                    process,
+                    console: Some(console),
+                },
+                std::fs::File::from(out_read),
+            ))
+        }
+
+        pub(crate) fn id(&self) -> u32 {
+            self.pid
+        }
+
+        /// Closes the pseudoconsole: every process on it gets `CTRL_CLOSE_EVENT`. Doesn't wait
+        /// (the close itself may wait for the clients on newer Windows builds).
+        pub(crate) fn close_console(&mut self) {
+            if let Some(console) = self.console.take() {
+                // SAFETY: created in `spawn`, closed once.
+                std::thread::spawn(move || unsafe { ClosePseudoConsole(console) });
+            }
+        }
+
+        pub(crate) fn kill(&mut self) -> std::io::Result<()> {
+            // SAFETY: the process handle owned by `self`.
+            check(unsafe { TerminateProcess(self.process.as_raw_handle(), 1) })
+        }
+
+        pub(crate) fn wait(&mut self) -> Option<i32> {
+            let mut code = 0u32;
+            // SAFETY: the process handle owned by `self`; an out pointer to a local.
+            unsafe {
+                WaitForSingleObject(self.process.as_raw_handle(), INFINITE);
+                if GetExitCodeProcess(self.process.as_raw_handle(), &raw mut code) == 0 {
+                    return None;
+                }
+            }
+            Some(code.cast_signed())
+        }
+    }
+
+    impl Drop for PtyChild {
+        fn drop(&mut self) {
+            self.close_console();
         }
     }
 
