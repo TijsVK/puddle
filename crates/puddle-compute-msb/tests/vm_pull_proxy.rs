@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! T-116 on real registries (T-033 P2/P3, tiers K/W): the adapter pulls `alpine:3.20` from
-//! Docker Hub and `mcr.microsoft.com/dotnet/sdk:8.0` through puddle's image-pull proxy (process
-//! environment from `PullProxyEnv`, per-run token), then boots the pulled alpine image.
+//! Docker Hub and `mcr.microsoft.com/dotnet/sdk:8.0` through puddle's image-pull proxy (the
+//! registry client's own proxy setting, per-run token), then boots the pulled alpine image.
 //!
 //! The proxy's resolver records every name it resolved, so the test proves each registry (and
 //! its token and blob hosts) was reached through the proxy. A fresh msb home makes sure nothing
 //! comes from an earlier test's cache. The interception half (an untrusted root refused, a given
 //! root trusted) is the I test `puddle-e2e/tests/image_pull_proxy.rs`.
-//!
-//! One test in its own binary: it sets the process environment before any thread starts.
 mod support;
 
 use std::collections::BTreeSet;
@@ -20,7 +18,6 @@ use puddle_compute::{ExecRequest, Runtime, Sandbox, SandboxSpec};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::{BoxFuture, PullProxy, Resolver, SystemResolver};
-use puddle_runtime::PullProxyEnv;
 use puddle_types::{DomainName, ImageRef, MemoryMib};
 
 /// The OS resolver, recording each name asked for.
@@ -50,10 +47,6 @@ impl Recording {
     }
 }
 
-#[expect(
-    unsafe_code,
-    reason = "the registry client reads its proxy from the process environment"
-)]
 #[test]
 fn vm_image_pulls_through_the_pull_proxy_from_docker_hub_and_mcr() {
     let settings = support::settings();
@@ -62,9 +55,7 @@ fn vm_image_pulls_through_the_pull_proxy_from_docker_hub_and_mcr() {
     let proxy = PullProxy::bind(&endpoints)
         .unwrap()
         .with_resolver(resolver.clone());
-    let env = PullProxyEnv::plan(proxy.proxy_url().expose(), std::env::vars_os());
-    // SAFETY: this binary's only test, and no runtime or other thread has started yet.
-    unsafe { env.apply_to_process() };
+    let proxy_url = proxy.proxy_url().expose().to_owned();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -78,7 +69,8 @@ fn vm_image_pulls_through_the_pull_proxy_from_docker_hub_and_mcr() {
         let _ = std::fs::remove_dir_all(&home);
         let msb = MsbRuntime::open(
             MsbConfig::new(&home, pair.msb, pair.libkrunfw, home.join("guest-share"))
-                .with_ssh_key(support::TEST_SSH_KEY),
+                .with_ssh_key(support::TEST_SSH_KEY)
+                .with_registry_proxy(proxy_url),
         )
         .await
         .expect("open msb");

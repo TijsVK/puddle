@@ -6,8 +6,10 @@
 //! settings (anonymous unless puddle's `config.json` says otherwise, which it doesn't), plus
 //! puddle's registry roots ([`crate::MsbConfig::registry_roots`]).
 //!
-//! The registry client takes its proxy from the process environment, which puddle points at its
-//! image-pull proxy (`puddle_runtime::PullProxyEnv`, `puddle_proxy::PullProxy`, T-116).
+//! The registry client's proxy is the SDK backend's own setting (`LocalBackendBuilder::registry_proxy`,
+//! from [`crate::MsbConfig::registry_proxy`]): puddle's image-pull proxy (`puddle_proxy::PullProxy`,
+//! T-116). It comes back in the resolved registry settings and replaces the process environment
+//! for the client, so nothing sets `HTTPS_PROXY` (T-144).
 
 use std::collections::BTreeMap;
 
@@ -43,12 +45,14 @@ pub(crate) async fn pull(
         .registry_config(reference.registry(), RegistryOptions::default())
         .await
         .map_err(|e| fail(chain(&e)))?;
-    let registry = Registry::builder(Platform::host_linux(), cache)
+    let mut builder = Registry::builder(Platform::host_linux(), cache)
         .auth(settings.auth)
         .extra_ca_certs(with_roots(settings.ca_certs, roots))
-        .add_insecure_registries(settings.insecure_registries)
-        .build()
-        .map_err(|e| fail(chain(&e)))?;
+        .add_insecure_registries(settings.insecure_registries);
+    if let Some(proxy) = settings.proxy {
+        builder = builder.proxy(proxy);
+    }
+    let registry = builder.build().map_err(|e| fail(chain(&e)))?;
     let result = Box::pin(registry.pull(&reference, &options))
         .await
         .map_err(|e| fail(chain(&e)))?;

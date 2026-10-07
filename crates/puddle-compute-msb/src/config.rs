@@ -15,6 +15,25 @@ pub struct SshConfig {
     pub inactivity_timeout: Option<Duration>,
 }
 
+/// The proxy the registry client sends image pulls through, as a URL that may carry credentials
+/// (`http://puddle:<token>@127.0.0.1:<port>`). `Debug` never shows it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RegistryProxy(String);
+
+impl RegistryProxy {
+    /// The URL, credentials included. Only for handing to the SDK.
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for RegistryProxy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RegistryProxy(<redacted>)")
+    }
+}
+
 /// Everything [`crate::MsbRuntime::open`] needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MsbConfig {
@@ -33,6 +52,10 @@ pub struct MsbConfig {
     /// (`puddle-certs`), so pulls work behind a TLS-intercepting company proxy (T-116, T-033 P1).
     /// Added to the platform's roots, never instead of them.
     pub registry_roots: Vec<String>,
+    /// Where image pulls go: puddle's pull proxy (T-116). Given to the SDK's registry client
+    /// directly (T-144), so the token is never in the process environment. `None` leaves pulls
+    /// to the process environment, which is what tests without a pull proxy want.
+    pub registry_proxy: Option<RegistryProxy>,
 }
 
 impl MsbConfig {
@@ -52,6 +75,7 @@ impl MsbConfig {
             guest_share: guest_share.into(),
             ssh: SshConfig::default(),
             registry_roots: Vec::new(),
+            registry_proxy: None,
         }
     }
 
@@ -60,6 +84,15 @@ impl MsbConfig {
     #[must_use]
     pub fn with_registry_roots(mut self, roots: impl IntoIterator<Item = String>) -> Self {
         self.registry_roots.extend(roots);
+        self
+    }
+
+    /// The same config, with image pulls sent through the proxy at `url` (credentials allowed).
+    /// The SDK's registry client takes it as its own setting and ignores the proxy variables of
+    /// the process environment for those pulls.
+    #[must_use]
+    pub fn with_registry_proxy(mut self, url: impl Into<String>) -> Self {
+        self.registry_proxy = Some(RegistryProxy(url.into()));
         self
     }
 
@@ -140,6 +173,20 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn the_registry_proxy_is_kept_but_never_shown_or_written() {
+        let url = "http://puddle:t0k3n@127.0.0.1:4000";
+        let plain = MsbConfig::new("/h", "/rt/msb", "/rt/libkrunfw.so", "/share");
+        assert_eq!(plain.registry_proxy, None);
+        let c = plain.clone().with_registry_proxy(url);
+        assert_eq!(
+            c.registry_proxy.as_ref().map(RegistryProxy::expose),
+            Some(url)
+        );
+        assert!(!format!("{c:?}").contains("t0k3n"), "{c:?}");
+        assert_eq!(c.config_json(), plain.config_json());
     }
 
     #[test]

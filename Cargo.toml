@@ -50,11 +50,11 @@ puddle-upstream = { path = "crates/puddle-upstream" }
 # required even without guest networking: without it the SDK's launch config lacks `sandbox_slot`
 # and a release msb refuses it ("missing field `sandbox_slot`", T-102). `ssh` for the in-process
 # SSH server.
-microsandbox = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.6", default-features = false, features = ["local", "net", "ssh"] }
+microsandbox = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.7", default-features = false, features = ["local", "net", "ssh"] }
 # The SDK's image crate: the SDK has no public "pull without creating" call (T-106).
-microsandbox-image = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.6", default-features = false }
+microsandbox-image = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.7", default-features = false }
 # Only for building the SDK's boot error in tests.
-microsandbox-runtime = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.6", default-features = false }
+microsandbox-runtime = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.7", default-features = false }
 object = { version = "0.40", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"

@@ -2,10 +2,11 @@
 //! The image-pull proxy (T-116, D-8 interim design): the listener puddle's own registry traffic
 //! goes through, so image pulls take the same way out as everything else.
 //!
-//! msb's registry client (run inside puddle by the msb adapter) reads its proxy from
-//! `HTTPS_PROXY`/`HTTP_PROXY`. puddle points them at this listener with a per-run token as the
-//! URL's userinfo (`http://puddle:<token>@127.0.0.1:<port>`, see
-//! `puddle_runtime::PullProxyEnv`). Then:
+//! msb's registry client (run inside puddle by the msb adapter) is given this listener as its
+//! proxy, with a per-run token as the URL's userinfo (`http://puddle:<token>@127.0.0.1:<port>`),
+//! through the SDK's own setting (`puddle_compute_msb::MsbConfig::with_registry_proxy`, T-144),
+//! not through `HTTPS_PROXY`: the token is never in the process environment, so no child process
+//! inherits it. Then:
 //!
 //! - **Only puddle gets in.** The listener binds `127.0.0.1` only, and every request must carry
 //!   `Proxy-Authorization: Basic` for `puddle:<token>`; anything else is a `407` and the

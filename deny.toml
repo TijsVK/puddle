@@ -11,7 +11,7 @@ yanked = "deny"
 unmaintained = "all"
 ignore = [
     # Unmaintained, not vulnerable: bincode 2 comes in through the msb SDK (fork tag
-    # v0.7.7-puddle.6: microsandbox-filesystem, msb_krun). Still there at T-117; review at each
+    # v0.7.7-puddle.7: microsandbox-filesystem, msb_krun). Still there at T-144; review at each
     # fork bump (T-118), by 2027-01-06.
     { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained; transitive via the pinned msb SDK" },
     # rsa timing side channel (Marvin), no fixed release. Comes in through the SDK's `ssh` feature

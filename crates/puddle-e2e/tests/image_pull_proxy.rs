@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! I test of the image-pull path (T-116, T-033 P1/P2 without a VM): the msb adapter's real
-//! `pull_image` (the SDK's registry client) → `HTTPS_PROXY` from [`PullProxyEnv`] → puddle's
-//! [`PullProxy`] with its per-run token → a TLS registry whose certificate chains to a lab root
+//! `pull_image` (the SDK's registry client) → the client's own proxy setting
+//! ([`MsbConfig::with_registry_proxy`], T-144) → puddle's [`PullProxy`] with its per-run token → a TLS registry whose certificate chains to a lab root
 //! nobody trusts, standing in for a TLS-intercepting company proxy.
 //!
 //! - **P1**: without the lab root the pull fails on the certificate, after the proxy tunnelled
@@ -11,9 +11,14 @@
 //! - The registry's name resolves only inside the pull proxy, so a pull that skipped the proxy
 //!   could not reach it at all.
 //! - No log line (every crate, `trace` level) and no error carries the token.
+//! - **The token is not in any environment (T-144).** After the pulls, neither this process nor a
+//!   child it spawns has a variable that holds it. The process environment carries a decoy
+//!   `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` instead, which the pulls ignore: nothing connects to
+//!   it, so puddle needs no scrubbing of the user's own proxy variables.
 //!
-//! One test in its own binary: it sets the process environment before any thread starts, as
-//! `main` will, and installs a global log subscriber.
+//! One test in its own binary: it sets the decoy environment before any thread starts and
+//! installs a global log subscriber. The child is this same binary run again with a marker
+//! variable, which makes the test print its environment and stop.
 #![expect(
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
@@ -30,7 +35,6 @@ use puddle_compute::{ComputeError, Runtime};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::{BoxFuture, PullProxy, Resolver};
-use puddle_runtime::PullProxyEnv;
 use puddle_types::{DomainName, ImageRef};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
@@ -249,7 +253,7 @@ impl Write for Captured {
     }
 }
 
-fn config(home: &std::path::Path) -> MsbConfig {
+fn config(home: &std::path::Path, proxy_url: &str) -> MsbConfig {
     // Pulling needs no msb binary: the paths only go into msb's config.json.
     MsbConfig::new(
         home.join("msb-home"),
@@ -257,14 +261,93 @@ fn config(home: &std::path::Path) -> MsbConfig {
         home.join("runtime/libkrunfw"),
         home.join("guest-share"),
     )
+    .with_registry_proxy(proxy_url)
 }
 
+/// Set on the re-run of this binary that only prints its environment.
+const DUMP_ENV: &str = "PUDDLE_T144_DUMP_ENV";
+const ENV_BEGIN: &str = "<<<ENV-BEGIN>>>";
+const ENV_END: &str = "<<<ENV-END>>>";
+const TEST_NAME: &str = "image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots";
+
+/// Runs this test binary as a child process, as puddle starts msb's runner processes, and returns
+/// the environment it sees (`NAME=value` lines).
+fn child_environment() -> String {
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", TEST_NAME, "--nocapture", "--test-threads=1"])
+        .env(DUMP_ENV, "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let (_, rest) = text.split_once(ENV_BEGIN).unwrap();
+    let (env, _) = rest.split_once(ENV_END).unwrap();
+    env.to_owned()
+}
+
+/// The token is in no environment: not this process's, not a child's. The decoy proxy never saw
+/// a connection.
+fn assert_token_in_no_environment(token: &str, decoy: &std::net::TcpListener) {
+    for (name, value) in std::env::vars_os() {
+        assert!(
+            !value.to_string_lossy().contains(token),
+            "{} holds the token",
+            name.display()
+        );
+    }
+    let child = child_environment();
+    assert!(
+        child.contains("HTTPS_PROXY=http://decoy:decoy@"),
+        "the child should see the decoy environment:\n{child}"
+    );
+    assert!(!child.contains(token), "a child process sees the token");
+    assert!(
+        matches!(decoy.accept(), Err(e) if e.kind() == io::ErrorKind::WouldBlock),
+        "the pulls used the environment's proxy"
+    );
+}
+
+/// What the child prints: this process's environment between the markers.
+fn print_environment() {
+    let mut dump = String::from(ENV_BEGIN);
+    for (name, value) in std::env::vars_os() {
+        let _ = writeln!(
+            dump,
+            "\n{}={}",
+            name.to_string_lossy(),
+            value.to_string_lossy()
+        );
+    }
+    let _ = writeln!(io::stdout(), "{dump}\n{ENV_END}");
+}
+
+/// Puts a decoy proxy into the environment and returns its listener. The pulls take the client's
+/// own setting, so nothing may connect to it.
 #[expect(
     unsafe_code,
-    reason = "the registry client reads its proxy from the process environment"
+    reason = "the test puts a decoy proxy into the process environment before any thread starts"
 )]
+fn decoy_environment() -> std::net::TcpListener {
+    let decoy = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    decoy.set_nonblocking(true).unwrap();
+    let decoy_url = format!("http://decoy:decoy@{}", decoy.local_addr().unwrap());
+    // SAFETY: called first in this binary's only test; the harness's other thread only waits for
+    // it, and no runtime or other thread has started yet.
+    unsafe {
+        for name in ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"] {
+            std::env::set_var(name, &decoy_url);
+        }
+        std::env::remove_var("NO_PROXY");
+    }
+    decoy
+}
+
 #[test]
 fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
+    if std::env::var_os(DUMP_ENV).is_some() {
+        print_environment();
+        return;
+    }
     let captured = Captured::default();
     let writer = captured.clone();
     tracing::subscriber::set_global_default(
@@ -276,7 +359,7 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
     )
     .unwrap();
 
-    // As in `main`: bind with std listeners, then set the environment, then start threads.
+    let decoy = decoy_environment();
     let registry_listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let registry_addr = registry_listener.local_addr().unwrap();
     let endpoints = PuddleEndpoints::new();
@@ -284,10 +367,7 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
         .unwrap()
         .with_resolver(Arc::new(LabResolver(registry_addr)));
     let token = proxy.token().expose().to_owned();
-    let env = PullProxyEnv::plan(proxy.proxy_url().expose(), std::env::vars_os());
-    // SAFETY: this binary's only test; the harness's other thread only waits for it, and no
-    // runtime or other thread has started yet.
-    unsafe { env.apply_to_process() };
+    let proxy_url = proxy.proxy_url().expose().to_owned();
 
     let (root, tls) = lab_pki();
     let home = tempfile::tempdir().unwrap();
@@ -304,7 +384,7 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
         let image = ImageRef::new(&format!("{REGISTRY}/{REPO}:1")).unwrap();
 
         // P1: no lab root, so the registry client refuses the "interceptor".
-        let untrusting = MsbRuntime::open(config(&home.path().join("p1")))
+        let untrusting = MsbRuntime::open(config(&home.path().join("p1"), &proxy_url))
             .await
             .unwrap();
         let err = untrusting.pull_image(&image).await.unwrap_err();
@@ -321,10 +401,11 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
         assert!(seen.requests().is_empty(), "{:?}", seen.requests());
 
         // P2: with the lab root, the image comes through the proxy.
-        let trusting =
-            MsbRuntime::open(config(&home.path().join("p2")).with_registry_roots([root]))
-                .await
-                .unwrap();
+        let trusting = MsbRuntime::open(
+            config(&home.path().join("p2"), &proxy_url).with_registry_roots([root]),
+        )
+        .await
+        .unwrap();
         let pulled = trusting.pull_image(&image).await.unwrap();
         assert_eq!(pulled.env_var("PUDDLE_LAB"), Some("1"));
         assert_eq!(pulled.cmd, ["/hello"]);
@@ -357,4 +438,6 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
         "the pulls went through the pull proxy:\n{logs}"
     );
     assert!(!logs.contains(&token), "a log line carries the token");
+
+    assert_token_in_no_environment(&token, &decoy);
 }

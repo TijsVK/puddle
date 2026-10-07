@@ -170,9 +170,9 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "corporate roots, so pulls work behind a TLS-intercepting proxy (T-116)",
     ),
     set(
-        "registry client proxy (process env HTTPS_PROXY / HTTP_PROXY / NO_PROXY)",
-        "puddle's image-pull proxy with a per-run token (puddle_runtime::PullProxyEnv)",
-        "pulls take puddle's way out; msb has no proxy setting of its own (T-116)",
+        "LocalBackendBuilder::registry_proxy (RegistryBuilder::proxy in pull_image)",
+        "puddle's image-pull proxy with a per-run token (MsbConfig::registry_proxy)",
+        "pulls take puddle's way out; an explicit client setting, so the token is not in the process environment and the user's proxy variables are not read (T-116, T-144)",
     ),
     default("SandboxBuilder::slug", "unset", "cloud only"),
     default(

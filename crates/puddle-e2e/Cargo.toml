@@ -19,7 +19,6 @@ puddle-compute-msb = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
-puddle-runtime = { workspace = true }
 puddle-store = { workspace = true }
 puddle-types = { workspace = true }
 rcgen = { workspace = true }

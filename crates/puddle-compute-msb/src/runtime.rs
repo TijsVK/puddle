@@ -71,13 +71,13 @@ impl MsbRuntime {
             .map_err(|e| runtime("open", &e))?;
         let mut attempt = 1;
         let local = loop {
-            let opened = Box::pin(
-                LocalBackend::builder()
-                    .home(&config.home)
-                    .config_path(config.config_path())
-                    .build(),
-            )
-            .await;
+            let mut builder = LocalBackend::builder()
+                .home(&config.home)
+                .config_path(config.config_path());
+            if let Some(proxy) = &config.registry_proxy {
+                builder = builder.registry_proxy(proxy.expose());
+            }
+            let opened = Box::pin(builder.build()).await;
             match opened {
                 Ok(local) => break local,
                 // SQLite on Windows: an msb process that is just exiting can still hold the
