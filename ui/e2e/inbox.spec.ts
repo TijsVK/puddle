@@ -511,8 +511,16 @@ test.describe("keyboard only", () => {
     await expect(chevron).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(dialog).toBeVisible();
+    // Opening moves focus into the form on its own, one frame after it shows. Wait for that
+    // instead of pressing Tab at it: a Tab that lands before the move is swallowed by it.
+    const first = dialog.getByRole("radio").first();
+    await expect(first).toBeFocused();
     await page.keyboard.press("Tab");
-    await expect(dialog.getByRole("radio").first()).toBeFocused();
+    await expect(
+      dialog.getByRole("radio", { name: /^Only form/ }),
+    ).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(first).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(chevron).toBeFocused();
     expect(
