@@ -1,41 +1,21 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import Undo2 from "@lucide/svelte/icons/undo-2";
-  import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
-  import OptionsPopover from "#lib/components/OptionsPopover.svelte";
+  import DecisionFlow from "#lib/components/DecisionFlow.svelte";
   import RequestRow from "#lib/components/RequestRow.svelte";
   import Toast from "#lib/components/Toast.svelte";
-  import {
-    decidedPattern,
-    decidedSentence,
-    type Decided,
-  } from "#lib/decision/decided.ts";
-  import { LOCAL_LABELS, localCategory } from "#lib/decision/local.ts";
-  import {
-    describe,
-    narrowest,
-    needsConfirm,
-    type Choice,
-    type Effect,
-  } from "#lib/decision/model.ts";
+  import { decidedPattern, decidedSentence } from "#lib/decision/decided.ts";
+  import { LOCAL_LABELS } from "#lib/decision/local.ts";
+  import { narrowest, type Effect } from "#lib/decision/model.ts";
   import { relativeTime } from "#lib/format/relative-time.ts";
-  import {
-    limitGroups,
-    pending,
-    type Row,
-  } from "#lib/stores/pending.svelte.ts";
+  import { limitGroups, pending } from "#lib/stores/pending.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import "#lib/theme/controls.css";
 
   let now = $state(Date.now());
   let currentId = $state<number | null>(null);
-  // The options popover is one instance for the whole list; `shown` keeps its row and anchor
-  // through the close, so focus can return to the chevron.
-  let shown = $state<{ id: number; anchor: HTMLElement } | null>(null);
-  let optionsOpen = $state(false);
-  let confirming = $state<{ row: Row; choice: Choice } | null>(null);
-  let confirmOpen = $state(false);
+  let flow = $state<ReturnType<typeof DecisionFlow>>();
   let heading = $state<HTMLElement>();
 
   // A long list is drawn in slices, so the first rows are on screen at once: the first slice,
@@ -94,89 +74,9 @@
   const rowElement = (id: number) =>
     document.querySelector<HTMLElement>(`[data-request-id="${id}"]`);
 
-  function request(id: number | null): Row | undefined {
+  function request(id: number | null) {
     return pending.rows.find((r) => r.request.id === id);
   }
-
-  async function settleFocus(nextId: number | null) {
-    await tick();
-    const active = document.activeElement;
-    if (active && active !== document.body && document.contains(active)) return;
-    if (nextId !== null) rowElement(nextId)?.focus();
-    else heading?.focus();
-  }
-
-  async function submit(row: Row, choice: Choice, confirmed: boolean) {
-    const index = flat.indexOf(row);
-    const neighbour = flat[index + 1] ?? flat[index - 1];
-    const nextId = neighbour ? neighbour.request.id : null;
-    const result = await pending.decide(row, choice, confirmed);
-    if (!result.ok) {
-      toasts.push(result.message, { tone: "error", ms: 8000 });
-      if (result.reason === "stale") await settleFocus(nextId);
-      return;
-    }
-    const d = result.decided;
-    const extra =
-      d.alsoClosed > 0
-        ? `; also closed ${d.alsoClosed} other ${d.alsoClosed === 1 ? "request" : "requests"}`
-        : "";
-    toasts.push(`${decidedSentence(d)}${extra}.`, {
-      action: { label: "Undo", run: () => undo(d) },
-    });
-    await settleFocus(nextId);
-  }
-
-  async function undo(d: Decided) {
-    const result = await pending.undo(d);
-    toasts.push(
-      result.ok
-        ? `Undone: ${decidedSentence(d)}. It asks again the next time the workspace retries.`
-        : result.message,
-      { ms: result.ok ? 5000 : 8000, tone: result.ok ? "info" : "error" },
-    );
-  }
-
-  const optionsRow = $derived(request(shown?.id ?? null));
-
-  function openOptions(row: Row, anchor: HTMLElement) {
-    if (optionsOpen && shown?.id === row.request.id) {
-      optionsOpen = false;
-      return;
-    }
-    shown = { id: row.request.id, anchor };
-    optionsOpen = true;
-  }
-
-  function decide(row: Row, choice: Choice) {
-    optionsOpen = false;
-    if (needsConfirm(choice)) {
-      confirming = { row, choice };
-      confirmOpen = true;
-      return;
-    }
-    void submit(row, choice, false);
-  }
-
-  function confirmed() {
-    const pendingChoice = confirming;
-    confirming = null;
-    if (pendingChoice)
-      void submit(pendingChoice.row, pendingChoice.choice, true);
-  }
-
-  const confirmText = $derived(
-    confirming
-      ? describe(
-          confirming.choice,
-          {
-            host: confirming.row.request.host,
-            registrableDomain: confirming.row.domain,
-          },
-          confirming.row.request.sandbox,
-        )
-      : "",
-  );
 
   function quick(effect: Effect) {
     const row = request(activeId);
@@ -189,7 +89,7 @@
       );
       return;
     }
-    decide(row, narrowest(effect));
+    flow?.decide(row, narrowest(effect));
   }
 
   function move(step: 1 | -1) {
@@ -246,7 +146,7 @@
           const anchor = rowElement(row.request.id)?.querySelector<HTMLElement>(
             "[data-more]",
           );
-          if (anchor) openOptions(row, anchor);
+          if (anchor) flow?.more(row, anchor);
         }
         return;
       }
@@ -302,9 +202,9 @@
             {now}
             current={row.request.id === activeId}
             blockedBy={pending.blockedBy(row.request)}
-            optionsOpen={optionsOpen && shown?.id === row.request.id}
-            onMore={openOptions}
-            onDecide={decide}
+            optionsOpen={flow?.optionsOpenFor(row.request.id) ?? false}
+            onMore={(r, anchor) => flow?.more(r, anchor)}
+            onDecide={(r, choice) => flow?.decide(r, choice)}
             onFocusRow={(r) => {
               currentId = r.request.id;
             }}
@@ -340,7 +240,7 @@
             type="button"
             class="btn"
             aria-label="Undo: {decidedSentence(d)}"
-            onclick={() => void undo(d)}
+            onclick={() => void flow?.undo(d)}
           >
             <Undo2 aria-hidden="true" size={16} />Undo
           </button>
@@ -350,38 +250,7 @@
   </section>
 {/if}
 
-<ConfirmDialog
-  bind:open={confirmOpen}
-  title={confirming?.choice.effect === "deny"
-    ? "Deny for every workspace?"
-    : "Allow for every workspace?"}
-  summary={confirmText}
-  detail="This covers every workspace you have now and any you create later. You can undo it right after, or delete the rule on the Rules page."
-  confirmLabel={confirming?.choice.effect === "deny"
-    ? "Deny in every workspace"
-    : "Allow in every workspace"}
-  tone={confirming?.choice.effect === "deny" ? "deny" : "allow"}
-  onConfirm={confirmed}
-  onCancel={() => {
-    confirming = null;
-  }}
-/>
-{#if optionsRow}
-  <OptionsPopover
-    open={optionsOpen}
-    target={{
-      host: optionsRow.request.host,
-      registrableDomain: optionsRow.domain,
-    }}
-    workspace={optionsRow.request.sandbox}
-    anchor={shown?.anchor ?? null}
-    exactOnly={localCategory(optionsRow.request.host) !== null}
-    onDecide={(choice) => decide(optionsRow, choice)}
-    onClose={() => {
-      optionsOpen = false;
-    }}
-  />
-{/if}
+<DecisionFlow bind:this={flow} heading={() => heading} />
 <Toast />
 
 <style>
