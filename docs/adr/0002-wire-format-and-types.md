@@ -4,11 +4,10 @@ Date: 2026-08-20
 Status: accepted; **amended by [0003](0003-product-frontend.md) and
 [0004](0004-api-contract.md)** — `ts-rs` is superseded by an OpenAPI-first contract; the wire
 conventions below stand and 0004 adds three more. Also amended by 0003 — the wire conventions stand, but
-"no type tooling needed" described the MWE spike only. The product has a TypeScript consumer, so
-`ts-rs` is in from the start.
-Context: [ADR 0001](0001-frontend-stack.md),
-Svelte vs Dioxus, section "Can a schema neutralise the shared-struct advantage" (workspace:
-`docs/plan/2026-08-svelte-vs-dioxus.md`)
+"no type tooling needed" described the first milestone's prototype UI only. The product has a
+TypeScript consumer, so `ts-rs` is in from the start.
+Context: [ADR 0001](0001-frontend-stack.md), and a comparison of Svelte and Dioxus made before this
+repository existed, in particular whether a schema can neutralise Dioxus's shared-struct advantage.
 
 ## Decision
 
@@ -18,9 +17,9 @@ CI fails if regeneration changes it.
 
 **No protobuf, no gRPC.** JSON over HTTP and SSE.
 
-**The wire conventions below are fixed now**, in the MWE, even though no codegen tool is installed
-yet. The SSE and audit formats are being designed this month; the conventions are the part that is
-expensive to change later, and the PoC's JSONL audit already follows most of them.
+**The wire conventions below are fixed now**, in the first milestone, even though no codegen tool is
+installed yet. The SSE and audit formats are being designed this month; the conventions are the part
+that is expensive to change later, and the PoC's JSONL audit already follows most of them.
 
 ### When is a type generator needed at all?
 
@@ -29,7 +28,7 @@ is a desktop window:
 
 | UI approach | Cross-language boundary? | Type tooling |
 |---|---|---|
-| **Server-rendered HTML from axum** (the MWE, in a Tauri webview) | No — the HTML is built in Rust from Rust structs; the webview only displays it | **None.** There is nothing to generate |
+| **Server-rendered HTML from axum** (the first milestone, in a Tauri webview) | No — the HTML is built in Rust from Rust structs; the webview only displays it | **None.** There is nothing to generate |
 | Server-rendered + a JSON endpoint that vanilla JS reads | Yes, but informal and tiny | Optional; hand-written and reviewed is honest at this size |
 | Svelte SPA | Yes — TypeScript parses JSON | **`ts-rs`** |
 | Dioxus SPA | No — the same Rust structs render the UI | **None** |
@@ -45,10 +44,10 @@ exist from day one:
 - **the REST endpoints** — a CLI, automation and browser mode all want them, and they outlive any
   particular UI.
 
-**One MWE choice this exposes:** the SSE stream should carry **HTML fragments**, not JSON, for lists
-and rows. The client then needs no schema, no parsing and no types, which is what makes "no type
-tooling" genuinely true rather than an accounting trick. Keep JSON for the audit log and for REST
-responses, where the consumer is a script rather than a webview.
+**One first-milestone choice this exposes:** the SSE stream should carry **HTML fragments**, not
+JSON, for lists and rows. The client then needs no schema, no parsing and no types, which is what
+makes "no type tooling" genuinely true rather than an accounting trick. Keep JSON for the audit log
+and for REST responses, where the consumer is a script rather than a webview.
 
 ### Wire conventions
 
@@ -86,15 +85,15 @@ a red build rather than a runtime `undefined`.
   and it composes with the conventions above.
 - **`utoipa`** (5.5.0) → OpenAPI → `openapi-typescript` — the answer for an *external, documented*
   API: extensions, a central policy feed, third-party clients. Not needed for our own UI.
-- **protobuf / gRPC** — rejected in the comparison doc: browsers need Connect or grpc-web,
+- **protobuf / gRPC** — rejected in the Svelte/Dioxus comparison: browsers need Connect or grpc-web,
   binary frames fight an SSE text stream, it costs the audit log its `curl`/`grep` inspectability in
   a security tool, it re-adds `protoc`/`buf` to a build we just kept Node out of, and proto3 brings
   its own friction (integer enums, no required fields, `int64` as a string in protobuf-JSON anyway).
 
 ## Consequences
 
-- Nothing to install for the MWE; the server-rendered UI has no DTO layer, and the SSE stream carries
-  HTML fragments so the client needs no schema at all.
+- Nothing to install for the first milestone; the server-rendered UI has no DTO layer, and the SSE
+  stream carries HTML fragments so the client needs no schema at all.
 - The conventions apply immediately to the audit rows, the SSE events and the REST responses, so the
   first JS client is a codegen step rather than a redesign.
 - If Dioxus is ever chosen instead of Svelte, this ADR costs nothing: the `wire` module is already

@@ -69,7 +69,7 @@ thirty-minute check against a real `Cargo.toml`, not a decision to argue in a do
   validation server-side via `deny_unknown_fields`.
 - **`orval`** instead of `openapi-fetch` — generates hooks and heavier clients aimed at React Query;
   more machinery than a five-screen-to-twelve-screen app with SSE needs.
-- **protobuf / gRPC** — still no, for the reasons in the comparison doc.
+- **protobuf / gRPC** — still no, for the reasons in ADR 0002.
 
 ## The full options ledger
 
@@ -87,7 +87,7 @@ API is plausible later.
 | **`utoipa` 5.5 → OpenAPI → `openapi-typescript` + `openapi-fetch`** | **Chosen** |
 | `aide` 0.15.1 | Standby — same shape, axum-native, and the fallback if `utoipa-axum` does not support our pinned axum |
 | `orval` 8.24 | Out — generates React-Query-shaped clients; more machinery than needed |
-| protobuf / gRPC (+ Connect, grpc-web, `protobuf-es`) | Out — see the comparison doc: browsers need a shim, binary frames fight an SSE text stream, the audit log loses `curl`/`grep` inspectability in a security tool, and `protoc`/`buf` re-enters a build we kept clean |
+| protobuf / gRPC (+ Connect, grpc-web, `protobuf-es`) | Out — see ADR 0002: browsers need a shim, binary frames fight an SSE text stream, the audit log loses `curl`/`grep` inspectability in a security tool, and `protoc`/`buf` re-enters a build we kept clean |
 | Cap'n Proto, FlatBuffers, MessagePack, CBOR | Out for the same reasons, with even less tooling on the TS side. Payload size is irrelevant on loopback, which is the only thing they would buy |
 | **GraphQL (`async-graphql` 7.2.1 + graphql-codegen)** | **The strongest alternative, and not previously written down.** It would solve types, endpoints and the live stream in one: subscriptions could replace SSE, and TS codegen for GraphQL is excellent. Out because it is heavy for ~15 endpoints, adds a query planner and its own security surface (query depth and complexity limits) to a security tool, and makes the audit/inspection story worse — one opaque POST endpoint instead of greppable paths. Revisit only if several clients with genuinely divergent data needs appear |
 | **TypeSpec 1.15 (IDL-first, emitting OpenAPI)** | **The honest version of "define the DTOs outside either language"** — a real IDL without protobuf's wire format, and also not previously written down. Out because we own both ends: Rust-first generation is less ceremony and cannot drift from the handlers, whereas an IDL adds a third artefact to keep in sync. It becomes correct the day a *third party* owns the contract |
@@ -97,8 +97,8 @@ API is plausible later.
 
 ## Consequences
 
-- W4 (API) gains about a day: annotations on roughly fifteen endpoints, codegen wiring, the CI gate.
-  Call it **1.5–2 days** of contract work against `ts-rs`'s ~1.
+- The API work grows by about a day: annotations on roughly fifteen endpoints, codegen wiring, the
+  CI gate. Call it **1.5–2 days** of contract work against `ts-rs`'s ~1.
 - The frontend gets endpoint-level type safety, which is the class of bug most likely to survive
   review in a UI that mostly makes HTTP calls.
 - A published, versioned spec exists from the start, so an extensions API or a central policy feed

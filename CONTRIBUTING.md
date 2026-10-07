@@ -54,8 +54,9 @@ from it.
 - Run `scripts/check.sh` before pushing (or enable the hooks: `git config core.hooksPath .githooks`).
   The rules your change must meet are in [docs/STANDARDS.md](docs/STANDARDS.md).
 - By submitting a pull request you confirm that your contribution falls under the CLA you signed.
-- `T-NNN` and `D-NN` numbers in code, comments and docs, and "workspace:" paths, point to the
-  maintainer's private planning notes; you don't need them to contribute.
+- Keep code, comments, docs and commit messages self-contained: say the reason in words or cite an ADR or
+  spec section, and don't reference ticket or planning-note IDs. The `standalone` gate and the
+  `commit-msg` hook check this.
 
 ### Maintainer note: branch protection
 

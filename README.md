@@ -2,17 +2,17 @@
 
 Rubber ducks welcome.
 
-puddle runs each devcontainer workspace in its own microVM on Windows (Linux hosts
-from v1), with puddle's own proxy as the only way out of the VM. Outbound connections go to domains you allowed, per workspace or globally;
-anything else waits in an approval inbox until you allow or deny it. It is a native Rust
-program with a Tauri desktop app, built and tested on Windows and Linux, and builds on
-[microsandbox](https://github.com/superradcompany/microsandbox) for the microVMs.
+puddle runs each devcontainer workspace in its own microVM on Windows (Linux hosts from v1), with
+puddle's own proxy as the only way out of the VM. Outbound connections go to domains you allowed,
+per workspace or globally; anything else waits in an approval inbox until you allow or deny it. It
+is a native Rust program with a Tauri desktop app, built and tested on Windows and Linux, and builds
+on [microsandbox](https://github.com/superradcompany/microsandbox) for the microVMs.
 
 The idea follows [Huddle](https://github.com/infosupport/huddle); puddle is written from scratch and
 shares no code with it.
 
-**Status:** early development. The workspace and its quality gates are in place; product code is
-being written.
+**Status:** early development, no release yet. The Cargo workspace and its quality gates are in
+place; product code is being written.
 
 ## Branches
 
@@ -31,7 +31,7 @@ cargo nextest run                     # tests only
 cargo run -p puddle -- --version
 ```
 
-Layout, coding and testing rules, coverage thresholds and the agent workflow:
+Layout, coding and testing rules, coverage thresholds and the workflow for agents and humans:
 [docs/STANDARDS.md](docs/STANDARDS.md).
 Architecture decisions and why: [docs/adr/](docs/adr/README.md).
 

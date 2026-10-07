@@ -18,9 +18,8 @@ Take the next number, `NNNN-short-slug.md`, with a title line `# NNNN — <decis
 `Status:` and, if it changes an earlier ADR, `Amends:` (and add "amended by" to that one). Add a row
 to the table above.
 
-## References to the planning workspace
+## Background material
 
-0001–0006 were written in the private planning workspace before this repo existed. Their
-background material (plans, spike records, logs) stays there, so they cite it as plain text,
-`workspace: <path>`, not as links. `D-N` and `T-N` are decision and task numbers in that
-workspace's log and board. The ADR itself carries what the decision needs.
+0001–0006 were written before this repository existed. Their background material (plans,
+comparisons, measurement logs) is not published; each ADR states the facts and reasons its
+decision rests on.
