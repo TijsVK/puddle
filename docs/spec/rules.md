@@ -160,6 +160,10 @@ readable as JSONL (one record per line).
   Yarn Berry send `http://` URLs that way. When a tunnel's first bytes are an HTTP/1.x request line,
   its record carries that request's `method` and `path` (first request only); the bytes are
   relayed unchanged. *Added 2026-10-06 (T-098).*
+  `upstream` names the company-proxy hop that carried the connection (`DIRECT` or `PROXY host:port`,
+  never credentials; `null` when no upstream route is configured or nothing connected), and when
+  it is a proxy hop `resolved_ip` is the address sent to the proxy, or `null` if the proxy was told
+  the name (or this host could not resolve it). *Added 2026-10-07 (T-165, additive).*
 - **R-25 No secrets.** Never header values, credential material, query strings or request bodies;
   credentials appear only as `binding_id` and `injected: true|false`. Every audit struct has a test
   that serialises it with canary values in every secret-bearing input and asserts the canary is

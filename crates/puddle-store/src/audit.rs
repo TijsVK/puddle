@@ -48,6 +48,10 @@ pub struct ConnectionRecord {
     pub port: Option<u16>,
     /// The address connected to.
     pub resolved_ip: Option<String>,
+    /// The company-proxy hop that carried it (`DIRECT`, `PROXY host:port`), when an upstream
+    /// route is configured (T-165). Absent in records written before it existed.
+    #[serde(default)]
+    pub upstream: Option<String>,
     /// What happened.
     pub decision: Option<ConnectionDecision>,
     /// Why (see [`ConnectionReason`]).
@@ -85,6 +89,7 @@ impl ConnectionRecord {
             host: Some(event.host.to_string()),
             port: Some(event.port),
             resolved_ip: event.resolved_ip.map(|ip| ip.to_string()),
+            upstream: event.upstream.clone(),
             decision: Some(event.decision),
             reason: event.reason.to_string(),
             rule_id: event.rule_id.map(|id| id.0),
@@ -107,6 +112,7 @@ impl ConnectionRecord {
             host: None,
             port: None,
             resolved_ip: None,
+            upstream: None,
             decision: None,
             reason: ConnectionReason::Suppressed.to_string(),
             rule_id: None,
@@ -716,6 +722,7 @@ mod tests {
             "host",
             "port",
             "resolved_ip",
+            "upstream",
             "decision",
             "reason",
             "rule_id",

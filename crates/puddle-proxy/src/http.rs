@@ -377,7 +377,12 @@ const HOP_BY_HOP: [&str; 8] = [
 /// `Host` is replaced by the checked target (RFC 9112 §3.2.2: a proxy ignores the client's `Host`
 /// for an absolute-form target), and `Connection: close` ends the upstream connection after this
 /// one request, so nothing on it goes unchecked.
-pub(crate) fn upstream_head(head: &Head, path: &str, host_header: &str) -> String {
+pub(crate) fn upstream_head(
+    head: &Head,
+    target: &str,
+    host_header: &str,
+    proxy_authorization: Option<&str>,
+) -> String {
     let mut hop: Vec<String> = HOP_BY_HOP.iter().map(|h| (*h).to_owned()).collect();
     for h in &head.headers {
         if header_name(h) == "connection" {
@@ -388,8 +393,11 @@ pub(crate) fn upstream_head(head: &Head, path: &str, host_header: &str) -> Strin
             );
         }
     }
-    let mut out = format!("{} {path} {}\r\n", head.method, head.version);
+    let mut out = format!("{} {target} {}\r\n", head.method, head.version);
     let _ = write!(out, "Host: {host_header}\r\n");
+    if let Some(value) = proxy_authorization {
+        let _ = write!(out, "Proxy-Authorization: {value}\r\n");
+    }
     for h in &head.headers {
         if !hop.contains(&header_name(h)) {
             out.push_str(h);
@@ -640,10 +648,19 @@ mod tests {
             ]),
         };
         assert_eq!(
-            upstream_head(&head, "/x", "allowed.test"),
+            upstream_head(&head, "/x", "allowed.test", None),
             "GET /x HTTP/1.1\r\nHost: allowed.test\r\nAccept: */*\r\nConnection: close\r\n\r\n"
         );
-        assert!(upstream_head(&head, "/x", "[::1]:8080").contains("Host: [::1]:8080\r\n"));
+        assert!(upstream_head(&head, "/x", "[::1]:8080", None).contains("Host: [::1]:8080\r\n"));
+        // To a company proxy: the absolute URI and its own credential, never the guest's.
+        let proxied = upstream_head(
+            &head,
+            "http://allowed.test:80/x",
+            "allowed.test",
+            Some("Basic YTpi"),
+        );
+        assert!(proxied.starts_with("GET http://allowed.test:80/x HTTP/1.1\r\nHost: allowed.test\r\nProxy-Authorization: Basic YTpi\r\n"));
+        assert_eq!(proxied.matches("Proxy-Authorization").count(), 1);
     }
 
     proptest! {

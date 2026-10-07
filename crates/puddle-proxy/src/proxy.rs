@@ -32,6 +32,7 @@ use crate::destination::{AddressCheck, AddressVerdict, Resolver, SystemResolver}
 use crate::http::{self, Body, Head, HeadError, RawTarget};
 use crate::tap::RequestTap;
 use crate::target::Target;
+use crate::upstream::{Admitted, ProxyForm, Upstream, connect_out};
 
 /// Limits and timeouts. The defaults suit a real guest; tests shorten them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +125,7 @@ pub struct Proxy {
     resolver: Arc<dyn Resolver>,
     addresses: Arc<dyn AddressCheck>,
     log: Arc<dyn ConnectionLog>,
+    upstream: Option<Upstream>,
     pub(crate) sink: Arc<dyn EventSink>,
     pub(crate) config: ProxyConfig,
 }
@@ -150,6 +152,7 @@ impl Proxy {
             resolver: Arc::new(SystemResolver),
             addresses: Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE))),
             log: Arc::new(NullConnectionLog),
+            upstream: None,
             sink,
             config: ProxyConfig::default(),
         }
@@ -175,6 +178,15 @@ impl Proxy {
     #[must_use]
     pub fn with_connection_log(mut self, log: Arc<dyn ConnectionLog>) -> Self {
         self.log = log;
+        self
+    }
+
+    /// Sends admitted connections out along the company proxy route instead of straight to the
+    /// destination (T-165). Admission is unchanged: the rules, the address guard and the IP rules
+    /// all run first, and `DIRECT` hops connect only to an address that passed.
+    #[must_use]
+    pub fn with_upstream(mut self, upstream: Upstream) -> Self {
+        self.upstream = Some(upstream);
         self
     }
 
@@ -369,30 +381,44 @@ async fn relay(
     if let Some(path) = &path {
         event.http = Some(HttpRequestLine::new(head.method.as_str(), path));
     }
-    let addrs = match admitted {
-        Ok(addrs) => addrs,
+    let admitted = match admitted {
+        Ok(admitted) => admitted,
         Err(refusal) => {
             refuse(reader.get_mut(), &refusal).await;
             return event;
         }
     };
-    let (server, addr) = match connect_first(&addrs, proxy.config.connect_timeout).await {
-        Ok(connected) => connected,
-        Err(err) => {
-            tracing::info!(host = %target.host, port = target.port, error = %err, "upstream connect failed");
-            let refusal = Refusal::new(
-                "502 Bad Gateway",
-                format!("could not connect to {}:{}", target.host, target.port),
-            );
+    let out = match connect_out(
+        proxy.upstream.as_ref(),
+        target,
+        path.is_none(),
+        &admitted,
+        proxy.config.connect_timeout,
+    )
+    .await
+    {
+        Ok(out) => out,
+        Err(refusal) => {
             refuse(reader.get_mut(), &refusal).await;
             return event;
         }
     };
-    tracing::debug!(host = %target.host, port = target.port, %addr, "connected");
-    event.resolved_ip = Some(addr.ip());
+    event.resolved_ip = out.addr.map(|addr| addr.ip());
+    event.upstream = out.hop;
     match path {
-        None => event.http = tunnel(reader, server).await,
-        Some(path) => forward(reader, server, head, &path, target, body).await,
+        None => event.http = tunnel(reader, out.stream).await,
+        Some(path) => {
+            forward(
+                reader,
+                out.stream,
+                head,
+                &path,
+                target,
+                body,
+                out.via.as_ref(),
+            )
+            .await;
+        }
     }
     event
 }
@@ -455,7 +481,7 @@ pub(crate) fn parse_request(head: &Head) -> Result<(Target, Option<String>, Body
 pub(crate) async fn admit(
     proxy: &Proxy,
     request: &EgressRequest,
-) -> (Result<Vec<SocketAddr>, Refusal>, ConnectionEvent) {
+) -> (Result<Admitted, Refusal>, ConnectionEvent) {
     // Replaced by the first step that decides; a path that forgets to stays fail-closed in the
     // audit too.
     let mut event = ConnectionEvent::new(
@@ -494,7 +520,7 @@ async fn admit_into(
     proxy: &Proxy,
     request: &EgressRequest,
     event: &mut ConnectionEvent,
-) -> Result<Vec<SocketAddr>, Refusal> {
+) -> Result<Admitted, Refusal> {
     let host = &request.host;
     let port = request.port;
     // Name stage: a literal or a name that is blocked by itself never reaches the rules, so it
@@ -520,28 +546,25 @@ async fn admit_into(
             .await
             {
                 Err(_) => {
-                    return Err(Refusal::new(
-                        "504 Gateway Timeout",
-                        format!("resolving {host} timed out"),
-                    ));
+                    return left_to_upstream(proxy, host, "timed out").ok_or_else(|| {
+                        Refusal::new("504 Gateway Timeout", format!("resolving {host} timed out"))
+                    });
                 }
                 Ok(Err(err)) => {
                     tracing::info!(%host, error = %err, "resolve failed");
-                    return Err(Refusal::new(
-                        "502 Bad Gateway",
-                        format!("could not resolve {host}"),
-                    ));
+                    return left_to_upstream(proxy, host, "failed").ok_or_else(|| {
+                        Refusal::new("502 Bad Gateway", format!("could not resolve {host}"))
+                    });
                 }
                 Ok(Ok(addrs)) => addrs,
             }
         }
     };
     if addrs.is_empty() {
-        return Err(Refusal::new(
-            "502 Bad Gateway",
-            format!("{host} has no addresses"),
-        ));
+        return left_to_upstream(proxy, host, "returned no addresses")
+            .ok_or_else(|| Refusal::new("502 Bad Gateway", format!("{host} has no addresses")));
     }
+    let resolved = addrs.len();
     let (addrs, ip_allows) = apply_ip_rules(proxy, request, addrs, event)?;
     let mut usable = Vec::new();
     let mut exact_only = Vec::new();
@@ -596,7 +619,26 @@ async fn admit_into(
         note_block(event, shown_reason(&blocked));
         return Err(block(request, &blocked));
     }
-    Ok(usable)
+    // A proxy may be told the name only when nothing the name resolved to was dropped: otherwise
+    // it could pick the dropped address itself (R-14, R-27).
+    let name_ok = matches!(host, Host::Ip(_)) || usable.len() == resolved;
+    Ok(Admitted::checked(usable, name_ok))
+}
+
+/// A name this host could not resolve, when the company proxy may resolve it instead: no address
+/// exists to guard, so the rules' decision on the name is all that applies (the audit shows no
+/// `resolved_ip`).
+fn left_to_upstream(proxy: &Proxy, host: &Host, why: &str) -> Option<Admitted> {
+    if proxy
+        .upstream
+        .as_ref()
+        .is_some_and(Upstream::resolves_unknown_names)
+    {
+        tracing::info!(%host, why, "name not resolved here; the company proxy resolves it");
+        Some(Admitted::unresolved())
+    } else {
+        None
+    }
 }
 
 /// Applies each resolved address's own rules (R-27): drops every address an IP rule denies, and
@@ -796,26 +838,7 @@ fn shown_reason(reasons: &[BlockReason]) -> BlockReason {
         .unwrap_or(BlockReason::LocalAddress)
 }
 
-/// Connects to the first address that answers within `per_address`.
-pub(crate) async fn connect_first(
-    addrs: &[SocketAddr],
-    per_address: Duration,
-) -> io::Result<(TcpStream, SocketAddr)> {
-    let mut last = io::Error::new(io::ErrorKind::NotFound, "no addresses");
-    for addr in addrs {
-        match tokio::time::timeout(per_address, TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                if let Err(err) = stream.set_nodelay(true) {
-                    tracing::debug!(error = %err, "nodelay");
-                }
-                return Ok((stream, *addr));
-            }
-            Ok(Err(err)) => last = err,
-            Err(_) => last = io::Error::new(io::ErrorKind::TimedOut, "connect timed out"),
-        }
-    }
-    Err(last)
-}
+pub(crate) use puddle_upstream::connect_first;
 
 /// `CONNECT`: answer `200`, pass on bytes the guest sent early, splice. On an error both ends
 /// reset (T-048): [`splice`] sets zero linger on the server socket, and the guest stream is dropped
@@ -860,8 +883,20 @@ pub(crate) async fn forward<S: AsyncRead + AsyncWrite + Unpin>(
     path: &str,
     target: &Target,
     body: Body,
+    via: Option<&ProxyForm>,
 ) {
-    let upstream_head = http::upstream_head(head, path, &target.host_header());
+    // To a proxy the request target is the absolute URI (of the name or the checked address the
+    // proxy was told), with the proxy credential for this request if the scheme needs one.
+    let uri = via.map_or_else(
+        || path.to_owned(),
+        |proxy| format!("http://{}{path}", proxy.authority),
+    );
+    let authorization = via.and_then(|p| {
+        p.authorization
+            .as_ref()
+            .map(puddle_upstream::Secret::expose)
+    });
+    let upstream_head = http::upstream_head(head, &uri, &target.host_header(), authorization);
     let result = async {
         server.write_all(upstream_head.as_bytes()).await?;
         forward_one_request(&mut reader, &mut server, body).await

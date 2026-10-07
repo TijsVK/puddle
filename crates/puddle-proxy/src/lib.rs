@@ -56,8 +56,10 @@ mod tap;
 mod target;
 #[cfg(feature = "testing")]
 pub mod testing;
+mod upstream;
 
 pub use destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver, SystemResolver};
 pub use proxy::{Proxy, ProxyConfig, SandboxHandler};
 pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
 pub use route::Route;
+pub use upstream::Upstream;

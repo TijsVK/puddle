@@ -33,7 +33,10 @@ fn proxy(policy: Arc<dyn Policy>, resolver: StaticResolver) -> Proxy {
 
 /// The addresses or refusal of [`super::admit`], without its audit event.
 async fn admit(proxy: &Proxy, request: &EgressRequest) -> Result<Vec<SocketAddr>, Refusal> {
-    super::admit(proxy, request).await.0
+    super::admit(proxy, request)
+        .await
+        .0
+        .map(|admitted| admitted.addrs)
 }
 
 fn header<'a>(refusal: &'a Refusal, name: &str) -> Option<&'a str> {
@@ -1222,11 +1225,17 @@ mod guard {
 
                 prop_assert!(!policy.decided_an_ip.load(Ordering::SeqCst));
                 let is_denied = |a: &IpAddr| denied.iter().any(|(d, _)| d == a);
-                if let Ok(addrs) = &admitted {
-                    for addr in addrs {
+                if let Ok(admitted) = &admitted {
+                    for addr in &admitted.addrs {
                         prop_assert!(resolved.contains(&addr.ip()), "{addr} was never resolved");
                         prop_assert!(!is_denied(&addr.ip()), "{addr} is IP-denied but admitted");
                     }
+                    // T-165: a proxy may be told the name only if nothing it resolves to is
+                    // denied or dropped.
+                    prop_assert!(
+                        !admitted.name_ok || admitted.addrs.len() == resolved.len(),
+                        "the name was offered to a proxy although an address was dropped"
+                    );
                     prop_assert!(!event.resolved_ip.is_some_and(|a| is_denied(&a)));
                 }
                 if matches!(name, Ok(Decision::Allow { .. })) && resolved.iter().all(is_denied) {

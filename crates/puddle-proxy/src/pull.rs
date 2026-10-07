@@ -50,10 +50,9 @@ use tracing::Instrument;
 use crate::counted::Counted;
 use crate::destination::{Resolver, SystemResolver};
 use crate::http::{self, Head};
-use crate::proxy::{
-    ProxyConfig, Refusal, connect_first, forward, parse_request, read_request, refuse, tunnel,
-};
+use crate::proxy::{ProxyConfig, Refusal, forward, parse_request, read_request, refuse, tunnel};
 use crate::target::Target;
+use crate::upstream::{Admitted, Upstream, connect_out};
 
 /// Random bytes in a token (256 bits).
 const TOKEN_BYTES: usize = 32;
@@ -168,6 +167,7 @@ pub struct PullProxy {
     access: LocalAccess,
     resolver: Arc<dyn Resolver>,
     config: ProxyConfig,
+    upstream: Option<Upstream>,
     registration: Registration,
 }
 
@@ -202,6 +202,7 @@ impl PullProxy {
             access,
             resolver: Arc::new(SystemResolver),
             config: ProxyConfig::default(),
+            upstream: None,
             registration,
         })
     }
@@ -228,6 +229,14 @@ impl PullProxy {
     #[must_use]
     pub fn with_config(mut self, config: ProxyConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    /// Sends pulls out along the company proxy route (T-165). The guard still runs on every
+    /// address first, and a `DIRECT` hop connects only to an address that passed.
+    #[must_use]
+    pub fn with_upstream(mut self, upstream: Upstream) -> Self {
+        self.upstream = Some(upstream);
         self
     }
 
@@ -266,6 +275,7 @@ impl PullProxy {
             access: self.access,
             resolver: self.resolver,
             streams: Arc::new(Semaphore::new(self.config.max_streams_per_sandbox)),
+            upstream: self.upstream,
             config: self.config,
         });
         let task = tokio::spawn(accept_loop(listener, shared));
@@ -317,6 +327,7 @@ struct Shared {
     access: LocalAccess,
     resolver: Arc<dyn Resolver>,
     streams: Arc<Semaphore>,
+    upstream: Option<Upstream>,
     config: ProxyConfig,
 }
 
@@ -409,31 +420,45 @@ async fn serve(shared: &Shared, stream: TcpStream) {
             return;
         }
     };
-    let addrs = match admit(shared, &target).await {
-        Ok(addrs) => addrs,
+    let admitted = match admit(shared, &target).await {
+        Ok(admitted) => admitted,
         Err(refusal) => {
             refuse(reader.get_mut(), &refusal).await;
             return;
         }
     };
-    let (server, addr) = match connect_first(&addrs, shared.config.connect_timeout).await {
-        Ok(connected) => connected,
-        Err(err) => {
-            tracing::info!(host = %target.host, port = target.port, error = %err, "image-pull connect failed");
-            let refusal = Refusal::new(
-                "502 Bad Gateway",
-                format!("could not connect to {}:{}", target.host, target.port),
-            );
+    let out = match connect_out(
+        shared.upstream.as_ref(),
+        &target,
+        path.is_none(),
+        &admitted,
+        shared.config.connect_timeout,
+    )
+    .await
+    {
+        Ok(out) => out,
+        Err(refusal) => {
             refuse(reader.get_mut(), &refusal).await;
             return;
         }
     };
-    tracing::info!(host = %target.host, port = target.port, %addr, "image-pull connection");
+    tracing::info!(host = %target.host, port = target.port, addr = ?out.addr, hop = ?out.hop, "image-pull connection");
     match path {
         None => {
-            tunnel(reader, server).await;
+            tunnel(reader, out.stream).await;
         }
-        Some(path) => forward(reader, server, &head, &path, &target, body).await,
+        Some(path) => {
+            forward(
+                reader,
+                out.stream,
+                &head,
+                &path,
+                &target,
+                body,
+                out.via.as_ref(),
+            )
+            .await;
+        }
     }
     tracing::debug!(
         host = %target.host,
@@ -456,7 +481,7 @@ fn verdict(guard: &NetPolicy, access: LocalAccess, addr: SocketAddr) -> Result<(
 
 /// The addresses a pull to `target` may connect to: the name stage (`localhost`, metadata
 /// names), then every resolved address through [`verdict`].
-async fn admit(shared: &Shared, target: &Target) -> Result<Vec<SocketAddr>, Refusal> {
+async fn admit(shared: &Shared, target: &Target) -> Result<Admitted, Refusal> {
     let host = &target.host;
     let port = target.port;
     let named = puddle_netpolicy::Target::from_host(host.clone()).named_category();
@@ -485,22 +510,21 @@ async fn admit(shared: &Shared, target: &Target) -> Result<Vec<SocketAddr>, Refu
             .await
             {
                 Err(_) => {
-                    return Err(Refusal::new(
-                        "504 Gateway Timeout",
-                        format!("resolving {host} timed out"),
-                    ));
+                    return left_to_upstream(shared, host, "timed out").ok_or_else(|| {
+                        Refusal::new("504 Gateway Timeout", format!("resolving {host} timed out"))
+                    });
                 }
                 Ok(Err(err)) => {
                     tracing::info!(%host, error = %err, "image-pull resolve failed");
-                    return Err(Refusal::new(
-                        "502 Bad Gateway",
-                        format!("could not resolve {host}"),
-                    ));
+                    return left_to_upstream(shared, host, "failed").ok_or_else(|| {
+                        Refusal::new("502 Bad Gateway", format!("could not resolve {host}"))
+                    });
                 }
                 Ok(Ok(addrs)) => addrs,
             }
         }
     };
+    let resolved = addrs.len();
     let mut usable = Vec::new();
     let mut reasons = Vec::new();
     for addr in addrs {
@@ -518,7 +542,24 @@ async fn admit(shared: &Shared, target: &Target) -> Result<Vec<SocketAddr>, Refu
         }
         return Err(blocked(host, port, &reasons));
     }
-    Ok(usable)
+    // A proxy may be told the name only when every address it resolved to passed the guard.
+    let name_ok = matches!(host, Host::Ip(_)) || usable.len() == resolved;
+    Ok(Admitted::checked(usable, name_ok))
+}
+
+/// A registry name this host cannot resolve, when the company proxy may resolve it (networks
+/// without external DNS): there is no address to guard, and the name stage already ran.
+fn left_to_upstream(shared: &Shared, host: &Host, why: &str) -> Option<Admitted> {
+    if shared
+        .upstream
+        .as_ref()
+        .is_some_and(Upstream::resolves_unknown_names)
+    {
+        tracing::info!(%host, why, "image pull: name not resolved here; the company proxy resolves it");
+        Some(Admitted::unresolved())
+    } else {
+        None
+    }
 }
 
 /// The refusal for a pull to an address it may not reach.

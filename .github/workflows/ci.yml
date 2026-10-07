@@ -112,10 +112,18 @@ jobs:
       - name: doc tests and rustdoc
         if: ${{ !cancelled() }}
         run: scripts/check.sh doc
+      - name: Squid for the upstream-chaining e2e (T-165, Basic-auth company proxy)
+        run: |
+          sudo apt-get install -y --no-install-recommends squid
+          # The package starts its own daemon; the test runs its own Squid on a free port.
+          sudo systemctl stop squid || true
+          test -x /usr/sbin/squid
       - name: tests with coverage gate
         if: ${{ !cancelled() }}
         env:
           NEXTEST_PROFILE: ci
+          PUDDLE_SQUID_BIN: /usr/sbin/squid
+          PUDDLE_SQUID_REQUIRED: "1"
         run: |
           scripts/check.sh coverage
           {

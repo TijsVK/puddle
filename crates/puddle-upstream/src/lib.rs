@@ -15,6 +15,12 @@
 //!   port) only, so an implementation derives the `HTTP/<host>` service name from it and holds
 //!   any credentials itself.
 //!
+//! - [`Chain`]: connects along the route (T-165): `DIRECT` only to addresses the caller's guard
+//!   passed, `CONNECT` and absolute-form through proxies, fallback to the next hop when one is
+//!   unreachable, and the `407` loop on one connection with [`ProxyAuth`] ([`BasicAuth`] from
+//!   configured credentials; SSPI is T-135). [`host::connect`] is the same for puddle's own
+//!   requests.
+//!
 //! [`Discovery`] never fails: when it cannot learn a route it answers "direct", and says why in
 //! [`Decision::source`]. The caller connects hop by hop and calls [`Discovery::report_failure`]
 //! for a proxy that did not answer.
@@ -27,21 +33,31 @@
 #![cfg_attr(not(windows), forbid(unsafe_code))]
 
 mod auth;
+mod basic;
+mod chain;
 pub mod discovery;
 mod env;
 #[cfg(any(test, feature = "testing"))]
 mod fake;
+#[cfg(any(test, feature = "testing"))]
+mod fake_proxy;
 mod hop;
+pub mod host;
 mod os;
 mod parse;
 #[cfg(windows)]
 mod windows;
+mod wire;
 
 pub use auth::{AuthError, AuthSession, AuthStep, NoAuth, ProxyAuth, system_auth};
+pub use basic::{AuthList, BasicAuth, Credentials};
+pub use chain::{Chain, ChainConfig, ChainError, Connected, Form, Request, Secret, connect_first};
 pub use discovery::{Config, Decision, Discovery, ManualProxy, Mode, RouteSource, Watching};
 pub use env::{EnvFallback, EnvOs};
 #[cfg(any(test, feature = "testing"))]
 pub use fake::FakeOs;
+#[cfg(any(test, feature = "testing"))]
+pub use fake_proxy::{Behaviour, FakeProxy, Seen};
 pub use hop::{Destination, Hop, ParseError, ProxyAddr, Route, Scheme};
 pub use os::{
     ChangeCallback, Origin, OsProxy, PacError, PacQuery, ProxyConfig, SettingsError, WatchGuard,

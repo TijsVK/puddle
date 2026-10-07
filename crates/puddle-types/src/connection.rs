@@ -129,6 +129,10 @@ pub struct ConnectionEvent {
     pub port: u16,
     /// The address connected to, once connected.
     pub resolved_ip: Option<IpAddr>,
+    /// The hop of the company-proxy route that carried the connection (`DIRECT` or
+    /// `PROXY host:port`, T-165), once connected; `None` when no upstream route is configured.
+    /// Never carries credentials.
+    pub upstream: Option<String>,
     /// What happened.
     pub decision: ConnectionDecision,
     /// Why.
@@ -162,6 +166,7 @@ impl ConnectionEvent {
             host: request.host.clone(),
             port: request.port,
             resolved_ip: None,
+            upstream: None,
             decision,
             reason,
             rule_id: None,

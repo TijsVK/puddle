@@ -4180,6 +4180,7 @@ dependencies = [
  "puddle-proxy",
  "puddle-store",
  "puddle-types",
+ "puddle-upstream",
  "rcgen",
  "rustls",
  "serde_json",
@@ -4254,6 +4255,7 @@ dependencies = [
  "puddle-netpolicy",
  "puddle-proxy",
  "puddle-types",
+ "puddle-upstream",
  "subtle",
  "tokio",
  "tracing",
@@ -4325,6 +4327,7 @@ dependencies = [
 name = "puddle-upstream"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "proptest",
  "puddle-upstream",
  "thiserror",

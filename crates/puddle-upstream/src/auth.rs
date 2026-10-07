@@ -32,8 +32,9 @@ pub enum AuthStep {
 
 /// One authentication exchange with one proxy, possibly several legs on one connection (NTLM).
 pub trait AuthSession: Send + std::fmt::Debug {
-    /// The next step. `challenge` is the `Proxy-Authenticate` value of the latest `407`, or
-    /// `None` for the first leg (a preemptive Kerberos token needs no challenge).
+    /// The next step. `challenge` is the `Proxy-Authenticate` value of the latest `407` (when the
+    /// proxy sent several headers they are joined with `, `, which HTTP allows), or `None` for
+    /// the first leg (a preemptive Kerberos token needs no challenge).
     ///
     /// # Errors
     /// [`AuthError`] when the challenge cannot be answered.
