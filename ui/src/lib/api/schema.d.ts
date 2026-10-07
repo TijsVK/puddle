@@ -781,7 +781,7 @@ export interface components {
          */
         AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "audit_trimmed";
         /**
-         * @description What a programmatic clipboard read in the browser window does (D-46).
+         * @description What a programmatic clipboard read in the browser window does.
          * @enum {string}
          */
         ClipboardRead: "ask" | "allow" | "deny";
@@ -837,11 +837,11 @@ export interface components {
         };
         /** @description Every consent puddle asks for. */
         Consents: {
-            /** @description Crash reports (D-18). */
+            /** @description Crash reports. */
             crash_reports: components["schemas"]["Consent"];
-            /** @description Usage telemetry (D-18). */
+            /** @description Usage telemetry. */
             telemetry: components["schemas"]["Consent"];
-            /** @description Microsoft's VS Code server and its licence terms (D-40). */
+            /** @description Microsoft's VS Code server and its licence terms. */
             vscode_server: components["schemas"]["Consent"];
         };
         /** @description What an approve or deny did (R-16, R-17). */
@@ -1117,7 +1117,7 @@ export interface components {
          * @enum {string}
          */
         LocalCategory: "loopback" | "private" | "link_local" | "metadata" | "special";
-        /** @description Local destination categories a sandbox may approve (D-1, D-37). `null` inherits. */
+        /** @description Local destination categories a sandbox may approve. `null` inherits. */
         LocalToggles: {
             /** @description Link-local addresses. */
             link_local: boolean | null;

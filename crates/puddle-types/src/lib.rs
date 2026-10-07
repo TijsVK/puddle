@@ -2,13 +2,11 @@
 //! Shared types for puddle's crates: identifiers, wire types and errors that cross crate
 //! boundaries. Keep this crate small and free of I/O, so every other crate can depend on it.
 //!
-//! (The W1 breakdown, T-081, calls this crate `puddle-core`.)
-//!
 //! | Item | What |
 //! |---|---|
 //! | [`SandboxName`], [`WorkspaceId`], [`VolumeName`], [`ImageRef`] | validated names; sandbox, workspace and volume names are DNS labels |
 //! | [`GuestPath`], [`GuestFile`], [`GuestEnv`] | what providers put into a guest; the boot hook applies them |
-//! | [`ApplyKind`], [`MergeSpec`], [`unmerge`] | merged files: puddle owns only some keys of a user's file (T-097); the engine `puddle-agent` runs in the guest |
+//! | [`ApplyKind`], [`MergeSpec`], [`unmerge`] | merged files: puddle owns only some keys of a user's file; the engine `puddle-agent` runs in the guest |
 //! | [`MemoryMib`] | guest memory size: 256 MiB to 1 TiB, default 8 GiB (the setting is in `puddle-settings`) |
 //! | [`SandboxStatus`], [`Event`], [`EventSink`] | sandbox states and the user-facing event stream (incl. [`Event::OomKill`]) |
 //! | [`Host`], [`DomainName`] | a normalised egress destination (the proxy normalises, everyone else validates) |

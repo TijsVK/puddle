@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-api"
-description = "Local HTTP API (axum) with SSE and the generated OpenAPI contract (W4)"
+description = "Local HTTP API (axum) with SSE and the generated OpenAPI contract"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

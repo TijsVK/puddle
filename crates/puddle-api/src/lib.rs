@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! puddle's local HTTP API (MWE plan W4): axum on `127.0.0.1`, an SSE event stream, and the
+//! puddle's local HTTP API axum on `127.0.0.1`, an SSE event stream, and the
 //! `OpenAPI` contract the UI and CLI are generated from (ADR 0004).
 //!
-//! # Security (T-029 AP-1, AP-2)
+//! # Security
 //!
 //! Every request, the spec included, passes three checks before any handler runs, in this
 //! order, and each refusal is a JSON [`ApiErrorBody`]:

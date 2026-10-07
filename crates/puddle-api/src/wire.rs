@@ -1099,7 +1099,7 @@ impl SettingsLayer {
     }
 }
 
-/// Local destination categories a sandbox may approve (D-1, D-37). `null` inherits.
+/// Local destination categories a sandbox may approve. `null` inherits.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LocalToggles {
@@ -1154,7 +1154,7 @@ impl LocalToggles {
     }
 }
 
-/// What a programmatic clipboard read in the browser window does (D-46).
+/// What a programmatic clipboard read in the browser window does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipboardRead {
@@ -1412,7 +1412,7 @@ pub struct SandboxSettingsRequest {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Consents (D-18, D-40)
+// Consents
 
 /// What the user agreed to or declined.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -1455,11 +1455,11 @@ impl From<&settings::Consent> for Consent {
 /// Every consent puddle asks for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Consents {
-    /// Usage telemetry (D-18).
+    /// Usage telemetry.
     pub telemetry: Consent,
-    /// Crash reports (D-18).
+    /// Crash reports.
     pub crash_reports: Consent,
-    /// Microsoft's VS Code server and its licence terms (D-40).
+    /// Microsoft's VS Code server and its licence terms.
     pub vscode_server: Consent,
 }
 

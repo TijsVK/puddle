@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The guard over real HTTP: token, `Host` and `Origin` refusals (T-029 AP-1, AP-2), loopback
+//! The guard over real HTTP: token, `Host` and `Origin` refusals, loopback
 //! binding, no CORS, JSON-only state changes.
 
 use std::fmt::Write as _;

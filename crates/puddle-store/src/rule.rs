@@ -5,7 +5,7 @@ use puddle_types::{RuleId, SandboxName};
 
 use crate::pattern::Pattern;
 
-/// Which requests a rule applies to (R-5). Non-exhaustive: user rule sets (D-52) will be a third
+/// Which requests a rule applies to (R-5). Non-exhaustive: user rule sets will be a third
 /// scope, ranked below `Global`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]

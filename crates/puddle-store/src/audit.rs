@@ -49,7 +49,7 @@ pub struct ConnectionRecord {
     /// The address connected to.
     pub resolved_ip: Option<String>,
     /// The company-proxy hop that carried it (`DIRECT`, `PROXY host:port`), when an upstream
-    /// route is configured (T-165). Absent in records written before it existed.
+    /// route is configured. Absent in records written before it existed.
     #[serde(default)]
     pub upstream: Option<String>,
     /// What happened.
@@ -248,7 +248,7 @@ pub enum RuleDeleteReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuditRecord {
-    /// A connection the proxy handled (written by W2).
+    /// A connection the proxy handled (written by the proxy).
     Connection(ConnectionRecord),
     /// A new pending row.
     PendingCreated {

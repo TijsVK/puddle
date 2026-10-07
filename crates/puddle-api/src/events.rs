@@ -63,7 +63,7 @@ pub struct Lagged {
 }
 
 /// Whether a subscriber filtering on `filter` gets `event`. Global events (no sandbox) go to
-/// every subscriber (T-087).
+/// every subscriber.
 pub(crate) fn wanted(event: &Event, filter: Option<&SandboxName>) -> bool {
     wanted_for(event.sandbox(), filter)
 }
@@ -147,7 +147,7 @@ mod tests {
         assert!(!wanted(&oom("b"), Some(&a)));
         assert!(wanted(&oom("b"), None));
         // Global events (`Event::sandbox()` is `None`) reach filtered subscribers too. No real
-        // global variant exists yet (T-087), so the rule is checked on the sandbox alone.
+        // global variant exists yet, so the rule is checked on the sandbox alone.
         assert!(wanted_for(None, Some(&a)));
         assert!(wanted_for(None, None));
     }

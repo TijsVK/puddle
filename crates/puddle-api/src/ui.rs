@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Serving the single-page app from the API's own origin (T-161 default 1). The page and the API
-//! share one origin, so there is no CORS (AP-2 stays intact), SSE works, and the shell and a
+//! Serving the single-page app from the API's own origin. The page and the API
+//! share one origin, so there is no CORS (the API's `Origin` check stays intact), SSE works, and the shell and a
 //! browser tab run identical code.
 //!
 //! Static files need no token (the page has to load before it can present one) but keep the

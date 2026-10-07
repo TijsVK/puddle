@@ -90,7 +90,7 @@ fn hex(bytes: &[u8]) -> String {
 /// puddle creates it) and a file readable by others is refused when read back. On Windows it
 /// inherits the ACL of its directory, so it belongs in the user's profile (`%LOCALAPPDATA%`),
 /// which only the user, administrators and `SYSTEM` can read (`puddle_fs::private` owns both
-/// halves; T-093 adds the explicit Windows ACL there).
+/// halves; an explicit Windows ACL is still to come).
 #[derive(Clone)]
 pub struct ConnectionInfo {
     /// `http://127.0.0.1:<port>`.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Serving the single-page app from the API's origin: files need no token, the API still does,
-//! and the page is served with a strict CSP and no framing (T-170).
+//! and the page is served with a strict CSP and no framing.
 
 use std::collections::HashMap;
 use std::sync::Arc;

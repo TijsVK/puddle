@@ -3311,7 +3311,7 @@
       },
       "ClipboardRead": {
         "type": "string",
-        "description": "What a programmatic clipboard read in the browser window does (D-46).",
+        "description": "What a programmatic clipboard read in the browser window does.",
         "enum": [
           "ask",
           "allow",
@@ -3451,15 +3451,15 @@
         "properties": {
           "crash_reports": {
             "$ref": "#/components/schemas/Consent",
-            "description": "Crash reports (D-18)."
+            "description": "Crash reports."
           },
           "telemetry": {
             "$ref": "#/components/schemas/Consent",
-            "description": "Usage telemetry (D-18)."
+            "description": "Usage telemetry."
           },
           "vscode_server": {
             "$ref": "#/components/schemas/Consent",
-            "description": "Microsoft's VS Code server and its licence terms (D-40)."
+            "description": "Microsoft's VS Code server and its licence terms."
           }
         }
       },
@@ -4106,7 +4106,7 @@
       },
       "LocalToggles": {
         "type": "object",
-        "description": "Local destination categories a sandbox may approve (D-1, D-37). `null` inherits.",
+        "description": "Local destination categories a sandbox may approve. `null` inherits.",
         "required": [
           "loopback",
           "private",
