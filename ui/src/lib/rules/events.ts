@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The live event the rules screen listens to. The API will add `rules_changed` to its `Event`
-// union (and so to the generated schema); until then it is read here, defensively. When the API
-// has it, check this guard against the generated type.
+// The live event the rules screen listens to. It is read defensively: an event that is not an
+// object with that exact type is ignored.
+import type { components } from "#lib/api/schema.d.ts";
 
-/** True for the event that says some rule was added, changed, deleted or expired. */
-export function isRulesChanged(value: unknown): boolean {
+type Event = components["schemas"]["Event"];
+
+/** Some rule was added, changed, deleted or expired. */
+export type RulesChanged = Extract<Event, { type: "rules_changed" }>;
+
+export function isRulesChanged(value: unknown): value is RulesChanged {
   return (
     typeof value === "object" &&
     value !== null &&

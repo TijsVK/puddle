@@ -452,6 +452,26 @@ test.describe("staying current", () => {
     await expect(page.locator("tbody tr")).toHaveCount(8);
   });
 
+  test("a rule added or expired behind the page's back shows at once, by event", async ({
+    page,
+    backend,
+  }) => {
+    await openRules(page, backend);
+    // No clock movement: only the event stream can make this appear before the 10 s poll.
+    await backend.control.step({
+      do: "rule",
+      effect: "allow",
+      pattern: "by-event.example.org",
+    });
+    await expect(rowFor(page, "by-event.example.org")).toBeVisible({
+      timeout: 4000,
+    });
+    await backend.control.advance(5 * 3_600_000);
+    await expect(rowFor(page, "api.example.com")).toHaveCount(0, {
+      timeout: 4000,
+    });
+  });
+
   test("a restarted API is picked up again", async ({ page, backend }) => {
     await openRules(page, backend);
     await backend.control.restart();
