@@ -135,6 +135,9 @@ struct Guest {
     dirty: AtomicBool,
     fail_clone: AtomicBool,
     fail_boot: AtomicBool,
+    /// When set, the clone turns this path into a folder, so the next save of the workspace
+    /// list fails (a stand-in for a full disk or a locked file).
+    break_list_on_clone: Mutex<Option<PathBuf>>,
 }
 
 impl Guest {
@@ -174,6 +177,9 @@ impl Guest {
                 ExecOutput::new(0, "/workspaces/x: 4096 bytes trimmed\n", "")
             }
             "clone" => {
+                if let Some(list) = self.break_list_on_clone.lock().unwrap().take() {
+                    make_unwritable(&list);
+                }
                 if self.fail_clone.load(Ordering::SeqCst) {
                     ExecOutput::new(128, "", "fatal: repository not found")
                 } else {
@@ -292,6 +298,15 @@ async fn create(api: &Api, events: &mut support::Events, name: &'static str) {
     let reply = api.post("/api/workspaces", &new_workspace(name)).await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     events.until(ended(name), Duration::from_secs(20)).await;
+}
+
+/// Turns the file at `path` into a non-empty folder: replacing it then fails on every OS.
+fn make_unwritable(path: &std::path::Path) {
+    if path.is_file() {
+        std::fs::remove_file(path).unwrap();
+    }
+    std::fs::create_dir_all(path).unwrap();
+    std::fs::write(path.join("keep"), b"x").unwrap();
 }
 
 fn status_of(reply: &support::Reply) -> String {
@@ -1212,6 +1227,162 @@ async fn a_damaged_workspace_list_stops_the_start_instead_of_looking_empty() {
     assert!(matches!(err, HostError::State { .. }), "{err}");
     // Nothing was reconciled: a volume of the workspace that could not be listed is safe.
     assert!(rig.runtime.calls().is_empty());
+}
+
+// ---- the workspace list never costs a workspace its volume ------------------------------
+
+async fn volume_names(rig: &Rig) -> Vec<String> {
+    rig.runtime
+        .list_volumes()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|v| v.name)
+        .collect()
+}
+
+fn list_path(rig: &Rig) -> PathBuf {
+    rig.dir.path().join("data").join("workspaces.json")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_workspace_list_keeps_every_workspace_volume() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(events);
+    // The list is gone (deleted by hand, restored from an old backup, a broken disk).
+    std::fs::remove_file(list_path(&rig)).unwrap();
+
+    let again = rig.start().await;
+    assert_eq!(volume_names(&rig).await, ["ws-acme"]);
+    assert!(
+        again.reconcile_report().volumes_removed.is_empty(),
+        "{:?}",
+        again.reconcile_report()
+    );
+    // Reported, so the user can be told, and still usable: the volume is never taken.
+    assert_eq!(
+        again.reconcile_report().unknown_volumes,
+        [WorkspaceId::new("acme").unwrap().volume_name()]
+    );
+    again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_volume_no_listed_workspace_claims_is_kept() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(events);
+    // A volume with work on it that the list doesn't name (an older or partial list).
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("lost").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+
+    let again = rig.start().await;
+    assert_eq!(volume_names(&rig).await, ["ws-acme", "ws-lost"]);
+    assert_eq!(
+        again.reconcile_report().unknown_volumes,
+        [WorkspaceId::new("lost").unwrap().volume_name()]
+    );
+    // The listed workspace is unaffected.
+    assert_eq!(
+        status_of(&api(&again).get("/api/workspaces/acme").await),
+        "stopped"
+    );
+    again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_is_refused_when_the_workspace_list_cannot_be_saved() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    make_unwritable(&list_path(&rig));
+
+    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    let message = reply.json()["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("workspace list"), "{message}");
+    // Nothing was made, and the name is still free.
+    assert!(
+        api.get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(rig.runtime.list().await.unwrap().is_empty());
+    assert!(volume_names(&rig).await.is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_whose_last_save_fails_is_undone_and_says_why() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    *rig.guest.break_list_on_clone.lock().unwrap() = Some(list_path(&rig));
+
+    api1.post("/api/workspaces", &new_workspace("acme")).await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    // The list still says "being created", so a restart would take the volume as a leftover:
+    // the create fails now, before anyone works in it.
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end["detail"].as_str().unwrap().contains("workspace list"),
+        "{end}"
+    );
+    assert!(rig.runtime.list().await.unwrap().is_empty());
+    assert!(volume_names(&rig).await.is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_is_refused_when_the_workspace_list_cannot_be_saved() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    make_unwritable(&list_path(&rig));
+
+    let confirm = json!({"confirm": true}).to_string();
+    let refused = api.delete("/api/workspaces/acme", Some(&confirm)).await;
+    assert_eq!(refused.status, 503, "{}", refused.body);
+    let message = refused.json()["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("workspace list"), "{message}");
+    // Nothing was deleted: the workspace and its volume are still there.
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "stopped");
+    assert_eq!(volume_names(&rig).await, ["ws-acme"]);
+    // Not busy any more: once the list can be saved again, the delete goes through.
+    std::fs::remove_file(list_path(&rig).join("keep")).unwrap();
+    std::fs::remove_dir(list_path(&rig)).unwrap();
+    let accepted = api.delete("/api/workspaces/acme", Some(&confirm)).await;
+    assert_eq!(accepted.status, 202, "{}", accepted.body);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(volume_names(&rig).await.is_empty());
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(list_path(&rig)).unwrap()).unwrap();
+    assert!(
+        saved["workspaces"].as_array().unwrap().is_empty(),
+        "{saved}"
+    );
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

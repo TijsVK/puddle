@@ -6,6 +6,12 @@
 //! (it has no record that could carry the label; puddle's msb home is private); a volume
 //! named `ws-<workspace id>`. Everything else is foreign and only reported.
 //!
+//! A workspace volume holds work that may exist nowhere else, so reconcile removes one only when
+//! the inventory names it as a create that never finished. A `ws-*` volume the inventory doesn't
+//! know is kept and reported ([`ReconcileReport::unknown_volumes`]): a missing or outdated list
+//! of workspaces must never cost a workspace its data (principle 7, "your work is never lost by
+//! accident").
+//!
 //! A puddle-owned maintenance sandbox (`m--<workspace id>`) only lives while puddle checks
 //! or trims a workspace, so one found at start is always a leftover: it is stopped and removed
 //! even if the inventory lists it. After reconcile, [`adopt_workspaces`] rebuilds the workspace
@@ -19,9 +25,10 @@ use puddle_workspace::{Workspaces, is_maintenance_name};
 
 use crate::shutdown::{ShutdownConfig, StopOutcome, trim_and_stop};
 
-/// What puddle's own records say exists: the sandboxes and workspaces it knows. Anything
-/// puddle-owned that the runtime has and this doesn't list is stale and removed, so this must
-/// be the **complete** list from puddle's store, never a partial one.
+/// What puddle's own records say exists: the sandboxes and workspaces it knows. A puddle-owned
+/// sandbox record the runtime has and this doesn't list is stale and removed. Workspace volumes
+/// are different: only those of [`Inventory::interrupted`] are removed; any other volume this
+/// doesn't list is kept and reported.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Inventory {
     /// Sandboxes puddle has a record of; their runtime records are kept.
@@ -31,6 +38,10 @@ pub struct Inventory {
     /// The sandbox each known workspace is attached to, from puddle's store; read by
     /// [`adopt_workspaces`].
     pub attached: BTreeMap<WorkspaceId, SandboxName>,
+    /// Workspaces whose create started and never finished (puddle stopped in the middle of
+    /// it). Their volumes hold only what that create made, nothing the user worked on, and are
+    /// removed. A workspace in [`Inventory::workspaces`] too counts as known and is kept.
+    pub interrupted: BTreeSet<WorkspaceId>,
 }
 
 /// One reconcile step that failed; the others still ran.
@@ -55,8 +66,11 @@ pub struct ReconcileReport {
     pub crashed: Vec<SandboxName>,
     /// Stale directories (a failed create's leftovers), removed.
     pub stale_dirs_removed: Vec<SandboxName>,
-    /// `ws-*` volumes of workspaces puddle no longer knows, removed.
+    /// Volumes of creates that never finished ([`Inventory::interrupted`]), removed.
     pub volumes_removed: Vec<VolumeName>,
+    /// `ws-*` volumes no known workspace claims, kept: they may hold work, and the list that
+    /// lacks them may be the thing that is wrong. The caller tells the user.
+    pub unknown_volumes: Vec<VolumeName>,
     /// Foreign sandboxes, directories and volumes, left untouched.
     pub foreign: Vec<String>,
     /// Steps that failed.
@@ -65,8 +79,9 @@ pub struct ReconcileReport {
 
 /// Brings the runtime in line with `inventory` after a puddle that may have died: stops every
 /// puddle-owned sandbox still running (`fstrim` first), removes puddle-owned records and stale
-/// directories puddle doesn't know, then removes orphaned `ws-*` volumes (only when no running
-/// sandbox holds them). Foreign names are never touched. Run it before puddle starts any sandbox
+/// directories puddle doesn't know, then removes the `ws-*` volumes of creates that never
+/// finished (only when no running sandbox holds them). Any other `ws-*` volume no known
+/// workspace claims is kept and reported. Foreign names are never touched. Run it before puddle starts any sandbox
 /// and while no other puddle runs (single instance).
 ///
 /// # Errors
@@ -112,6 +127,11 @@ pub async fn reconcile<R: Runtime>(
         if inventory.workspaces.contains(&workspace) {
             continue;
         }
+        if !inventory.interrupted.contains(&workspace) {
+            tracing::warn!(volume = %name, "reconcile: a workspace volume no known workspace claims; kept");
+            report.unknown_volumes.push(name);
+            continue;
+        }
         if let Some(holder) = volume.holder {
             // Only a sandbox that is still running holds a volume, and every puddle-owned one
             // was stopped above, so this holder is foreign (or its stop failed).
@@ -124,7 +144,7 @@ pub async fn reconcile<R: Runtime>(
         }
         match runtime.remove_volume(&name).await {
             Ok(()) => {
-                tracing::info!(volume = %name, "reconcile: orphaned workspace volume removed");
+                tracing::info!(volume = %name, "reconcile: volume of an unfinished create removed");
                 report.volumes_removed.push(name);
             }
             Err(e) => report.fail(name.as_str(), "remove volume", &e),
@@ -132,11 +152,13 @@ pub async fn reconcile<R: Runtime>(
     }
 
     report.foreign.sort();
+    report.unknown_volumes.sort();
     tracing::info!(
         stopped = report.stopped.len(),
         removed = report.removed.len(),
         stale_dirs = report.stale_dirs_removed.len(),
         volumes = report.volumes_removed.len(),
+        unknown_volumes = report.unknown_volumes.len(),
         foreign = report.foreign.len(),
         failures = report.failures.len(),
         "reconcile done"

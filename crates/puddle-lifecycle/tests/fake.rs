@@ -266,8 +266,9 @@ async fn killed_puddle_world() -> World {
     // Stale directories.
     rt.add_stale_dir("failed-create");
     rt.add_stale_dir("Foreign_Dir");
-    // Volumes: a known workspace, an orphaned one, and foreign ones.
-    for v in ["ws-known", "ws-orphan", "data"] {
+    // Volumes: a known workspace, an unfinished create, one no workspace claims, and foreign
+    // ones.
+    for v in ["ws-known", "ws-half", "ws-unknown", "data"] {
         rt.create_volume(VolumeSpec {
             name: vol(v),
             size: DiskSize::mib(8),
@@ -283,6 +284,7 @@ async fn killed_puddle_world() -> World {
             .map(name)
             .collect(),
         workspaces: BTreeSet::from([WorkspaceId::new("known").unwrap()]),
+        interrupted: BTreeSet::from([WorkspaceId::new("half").unwrap()]),
         ..Inventory::default()
     };
     World {
@@ -312,7 +314,8 @@ async fn reconcile_cleans_up_only_what_puddle_owns() {
     );
     assert_eq!(report.crashed, [name("known-crashed")]);
     assert_eq!(report.stale_dirs_removed, [name("failed-create")]);
-    assert_eq!(report.volumes_removed, [vol("ws-orphan")]);
+    assert_eq!(report.volumes_removed, [vol("ws-half")]);
+    assert_eq!(report.unknown_volumes, [vol("ws-unknown")]);
     assert_eq!(
         report.foreign,
         [
@@ -373,7 +376,7 @@ async fn reconcile_cleans_up_only_what_puddle_owns() {
         .into_iter()
         .map(|v| v.name)
         .collect();
-    assert_eq!(volumes, ["Data_Disk", "data", "ws-known"]);
+    assert_eq!(volumes, ["Data_Disk", "data", "ws-known", "ws-unknown"]);
 
     // A second reconcile finds nothing left to do.
     let again = reconcile(rt, &w.inventory, &ShutdownConfig::default())
@@ -382,6 +385,7 @@ async fn reconcile_cleans_up_only_what_puddle_owns() {
     assert!(again.stopped.is_empty() && again.removed.is_empty());
     assert!(again.stale_dirs_removed.is_empty() && again.volumes_removed.is_empty());
     assert_eq!(again.crashed, [name("known-crashed")]);
+    assert_eq!(again.unknown_volumes, [vol("ws-unknown")]);
 }
 
 #[tokio::test]
@@ -409,7 +413,7 @@ async fn reconcile_reports_failed_steps_and_carries_on() {
         [
             ("unknown-stopped", "remove"),
             ("failed-create", "remove stale dir"),
-            ("ws-orphan", "remove volume"),
+            ("ws-half", "remove volume"),
         ]
     );
     assert!(report.failures[0].error.contains("injected"));
@@ -435,8 +439,12 @@ async fn an_orphan_whose_stop_fails_keeps_its_record_and_its_volume() {
         .await
         .unwrap();
     rt.inject(Op::Stop, Fault::always(runtime_error("stop")));
+    let inventory = Inventory {
+        interrupted: BTreeSet::from([WorkspaceId::new("held").unwrap()]),
+        ..Inventory::default()
+    };
 
-    let report = reconcile(&rt, &Inventory::default(), &ShutdownConfig::default())
+    let report = reconcile(&rt, &inventory, &ShutdownConfig::default())
         .await
         .unwrap();
 
@@ -562,6 +570,7 @@ async fn adopted_workspaces_refuse_a_second_sandbox_after_a_restart() {
             (beta.clone(), name("gone")),
             (WorkspaceId::new("unknown").unwrap(), name("one")),
         ]),
+        ..Inventory::default()
     };
     reconcile(&rt, &inventory, &ShutdownConfig::default())
         .await
@@ -580,4 +589,49 @@ async fn adopted_workspaces_refuse_a_second_sandbox_after_a_restart() {
         "{refused}"
     );
     assert!(workspaces.holder(&beta).is_none());
+}
+
+#[tokio::test]
+async fn a_workspace_volume_the_inventory_does_not_list_is_kept() {
+    let rt = FakeRuntime::new();
+    rt.create_volume(VolumeSpec {
+        name: vol("ws-lost"),
+        size: DiskSize::mib(8),
+    })
+    .await
+    .unwrap();
+
+    // An empty inventory is what a missing or outdated workspace list gives.
+    let report = reconcile(&rt, &Inventory::default(), &ShutdownConfig::default())
+        .await
+        .unwrap();
+
+    assert!(report.volumes_removed.is_empty(), "{report:?}");
+    assert_eq!(report.unknown_volumes, [vol("ws-lost")]);
+    assert!(report.failures.is_empty(), "{report:?}");
+    assert!(rt.volume(&vol("ws-lost")).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn a_known_workspace_wins_over_an_interrupted_mark() {
+    let rt = FakeRuntime::new();
+    rt.create_volume(VolumeSpec {
+        name: vol("ws-both"),
+        size: DiskSize::mib(8),
+    })
+    .await
+    .unwrap();
+    let both = WorkspaceId::new("both").unwrap();
+    let inventory = Inventory {
+        workspaces: BTreeSet::from([both.clone()]),
+        interrupted: BTreeSet::from([both]),
+        ..Inventory::default()
+    };
+
+    let report = reconcile(&rt, &inventory, &ShutdownConfig::default())
+        .await
+        .unwrap();
+
+    assert!(report.volumes_removed.is_empty() && report.unknown_volumes.is_empty());
+    assert!(rt.volume(&vol("ws-both")).await.unwrap().is_some());
 }

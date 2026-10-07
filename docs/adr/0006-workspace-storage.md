@@ -84,7 +84,9 @@ Two findings from the rerun put requirements on puddle rather than on the choice
 - **The first sandbox work is "workspace volume lifecycle"** instead of "bind mounts": create (`msb
   volume create --kind disk --size N`) or reuse `ws-<id>`, attach, track the attachment, delete with
   the unpushed-work check (the check runs in the guest, so delete needs a running sandbox or a short
-  one started for it), garbage-collect orphaned `volumes\ws-*`, and clean up refused/failed creates.
+  one started for it), remove the volume of a create that never finished, and clean up refused/failed
+  creates. A `ws-*` volume that no workspace in puddle's list claims is kept and reported, never
+  removed: the list may be what is missing or wrong, and the volume may hold the only copy of work.
   Windows path handling mostly drops out. Resizing a volume is not known to be supported by msb; the
   size is set at creation.
 - **The IDE attaches into the VM.** VS Code Remote-SSH and JetBrains Gateway open

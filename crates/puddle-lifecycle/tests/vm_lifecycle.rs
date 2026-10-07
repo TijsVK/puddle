@@ -612,11 +612,12 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
     let sandboxes_dir = env.settings().home().join("sandboxes");
     std::fs::create_dir_all(sandboxes_dir.join(sb("stale").as_str())).unwrap();
     std::fs::create_dir_all(sandboxes_dir.join("Foreign_Dir")).unwrap();
-    // Volumes: a known workspace, an orphaned one, a foreign one.
+    // Volumes: a known workspace, an unfinished create, one no workspace claims, a foreign one.
     let ws = |id: &str| WorkspaceId::new(&format!("{}-{id}", world.prefix)).unwrap();
     for v in [
         ws("known").volume_name(),
-        ws("orphan").volume_name(),
+        ws("half").volume_name(),
+        ws("unknown").volume_name(),
         VolumeName::new("data").unwrap(),
     ] {
         rt.create_volume(VolumeSpec {
@@ -630,6 +631,7 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
     let inventory = Inventory {
         sandboxes: BTreeSet::from([sb("known")]),
         workspaces: BTreeSet::from([ws("known")]),
+        interrupted: BTreeSet::from([ws("half")]),
         ..Inventory::default()
     };
     let report = reconcile(rt, &inventory, &ShutdownConfig::default())
@@ -641,7 +643,8 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
     assert_eq!(report.stopped, [sb("running")]);
     assert_eq!(report.removed, [sb("running"), sb("unknown")]);
     assert_eq!(report.stale_dirs_removed, [sb("stale")]);
-    assert_eq!(report.volumes_removed, [ws("orphan").volume_name()]);
+    assert_eq!(report.volumes_removed, [ws("half").volume_name()]);
+    assert_eq!(report.unknown_volumes, [ws("unknown").volume_name()]);
     for f in [foreign.as_str(), "Foreign_Dir", "data"] {
         assert!(
             report.foreign.iter().any(|x| x == f),
@@ -664,9 +667,19 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
             .unwrap()
             .is_some()
     );
+    assert!(
+        rt.volume(&ws("unknown").volume_name())
+            .await
+            .unwrap()
+            .is_some()
+    );
     drop(left_running);
 
-    for v in [ws("known").volume_name(), VolumeName::new("data").unwrap()] {
+    for v in [
+        ws("known").volume_name(),
+        ws("unknown").volume_name(),
+        VolumeName::new("data").unwrap(),
+    ] {
         rt.remove_volume(&v).await.unwrap();
     }
     let _ = std::fs::remove_dir(sandboxes_dir.join("Foreign_Dir"));

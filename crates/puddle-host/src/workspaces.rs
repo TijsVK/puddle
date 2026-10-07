@@ -13,6 +13,11 @@
 //! the same sandbox only while this process still serves that route; otherwise (after a restart
 //! of the host) its sandbox is rebuilt on the same volume. Everything on the volume survives,
 //! the root disk does not (ADR 0006, point 3).
+//!
+//! The workspace list on disk is what the next start keeps volumes for, so it is saved before
+//! anything it must cover exists or goes: a create is refused when its entry can't be written,
+//! a create whose final save fails is undone before anyone works in it, and a delete is refused
+//! when the entry can't be taken out first (principle 7, "your work is never lost by accident").
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -75,6 +80,9 @@ pub(crate) struct Parts<R: Runtime + Clone> {
 struct Slot {
     record: WorkspaceRecord,
     creating: bool,
+    /// Being deleted: left out of the saved list, so a delete that went through can't come
+    /// back as a workspace without a volume.
+    deleting: bool,
 }
 
 struct State {
@@ -230,6 +238,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Slot {
                     record,
                     creating: false,
+                    deleting: false,
                 },
             );
         }
@@ -253,9 +262,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 running: watch::channel(0).0,
             }),
         };
-        if interrupted {
-            let state = service.state();
-            service.persist(&state);
+        if interrupted && let Err(e) = service.persist(&service.state()) {
+            // Harmless: the entries still say "being created", so the next start drops them
+            // again, and every later save writes the list without them.
+            tracing::warn!(error = %e, "the workspace list was not saved after dropping unfinished creates");
         }
         Ok(service)
     }
@@ -268,10 +278,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// Writes the book. Called with the state lock held, so saves cannot reorder.
-    fn persist(&self, state: &State) {
+    fn persist(&self, state: &State) -> Result<(), HostError> {
         let stored = state
             .slots
             .values()
+            .filter(|slot| !slot.deleting)
             .map(|slot| Stored {
                 id: slot.record.id.to_string(),
                 name: slot.record.name.to_string(),
@@ -284,9 +295,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 creating: slot.creating,
             })
             .collect();
-        if let Err(e) = self.inner.book.save(stored) {
-            tracing::error!(error = %e, "the workspace list was not saved");
+        self.inner.book.save(stored)
+    }
+
+    /// The create of `id` finished: saves its entry as complete. Until this succeeds the list
+    /// says the create never finished, and the next start would remove its volume.
+    fn mark_created(&self, id: &WorkspaceId) -> Result<(), String> {
+        let mut state = self.state();
+        let Some(slot) = state.slots.get_mut(id) else {
+            return Err(not_found(id).to_string());
+        };
+        slot.creating = false;
+        let saved = self.persist(&state);
+        if saved.is_err()
+            && let Some(slot) = state.slots.get_mut(id)
+        {
+            slot.creating = true;
         }
+        saved.map_err(|e| e.to_string())
     }
 
     fn status_event(&self, record: &WorkspaceRecord) {
@@ -396,8 +422,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             return;
         };
         slot.record.busy = None;
+        slot.deleting = false;
         let name = slot.record.name.clone();
         let mut status_changed = false;
+        // Only a failed create or delete leaves the list different from what is saved: the
+        // failed create's entry goes, the failed delete's entry comes back.
+        let save = matches!(
+            (&result, op),
+            (Err(_), Operation::Creating | Operation::Deleting)
+        );
+        let mut result = result;
         match (&result, op) {
             (Err(_), Operation::Creating) | (Ok(()), Operation::Deleting) => {
                 state.slots.remove(id);
@@ -423,7 +457,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         }
         let record = state.slots.get(id).map(|s| s.record.clone());
-        self.persist(&state);
+        if save
+            && let Err(e) = self.persist(&state)
+            && let Err(reason) = &mut result
+        {
+            *reason = format!("{reason}; {e}");
+        }
         drop(state);
         if let (true, Some(record)) = (status_changed, &record) {
             self.status_event(record);
@@ -667,6 +706,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.undo_boot(&record, true, created_volume).await;
             return Err(e.to_string());
         }
+        // Nobody has worked in it yet, so undoing it now loses nothing; keeping it would leave
+        // a workspace the next start takes for an unfinished create.
+        if let Err(e) = self.mark_created(&record.id) {
+            self.undo_boot(&record, true, created_volume).await;
+            return Err(format!("{e}; the new workspace was removed again"));
+        }
         Ok(())
     }
 
@@ -843,13 +888,20 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     )));
                 }
                 state.slots.insert(
-                    id,
+                    id.clone(),
                     Slot {
                         record: record.clone(),
                         creating: true,
+                        deleting: false,
                     },
                 );
-                self.persist(&state);
+                if let Err(e) = self.persist(&state) {
+                    state.slots.remove(&id);
+                    return Err(WorkspaceError::Unavailable(format!(
+                        "{} was not created: {e}",
+                        new.name
+                    )));
+                }
             }
             self.status_event(&record);
             let this = self.clone();
@@ -1023,11 +1075,27 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     }
                 }
             };
+            // The entry leaves the saved list before the volume goes, so a delete that can't be
+            // saved deletes nothing.
+            let verdict = verdict.and_then(|report| {
+                let mut state = self.state();
+                if let Some(slot) = state.slots.get_mut(id) {
+                    slot.deleting = true;
+                }
+                match self.persist(&state) {
+                    Ok(()) => Ok(report),
+                    Err(e) => Err(WorkspaceError::Unavailable(format!(
+                        "{} was not deleted: {e}",
+                        record.name
+                    ))),
+                }
+            });
             let report = match verdict {
                 Ok(report) => report,
                 Err(e) => {
                     if let Some(slot) = self.state().slots.get_mut(id) {
                         slot.record.busy = None;
+                        slot.deleting = false;
                     }
                     return Err(e);
                 }
@@ -1065,7 +1133,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         if let Some(slot) = state.slots.get_mut(id) {
                             slot.record.first_connect_notice_due = false;
                         }
-                        self.persist(&state);
+                        if let Err(e) = self.persist(&state) {
+                            // Only the first-connect notice is at stake: it shows again after
+                            // a restart. The editor is already open.
+                            tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after an attach");
+                        }
                         Ok(Attached::opened())
                     }
                     Err(err) => Ok(Attached::not_opened(err.to_string())),
@@ -1076,7 +1148,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 }
 
 /// The workspace ids a book entry set names, for the inventory reconcile works from. An entry
-/// whose create never finished is left out: its volume is an orphan.
+/// whose create never finished is left out: reconcile removes its volume.
 pub(crate) fn known_ids(stored: &[Stored]) -> BTreeSet<WorkspaceId> {
     stored
         .iter()

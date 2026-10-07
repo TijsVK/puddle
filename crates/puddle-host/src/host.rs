@@ -743,6 +743,11 @@ async fn inventory_of<R: Runtime>(
         inventory.sandboxes.insert(name);
     }
     inventory.workspaces = workspaces;
+    inventory.interrupted = stored
+        .iter()
+        .filter(|s| s.creating)
+        .filter_map(|s| puddle_types::WorkspaceId::new(&s.id).ok())
+        .collect();
     Ok(inventory)
 }
 
@@ -762,6 +767,13 @@ async fn reconcile_with<R: Runtime>(
     let report = reconcile(runtime, &inventory, &config.shutdown)
         .await
         .map_err(|e| HostError::Reconcile(e.to_string()))?;
+    if !report.unknown_volumes.is_empty() {
+        // Kept, never removed: the list may be the thing that is missing or out of date.
+        tracing::warn!(
+            volumes = ?report.unknown_volumes,
+            "workspace volumes that no workspace in the list claims were kept"
+        );
+    }
     for failure in &report.failures {
         tracing::warn!(item = %failure.item, action = failure.action, error = %failure.error, "reconcile did not finish this");
     }

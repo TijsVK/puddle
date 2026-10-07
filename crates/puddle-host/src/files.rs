@@ -161,7 +161,8 @@ impl WorkspaceBook {
         }
     }
 
-    /// Every stored workspace; none when there is no book yet.
+    /// Every stored workspace; none when there is no book yet. A missing book costs no
+    /// volume: reconcile keeps and reports every workspace volume the book doesn't name.
     pub(crate) fn load(&self) -> Result<Vec<Stored>, HostError> {
         let Some(value) = read_json(&self.path).map_err(Self::error)? else {
             return Ok(Vec::new());
