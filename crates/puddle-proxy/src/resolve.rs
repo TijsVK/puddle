@@ -4,8 +4,8 @@
 //! Clients that ignore proxy settings resolve a name and connect to the answer, which the guest's
 //! network rules redirect to the agent. The stub answers every address query with a stand-in
 //! address and asks the host first, so the one thing it must learn is whether the name exists.
-//! The host decides with the sandbox's rules and never writes a pending row for a lookup: the
-//! connect that follows is what produces the deny or pending row.
+//! The host decides with the sandbox's rules. An address lookup never writes a pending row: the
+//! connect that follows is what produces the deny or pending row. The one exception is `SRV` (below).
 //!
 //! - **Not allowed** (no rule, or a deny): a stand-in with **no lookup at all**. DNS carries nothing
 //!   out, and a guest asking for a million random names causes no resolver traffic.
@@ -16,7 +16,10 @@
 //!   (some networks resolve internet names only at the proxy): then a stand-in, and the proxy
 //!   decides when the connect arrives.
 //! - **`SRV`, `TXT`, `MX`** are looked up for allowed names only; for any other name the answer is
-//!   `NODATA`. The leading service labels of an `SRV` name (`_mongodb._tcp.`) are not part of what
+//!   `NODATA`. An `SRV` query for a name **no rule matches** also raises one pending request for
+//!   the base name (deduplicated like any other), because a client that starts with `SRV`
+//!   (`mongodb+srv://`) would otherwise fail without the user ever seeing it. A denied name raises
+//!   nothing, and neither do `TXT` and `MX`. The leading service labels of an `SRV` name (`_mongodb._tcp.`) are not part of what
 //!   the rules match: `_mongodb._tcp.db.example.net` is decided as `db.example.net`.
 //!
 //! The answer to an address query never contains an address of the host's: only the stand-in the
@@ -66,6 +69,12 @@ impl SandboxHandler {
         }
         match allowed(proxy, &self.sandbox, &host).await {
             Allowed::No => return stand_in_or_no_data(query.rtype, StandInReason::NotAllowed),
+            Allowed::Unmatched => {
+                if query.rtype != RecordType::Srv {
+                    return stand_in_or_no_data(query.rtype, StandInReason::NotAllowed);
+                }
+                return self.request_for_srv(host).await;
+            }
             Allowed::Unreadable => return ResolveAnswer::Unavailable,
             Allowed::Yes => {}
         }
@@ -77,6 +86,21 @@ impl SandboxHandler {
         match query.rtype {
             RecordType::A => address_answer(proxy, &self.sandbox, &name).await,
             rtype => records_answer(proxy, &query.name, rtype).await,
+        }
+    }
+}
+
+impl SandboxHandler {
+    /// Raises the pending request an `SRV` query for an unmatched name stands for, and answers
+    /// `NODATA` (the user has not decided yet). The port is unknown at this point, so it is 0.
+    async fn request_for_srv(&self, host: Host) -> ResolveAnswer {
+        let request = EgressRequest::new(self.sandbox.clone(), host, 0);
+        match self.proxy.decide(&request, SuffixAllows::Count).await {
+            Ok(_) => ResolveAnswer::NoData { ttl: NEGATIVE_TTL },
+            Err(err) => {
+                tracing::warn!(sandbox = %self.sandbox, error = %err, "rules unreadable; name lookup refused");
+                ResolveAnswer::Unavailable
+            }
         }
     }
 }
@@ -110,7 +134,10 @@ fn split_service_labels(name: &str) -> (Vec<&str>, &str) {
 
 enum Allowed {
     Yes,
+    /// A deny rule matches.
     No,
+    /// No rule matches.
+    Unmatched,
     Unreadable,
 }
 
@@ -119,7 +146,8 @@ async fn allowed(proxy: &Proxy, sandbox: &SandboxName, host: &Host) -> Allowed {
     let request = EgressRequest::new(sandbox.clone(), host.clone(), 0);
     match proxy.look_up_rule(request, SuffixAllows::Count).await {
         Ok(Some(puddle_types::Decision::Allow { .. })) => Allowed::Yes,
-        Ok(_) => Allowed::No,
+        Ok(Some(_)) => Allowed::No,
+        Ok(None) => Allowed::Unmatched,
         Err(err) => {
             tracing::warn!(%sandbox, %host, error = %err, "rules unreadable; name lookup refused");
             Allowed::Unreadable

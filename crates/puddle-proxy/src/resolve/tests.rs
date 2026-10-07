@@ -170,7 +170,7 @@ async fn a_name_nothing_allows_has_no_records_and_no_lookup_for_every_type() {
         StaticRecords::new().with("x.example", RecordType::Txt, vec![]),
         |p| p,
     );
-    for rtype in [RecordType::Srv, RecordType::Txt, RecordType::Mx] {
+    for rtype in [RecordType::Txt, RecordType::Mx] {
         assert_eq!(
             r.handler
                 .resolve_name(ResolveQuery::new("x.example", rtype))
@@ -179,6 +179,67 @@ async fn a_name_nothing_allows_has_no_records_and_no_lookup_for_every_type() {
         );
     }
     assert_eq!(r.records.lookups(), 0);
+}
+
+#[tokio::test]
+async fn an_srv_query_for_an_unmatched_name_raises_one_request_for_the_base_name() {
+    let r = rig(StaticResolver::new());
+    let srv = || ResolveQuery::new("_mongodb._tcp.cluster.example", RecordType::Srv);
+    for _ in 0..2 {
+        assert_eq!(
+            r.handler.resolve_name(srv()).await,
+            ResolveAnswer::NoData { ttl: 20 }
+        );
+    }
+    let pending = r.policy.pending();
+    assert_eq!(pending.len(), 1, "deduplicated");
+    assert_eq!(pending[0].host, host("cluster.example"));
+    assert_eq!((pending[0].attempts, pending[0].open), (2, true));
+    assert_eq!((r.resolver.lookups(), r.records.lookups()), (0, 0));
+}
+
+#[tokio::test]
+async fn only_an_srv_query_for_an_unmatched_name_raises_a_request() {
+    let r = rig(StaticResolver::new());
+    r.policy.deny_host(&host("denied.example"));
+    for (name, rtype) in [
+        ("_mongodb._tcp.denied.example", RecordType::Srv),
+        ("denied.example", RecordType::Srv),
+        ("txt.example", RecordType::Txt),
+        ("mx.example", RecordType::Mx),
+        ("a.example", RecordType::A),
+        ("_x._tcp.10.0.0.1", RecordType::Srv),
+        ("_x._tcp.bad name", RecordType::Srv),
+    ] {
+        r.handler.resolve_name(ResolveQuery::new(name, rtype)).await;
+    }
+    assert_eq!(r.policy.pending(), vec![]);
+}
+
+#[tokio::test]
+async fn an_srv_query_for_a_name_blocked_by_itself_raises_no_request() {
+    let r = rig_with(StaticResolver::new(), StaticRecords::new(), |p| {
+        p.with_address_check(Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE))))
+    });
+    r.policy.allow(&host("localhost"));
+    r.handler
+        .resolve_name(ResolveQuery::new("_x._tcp.localhost", RecordType::Srv))
+        .await;
+    assert_eq!(r.policy.pending(), vec![]);
+}
+
+#[tokio::test]
+async fn an_srv_query_with_unreadable_rules_is_unavailable_and_raises_nothing() {
+    let r = rig(StaticResolver::new());
+    r.policy.set_unavailable(true);
+    assert_eq!(
+        r.handler
+            .resolve_name(ResolveQuery::new("_x._tcp.a.example", RecordType::Srv))
+            .await,
+        ResolveAnswer::Unavailable
+    );
+    r.policy.set_unavailable(false);
+    assert_eq!(r.policy.pending(), vec![]);
 }
 
 #[tokio::test]

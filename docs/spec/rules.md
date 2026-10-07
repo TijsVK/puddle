@@ -211,15 +211,15 @@ other client, so R-1 to R-14 apply to it unchanged. These rules say what the hos
 lookup. They are tested in `puddle-proxy` (`resolve`) and `puddle-e2e` (`stub_dns`), not in the
 store.
 
-- **R-30 A lookup never writes anything.** It asks the rules engine without recording: no pending
-  row, no audit record, no counter. The pending row and the deny come from the connection that
-  follows (R-10), by name.
+- **R-30 A lookup writes nothing, except one `SRV` request (R-36).** It asks the rules engine
+  without recording: no pending row, no audit record, no counter. The pending row and the deny
+  come from the connection that follows (R-10), by name.
 - **R-31 A name that no rule allows is not looked up.** An unmatched name, a denied name and a name
   blocked by itself (R-14: a toggle that is off, one of puddle's endpoints) all get a stand-in
   and cause **no** lookup on any resolver, so DNS is not a way out and a guest asking for many
   random names causes no resolver traffic. The connection that follows is refused with the
   usual reason. Record types other than `A` (`TXT`, `SRV`, `MX`) of such a name are answered
-  with no data.
+  with no data; R-36 adds one request for an `SRV` query of a name no rule matches.
 - **R-32 An allowed name is resolved once, on the host.** If it resolves, the guest gets a
   stand-in. If the host's resolver says there is no such name, the guest gets `NXDOMAIN`, except
   under R-33. If every address it resolves to is refused by R-14, the guest still gets a stand-in:
@@ -241,6 +241,16 @@ store.
   at most 32 host lookups at once and one agent session has at most 64 lookups open; over the cap
   the answer is "unavailable" (`SERVFAIL` in the guest). Each lookup has a timeout. An unreadable
   rules engine is "unavailable", never "not allowed".
+- **R-36 An `SRV` query for a name no rule matches raises one request for its base name.** Clients
+  such as `mongodb+srv://` ask for `SRV` first and give up on "no records" without ever
+  connecting, so the user would never see them. The query `_mongodb._tcp.cluster.example.net`
+  therefore opens one pending request for `cluster.example.net` (the leading service labels are
+  stripped, as in R-34), with port 0 because the service's port is not known yet. It is
+  deduplicated, limited and shown like any other pending request (R-11, R-13), and the answer is
+  no data until the user decides; once the name is allowed the same query is looked up (R-34).
+  It applies to `SRV` only: `TXT`, `MX` and address queries still raise nothing. A name a deny
+  rule matches, a name blocked by itself (R-14) and a name that is not a plain host name raise
+  nothing.
 
 The stub answers names that can never be a connect target itself (reverse zones, names that end in
 a number) with `NXDOMAIN`. Every other name, including single labels and zones such as `.local` or

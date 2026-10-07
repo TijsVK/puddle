@@ -36,6 +36,7 @@ use tokio::task::JoinHandle;
 
 const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const TYPE_A: u16 = 1;
+const TYPE_MX: u16 = 15;
 const TYPE_TXT: u16 = 16;
 const TYPE_AAAA: u16 = 28;
 const TYPE_SRV: u16 = 33;
@@ -422,7 +423,54 @@ async fn srv_and_txt_are_forwarded_for_an_allowed_name_with_a_stand_in_for_each_
     // The service name is decided as the cluster's name: an unallowed one gets no records.
     let none = dns(udp, "_mongodb._tcp.other.example.net", TYPE_SRV).await;
     assert_eq!((none.rcode, none.answers), (0, 0));
-    assert_eq!(footprint(&rig.store), (0, 0));
+    assert_eq!(
+        rig.counted.records.lookups(),
+        2,
+        "only the allowed name was looked up"
+    );
+}
+
+#[tokio::test]
+async fn an_srv_query_for_an_unmatched_name_raises_one_request_for_its_base_name() {
+    let rig = rig().await;
+    deny(&rig.store, "denied.example.com");
+    let (udp, _) = rig.agent.dns_addrs().unwrap();
+    let before = footprint(&rig.store);
+    for _ in 0..3 {
+        let srv = dns(udp, "_mongodb._tcp.cluster.example.net", TYPE_SRV).await;
+        assert_eq!((srv.rcode, srv.answers), (0, 0));
+    }
+    let open = rig.store.open_pending(None).unwrap();
+    assert_eq!(open.len(), 1, "three queries, one request");
+    assert_eq!(open[0].host.to_string(), "cluster.example.net");
+    // The stub answers repeats from its cache for the answer's TTL, so the host sees one.
+    assert_eq!(open[0].attempts, 1);
+    // Not for TXT, MX, A, a denied name, or a name no client connects to.
+    for (name, qtype) in [
+        ("txt-only.example.net", TYPE_TXT),
+        ("mx-only.example.net", TYPE_MX),
+        ("a-only.example.net", TYPE_A),
+        ("_mongodb._tcp.denied.example.com", TYPE_SRV),
+        ("_x._tcp.1.2.3.4", TYPE_SRV),
+    ] {
+        dns(udp, name, qtype).await;
+    }
+    assert_eq!(rig.store.open_pending(None).unwrap().len(), 1);
+    assert_eq!(rig.counted.resolver.lookups(), 0);
+    assert_eq!(rig.counted.records.lookups(), 0);
+    assert_ne!(footprint(&rig.store), before);
+}
+
+#[tokio::test]
+async fn a_flood_of_srv_queries_for_random_names_is_rate_limited_like_connects() {
+    let rig = rig().await;
+    let (udp, _) = rig.agent.dns_addrs().unwrap();
+    for i in 0..400 {
+        dns(udp, &format!("_x._tcp.flood-{i}.example.net"), TYPE_SRV).await;
+    }
+    let open = rig.store.open_pending(None).unwrap().len();
+    assert!(open > 0 && open < 100, "{open} open rows");
+    assert_eq!(rig.counted.records.lookups(), 0);
 }
 
 #[tokio::test]

@@ -345,7 +345,7 @@ impl Proxy {
             })
     }
 
-    async fn decide(
+    pub(crate) async fn decide(
         &self,
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
