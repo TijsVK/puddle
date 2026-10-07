@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Windows only: the real WinHTTP engine against a local PAC server, and the registry
 //! path end to end. The registry tests edit the *current user's* Internet Settings, so they run
-//! only where `GITHUB_ACTIONS` is set (a throwaway runner), never on a developer's machine.
+//! only where `GITHUB_ACTIONS` is set (a throwaway runner), never on a developer's machine, and
+//! one at a time (see `registry_test`).
 #![cfg(windows)]
 #![expect(
     clippy::unwrap_used,
@@ -172,14 +173,27 @@ const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Sett
 /// The tests share one registry key: one at a time.
 static REGISTRY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-fn on_throwaway_runner() -> bool {
-    let yes = std::env::var_os("GITHUB_ACTIONS").is_some();
-    if !yes {
+/// The gate for every test that edits the Internet Settings key: `None` (skip) off a CI runner,
+/// otherwise an exclusive lock that the test holds until it returns. All registry tests share
+/// the one key and the watch on it, and nextest runs each test in its own process, in parallel:
+/// without the lock one test's values (or its clean-up deleting them) show up in another's
+/// reads. The lock is a file lock, so it holds across processes and across threads alike.
+fn registry_test() -> Option<std::fs::File> {
+    if std::env::var_os("GITHUB_ACTIONS").is_none() {
         eprintln!(
             "skipped: edits HKCU Internet Settings, only run on a CI runner (GITHUB_ACTIONS)"
         );
+        return None;
     }
-    yes
+    let path = std::env::temp_dir().join("puddle-test-hkcu-internet-settings.lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    lock.lock().unwrap();
+    Some(lock)
 }
 
 fn reg(args: &[&str]) -> bool {
@@ -220,9 +234,9 @@ impl Drop for RegValue {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn settings_and_discovery_follow_the_registry_end_to_end() {
-    if !on_throwaway_runner() {
+    let Some(_registry) = registry_test() else {
         return;
-    }
+    };
     let _registry = REGISTRY.lock().await;
     let pac = pac_server().await;
     let _url = RegValue::set("AutoConfigURL", "REG_SZ", &pac);
@@ -249,9 +263,9 @@ async fn settings_and_discovery_follow_the_registry_end_to_end() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_health_report_names_what_windows_holds_and_hides_what_is_secret() {
-    if !on_throwaway_runner() {
+    let Some(_registry) = registry_test() else {
         return;
-    }
+    };
     let _registry = REGISTRY.lock().await;
     let discovery = || {
         Discovery::new(
@@ -296,9 +310,9 @@ async fn the_health_report_names_what_windows_holds_and_hides_what_is_secret() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_proxy_enable_switch_hides_a_static_proxy() {
-    if !on_throwaway_runner() {
+    let Some(_registry) = registry_test() else {
         return;
-    }
+    };
     let _registry = REGISTRY.lock().await;
     let _server = RegValue::set("ProxyServer", "REG_SZ", "static.corp:3128");
     let _bypass = RegValue::set("ProxyOverride", "REG_SZ", "*.corp.test;<local>");
@@ -333,9 +347,9 @@ async fn the_proxy_enable_switch_hides_a_static_proxy() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_registry_change_ends_the_epoch_once_after_the_debounce() {
-    if !on_throwaway_runner() {
+    let Some(_registry) = registry_test() else {
         return;
-    }
+    };
     let _registry = REGISTRY.lock().await;
     let config = Config {
         debounce: Duration::from_millis(300),
