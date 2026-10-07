@@ -11,7 +11,8 @@
 //! | [`SandboxLayer`], [`LocalToggles`] | the settings a sandbox has, each optional; used for both levels |
 //! | [`Effective`], [`Resolved`], [`Source`] | the value a sandbox gets and which level it came from |
 //! | [`Consent`], [`Consents`], [`ConsentKind`], [`TermsVersion`], [`UnixMillis`] | what the user agreed to or declined, when, and to which version of the terms |
-//! | [`ReconnectionGrace`], [`ClipboardRead`] | value types for single settings |
+//! | [`UiPrefs`] | the window's theme, notification and close preferences |
+//! | [`ReconnectionGrace`], [`ClipboardRead`], [`ServerChoice`], [`ThemeChoice`], [`CloseBehaviour`] | value types for single settings |
 //! | [`Loaded`], [`SettingsError`] | the result of reading a document |
 //!
 //! # Resolution
@@ -67,8 +68,8 @@ mod values;
 
 pub use consent::{Consent, ConsentKind, Consents, TermsVersion, UnixMillis};
 pub use document::{Loaded, SettingsError};
-pub use global::{GLOBAL_SCHEMA_VERSION, GlobalSettings, VsCodeServer};
+pub use global::{GLOBAL_SCHEMA_VERSION, GlobalSettings, UiPrefs, VsCodeServer};
 pub use layer::{LocalToggles, SandboxLayer};
 pub use resolve::{Effective, EffectiveToggles, Resolved, Source, resolve};
 pub use sandbox::{SANDBOX_SCHEMA_VERSION, SandboxSettings};
-pub use values::{ClipboardRead, ReconnectionGrace};
+pub use values::{ClipboardRead, CloseBehaviour, ReconnectionGrace, ServerChoice, ThemeChoice};

@@ -27,7 +27,11 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
     assert_eq!(view["sandbox_defaults"], null_layer());
     assert_eq!(
         view["vscode_server"],
-        json!({"telemetry": null, "auto_update": null})
+        json!({"server": null, "telemetry": null, "auto_update": null})
+    );
+    assert_eq!(
+        view["ui"],
+        json!({"theme": null, "notifications": null, "sound": null, "close_behaviour": null})
     );
     assert_eq!(view["unknown_fields"], json!([]));
     let e = &view["effective"];
@@ -264,5 +268,61 @@ async fn consents_are_recorded_with_the_server_time() {
         let reply = api.send("PUT", path, Some(&body)).await;
         assert_eq!(reply.status, status, "{path} {body}: {}", reply.body);
     }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
+    let api = start().await;
+    let ms = json!({"vscode_server": {"server": "microsoft"}});
+    let reply = api.send("PUT", "/api/settings", Some(&ms)).await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    assert!(reply.body.contains("consent"), "{}", reply.body);
+    assert_eq!(
+        api.get("/api/settings").await.json()["vscode_server"]["server"],
+        Value::Null
+    );
+
+    // A decline is not consent either.
+    let declined = json!({"decision": "declined", "terms_version": "https://example.test/terms"});
+    api.send("PUT", "/api/consents/vscode_server", Some(&declined))
+        .await;
+    assert_eq!(
+        api.send("PUT", "/api/settings", Some(&ms)).await.status,
+        422
+    );
+
+    let granted = json!({"decision": "granted", "terms_version": "https://example.test/terms"});
+    api.send("PUT", "/api/consents/vscode_server", Some(&granted))
+        .await;
+    let body = json!({
+        "vscode_server": {"server": "microsoft", "telemetry": false},
+        "ui": {"theme": "dark", "notifications": false, "sound": true, "close_behaviour": "quit"}
+    });
+    let reply = api.send("PUT", "/api/settings", Some(&body)).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let view = reply.json();
+    assert_eq!(view["vscode_server"]["server"], "microsoft");
+    assert_eq!(view["ui"]["theme"], "dark");
+    assert_eq!(view["ui"]["close_behaviour"], "quit");
+    let stored = api.settings.load_global().unwrap().unwrap();
+    assert_eq!(stored["ui"]["theme"], "dark");
+    assert_eq!(stored["vscode_server"]["server"], "microsoft");
+    // The consent survives choosing code-server again.
+    let back = json!({"vscode_server": {"server": "code_server"}});
+    assert_eq!(
+        api.send("PUT", "/api/settings", Some(&back)).await.status,
+        200
+    );
+    assert_eq!(
+        api.get("/api/consents").await.json()["vscode_server"]["state"],
+        "granted"
+    );
+
+    let bad = json!({"ui": {"theme": "purple"}});
+    assert_eq!(
+        api.send("PUT", "/api/settings", Some(&bad)).await.status,
+        422
+    );
     api.running.shutdown().await;
 }

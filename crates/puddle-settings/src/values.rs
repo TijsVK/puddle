@@ -99,6 +99,42 @@ pub enum ClipboardRead {
     Deny,
 }
 
+/// Which VS Code server browser VS Code runs. Microsoft's needs the user's consent
+/// ([`crate::ConsentKind::VsCodeServer`]); the bundled code-server needs none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerChoice {
+    /// The bundled code-server (extensions from Open VSX).
+    #[default]
+    CodeServer,
+    /// Microsoft's VS Code server, downloaded from Microsoft after the user's consent.
+    Microsoft,
+}
+
+/// The colour theme of puddle's window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeChoice {
+    /// Follow the operating system.
+    #[default]
+    System,
+    /// Always light.
+    Light,
+    /// Always dark.
+    Dark,
+}
+
+/// What closing puddle's window does while a sandbox runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseBehaviour {
+    /// Keep running in the tray, so sandboxes keep working.
+    #[default]
+    Tray,
+    /// Quit puddle (and stop the sandboxes).
+    Quit,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +187,29 @@ mod tests {
             ClipboardRead::Deny
         );
         assert!(serde_json::from_str::<ClipboardRead>(r#""Deny""#).is_err());
+    }
+
+    #[test]
+    fn choices_are_snake_case_and_default_to_the_safe_option() {
+        assert_eq!(ServerChoice::default(), ServerChoice::CodeServer);
+        assert_eq!(ThemeChoice::default(), ThemeChoice::System);
+        assert_eq!(CloseBehaviour::default(), CloseBehaviour::Tray);
+        assert_eq!(
+            serde_json::to_string(&ServerChoice::CodeServer).unwrap(),
+            r#""code_server""#
+        );
+        assert_eq!(
+            serde_json::from_str::<ServerChoice>(r#""microsoft""#).unwrap(),
+            ServerChoice::Microsoft
+        );
+        assert_eq!(
+            serde_json::from_str::<ThemeChoice>(r#""dark""#).unwrap(),
+            ThemeChoice::Dark
+        );
+        assert_eq!(
+            serde_json::from_str::<CloseBehaviour>(r#""quit""#).unwrap(),
+            CloseBehaviour::Quit
+        );
+        assert!(serde_json::from_str::<ServerChoice>(r#""other""#).is_err());
     }
 }

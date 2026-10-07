@@ -8,7 +8,9 @@ use serde_json::Value;
 
 use crate::document::{self, Document};
 use crate::migrate::{self, Migration};
-use crate::{Consents, Loaded, SandboxLayer, SettingsError};
+use crate::{
+    CloseBehaviour, Consents, Loaded, SandboxLayer, ServerChoice, SettingsError, ThemeChoice,
+};
 
 /// The current shape of [`GlobalSettings`] documents.
 pub const GLOBAL_SCHEMA_VERSION: u32 = 1;
@@ -41,6 +43,9 @@ pub struct GlobalSettings {
     /// Options for Microsoft's VS Code server (global only).
     #[serde(default, skip_serializing_if = "VsCodeServer::is_empty")]
     pub vscode_server: VsCodeServer,
+    /// How puddle's own window looks and behaves (global only).
+    #[serde(default, skip_serializing_if = "UiPrefs::is_empty")]
+    pub ui: UiPrefs,
     /// What the user agreed to or declined (per user, never per sandbox).
     #[serde(default, skip_serializing_if = "Consents::is_empty")]
     pub consents: Consents,
@@ -77,6 +82,7 @@ impl Document for GlobalSettings {
         self.sandbox_defaults
             .collect_unknown("sandbox_defaults.", out);
         document::push_unknown("vscode_server.", &self.vscode_server.extra, out);
+        document::push_unknown("ui.", &self.ui.extra, out);
         self.consents.collect_unknown("consents.", out);
     }
 }
@@ -85,6 +91,10 @@ impl Document for GlobalSettings {
 /// enabled at all is [`Consents::vscode_server`].
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct VsCodeServer {
+    /// Which server browser VS Code runs; default the bundled code-server. Choosing Microsoft's
+    /// needs a granted [`Consents::vscode_server`], which the API checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<ServerChoice>,
     /// Let the server send Microsoft its telemetry: the checkbox in the enable popup, default
     /// off (unchecked passes `--disable-telemetry`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -102,6 +112,12 @@ impl VsCodeServer {
     /// puddle's default for [`VsCodeServer::auto_update`].
     pub const DEFAULT_AUTO_UPDATE: bool = true;
 
+    /// The server in use.
+    #[must_use]
+    pub fn server(&self) -> ServerChoice {
+        self.server.unwrap_or_default()
+    }
+
     /// Whether the server's telemetry is on.
     #[must_use]
     pub fn telemetry(&self) -> bool {
@@ -112,6 +128,61 @@ impl VsCodeServer {
     #[must_use]
     pub fn auto_update(&self) -> bool {
         self.auto_update.unwrap_or(Self::DEFAULT_AUTO_UPDATE)
+    }
+
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Preferences for puddle's own window. They are stored here so they follow the user; the
+/// desktop shell reads the notification and close settings.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct UiPrefs {
+    /// Light, dark or follow the system; default follow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<ThemeChoice>,
+    /// Show a system notification for a new request; default on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notifications: Option<bool>,
+    /// Play the system sound with a notification; default off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<bool>,
+    /// What closing the window does while a sandbox runs; default keep running in the tray.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_behaviour: Option<CloseBehaviour>,
+    #[serde(flatten)]
+    pub(crate) extra: BTreeMap<String, Value>,
+}
+
+impl UiPrefs {
+    /// puddle's default for [`UiPrefs::notifications`].
+    pub const DEFAULT_NOTIFICATIONS: bool = true;
+    /// puddle's default for [`UiPrefs::sound`].
+    pub const DEFAULT_SOUND: bool = false;
+
+    /// The theme in use.
+    #[must_use]
+    pub fn theme(&self) -> ThemeChoice {
+        self.theme.unwrap_or_default()
+    }
+
+    /// Whether a new request raises a system notification.
+    #[must_use]
+    pub fn notifications(&self) -> bool {
+        self.notifications.unwrap_or(Self::DEFAULT_NOTIFICATIONS)
+    }
+
+    /// Whether a notification plays the system sound.
+    #[must_use]
+    pub fn sound(&self) -> bool {
+        self.sound.unwrap_or(Self::DEFAULT_SOUND)
+    }
+
+    /// What closing the window does.
+    #[must_use]
+    pub fn close_behaviour(&self) -> CloseBehaviour {
+        self.close_behaviour.unwrap_or_default()
     }
 
     fn is_empty(&self) -> bool {
@@ -154,6 +225,57 @@ mod tests {
         .unwrap();
         assert!(loaded.settings.vscode_server.telemetry());
         assert!(!loaded.settings.vscode_server.auto_update());
+    }
+
+    #[test]
+    fn ui_prefs_and_server_choice_default_and_round_trip() {
+        let loaded = GlobalSettings::from_document(json!({})).unwrap();
+        assert_eq!(
+            loaded.settings.vscode_server.server(),
+            ServerChoice::CodeServer
+        );
+        let ui = &loaded.settings.ui;
+        assert_eq!(ui.theme(), ThemeChoice::System);
+        assert!(ui.notifications());
+        assert!(!ui.sound());
+        assert_eq!(ui.close_behaviour(), CloseBehaviour::Tray);
+
+        let doc = json!({
+            "schema_version": 1,
+            "vscode_server": { "server": "microsoft" },
+            "ui": { "theme": "dark", "notifications": false, "sound": true, "close_behaviour": "quit" },
+        });
+        let loaded = GlobalSettings::from_document(doc.clone()).unwrap();
+        assert!(loaded.unknown_fields.is_empty());
+        assert_eq!(
+            loaded.settings.vscode_server.server(),
+            ServerChoice::Microsoft
+        );
+        assert_eq!(loaded.settings.ui.theme(), ThemeChoice::Dark);
+        assert!(!loaded.settings.ui.notifications());
+        assert!(loaded.settings.ui.sound());
+        assert_eq!(loaded.settings.ui.close_behaviour(), CloseBehaviour::Quit);
+        assert_eq!(loaded.settings.to_document(), doc);
+    }
+
+    #[test]
+    fn a_document_from_before_these_fields_loads_unchanged_and_ui_unknowns_are_kept() {
+        let old = json!({ "schema_version": 1, "vscode_server": { "telemetry": true } });
+        let loaded = GlobalSettings::from_document(old.clone()).unwrap();
+        assert_eq!(loaded.migrated_from, None);
+        assert_eq!(loaded.settings.to_document(), old);
+
+        let newer =
+            json!({ "schema_version": 1, "ui": { "density": "compact", "theme": "light" } });
+        let loaded = GlobalSettings::from_document(newer.clone()).unwrap();
+        assert_eq!(loaded.unknown_fields, ["ui.density"]);
+        assert_eq!(loaded.settings.to_document(), newer);
+    }
+
+    #[test]
+    fn an_invalid_choice_fails_the_document() {
+        let err = GlobalSettings::from_document(json!({"ui":{"theme":"purple"}})).unwrap_err();
+        assert!(matches!(err, SettingsError::Invalid { kind: "global", .. }));
     }
 
     #[test]

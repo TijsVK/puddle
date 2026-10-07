@@ -1190,6 +1190,11 @@ impl From<ClipboardRead> for settings::ClipboardRead {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VsCodeServer {
+    /// Which server browser VS Code runs (default `code_server`). `microsoft` is refused
+    /// until the user agreed to Microsoft's terms (`PUT /api/consents/vscode_server`).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub server: Option<ServerChoice>,
     /// Whether the server may send Microsoft telemetry (default off).
     #[serde(default)]
     #[schema(required = true)]
@@ -1198,6 +1203,142 @@ pub struct VsCodeServer {
     #[serde(default)]
     #[schema(required = true)]
     pub auto_update: Option<bool>,
+}
+
+/// Which VS Code server browser VS Code runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerChoice {
+    /// The bundled code-server.
+    CodeServer,
+    /// Microsoft's VS Code server, downloaded after the user's consent.
+    Microsoft,
+}
+
+impl From<settings::ServerChoice> for ServerChoice {
+    fn from(c: settings::ServerChoice) -> Self {
+        match c {
+            settings::ServerChoice::CodeServer => Self::CodeServer,
+            settings::ServerChoice::Microsoft => Self::Microsoft,
+        }
+    }
+}
+
+impl From<ServerChoice> for settings::ServerChoice {
+    fn from(c: ServerChoice) -> Self {
+        match c {
+            ServerChoice::CodeServer => Self::CodeServer,
+            ServerChoice::Microsoft => Self::Microsoft,
+        }
+    }
+}
+
+/// The colour theme of puddle's window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeChoice {
+    /// Follow the operating system.
+    System,
+    /// Always light.
+    Light,
+    /// Always dark.
+    Dark,
+}
+
+impl From<settings::ThemeChoice> for ThemeChoice {
+    fn from(c: settings::ThemeChoice) -> Self {
+        match c {
+            settings::ThemeChoice::System => Self::System,
+            settings::ThemeChoice::Light => Self::Light,
+            settings::ThemeChoice::Dark => Self::Dark,
+        }
+    }
+}
+
+impl From<ThemeChoice> for settings::ThemeChoice {
+    fn from(c: ThemeChoice) -> Self {
+        match c {
+            ThemeChoice::System => Self::System,
+            ThemeChoice::Light => Self::Light,
+            ThemeChoice::Dark => Self::Dark,
+        }
+    }
+}
+
+/// What closing the window does while a sandbox runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseBehaviour {
+    /// Keep running in the tray.
+    Tray,
+    /// Quit puddle.
+    Quit,
+}
+
+impl From<settings::CloseBehaviour> for CloseBehaviour {
+    fn from(c: settings::CloseBehaviour) -> Self {
+        match c {
+            settings::CloseBehaviour::Tray => Self::Tray,
+            settings::CloseBehaviour::Quit => Self::Quit,
+        }
+    }
+}
+
+impl From<CloseBehaviour> for settings::CloseBehaviour {
+    fn from(c: CloseBehaviour) -> Self {
+        match c {
+            CloseBehaviour::Tray => Self::Tray,
+            CloseBehaviour::Quit => Self::Quit,
+        }
+    }
+}
+
+/// Preferences for puddle's own window. `null` means puddle's default.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UiPrefs {
+    /// Light, dark or follow the system (default `system`).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub theme: Option<ThemeChoice>,
+    /// A system notification for a new request (default on).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub notifications: Option<bool>,
+    /// The system sound with a notification (default off).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub sound: Option<bool>,
+    /// What closing the window does while a sandbox runs (default `tray`).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub close_behaviour: Option<CloseBehaviour>,
+}
+
+impl From<&settings::UiPrefs> for UiPrefs {
+    fn from(u: &settings::UiPrefs) -> Self {
+        Self {
+            theme: u.theme.map(Into::into),
+            notifications: u.notifications,
+            sound: u.sound,
+            close_behaviour: u.close_behaviour.map(Into::into),
+        }
+    }
+}
+
+impl UiPrefs {
+    fn apply_to(self, prefs: &mut settings::UiPrefs) {
+        let Self {
+            theme,
+            notifications,
+            sound,
+            close_behaviour,
+        } = self;
+        prefs.theme = theme.map(Into::into);
+        prefs.notifications = notifications;
+        prefs.sound = sound;
+        prefs.close_behaviour = close_behaviour.map(Into::into);
+    }
 }
 
 /// Which level an effective value came from.
@@ -1338,6 +1479,8 @@ pub struct GlobalSettingsView {
     pub sandbox_defaults: SettingsLayer,
     /// VS Code server options.
     pub vscode_server: VsCodeServer,
+    /// Preferences for puddle's window.
+    pub ui: UiPrefs,
     /// The effective values for a sandbox with no overrides.
     pub effective: EffectiveSettings,
     /// Fields in the stored document this puddle doesn't know (written by a newer one); they
@@ -1355,6 +1498,9 @@ pub struct GlobalSettingsRequest {
     /// VS Code server options.
     #[serde(default)]
     pub vscode_server: VsCodeServer,
+    /// Preferences for puddle's window.
+    #[serde(default)]
+    pub ui: UiPrefs,
 }
 
 impl GlobalSettingsRequest {
@@ -1363,13 +1509,17 @@ impl GlobalSettingsRequest {
             sandbox_defaults,
             vscode_server:
                 VsCodeServer {
+                    server,
                     telemetry,
                     auto_update,
                 },
+            ui,
         } = self;
         sandbox_defaults.apply_to(&mut global.sandbox_defaults)?;
+        global.vscode_server.server = server.map(Into::into);
         global.vscode_server.telemetry = telemetry;
         global.vscode_server.auto_update = auto_update;
+        ui.apply_to(&mut global.ui);
         Ok(())
     }
 }
@@ -1380,9 +1530,11 @@ impl GlobalSettingsView {
         Self {
             sandbox_defaults: (&global.sandbox_defaults).into(),
             vscode_server: VsCodeServer {
+                server: global.vscode_server.server.map(Into::into),
                 telemetry: global.vscode_server.telemetry,
                 auto_update: global.vscode_server.auto_update,
             },
+            ui: (&global.ui).into(),
             effective: settings::resolve(global, None).into(),
             unknown_fields: loaded.unknown_fields.clone(),
         }
@@ -1640,12 +1792,24 @@ mod tests {
                 ..SettingsLayer::default()
             },
             vscode_server: VsCodeServer {
+                server: Some(ServerChoice::Microsoft),
                 telemetry: Some(true),
                 auto_update: Some(false),
+            },
+            ui: UiPrefs {
+                theme: Some(ThemeChoice::Dark),
+                notifications: Some(false),
+                sound: Some(true),
+                close_behaviour: Some(CloseBehaviour::Quit),
             },
         }
         .apply_to(&mut g)
         .unwrap();
+        assert_eq!(g.vscode_server.server(), settings::ServerChoice::Microsoft);
+        assert_eq!(g.ui.theme(), settings::ThemeChoice::Dark);
+        assert!(!g.ui.notifications());
+        assert!(g.ui.sound());
+        assert_eq!(g.ui.close_behaviour(), settings::CloseBehaviour::Quit);
         assert!(g.vscode_server.telemetry());
         assert!(!g.vscode_server.auto_update());
         let view = GlobalSettingsView::new(&settings::Loaded {

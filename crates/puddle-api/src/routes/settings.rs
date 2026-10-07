@@ -91,7 +91,7 @@ pub(crate) async fn get_global(
     responses(
         (status = OK, description = "the new global settings", body = GlobalSettingsView),
         (status = CONFLICT, description = "written by a newer puddle", body = ApiErrorBody),
-        (status = UNPROCESSABLE_ENTITY, description = "a value out of range", body = ApiErrorBody)
+        (status = UNPROCESSABLE_ENTITY, description = "a value out of range, or Microsoft's server chosen without consent", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn put_global(
@@ -103,6 +103,20 @@ pub(crate) async fn put_global(
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;
         body.apply_to(&mut loaded.settings)?;
+        // Consent fails closed: Microsoft's server is only chosen after the user agreed.
+        if loaded.settings.vscode_server.server() == puddle_settings::ServerChoice::Microsoft
+            && !matches!(
+                loaded
+                    .settings
+                    .consents
+                    .get(puddle_settings::ConsentKind::VsCodeServer),
+                puddle_settings::Consent::Granted { .. }
+            )
+        {
+            return Err(ApiError::invalid(
+                "vscode_server.server: Microsoft's server needs the user's consent first",
+            ));
+        }
         repo.save_global(loaded.settings.to_document())?;
         Ok(loaded)
     })

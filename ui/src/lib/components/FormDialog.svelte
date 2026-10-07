@@ -12,12 +12,15 @@
     description,
     children,
     onClose,
+    returnFocusTo,
   }: {
     open?: boolean;
     title: string;
     description?: string;
     children: Snippet;
     onClose?: () => void;
+    /** Where focus goes on close, when the dialog was not opened from a control that will take it back. */
+    returnFocusTo?: () => HTMLElement | null | undefined;
   } = $props();
 </script>
 
@@ -29,7 +32,16 @@
 >
   <Dialog.Portal>
     <Dialog.Overlay class="confirm-overlay" />
-    <Dialog.Content class="confirm-content form-dialog">
+    <Dialog.Content
+      class="confirm-content form-dialog"
+      onCloseAutoFocus={(event) => {
+        const target = returnFocusTo?.();
+        if (target) {
+          event.preventDefault();
+          target.focus();
+        }
+      }}
+    >
       <Dialog.Title class="confirm-title">{title}</Dialog.Title>
       {#if description}
         <Dialog.Description class="confirm-detail"

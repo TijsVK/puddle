@@ -13,7 +13,7 @@
   aria-label="Colour theme"
   value={theme.choice}
   onValueChange={(value) => {
-    if (isThemeChoice(value)) theme.set(value);
+    if (isThemeChoice(value)) void theme.set(value);
   }}
 >
   {#each Object.entries(labels) as [value, label] (value)}

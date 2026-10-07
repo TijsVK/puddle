@@ -786,6 +786,11 @@ export interface components {
          */
         ClipboardRead: "ask" | "allow" | "deny";
         /**
+         * @description What closing the window does while a sandbox runs.
+         * @enum {string}
+         */
+        CloseBehaviour: "tray" | "quit";
+        /**
          * @description How the proxy handled a connection.
          * @enum {string}
          */
@@ -1060,6 +1065,8 @@ export interface components {
         GlobalSettingsRequest: {
             /** @description Defaults for every sandbox. */
             sandbox_defaults?: components["schemas"]["SettingsLayer"];
+            /** @description Preferences for puddle's window. */
+            ui?: components["schemas"]["UiPrefs"];
             /** @description VS Code server options. */
             vscode_server?: components["schemas"]["VsCodeServer"];
         };
@@ -1069,6 +1076,8 @@ export interface components {
             effective: components["schemas"]["EffectiveSettings"];
             /** @description Defaults for every sandbox. */
             sandbox_defaults: components["schemas"]["SettingsLayer"];
+            /** @description Preferences for puddle's window. */
+            ui: components["schemas"]["UiPrefs"];
             /**
              * @description Fields in the stored document this puddle doesn't know (written by a newer one); they
              *     are kept.
@@ -1408,6 +1417,11 @@ export interface components {
          */
         ScopeChoice: "sandbox" | "global";
         /**
+         * @description Which VS Code server browser VS Code runs.
+         * @enum {string}
+         */
+        ServerChoice: "code_server" | "microsoft";
+        /**
          * @description Which level an effective value came from.
          * @enum {string}
          */
@@ -1448,10 +1462,25 @@ export interface components {
             /** @description The sandbox. */
             sandbox: components["schemas"]["SandboxName"];
         };
+        /**
+         * @description The colour theme of puddle's window.
+         * @enum {string}
+         */
+        ThemeChoice: "system" | "light" | "dark";
+        /** @description Preferences for puddle's own window. `null` means puddle's default. */
+        UiPrefs: {
+            close_behaviour: components["schemas"]["CloseBehaviour"] | null;
+            /** @description A system notification for a new request (default on). */
+            notifications: boolean | null;
+            /** @description The system sound with a notification (default off). */
+            sound: boolean | null;
+            theme: components["schemas"]["ThemeChoice"] | null;
+        };
         /** @description Options for the VS Code server in the guest. `null` means puddle's default. */
         VsCodeServer: {
             /** @description Whether puddle updates the server (default on). */
             auto_update: boolean | null;
+            server: components["schemas"]["ServerChoice"] | null;
             /** @description Whether the server may send Microsoft telemetry (default off). */
             telemetry: boolean | null;
         };
@@ -2728,7 +2757,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description a value out of range */
+            /** @description a value out of range, or Microsoft's server chosen without consent */
             422: {
                 headers: {
                     [name: string]: unknown;

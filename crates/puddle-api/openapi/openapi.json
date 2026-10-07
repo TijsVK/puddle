@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "paths": {
     "/api/audit": {
@@ -1511,7 +1511,7 @@
             }
           },
           "422": {
-            "description": "a value out of range",
+            "description": "a value out of range, or Microsoft's server chosen without consent",
             "content": {
               "application/json": {
                 "schema": {
@@ -3318,6 +3318,14 @@
           "deny"
         ]
       },
+      "CloseBehaviour": {
+        "type": "string",
+        "description": "What closing the window does while a sandbox runs.",
+        "enum": [
+          "tray",
+          "quit"
+        ]
+      },
       "ConnectionDecision": {
         "type": "string",
         "description": "How the proxy handled a connection.",
@@ -3985,6 +3993,10 @@
             "$ref": "#/components/schemas/SettingsLayer",
             "description": "Defaults for every sandbox."
           },
+          "ui": {
+            "$ref": "#/components/schemas/UiPrefs",
+            "description": "Preferences for puddle's window."
+          },
           "vscode_server": {
             "$ref": "#/components/schemas/VsCodeServer",
             "description": "VS Code server options."
@@ -3998,6 +4010,7 @@
         "required": [
           "sandbox_defaults",
           "vscode_server",
+          "ui",
           "effective",
           "unknown_fields"
         ],
@@ -4009,6 +4022,10 @@
           "sandbox_defaults": {
             "$ref": "#/components/schemas/SettingsLayer",
             "description": "Defaults for every sandbox."
+          },
+          "ui": {
+            "$ref": "#/components/schemas/UiPrefs",
+            "description": "Preferences for puddle's window."
           },
           "unknown_fields": {
             "type": "array",
@@ -4738,6 +4755,14 @@
           "global"
         ]
       },
+      "ServerChoice": {
+        "type": "string",
+        "description": "Which VS Code server browser VS Code runs.",
+        "enum": [
+          "code_server",
+          "microsoft"
+        ]
+      },
       "SettingSource": {
         "type": "string",
         "description": "Which level an effective value came from.",
@@ -4836,10 +4861,69 @@
           }
         }
       },
+      "ThemeChoice": {
+        "type": "string",
+        "description": "The colour theme of puddle's window.",
+        "enum": [
+          "system",
+          "light",
+          "dark"
+        ]
+      },
+      "UiPrefs": {
+        "type": "object",
+        "description": "Preferences for puddle's own window. `null` means puddle's default.",
+        "required": [
+          "theme",
+          "notifications",
+          "sound",
+          "close_behaviour"
+        ],
+        "properties": {
+          "close_behaviour": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CloseBehaviour",
+                "description": "What closing the window does while a sandbox runs (default `tray`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notifications": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "A system notification for a new request (default on)."
+          },
+          "sound": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The system sound with a notification (default off)."
+          },
+          "theme": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThemeChoice",
+                "description": "Light, dark or follow the system (default `system`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "VsCodeServer": {
         "type": "object",
         "description": "Options for the VS Code server in the guest. `null` means puddle's default.",
         "required": [
+          "server",
           "telemetry",
           "auto_update"
         ],
@@ -4850,6 +4934,17 @@
               "null"
             ],
             "description": "Whether puddle updates the server (default on)."
+          },
+          "server": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ServerChoice",
+                "description": "Which server browser VS Code runs (default `code_server`). `microsoft` is refused\nuntil the user agreed to Microsoft's terms (`PUT /api/consents/vscode_server`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "telemetry": {
             "type": [

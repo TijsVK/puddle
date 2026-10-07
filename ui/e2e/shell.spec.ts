@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { test as isolated } from "./fixture";
 import { axeViolations, expect, signIn, test, watchCsp } from "./support";
 
 const sections = [
@@ -98,32 +99,6 @@ test.describe("the app shell, served by the real API", () => {
     expect(order[6]).toMatch(/^(System|Light|Dark)$/);
   });
 
-  test("theme: follows the OS, can be overridden, and the choice survives a reload", async ({
-    page,
-  }) => {
-    await page.emulateMedia({ colorScheme: "dark" });
-    await page.goto("/inbox");
-    const scheme = () =>
-      page.evaluate(
-        () => getComputedStyle(document.documentElement).colorScheme,
-      );
-    expect(await scheme()).toBe("light dark");
-    const bg = () =>
-      page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    const darkBg = await bg();
-
-    await page.getByRole("radio", { name: "Light" }).click();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-    const lightBg = await bg();
-    expect(lightBg).not.toBe(darkBg);
-
-    await page.reload();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-    await page.getByRole("radio", { name: "System" }).click();
-    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.*/);
-    expect(await bg()).toBe(darkBg);
-  });
-
   for (const scheme of ["light", "dark"] as const) {
     test(`axe finds nothing on any route in ${scheme}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: scheme });
@@ -137,16 +112,6 @@ test.describe("the app shell, served by the real API", () => {
       expect(await axeViolations(page), `404 (${scheme})`).toEqual([]);
     });
   }
-
-  test("axe finds nothing with the theme override set either way", async ({
-    page,
-  }) => {
-    await page.goto("/settings");
-    for (const choice of ["Light", "Dark"]) {
-      await page.getByRole("radio", { name: choice }).click();
-      expect(await axeViolations(page), choice).toEqual([]);
-    }
-  });
 });
 
 test.describe("the origin and the token", () => {
@@ -174,4 +139,54 @@ test.describe("the origin and the token", () => {
     ).toBeVisible();
     expect(await axeViolations(page)).toEqual([]);
   });
+});
+
+isolated.describe("the theme choice is kept by puddle, not by the page", () => {
+  isolated(
+    "theme: follows the OS, can be overridden, and the choice survives a reload",
+    async ({ page, backend }) => {
+      await backend.signIn(page);
+      await page.emulateMedia({ colorScheme: "dark" });
+      await page.goto("/inbox");
+      const scheme = () =>
+        page.evaluate(
+          () => getComputedStyle(document.documentElement).colorScheme,
+        );
+      expect(await scheme()).toBe("light dark");
+      const bg = () =>
+        page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+      const darkBg = await bg();
+
+      const storedTheme = page.waitForResponse(
+        (r) =>
+          r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
+      );
+      await page.getByRole("radio", { name: "Light" }).click();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+      const lightBg = await bg();
+      expect(lightBg).not.toBe(darkBg);
+
+      await storedTheme;
+      await page.reload();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+      await page.getByRole("radio", { name: "System" }).click();
+      await expect(page.locator("html")).not.toHaveAttribute(
+        "data-theme",
+        /.*/,
+      );
+      expect(await bg()).toBe(darkBg);
+    },
+  );
+
+  isolated(
+    "axe finds nothing with the theme override set either way",
+    async ({ page, backend }) => {
+      await backend.signIn(page);
+      await page.goto("/settings");
+      for (const choice of ["Light", "Dark"]) {
+        await page.getByRole("radio", { name: choice }).click();
+        expect(await axeViolations(page), choice).toEqual([]);
+      }
+    },
+  );
 });

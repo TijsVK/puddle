@@ -13,6 +13,7 @@
 
   onMount(() => {
     theme.init();
+    void theme.sync();
     return live.start();
   });
 </script>

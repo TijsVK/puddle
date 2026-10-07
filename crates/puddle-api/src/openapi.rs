@@ -12,7 +12,7 @@ use crate::routes::{AppState, api_router};
 
 /// The contract's version. Bump the minor version for additive changes and the major version
 /// for anything a generated client would break on.
-pub const API_VERSION: &str = "0.2.0";
+pub const API_VERSION: &str = "0.3.0";
 
 /// The security scheme's name in the spec.
 const BEARER: &str = "bearer";
@@ -171,14 +171,18 @@ mod tests {
         let s = spec();
         let schemas = s["components"]["schemas"].as_object().unwrap();
         for (name, schema) in schemas {
-            if name.ends_with("Request") || name == "SettingsLayer" || name == "LocalToggles" {
+            if name.ends_with("Request")
+                || name == "SettingsLayer"
+                || name == "LocalToggles"
+                || name == "UiPrefs"
+            {
                 continue;
             }
             check_required(name, schema);
         }
         // Shared by requests and responses: required in the spec (responses always send them),
         // tolerated when absent in a request.
-        for name in ["SettingsLayer", "LocalToggles", "VsCodeServer"] {
+        for name in ["SettingsLayer", "LocalToggles", "VsCodeServer", "UiPrefs"] {
             check_required(name, &schemas[name]);
         }
     }
