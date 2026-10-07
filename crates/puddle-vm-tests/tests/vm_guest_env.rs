@@ -34,27 +34,47 @@ const PNPM: &str = "pnpm@10.12.1";
 const YARN_BERRY: &str = "yarn@4.9.2";
 
 const CREATE_BUDGET: Duration = Duration::from_secs(300);
-const SETUP_BUDGET: Duration = Duration::from_secs(420);
+/// Per setup step; the guest enforces it with `timeout` (a bit less), so a hung step ends with its
+/// own output instead of a bare host-side timeout.
+const SETUP_STEP_BUDGET: Duration = Duration::from_secs(300);
 const PROBE_BUDGET: Duration = Duration::from_secs(150);
 const STEP_BUDGET: Duration = Duration::from_secs(60);
 
 /// Probes expected to fail today, by name (see the module docs).
 const KNOWN_GAPS: &[&str] = &[];
 
-const SETUP: &str = r#"set -eu
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq --no-install-recommends ca-certificates curl wget git sudo unzip \
-  python3-pip openjdk-21-jdk-headless maven >/dev/null
-curl -fsSL -o /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip"
-unzip -q /tmp/gradle.zip -d /opt
-ln -sf "/opt/gradle-$GRADLE_VERSION/bin/gradle" /usr/local/bin/gradle
-export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-corepack enable pnpm
-corepack install -g "$PNPM"
-mkdir -p /tmp/warm && cd /tmp/warm && corepack "$YARN_BERRY" --version
-mvn -v | head -1; gradle --version -q | grep Gradle; node -v; pnpm -v; yarn -v; java -version 2>&1 | head -1
-"#;
+/// The tool install, one named step at a time so the log shows which step is slow or hangs.
+const SETUP_STEPS: &[(&str, &str)] = &[
+    ("apt update", "apt-get update -qq"),
+    (
+        "apt install (JDK 21, maven, tools)",
+        "apt-get install -y -qq --no-install-recommends ca-certificates curl wget git sudo unzip \
+         python3-pip openjdk-21-jdk-headless maven >/dev/null",
+    ),
+    (
+        "gradle download",
+        "curl -fsSL -w 'http=%{http_code} bytes=%{size_download} speed=%{speed_download}B/s \
+         connect=%{time_connect}s tls=%{time_appconnect}s first-byte=%{time_starttransfer}s \
+         total=%{time_total}s\n' -o /tmp/gradle.zip \
+         \"https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip\"",
+    ),
+    (
+        "gradle unpack",
+        "unzip -q /tmp/gradle.zip -d /opt && ln -sf \"/opt/gradle-$GRADLE_VERSION/bin/gradle\" /usr/local/bin/gradle",
+    ),
+    (
+        "corepack pnpm",
+        "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0; corepack enable pnpm && corepack install -g \"$PNPM\"",
+    ),
+    (
+        "corepack yarn berry",
+        "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0; mkdir -p /tmp/warm && cd /tmp/warm && corepack \"$YARN_BERRY\" --version",
+    ),
+    (
+        "tool versions",
+        "mvn -v | head -1; gradle --version -q | grep Gradle; node -v; pnpm -v; yarn -v; java -version 2>&1 | head -1",
+    ),
+];
 
 /// The guest side of the route: logs `<request line> host=<Host>` per request.
 const FIXTURE: &str = r"
@@ -413,6 +433,47 @@ async fn fixture_log(sb: &Sandbox) -> Vec<String> {
     out.stdout().unwrap().lines().map(str::to_owned).collect()
 }
 
+/// Runs one setup step as root and prints its time and output tail; panics, naming the step, when it
+/// fails or exceeds [`SETUP_STEP_BUDGET`].
+async fn setup_step(sb: &Sandbox, name: &str, script: &str) {
+    let guest_limit = SETUP_STEP_BUDGET.as_secs() - 10;
+    let wrapped = format!(
+        "set -eu; export DEBIAN_FRONTEND=noninteractive; exec 2>&1; timeout {guest_limit} sh -c {}",
+        sh_quote(&format!("set -eu; {script}"))
+    );
+    let started = Instant::now();
+    let out = within(
+        "setup step",
+        SETUP_STEP_BUDGET,
+        sb.shell_with(wrapped, |e| {
+            e.user("root")
+                .env("GRADLE_VERSION", GRADLE_VERSION)
+                .env("PNPM", PNPM)
+                .env("YARN_BERRY", YARN_BERRY)
+                .timeout(SETUP_STEP_BUDGET)
+        }),
+    )
+    .await;
+    let secs = started.elapsed().as_secs_f32();
+    let out = match out {
+        Ok(Ok(out)) => out,
+        other => panic!("setup step '{name}' did not finish in {secs:.1} s: {other:?}"),
+    };
+    let text = out.stdout().unwrap_or_default();
+    eprintln!(
+        "setup step '{name}': {secs:.1} s, exit {}\n{}",
+        out.status().code,
+        tail(&text, 8)
+    );
+    assert_eq!(out.status().code, 0, "setup step '{name}' failed:\n{text}");
+}
+
+/// The last `n` lines of `text`.
+fn tail(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
 struct Outcome {
     name: &'static str,
     reached: bool,
@@ -434,26 +495,10 @@ async fn tools_reach_the_fixture(env: &VmEnv) -> Result<Vec<Outcome>, HarnessErr
         eprintln!("create (pull + boot) {} s", started.elapsed().as_secs());
 
         let started = Instant::now();
-        let setup = within(
-            "setup",
-            SETUP_BUDGET,
-            sb.shell_with(SETUP, |e| {
-                e.user("root")
-                    .env("GRADLE_VERSION", GRADLE_VERSION)
-                    .env("PNPM", PNPM)
-                    .env("YARN_BERRY", YARN_BERRY)
-                    .timeout(SETUP_BUDGET)
-            }),
-        )
-        .await??;
-        assert_eq!(
-            setup.status().code,
-            0,
-            "tool setup failed:\n{}\n{}",
-            setup.stdout().unwrap_or_default(),
-            setup.stderr().unwrap_or_default()
-        );
-        eprintln!("setup {} s:\n{}", started.elapsed().as_secs(), setup.stdout().unwrap_or_default());
+        for (name, script) in SETUP_STEPS {
+            setup_step(&sb, name, script).await;
+        }
+        eprintln!("setup total {} s", started.elapsed().as_secs());
 
         for f in &config.files {
             write_file(&sb, f.path().as_str(), f.mode(), f.contents()).await;

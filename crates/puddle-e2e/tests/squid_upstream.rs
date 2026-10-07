@@ -62,6 +62,8 @@ impl Drop for Squid {
             Stop::Process(child) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                // A killed Squid cannot unlink its shared-memory segments.
+                remove_shared_memory(&instance_name(self.port));
             }
             Stop::Container(name) => {
                 let _ = Command::new("docker")
@@ -70,6 +72,26 @@ impl Drop for Squid {
                     .stderr(Stdio::null())
                     .status();
             }
+        }
+    }
+}
+
+/// Squid's instance name (`-n`, alphanumeric only). It prefixes the shared-memory segments
+/// (`/dev/shm/<name>-cf__*`) that Squid creates exclusively, so concurrent Squids, or one killed
+/// earlier, would otherwise collide on the default name.
+fn instance_name(port: u16) -> String {
+    format!("puddletest{port}")
+}
+
+/// Removes the shared-memory segments left under `name` (Linux's `/dev/shm`; absent elsewhere).
+fn remove_shared_memory(name: &str) {
+    let prefix = format!("{name}-cf__");
+    let Ok(entries) = fs::read_dir("/dev/shm") else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            let _ = fs::remove_file(entry.path());
         }
     }
 }
@@ -169,10 +191,12 @@ impl Squid {
                 bin.to_string_lossy()
             );
             let log = fs::File::create(dir.path().join("squid.stderr")).unwrap();
+            let name = instance_name(port);
+            remove_shared_memory(&name);
             let child = Command::new(bin)
                 .arg("-f")
                 .arg(dir.path().join("squid.conf"))
-                .args(["-N", "-Y", "-C"])
+                .args(["-N", "-Y", "-C", "-n", &name])
                 .stdout(Stdio::null())
                 .stderr(log)
                 .spawn()

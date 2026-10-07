@@ -14,18 +14,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use puddle_doctor::{CheckId, Finding, Options, Report, Status, SystemProbe, diagnose};
-use puddle_runtime::{
-    DevOverride, LIBKRUNFW_FILE_NAME, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeVersion,
-};
+use puddle_runtime::{DevOverride, HostOs, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeVersion};
 use puddle_vm_tests::{RuntimePair, Settings};
 
 /// The acceptance bar for a whole run.
 const BAR: Duration = Duration::from_secs(30);
-
-/// The firmware file name msb 0.7.7 looks for beside itself on Linux
-/// (`microsandbox_utils::libkrunfw_filename("linux")`); puddle's runtime layout only defines
-/// Windows's, and CI installs it as `libkrunfw.so.5` for the SDK's explicit config.
-const LINUX_LIBKRUNFW: &str = "libkrunfw.so.5.6.1";
 
 fn settings() -> Settings {
     Settings::from_lookup(|var| std::env::var(var).ok()).expect("VM settings")
@@ -43,13 +36,18 @@ fn runtime_copy(root: &Path) -> PathBuf {
     let dir = root.join(RUNTIME_DIR_NAME);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::copy(&pair.msb, dir.join(MSB_FILE_NAME)).unwrap();
-    // msb pairs itself with the firmware beside it, under the name it was released with.
-    let firmware = if cfg!(windows) {
-        LIBKRUNFW_FILE_NAME
-    } else {
-        LINUX_LIBKRUNFW
-    };
-    std::fs::copy(&pair.libkrunfw, dir.join(firmware)).unwrap();
+    // msb pairs itself with the firmware beside it, under the name it was released with, so copy
+    // every firmware name the runtime folder holds (`libkrunfw.so.5` and the versioned file).
+    let prefix = HostOs::current().runtime_files().libkrunfw_prefix;
+    for entry in std::fs::read_dir(pair.msb.parent().unwrap())
+        .unwrap()
+        .flatten()
+    {
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with(prefix) && entry.path().is_file() {
+            std::fs::copy(entry.path(), dir.join(&name)).unwrap();
+        }
+    }
     dir
 }
 

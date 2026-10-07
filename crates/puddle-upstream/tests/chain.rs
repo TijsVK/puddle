@@ -440,7 +440,7 @@ async fn an_ipv6_address_is_sent_with_brackets() {
     let chain = chain(vec![via(&proxy)], Arc::new(puddle_upstream::NoAuth));
     let dest = https("v6.test");
     let checked: [SocketAddr; 1] = ["[2001:db8::1]:443".parse().unwrap()];
-    // The fake cannot reach it; only the request line matters.
+    // The fake refuses every non-loopback target without dialling it; only the request line matters.
     let err = chain
         .connect(&Request::new(&dest, Form::Tunnel, &checked))
         .await

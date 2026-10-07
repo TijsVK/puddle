@@ -10,8 +10,9 @@
 #              msb.exe + libkrunfw.dll.
 #     Linux:   the fork releases no Linux msb, so msb is built from the tag's source (commit
 #              pinned) with upstream's agentd embedded; libkrunfw from upstream's release v<release>
-#              (the fork keeps upstream's firmware). Needs cargo and libcap-ng-dev; takes
-#              ~10 min cold. MSB_BUILD_DIR (default <dest-dir>/../msb-build) holds the checkout,
+#              (the fork keeps upstream's firmware), installed as libkrunfw.so.5 and as a copy under
+#              the versioned name msb looks for beside itself (libkrunfw.so.<version>, pinned in
+#              ci/msb-runtime.sha256). Needs cargo and libcap-ng-dev; takes ~10 min cold. MSB_BUILD_DIR (default <dest-dir>/../msb-build) holds the checkout,
 #              its target dir and the result msb-<commit>, which is reused when present (a CI
 #              cache keeps only that file).
 #   upstream tag v<release> (superradcompany/microsandbox): the release archive for this host.
@@ -74,6 +75,8 @@ fetch() {
 }
 
 mkdir -p "$dest"
+# Absolute: the source build below runs from other directories and gets paths under $dest.
+dest=$(cd "$dest" && pwd)
 case "$tag/$os" in
 *-puddle.*/windows)
     fetch "$fork_repo" "$tag" "msb-windows-$arch.exe" "$dest/msb.exe"
@@ -107,6 +110,17 @@ case "$tag/$os" in
         cp "$build/target/release/msb" "$built"
     fi
     cp "$built" "$dest/msb"
+    # msb loads the firmware from beside itself under the exact name it was built to look for
+    # (libkrunfw.so.<LIBKRUNFW_VERSION>); the release asset is only SONAME-named. The version is
+    # pinned with the commit, and checked against the source when this run has the checkout.
+    fw_version=$(pinned "$tag" libkrunfw-linux-version)
+    if [ -f "${src:-/nonexistent}/crates/utils/lib/lib.rs" ] &&
+        ! grep -q "LIBKRUNFW_VERSION: &str = \"$fw_version\"" "$src/crates/utils/lib/lib.rs"; then
+        echo "fetch-msb: $tag's source does not look for libkrunfw $fw_version (fix libkrunfw-linux-version in ci/msb-runtime.sha256)" >&2
+        exit 1
+    fi
+    versioned=libkrunfw.so.$fw_version
+    cp "$dest/libkrunfw.so.5" "$dest/$versioned"
     ;;
 */*)
     archive="microsandbox-$os-$arch.tar.gz"

@@ -351,7 +351,14 @@ async fn tunnel(shared: &Shared, mut reader: BufReader<TcpStream>, target: &str)
             .await;
         return;
     };
-    let Ok(mut upstream) = TcpStream::connect(resolved).await else {
+    // Only loopback is dialled: a documentation or other routable address would reach the test
+    // host's real network, where a host with a default route black-holes it instead of refusing.
+    let dialled = if resolved.ip().is_loopback() {
+        TcpStream::connect(resolved).await.ok()
+    } else {
+        None
+    };
+    let Some(mut upstream) = dialled else {
         let _ = reader
             .get_mut()
             .write_all(&response(

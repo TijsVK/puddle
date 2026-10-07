@@ -253,8 +253,38 @@ impl VmEnv {
         let home = self.settings.home();
         let kept = self.settings.kept_logs();
         drop(self);
+        remove_metrics_segments(&home);
         remove_dir_retrying(&home, REMOVE_ATTEMPTS, REMOVE_BACKOFF).await?;
         remove_dir_retrying(&kept, REMOVE_ATTEMPTS, REMOVE_BACKOFF).await
+    }
+}
+
+/// The registry ABI versions whose segment msb may have created for a home (current and legacy).
+const METRICS_ABIS: [u32; 2] = [2, 3];
+
+/// The POSIX shared-memory object names (without the leading `/`) msb's metrics registry uses for
+/// `home`: `msb-met-<FNV-1a 64 of the home path's bytes>-v<abi>`. msb creates one per home on the
+/// first sandbox start and never unlinks it.
+fn metrics_segment_names(home: &Path) -> Vec<String> {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in home.as_os_str().as_encoded_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    METRICS_ABIS
+        .iter()
+        .map(|abi| format!("msb-met-{hash:016x}-v{abi}"))
+        .collect()
+}
+
+/// Unlinks the metrics segments msb left for the private `home`, so a test run leaves nothing in
+/// `/dev/shm`. Best effort. Only Linux shows these as files; Windows frees the mapping with its
+/// last handle, and macOS names live outside the file system.
+fn remove_metrics_segments(home: &Path) {
+    if cfg!(target_os = "linux") {
+        for name in metrics_segment_names(home) {
+            let _ = std::fs::remove_file(Path::new("/dev/shm").join(name));
+        }
     }
 }
 
@@ -325,6 +355,15 @@ pub(crate) mod tests {
     use puddle_runtime::HostOs;
 
     use super::*;
+
+    #[test]
+    fn the_metrics_segment_name_matches_msbs_hash_of_the_home() {
+        // Value from msb's own `metrics_registry_shm_name` for this path.
+        assert_eq!(
+            metrics_segment_names(Path::new("/tmp/msb-abc123")),
+            ["msb-met-d63328847086d141-v2", "msb-met-d63328847086d141-v3"]
+        );
+    }
 
     /// A temp dir removed on drop (no tempfile dependency for a few tests).
     pub(crate) struct TempDir(PathBuf);

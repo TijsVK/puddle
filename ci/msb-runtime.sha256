@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # What ci/fetch-msb.sh may install, by release tag: `<tag> <release asset> <sha256>`, or
-# `<tag> source-commit <sha1>` for a fork tag whose Linux msb is built from source. fetch-msb.sh
+# `<tag> source-commit <sha1>` for a fork tag whose Linux msb is built from source, and
+# `<tag> libkrunfw-linux-version <x.y.z>`: the firmware version that msb looks for beside itself
+# (`LIBKRUNFW_VERSION` in its `crates/utils/lib/lib.rs`). fetch-msb.sh
 # refuses anything not listed here. Values copied from each release's checksums.sha256 and checked
 # against a download.
 #
@@ -12,21 +14,27 @@ v0.7.7-puddle.12 source-commit 7e76f8ed23dbcc3bdfd73e166692b8b30b3522e0
 v0.7.7-puddle.11 msb-windows-x86_64.exe b15dfc2c73a36098d5943bdc5ca8c24920174db60ad1eaeef26da5245e9a4c33
 v0.7.7-puddle.11 libkrunfw-windows-x86_64.dll bc633c0330346fabfbfa4d91fb4e544f8a9bae2857c22dd808b4bb396bd9c44e
 v0.7.7-puddle.11 source-commit bf557bca3f209c29172315b818dd85fa41d094d3
+v0.7.7-puddle.11 libkrunfw-linux-version 5.6.1
 v0.7.7-puddle.9 msb-windows-x86_64.exe a9b727b1a7d8e5ebe5072cedcbf58f7af16c618e246a8edd57ff3436611c3726
 v0.7.7-puddle.9 libkrunfw-windows-x86_64.dll bc633c0330346fabfbfa4d91fb4e544f8a9bae2857c22dd808b4bb396bd9c44e
 v0.7.7-puddle.9 source-commit 4806716a257e080c0d63630855f638b674cb0c8a
+v0.7.7-puddle.9 libkrunfw-linux-version 5.6.1
 v0.7.7-puddle.8 msb-windows-x86_64.exe bbdf31484d6c2927278ca081c0397efc73a127d5279340a534022c716c0e9d4d
 v0.7.7-puddle.8 libkrunfw-windows-x86_64.dll bc633c0330346fabfbfa4d91fb4e544f8a9bae2857c22dd808b4bb396bd9c44e
 v0.7.7-puddle.8 source-commit e96aad1bf3b1b86d0daa7305674a08cf2bf19038
+v0.7.7-puddle.8 libkrunfw-linux-version 5.6.1
 v0.7.7-puddle.7 msb-windows-x86_64.exe 2c21fd19c288e18e3b531a79e6c1a0c1221af11cd03c1d76ed7239379474ae41
 v0.7.7-puddle.7 libkrunfw-windows-x86_64.dll bc633c0330346fabfbfa4d91fb4e544f8a9bae2857c22dd808b4bb396bd9c44e
 v0.7.7-puddle.7 source-commit 02725cd7a237e4d8d61b79b693254addd388e5e4
+v0.7.7-puddle.7 libkrunfw-linux-version 5.6.1
 v0.7.7-puddle.6 msb-windows-x86_64.exe 114b8200d29d044446532edb9a035148ceb4d1fac0ebecd7d95a4e05c60eff58
 v0.7.7-puddle.6 libkrunfw-windows-x86_64.dll bc633c0330346fabfbfa4d91fb4e544f8a9bae2857c22dd808b4bb396bd9c44e
 v0.7.7-puddle.6 source-commit 7ac3f65496c09539b75c7d5ecaa9a7f86788f25a
+v0.7.7-puddle.6 libkrunfw-linux-version 5.6.1
 v0.7.7-puddle.3 msb-windows-x86_64.exe ed73bd972680da66b1807bbc5098fe3a52238015fda67c380a3c3ec86160f91e
 v0.7.7-puddle.3 libkrunfw-windows-x86_64.dll bc633c0330346fabfbfa4d91fb4e544f8a9bae2857c22dd808b4bb396bd9c44e
 v0.7.7-puddle.3 source-commit 7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7
+v0.7.7-puddle.3 libkrunfw-linux-version 5.6.1
 # Upstream v0.7.7 (superradcompany/microsandbox): the stock archives, and the firmware and
 # agentd a fork Linux build of that release uses.
 v0.7.7 microsandbox-linux-x86_64.tar.gz b3cc4a5e3f52dfdd938a6f67ac4a9a959ddfe304bab56de4964044b8613f01bb
