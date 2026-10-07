@@ -88,6 +88,14 @@ run_gate() {
         # build for the msvc target. It drives clang as clang-cl and the toolchain's llvm-ar as
         # llvm-lib, so it needs `clang` on PATH; the shell's Windows resources need `llvm-rc`. Run through plain cargo: the cross-check doesn't
         # share the native build's cache anyway.
+        # Distro LLVM packages (Debian, Ubuntu) keep llvm-rc and friends in /usr/lib/llvm-N/bin, off
+        # PATH; use the newest one when llvm-rc isn't already on PATH.
+        if ! command -v llvm-rc >/dev/null 2>&1; then
+            for dir in /usr/lib/llvm-*/bin; do
+                [ ! -x "$dir/llvm-rc" ] || llvm_bin=$dir
+            done
+            [ -z "${llvm_bin:-}" ] || PATH="$llvm_bin:$PATH"
+        fi
         for tool in cargo-xwin clang llvm-rc; do
             command -v "$tool" >/dev/null 2>&1 || {
                 echo "clippy-windows needs $tool on PATH (docs/STANDARDS.md, \"Toolchain\")" >&2

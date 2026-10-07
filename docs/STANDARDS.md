@@ -69,7 +69,7 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
 - Windows releases are built with native MSVC in CI. Locally, `cargo-xwin` cross-builds the
   MSVC target from Linux; `scripts/check.sh clippy-windows` cross-checks without linking, through
   `cargo xwin clippy` so C dependencies (bundled SQLite) compile too. It needs `clang` on `PATH`
-  (a distro `clang` package, or a conda-forge `clang` environment) and `llvm-rc` (the shell's Windows resources, `tauri-winres`); cargo-xwin links it as
+  (a distro `clang` package, or a conda-forge `clang` environment) and `llvm-rc` (the shell's Windows resources, `tauri-winres`). The gate adds the newest `/usr/lib/llvm-*/bin` (Debian and Ubuntu `llvm` package) to `PATH` when `llvm-rc` isn't on it; cargo-xwin links it as
   `clang-cl` and uses the toolchain's `llvm-tools` as `llvm-lib`.
 - Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli`, `cargo-xwin`, `shellcheck`, `cargo-about` (with `--features cli`) (versions pinned in
   `.github/workflows/ci.yml`; use the same or newer locally).
