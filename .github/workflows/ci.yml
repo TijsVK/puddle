@@ -84,6 +84,9 @@ jobs:
       - name: shellcheck
         if: ${{ !cancelled() }}
         run: scripts/check.sh shellcheck
+      - name: standalone (no planning-note references)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh standalone
       - name: clippy (linux)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy
