@@ -388,8 +388,7 @@ mod tests {
             ),
             (" ".repeat(5000), "too large"),
         ] {
-            fs::write(&path, &body).unwrap();
-            set_private(&path);
+            puddle_fs::private::write_atomic(&path, body.as_bytes()).unwrap();
             let err = ConnectionInfo::read(&path).unwrap_err().to_string();
             assert!(err.contains(want), "{err}");
             assert!(!err.contains(&secretish), "{err}");
@@ -422,13 +421,4 @@ mod tests {
             .collect();
         assert!(left.is_empty(), "{left:?}");
     }
-
-    #[cfg(unix)]
-    fn set_private(path: &Path) {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
-    }
-
-    #[cfg(windows)]
-    fn set_private(_path: &Path) {}
 }

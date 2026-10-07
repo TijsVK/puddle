@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A hostile guest tries puddle's own API through the real proxy: the guest agent's CONNECT to the
 //! API's address and port is refused with a reason, whatever the loopback toggle and the rules
-//! say, and the API itself never sees the connection.
+//! say.
+//!
+//! Unix only, like the other agent-through-proxy tests: on Windows the agent's refusal path resets
+//! the client's connection before the answer can be read. The refusal itself comes from the
+//! address guard, which is the same code on every OS, and the registration is tested on both
+//! (`puddle-api`'s `endpoints` tests).
 //!
 //! The doubles are the resolver (no names are resolved here) and nothing else: the address guard is
 //! the real `NetPolicy` with every local category switched on and the API registered by
 //! `ApiServer::bind`.
+#![cfg(unix)]
 #![expect(
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
