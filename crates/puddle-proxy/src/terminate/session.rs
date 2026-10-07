@@ -344,6 +344,26 @@ where
         Ok(())
     }
 
+    /// Writes `response` to the guest while the guest's read side is polled (see [`keep_reading`]).
+    async fn write_response(
+        &mut self,
+        response: ::http::Response<hyper::body::Incoming>,
+        parsed: &Parsed,
+        config: ProxyConfig,
+    ) -> io::Result<response::Written> {
+        tokio::select! {
+            written = response::write(
+                &mut self.writer,
+                response,
+                &parsed.method,
+                parsed.http11,
+                parsed.close,
+                config.body_idle_timeout,
+            ) => written,
+            never = keep_reading(&mut self.reader) => match never {},
+        }
+    }
+
     /// Sends `parsed` with `headers` upstream and its response to the guest.
     async fn exchange(&mut self, parsed: &Parsed, headers: ::http::HeaderMap) -> Flow {
         let config = self.cx.proxy.config;
@@ -421,15 +441,7 @@ where
                     .await;
             }
         };
-        let written = response::write(
-            &mut self.writer,
-            response,
-            &parsed.method,
-            parsed.http11,
-            parsed.close,
-            config.body_idle_timeout,
-        )
-        .await;
+        let written = self.write_response(response, parsed, config).await;
         match written {
             Ok(response::Written::KeepOpen) if body_complete || !has_body => Flow::Continue,
             Ok(_) => {
@@ -445,6 +457,18 @@ where
             }
         }
     }
+}
+
+/// Polls the guest's read side for as long as it is dropped. A yamux stream only learns that
+/// the peer opened its window again by being read, so a writer that is stuck on a full window
+/// while nobody reads (the guest is waiting for the response) never wakes: a download of more
+/// than one window would stall. Anything the guest does send stays buffered for the next request.
+async fn keep_reading<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+) -> std::convert::Infallible {
+    // An empty read is the guest closing its side: the response may still go out.
+    let _ = reader.fill_buf().await;
+    std::future::pending().await
 }
 
 /// Sends `request` while pumping the guest's body into it. `None` as the first answer: the

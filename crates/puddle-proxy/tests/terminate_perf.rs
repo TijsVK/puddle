@@ -153,3 +153,22 @@ async fn terminating_costs_little_next_to_splicing() {
     );
     let _ = Arc::strong_count(&rig.ca);
 }
+
+/// A response bigger than a yamux stream window has to arrive although the guest sends nothing
+/// while it waits: the proxy's writer stalled on a full window until its guest side was read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_download_larger_than_the_stream_window_arrives() {
+    let pki = Pki::new();
+    let bound = bulk_server(&pki, "bound.test").await;
+    let rig = RigBuilder::new(&pki).name("bound.test", bound).build();
+    let mut guest = rig.guest().await;
+    for _ in 0..8 {
+        let mut client = guest.tls("bound.test:443", None).await.unwrap();
+        let took = tokio::time::timeout(
+            Duration::from_secs(20),
+            transfer(&mut client, "bound.test", 40),
+        )
+        .await;
+        assert!(took.is_ok(), "40 MiB up and down stalled");
+    }
+}
