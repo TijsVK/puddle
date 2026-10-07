@@ -1,16 +1,16 @@
 # Rules spec: firewall rules, pending requests, audit
 
-Status: draft for W3 (`puddle-store` rules engine and SQLite store), 2026-10-06.
-Written fresh from puddle's own decisions (D-1, D-16, D-26, D-37, D-44, D-52, D-54) and threat model
-(T-029 AP-3 to AP-6, AU-1 to AU-3). No upstream Huddle rules, store or test code was used.
+Status: draft for the `puddle-store` rules engine and SQLite store, 2026-10-06.
+Written fresh from puddle's own design decisions and threat model. No upstream Huddle rules, store
+or test code was used.
 
-Every numbered rule (`R-n`) gets at least one named test in W3 (`r07_expired_rule_never_matches`, etc.).
-Defaults marked *(default)* are reversible choices, collected in the T-130 brief.
+Every numbered rule (`R-n`) gets at least one named test in `puddle-store` (`r07_expired_rule_never_matches`, etc.).
+Defaults marked *(default)* are reversible choices.
 
 ## 1. Model
 
-A **request** is what the proxy (W2) asks about: `(sandbox_id, host, port)`. The sandbox id comes from
-the route the connection arrived on, never from anything the guest says (T-029). `host` is a
+A **request** is what the proxy asks about: `(sandbox_id, host, port)`. The sandbox id comes from
+the route the connection arrived on, never from anything the guest says. `host` is a
 normalised name (lowercase, IDNA to ASCII, LDH labels, no trailing dot, at most 253 characters) or
 a canonical IP literal (IPv4 dotted quad, IPv6 per RFC 5952). The proxy normalises; the engine only
 accepts the normalised type and never parses raw input.
@@ -30,22 +30,22 @@ A **rule** says what happens to matching requests:
 A **pending row** is a request that matched no rule (§3). Rules and pending rows live in SQLite;
 the audit (§5) is a SQLite table that is also served as a JSONL stream.
 
-Credential bindings (D-11) and the local-destination toggles (D-1) are separate settings, not rules:
+Credential bindings and the local-destination toggles are separate settings, not rules:
 a binding never allows a host, and a toggle never allows a destination (R-14).
 
 ## 2. Matching
 
-- **R-1 Nothing is pre-decided.** A fresh install has no rules, allow or deny (D-52). Every request
+- **R-1 Nothing is pre-decided.** A fresh install has no rules, allow or deny. Every request
   with no matching rule becomes pending (§3); there is no built-in deny list.
 - **R-2 Exact rules** match the identical normalised host or IP literal, on any port. Port rules are
-  later (T-029 EG-6); the port is still recorded on pending rows and in the audit.
+  later; the port is still recorded on pending rows and in the audit.
 - **R-3 Suffix rules** `.example.com` match every name ending in `.example.com` at any depth, and
   not `example.com` itself *(default)*. Input `*.example.com` is accepted and stored as
   `.example.com`. A suffix rule never matches an IP literal.
 - **R-4 A suffix must be longer than a public suffix.** `.com`, `.co.uk` and other entries of the
   bundled public suffix list (ICANN and private sections) are refused as suffix patterns.
 - **R-5 Applicable rules** for a request: every non-expired `global` rule plus every non-expired
-  `sandbox` rule of that request's sandbox. Another sandbox's rules never apply (T-029 HG-22).
+  `sandbox` rule of that request's sandbox. Another sandbox's rules never apply.
 - **R-6 Precedence, most specific wins:** (1) exact beats suffix, and a longer suffix beats a shorter
   one; (2) at equal pattern specificity, `sandbox` beats `global`; (3) at equal scope, `deny` beats
   `allow` *(default)*. So a global deny on `.example.com` can be overridden for one sandbox by a
@@ -64,35 +64,35 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
 
 States: `requested → allowed | denied | expired`. The three end states are final.
 
-- **R-10 Unmatched requests are denied and recorded** (plan §1 item 3). The proxy answers 403 at once
-  (plan W2 option (a): fail fast, the client retries); the row keeps `first_seen`/`last_seen` so
+- **R-10 Unmatched requests are denied and recorded.** The proxy answers 403 at once
+  (fail fast, the client retries); the row keeps `first_seen`/`last_seen` so
   parking the connection can be added later without a schema change. The name is never resolved
-  before a rule allows it (T-029 EG-8).
+  before a rule allows it.
 - **R-11 Dedupe on `(sandbox_id, host, port)`:** at most one `requested` row per key (a partial unique
   index). A repeat updates `last_seen` and increments `attempts` on the existing row; it creates
   nothing. A request after the row ended (for example the allow it created later expired) opens a
   new row with a new id.
-- **R-12 Pending rows are immutable** (T-029 AP-5): `id`, `sandbox_id`, `host`, `port` and
+- **R-12 Pending rows are immutable:** `id`, `sandbox_id`, `host`, `port` and
   `first_seen` never change after insert; ids are never reused. Only `last_seen`, `attempts`,
   `state`, `decided_at`, `decided_by` and `rule_id` change, and `state` only along the arrows above.
-- **R-13 Per-sandbox rate limit on new rows** (T-029 AP-6): a token bucket per sandbox, 60 new rows
+- **R-13 Per-sandbox rate limit on new rows:** a token bucket per sandbox, 60 new rows
   burst, refill 1 per second *(default)*, plus at most 500 open rows per sandbox *(default)*. Over
   the limit the request is still denied, no row is written, and the sandbox's `suppressed` counter
   goes up. One `pending_suppressed` audit record carries the count when suppression starts and
   every 60 s while it lasts; the inbox shows "N requests from <sandbox> suppressed". Repeats of an
   open row (R-11) never consume tokens.
-- **R-14 Local destinations** (W2 applies this after resolving an allowed name; the engine supplies
+- **R-14 Local destinations** (the proxy applies this after resolving an allowed name; the engine supplies
   the match): an address in a local category with its toggle off is blocked and the block names
-  the toggle, with no pending row (D-1, T-029 HG-06). With the toggle on, only an `exact` allow
+  the toggle, with no pending row. With the toggle on, only an `exact` allow
   counts: of the name, or of the resolved address itself (an exact IP rule admits that address,
   and only it). A suffix allow is treated as no match, and if no address is admitted the request
-  goes pending for the exact name (D-37, D-44), unless the "wildcards reach local addresses"
+  goes pending for the exact name, unless the "wildcards reach local addresses"
   setting is on (global default off, per-sandbox override *(default)*). The IP check only looks
   up rules (`Policy::lookup`); it never writes a pending row for the address. puddle's own
-  endpoints are blocked whatever rules or toggles say, and never become pending (D-26).
-  *Changed 2026-10-06 (T-092): the exact-IP case was added to follow D-44 ("a local destination
-  needs an exact name or IP entry"); before, only an exact name rule or an approval counted.*
-- **R-27 An exact IP deny wins for a resolved address** (W2 applies this to every address an
+  endpoints are blocked whatever rules or toggles say, and never become pending.
+  *Changed 2026-10-06: the exact-IP case was added, following the principle that a local destination
+  needs an exact name or IP entry; before, only an exact name rule or an approval counted.*
+- **R-27 An exact IP deny wins for a resolved address** (the proxy applies this to every address an
   allowed name resolves to, before R-14). The proxy looks up each address's own rules
   (`Policy::lookup`, R-5 to R-7 as for a request to that literal): if they deny it, the address is
   never used, whatever allows the name (exact, suffix, or an approval) and whether it is local or
@@ -102,20 +102,20 @@ States: `requested → allowed | denied | expired`. The three end states are fin
   refuses the request (fail closed). A request for an IP literal was already decided as that
   address. *(default)*: an address's own rules use R-6 precedence, so a sandbox allow of the
   address beats a global deny of it. Numbered R-27 to keep the other numbers (and their test
-  names) stable. *Added 2026-10-06 (T-095): before, an IP deny was checked only on the wildcard
+  names) stable. *Added 2026-10-06: before, an IP deny was checked only on the wildcard
   path, so an exact name allow or an approval reached a denied address (firewall model,
   2026-10-04: false allows are very bad).*
 - **R-15 Approve and deny** take a row id and four choices: effect (`allow`/`deny`), scope (`sandbox`,
   the default, or `global`), pattern (`exact`, the default, or a suffix of the row's host that passes
   R-4) and expiry (permanent, the default, or a duration). This covers the inbox's four outcomes
-  (allow/deny × this sandbox/everyone). Defaults are never widened implicitly (T-029 AP-4).
+  (allow/deny × this sandbox/everyone). Defaults are never widened implicitly.
 - **R-16 A decision is one transaction:** create the rule, set the row to `allowed`/`denied` with
   `rule_id`, `decided_at` and `decided_by`, and close every other `requested` row the new rule now
   decides (same sandbox for a sandbox rule, any sandbox for a global one) the same way.
 - **R-17 Stale ids are refused.** Approving or denying an unknown id or a row not in `requested`
   fails with an error naming the row's current state; nothing changes. A successful call returns
   the row as decided (sandbox, host, port) and the rule created, so the CLI and UI can echo exactly
-  what was approved (T-029 AP-5, HG-30).
+  what was approved.
 - **R-18 The inbox groups by registrable domain** (public suffix list, as R-4) for display; grouping
   is derived, not stored, and never decides anything.
 
@@ -137,17 +137,16 @@ Sweeper work never holds a lock that a decision waits on for more than one short
 Every decision, rule change and pending change is one record: a row in the SQLite `audit` table,
 readable as JSONL (one record per line).
 
-- **R-23 Serialised with `serde_json` only** (T-029 AU-1), from one internally tagged enum
+- **R-23 Serialised with `serde_json` only**, from one internally tagged enum
   (`"type": "..."`), per ADR 0002: `snake_case` fields, `ts` in epoch ms, `null` always written,
   never `untagged`, additive changes only. Control characters in any string come out escaped, so
   every line parses with `jq`.
-- **R-24 Record types** in W3: `connection` (written by W2: `sandbox_id`, `host`, `port`,
+- **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `sandbox_id`, `host`, `port`,
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `local_address`,
   `policy_unavailable`, `suppressed`, ...), `rule_id`, `pending_id`, `binding_id`, `injected`,
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
-  plain HTTP/1.x only, `bytes_up`, `bytes_down`,
-  per T-029 AU-3), `pending_created`, `pending_decided`, `pending_expired`,
+  plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired`,
   `pending_suppressed` (`sandbox_id`, `count`), `rule_created`, `rule_updated`, `rule_deleted`,
   `rule_expired` (with the full rule), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`).
   The proxy writes one `connection` record per request whose destination it parsed, when the
@@ -159,11 +158,11 @@ readable as JSONL (one record per line).
   `CONNECT host:80` and `GET http://host/` get the same decision and pending row. Node `fetch` and
   Yarn Berry send `http://` URLs that way. When a tunnel's first bytes are an HTTP/1.x request line,
   its record carries that request's `method` and `path` (first request only); the bytes are
-  relayed unchanged. *Added 2026-10-06 (T-098).*
+  relayed unchanged. *Added 2026-10-06.*
   `upstream` names the company-proxy hop that carried the connection (`DIRECT` or `PROXY host:port`,
   never credentials; `null` when no upstream route is configured or nothing connected), and when
   it is a proxy hop `resolved_ip` is the address sent to the proxy, or `null` if the proxy was told
-  the name (or this host could not resolve it). *Added 2026-10-07 (T-165, additive).*
+  the name (or this host could not resolve it). *Added 2026-10-07 (additive).*
 - **R-25 No secrets.** Never header values, credential material, query strings or request bodies;
   credentials appear only as `binding_id` and `injected: true|false`. Every audit struct has a test
   that serialises it with canary values in every secret-bearing input and asserts the canary is
@@ -193,7 +192,8 @@ readable as JSONL (one record per line).
 
 ## 6. Out of scope here
 
-The AI judge (D-16: no field or placeholder until its flow is designed), rule sets the user can
-enable (D-52, v1; they will be a third scope), path rules (after v1), port rules (T-029 EG-6), and the
-"Dangerous settings" unblock of puddle's endpoints (D-26, later). Address classification, name
-normalisation and the 403 body belong to W2; the API and CLI shape of R-15 to W4 and W7.
+The AI judge (no field or placeholder until its flow is designed), rule sets the user can
+enable (v1; they will be a third scope), path rules (after v1), port rules, and the
+"Dangerous settings" unblock of puddle's endpoints (later). Address classification, name
+normalisation and the 403 body belong to the proxy and `puddle-netpolicy`; the API and CLI shape of R-15
+to `puddle-api` and `puddle`.
