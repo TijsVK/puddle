@@ -1314,7 +1314,10 @@ async fn a_create_is_refused_when_the_workspace_list_cannot_be_saved() {
     let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
     assert_eq!(reply.status, 503, "{}", reply.body);
     let message = reply.json()["message"].as_str().unwrap().to_owned();
+    // What failed, the file, and what to do about it.
     assert!(message.contains("workspace list"), "{message}");
+    assert!(message.contains("workspaces.json"), "{message}");
+    assert!(message.contains("try again"), "{message}");
     // Nothing was made, and the name is still free.
     assert!(
         api.get("/api/workspaces").await.json()["workspaces"]

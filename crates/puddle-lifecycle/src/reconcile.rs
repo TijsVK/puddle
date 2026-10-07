@@ -69,7 +69,7 @@ pub struct ReconcileReport {
     /// Volumes of creates that never finished ([`Inventory::interrupted`]), removed.
     pub volumes_removed: Vec<VolumeName>,
     /// `ws-*` volumes no known workspace claims, kept: they may hold work, and the list that
-    /// lacks them may be the thing that is wrong. The caller tells the user.
+    /// lacks them may be the thing that is wrong. The caller reports them (the host logs them).
     pub unknown_volumes: Vec<VolumeName>,
     /// Foreign sandboxes, directories and volumes, left untouched.
     pub foreign: Vec<String>,

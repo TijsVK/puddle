@@ -137,6 +137,10 @@ impl<R: Runtime + Clone> std::fmt::Debug for HostWorkspaces<R> {
     }
 }
 
+/// The way out after the workspace list could not be saved; the error already names the file.
+const SAVE_HINT: &str =
+    "check the free disk space and that puddle may write that file, then try again";
+
 fn not_found(id: &WorkspaceId) -> WorkspaceError {
     WorkspaceError::NotFound(format!("no workspace {id}"))
 }
@@ -432,6 +436,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             (Err(_), Operation::Creating | Operation::Deleting)
         );
         let mut result = result;
+        let old_entry = slot.creating;
         match (&result, op) {
             (Err(_), Operation::Creating) | (Ok(()), Operation::Deleting) => {
                 state.slots.remove(id);
@@ -457,11 +462,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         }
         let record = state.slots.get(id).map(|s| s.record.clone());
-        if save
-            && let Err(e) = self.persist(&state)
-            && let Err(reason) = &mut result
-        {
-            *reason = format!("{reason}; {e}");
+        if save && let Err(e) = self.persist(&state) {
+            if old_entry {
+                // The entry still says "being created", so the next start drops it and removes
+                // what is left of the volume: nothing the user worked on.
+                tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after a failed create");
+            } else if let Err(reason) = &mut result {
+                // The workspace is now missing from the saved list: the next start keeps its
+                // volume and reports it, but doesn't list the workspace.
+                *reason = format!("{reason}; {e}; {SAVE_HINT}");
+            }
         }
         drop(state);
         if let (true, Some(record)) = (status_changed, &record) {
@@ -710,7 +720,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         // a workspace the next start takes for an unfinished create.
         if let Err(e) = self.mark_created(&record.id) {
             self.undo_boot(&record, true, created_volume).await;
-            return Err(format!("{e}; the new workspace was removed again"));
+            return Err(format!(
+                "{e}; the new workspace was removed again; {SAVE_HINT}"
+            ));
         }
         Ok(())
     }
@@ -898,7 +910,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 if let Err(e) = self.persist(&state) {
                     state.slots.remove(&id);
                     return Err(WorkspaceError::Unavailable(format!(
-                        "{} was not created: {e}",
+                        "{} was not created: {e}; {SAVE_HINT}",
                         new.name
                     )));
                 }
@@ -1085,7 +1097,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 match self.persist(&state) {
                     Ok(()) => Ok(report),
                     Err(e) => Err(WorkspaceError::Unavailable(format!(
-                        "{} was not deleted: {e}",
+                        "{} was not deleted: {e}; {SAVE_HINT}",
                         record.name
                     ))),
                 }
