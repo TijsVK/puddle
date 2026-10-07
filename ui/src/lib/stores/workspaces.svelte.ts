@@ -60,7 +60,7 @@ export type ActionResult<T = null> =
   | { ok: true; value: T }
   | { ok: false; message: string; field?: Field; reason?: "gone" | "conflict" };
 
-type StoreApi = Pick<ApiClient, "GET" | "POST" | "DELETE">;
+type StoreApi = Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
 
 export interface WorkspacesDeps {
   api?: StoreApi;
@@ -338,6 +338,38 @@ export class WorkspaceStore {
         body: { mode },
       }),
     );
+  }
+
+  /**
+   * Turns direct SSH on or off for one workspace by setting its own switch (the API replaces a
+   * workspace's whole settings layer, so this reads it first and sends it back with the change).
+   */
+  async setDirectSsh(name: string, on: boolean): Promise<ActionResult> {
+    try {
+      const mine = await this.#api.GET("/api/settings/sandboxes/{sandbox}", {
+        params: { path: { sandbox: name } },
+      });
+      if (!mine.data) {
+        return {
+          ok: false,
+          message: mine.error?.message ?? "puddle couldn't read the settings.",
+        };
+      }
+      const saved = await this.#api.PUT("/api/settings/sandboxes/{sandbox}", {
+        params: { path: { sandbox: name } },
+        body: { overrides: { ...mine.data.overrides, direct_ssh: on } },
+      });
+      if (!saved.data) {
+        return {
+          ok: false,
+          message: saved.error?.message ?? "puddle couldn't save that.",
+        };
+      }
+      await this.refresh();
+      return { ok: true, value: null };
+    } catch {
+      return { ok: false, message: DOWN };
+    }
   }
 
   /** Starts listening and polling; returns the function that stops both. */

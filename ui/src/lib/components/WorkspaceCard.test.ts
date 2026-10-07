@@ -12,7 +12,7 @@ function mount(over: Record<string, unknown> = {}, w = workspace("demo")) {
   const calls = {
     start: vi.fn(),
     stop: vi.fn(),
-    attach: vi.fn(),
+    connect: vi.fn(),
     dismiss: vi.fn(),
   };
   render(WorkspaceCard, {
@@ -21,7 +21,7 @@ function mount(over: Record<string, unknown> = {}, w = workspace("demo")) {
       now: NOW,
       onStart: calls.start,
       onStop: calls.stop,
-      onAttach: calls.attach,
+      onConnect: calls.connect,
       onDismiss: calls.dismiss,
       ...over,
     },
@@ -52,6 +52,14 @@ describe("WorkspaceCard", () => {
     expect(card).toHaveTextContent("8 GiB memory");
     expect(card).toHaveTextContent("2 GiB of 32 GiB used");
     expect(card).toHaveTextContent("3 hours ago");
+  });
+
+  it("marks a workspace with direct SSH on as trusted, and no other", () => {
+    mount({}, workspace("demo", { direct_ssh: true }));
+    expect(screen.getByText("Trusted")).toBeInTheDocument();
+    cleanup();
+    mount({}, workspace("demo"));
+    expect(screen.queryByText("Trusted")).toBeNull();
   });
 
   it("links the waiting count to the network tab, only when something waits", () => {

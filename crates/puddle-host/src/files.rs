@@ -128,7 +128,6 @@ pub(crate) struct Stored {
     pub(crate) memory_mib: u32,
     pub(crate) created_at: u64,
     pub(crate) disk_size_mib: u64,
-    pub(crate) first_connect_notice_due: bool,
     /// Set from the moment a create starts until it finishes. A record still marked after a
     /// restart is an interrupted create: its volume is an orphan for reconcile to remove.
     #[serde(default)]
@@ -214,7 +213,6 @@ mod tests {
             memory_mib: 1024,
             created_at: 7,
             disk_size_mib: 2048,
-            first_connect_notice_due: true,
             creating: false,
         }
     }
@@ -308,6 +306,7 @@ mod tests {
 
     #[test]
     fn an_old_entry_without_the_creating_flag_is_complete() {
+        // It also still carries the retired first-connect flag, which is ignored.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("workspaces.json");
         let entry = json!({"version": 1, "workspaces": [{

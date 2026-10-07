@@ -3,6 +3,7 @@
   import AttachButtons from "./AttachButtons.svelte";
   import ProgressLine from "./ProgressLine.svelte";
   import StatusChip from "./StatusChip.svelte";
+  import TrustedBadge from "./TrustedBadge.svelte";
   import { relativeTime } from "#lib/format/relative-time.ts";
   import type { OomEvent, Progress } from "#lib/stores/workspaces.svelte.ts";
   import {
@@ -20,7 +21,7 @@
     oom,
     onStart,
     onStop,
-    onAttach,
+    onConnect,
     onDismiss,
   }: {
     workspace: Workspace;
@@ -31,7 +32,7 @@
     oom?: OomEvent | undefined;
     onStart: (w: Workspace) => void;
     onStop: (w: Workspace) => void;
-    onAttach: (w: Workspace) => void;
+    onConnect: (w: Workspace) => void;
     onDismiss: (w: Workspace) => void;
   } = $props();
 
@@ -48,6 +49,7 @@
       </h2>
       <p class="repo">{workspace.repo_url}</p>
     </div>
+    {#if workspace.direct_ssh}<TrustedBadge />{/if}
     <StatusChip status={workspace.status} busy={workspace.busy} />
   </header>
   <p class="meta">
@@ -76,7 +78,7 @@
     onDismiss={() => onDismiss(workspace)}
   />
   <div class="acts">
-    <AttachButtons {workspace} {onStart} {onStop} {onAttach} />
+    <AttachButtons {workspace} {onStart} {onStop} {onConnect} />
     <a class="btn details" href="/workspaces/{encodeURIComponent(workspace.id)}"
       >Details <span class="visually-hidden">of {workspace.name}</span></a
     >

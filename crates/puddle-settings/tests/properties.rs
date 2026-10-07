@@ -39,8 +39,9 @@ fn layer() -> impl Strategy<Value = SandboxLayer> {
         proptest::option::of(grace()),
         proptest::option::of(any::<bool>()),
         proptest::option::of(clipboard()),
+        proptest::option::of(any::<bool>()),
     )
-        .prop_map(|(memory, toggles, wild, grace, zoom, clip)| {
+        .prop_map(|(memory, toggles, wild, grace, zoom, clip, direct_ssh)| {
             let mut l = SandboxLayer::default();
             l.memory = memory;
             let [loopback, private, link_local, metadata, special] = toggles;
@@ -53,6 +54,7 @@ fn layer() -> impl Strategy<Value = SandboxLayer> {
             l.reconnection_grace = grace;
             l.zoom_hotkeys = zoom;
             l.clipboard_read = clip;
+            l.direct_ssh = direct_ssh;
             l
         })
 }
@@ -170,6 +172,7 @@ fn check_rule(g: &GlobalSettings, s: Option<&SandboxSettings>) {
         glob.clipboard_read,
         ClipboardRead::Ask,
     );
+    expect(eff.direct_ssh, over.direct_ssh, glob.direct_ssh, false);
 }
 
 /// Keys that no settings struct knows, at any level.
@@ -205,6 +208,7 @@ proptest! {
         o.reconnection_grace.get_or_insert(ReconnectionGrace::MIN);
         o.zoom_hotkeys.get_or_insert(false);
         o.clipboard_read.get_or_insert(ClipboardRead::Deny);
+        o.direct_ssh.get_or_insert(true);
         prop_assert_eq!(resolve(&g1, Some(&full)), resolve(&g2, Some(&full)));
     }
 

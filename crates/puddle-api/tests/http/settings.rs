@@ -14,7 +14,8 @@ fn null_layer() -> Value {
         "wildcards_reach_local": null,
         "reconnection_grace": null,
         "zoom_hotkeys": null,
-        "clipboard_read": null
+        "clipboard_read": null,
+        "direct_ssh": null
     })
 }
 
@@ -39,6 +40,10 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
     assert_eq!(e["reconnection_grace"]["value"], 300);
     assert_eq!(e["clipboard_read"]["value"], "ask");
     assert_eq!(e["local_toggles"]["metadata"]["value"], false);
+    assert_eq!(
+        e["direct_ssh"],
+        json!({"value": false, "source": "default"})
+    );
     // Reading wrote nothing.
     assert_eq!(api.settings.load_global().unwrap(), None);
     api.running.shutdown().await;

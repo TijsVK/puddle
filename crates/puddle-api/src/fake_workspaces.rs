@@ -93,6 +93,8 @@ struct Inner {
     in_flight: watch::Sender<usize>,
     /// Operations wait here while it is `true`.
     held: watch::Sender<bool>,
+    /// How many times the API reported a settings change.
+    settings_changes: std::sync::atomic::AtomicUsize,
 }
 
 /// The in-memory service. Cheap to clone; clones share state.
@@ -142,6 +144,7 @@ impl FakeWorkspaces {
                 browser_base: "http://127.0.0.1:18080".to_owned(),
                 in_flight: watch::channel(0).0,
                 held: watch::channel(false).0,
+                settings_changes: std::sync::atomic::AtomicUsize::new(0),
             }),
         }
     }
@@ -181,6 +184,14 @@ impl FakeWorkspaces {
     /// Lets held operations go on.
     pub fn release(&self) {
         self.inner.held.send_replace(false);
+    }
+
+    /// How many settings changes the API has reported to this service.
+    #[must_use]
+    pub fn settings_changes(&self) -> usize {
+        self.inner
+            .settings_changes
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Resolves when no operation is running.
@@ -587,16 +598,18 @@ impl WorkspaceService for FakeWorkspaces {
                     self.inner.browser_base, record.id
                 ))),
                 AttachMode::Desktop => match self.inner.launcher.open_desktop(&record).await {
-                    Ok(()) => {
-                        if let Some(entry) = lock(&self.inner.state).entries.get_mut(id) {
-                            entry.record.first_connect_notice_due = false;
-                        }
-                        Ok(Attached::opened())
-                    }
+                    Ok(()) => Ok(Attached::opened()),
                     Err(err) => Ok(Attached::not_opened(err.to_string())),
                 },
             }
         })
+    }
+
+    fn settings_changed(&self) -> BoxFuture<'_, ()> {
+        self.inner
+            .settings_changes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async {})
     }
 }
 

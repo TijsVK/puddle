@@ -232,7 +232,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             record.memory = MemoryMib::new(stored.memory_mib).unwrap_or(MemoryMib::DEFAULT);
             record.created_at = stored.created_at;
             record.disk_size_mib = stored.disk_size_mib;
-            record.first_connect_notice_due = stored.first_connect_notice_due;
             record.status = match status.get(&name) {
                 Some(SandboxStatus::Crashed) => SandboxStatus::Crashed,
                 _ => SandboxStatus::Stopped,
@@ -295,7 +294,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 memory_mib: slot.record.memory.get(),
                 created_at: slot.record.created_at,
                 disk_size_mib: slot.record.disk_size_mib,
-                first_connect_notice_due: slot.record.first_connect_notice_due,
                 creating: slot.creating,
             })
             .collect();
@@ -619,18 +617,111 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if inner.lifecycle.manage(handle, vec![mount]).is_err() {
             return Err("puddle is shutting down".to_owned());
         }
-        match inner.kit.ipc().listen() {
-            Ok(listener) => match SshEndpoint::start(listener, gated) {
-                Ok(ssh) => {
-                    if let Some(live) = inner.live.lock().await.get_mut(name) {
-                        live.ssh = Some(ssh);
-                    }
-                }
-                Err(e) => tracing::warn!(sandbox = %name, error = %e, "no SSH endpoint"),
-            },
-            Err(e) => tracing::warn!(sandbox = %name, error = %e, "no SSH endpoint"),
+        // Direct SSH is off unless the user allowed it: then there is no endpoint to connect to
+        // and no ssh config entry, however the guest behaves.
+        if self.direct_ssh_allowed(name) {
+            self.open_ssh(name, gated).await;
         }
         Ok(())
+    }
+
+    /// The single gate for direct SSH: whether the user allowed it for `name`. Whatever opens an
+    /// SSH way into a workspace (the endpoint, and any ssh config entry) must check this first.
+    /// It is its override over the global default over
+    /// off. A settings document that cannot be read counts as off.
+    pub fn direct_ssh_allowed(&self, name: &SandboxName) -> bool {
+        let settings = self.inner.settings.as_ref();
+        let Some(global) = settings
+            .load_global()
+            .ok()
+            .map(|doc| doc.unwrap_or_else(|| serde_json::json!({})))
+            .and_then(|doc| GlobalSettings::from_document(doc).ok())
+        else {
+            return false;
+        };
+        let own = settings
+            .load_sandbox(name)
+            .ok()
+            .map(|doc| doc.unwrap_or_else(|| serde_json::json!({})))
+            .and_then(|doc| SandboxSettings::from_document(doc).ok());
+        match own {
+            Some(own) => {
+                resolve(&global.settings, Some(&own.settings))
+                    .direct_ssh
+                    .value
+            }
+            None => false,
+        }
+    }
+
+    /// Opens the SSH endpoint of a running sandbox Failures are logged: the workspace
+    /// runs without direct SSH.
+    async fn open_ssh(&self, name: &SandboxName, gated: Arc<GatedSandbox<R::Sandbox>>) {
+        let inner = &self.inner;
+        let listener = match inner.kit.ipc().listen() {
+            Ok(listener) => listener,
+            Err(e) => {
+                tracing::warn!(sandbox = %name, error = %e, "no SSH endpoint");
+                return;
+            }
+        };
+        let ssh = match SshEndpoint::start(listener, gated) {
+            Ok(ssh) => ssh,
+            Err(e) => {
+                tracing::warn!(sandbox = %name, error = %e, "no SSH endpoint");
+                return;
+            }
+        };
+        let stale = {
+            let mut live = inner.live.lock().await;
+            match live.get_mut(name) {
+                Some(entry) => entry.ssh.replace(ssh),
+                None => {
+                    drop(live);
+                    ssh.close().await;
+                    return;
+                }
+            }
+        };
+        if let Some(stale) = stale {
+            stale.close().await;
+        }
+    }
+
+    /// Makes every running sandbox's SSH endpoint and ssh config entry match its direct SSH
+    /// setting, at once and without a restart.
+    async fn apply_direct_ssh(&self) {
+        let running: Vec<(SandboxName, Option<Arc<GatedSandbox<R::Sandbox>>>, bool)> = {
+            let live = self.inner.live.lock().await;
+            live.iter()
+                .filter_map(|(name, entry)| {
+                    Some((
+                        name.clone(),
+                        Some(entry.gated.clone()?),
+                        entry.ssh.is_some(),
+                    ))
+                })
+                .collect()
+        };
+        for (name, gated, open) in running {
+            let allowed = self.direct_ssh_allowed(&name);
+            match (allowed, open, gated) {
+                (true, false, Some(gated)) => self.open_ssh(&name, gated).await,
+                (false, true, _) => {
+                    let ssh = self
+                        .inner
+                        .live
+                        .lock()
+                        .await
+                        .get_mut(&name)
+                        .and_then(|entry| entry.ssh.take());
+                    if let Some(ssh) = ssh {
+                        ssh.close().await;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Stops what a failed boot or a finished stop leaves: the SSH endpoint and the lifecycle's
@@ -1140,22 +1231,15 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     "the editor in the browser is not available in this build",
                 )),
                 AttachMode::Desktop => match self.inner.launcher.open_desktop(&record).await {
-                    Ok(()) => {
-                        let mut state = self.state();
-                        if let Some(slot) = state.slots.get_mut(id) {
-                            slot.record.first_connect_notice_due = false;
-                        }
-                        if let Err(e) = self.persist(&state) {
-                            // Only the first-connect notice is at stake: it shows again after
-                            // a restart. The editor is already open.
-                            tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after an attach");
-                        }
-                        Ok(Attached::opened())
-                    }
+                    Ok(()) => Ok(Attached::opened()),
                     Err(err) => Ok(Attached::not_opened(err.to_string())),
                 },
             }
         })
+    }
+
+    fn settings_changed(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move { self.apply_direct_ssh().await })
     }
 }
 

@@ -42,6 +42,8 @@ pub struct Effective {
     pub zoom_hotkeys: Resolved<bool>,
     /// Programmatic clipboard reads in sandbox windows.
     pub clipboard_read: Resolved<ClipboardRead>,
+    /// Whether puddle opens an SSH endpoint and an ssh config entry for the workspace.
+    pub direct_ssh: Resolved<bool>,
 }
 
 /// The local-destination toggles in effect for one sandbox.
@@ -98,6 +100,7 @@ impl Effective {
         reconnection_grace: default(ReconnectionGrace::DEFAULT),
         zoom_hotkeys: default(true),
         clipboard_read: default(ClipboardRead::Ask),
+        direct_ssh: default(false),
     };
 }
 
@@ -153,6 +156,7 @@ pub fn resolve(global: &GlobalSettings, sandbox: Option<&SandboxSettings>) -> Ef
         reconnection_grace,
         zoom_hotkeys,
         clipboard_read,
+        direct_ssh,
         extra: _,
     } = s;
     let LocalToggles {
@@ -196,6 +200,7 @@ pub fn resolve(global: &GlobalSettings, sandbox: Option<&SandboxSettings>) -> Ef
         ),
         zoom_hotkeys: pick(*zoom_hotkeys, g.zoom_hotkeys, d.zoom_hotkeys),
         clipboard_read: pick(*clipboard_read, g.clipboard_read, d.clipboard_read),
+        direct_ssh: pick(*direct_ssh, g.direct_ssh, d.direct_ssh),
     }
 }
 
@@ -204,12 +209,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn direct_ssh_follows_the_override_then_the_global_default() {
+        let mut g = GlobalSettings::default();
+        let mut s = SandboxSettings::default();
+        g.sandbox_defaults.direct_ssh = Some(true);
+        let e = resolve(&g, Some(&s));
+        assert!(e.direct_ssh.value);
+        assert_eq!(e.direct_ssh.source, Source::Global);
+        s.overrides.direct_ssh = Some(false);
+        let e = resolve(&g, Some(&s));
+        assert!(!e.direct_ssh.value);
+        assert_eq!(e.direct_ssh.source, Source::Sandbox);
+    }
+
+    #[test]
     fn nothing_set_gives_the_built_in_defaults() {
         let e = resolve(&GlobalSettings::default(), None);
         assert_eq!(e, Effective::DEFAULTS);
         assert_eq!(e.memory.value, MemoryMib::DEFAULT);
         assert!(!e.local_toggles.metadata.value);
         assert!(!e.wildcards_reach_local.value);
+        assert!(
+            !e.direct_ssh.value,
+            "direct SSH is off until someone turns it on"
+        );
         assert_eq!(e.reconnection_grace.value.secs(), 300);
         assert!(e.zoom_hotkeys.value);
         assert_eq!(e.clipboard_read.value, ClipboardRead::Ask);

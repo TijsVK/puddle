@@ -956,6 +956,8 @@ export interface components {
         EffectiveSettings: {
             /** @description Clipboard reads. */
             clipboard_read: components["schemas"]["ResolvedClipboardRead"];
+            /** @description Whether direct SSH is on. */
+            direct_ssh: components["schemas"]["ResolvedBool"];
             /** @description Local destination toggles. */
             local_toggles: components["schemas"]["EffectiveToggles"];
             /** @description Guest memory in MiB. */
@@ -1611,6 +1613,12 @@ export interface components {
          */
         SettingsLayer: {
             clipboard_read: components["schemas"]["ClipboardRead"] | null;
+            /**
+             * @description Whether puddle opens an SSH way into the workspace for the user's own tools (desktop
+             *     VS Code, a terminal `ssh`). Off by default; while off there is no SSH endpoint and no ssh
+             *     config entry. Turning it on marks the workspace trusted.
+             */
+            direct_ssh: boolean | null;
             /** @description Which local destination categories may be approved (all off by default). */
             local_toggles: components["schemas"]["LocalToggles"];
             /**
@@ -1727,6 +1735,12 @@ export interface components {
              */
             created_at: number;
             /**
+             * @description Whether direct SSH is on for this workspace (its effective setting, `direct_ssh` in the
+             *     settings). The workspace is then "trusted": desktop VS Code and other SSH tools can
+             *     connect, and what runs in the workspace can reach this computer through them.
+             */
+            direct_ssh: boolean;
+            /**
              * Format: int64
              * @description The disk's size in MiB: the most the workspace can hold.
              */
@@ -1737,8 +1751,9 @@ export interface components {
              */
             disk_used_mib: number | null;
             /**
-             * @description Whether the first-connect notice has to be shown before the first desktop attach. A
-             *     successful desktop attach clears it.
+             * @deprecated
+             * @description Deprecated and always `false`: the first-connect notice is the "Allow direct SSH"
+             *     confirmation now. Read `direct_ssh` instead.
              */
             first_connect_notice_due: boolean;
             /** @description The id used in paths. Today it is the workspace's name. */
@@ -3598,7 +3613,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description not running */
+            /** @description not running, or direct SSH is off for a desktop attach */
             409: {
                 headers: {
                     [name: string]: unknown;

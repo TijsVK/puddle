@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // What a click on a workspace does, shared by the list and the detail page: start, stop,
-// reclaim, open in VS Code (with the first-connect notice, once), delete (with the check of what
-// would be lost) and the create dialog. The dialogs themselves are drawn by
+// reclaim, connect (the "how do you want to connect" step, with the direct-SSH switch and its
+// trust text), delete (with the check of what would be lost) and the create dialog. The dialogs themselves are drawn by
 // `WorkspaceDialogs.svelte`, which reads the state here.
 import {
   workspaces as defaultStore,
@@ -31,6 +31,7 @@ type Store = Pick<
   | "stopWorkspace"
   | "reclaim"
   | "attach"
+  | "setDirectSsh"
   | "checkDelete"
   | "remove"
   | "refresh"
@@ -60,8 +61,12 @@ export function settledMessage(settled: Settled): string {
 
 export class WorkspaceActions {
   createOpen = $state(false);
-  noticeFor = $state.raw<Workspace | null>(null);
-  noticeOpen = $state(false);
+  /** The workspace the connect step is open for (a snapshot: read live data by its id). */
+  connectFor = $state.raw<Workspace | null>(null);
+  connectOpen = $state(false);
+  /** The workspace whose direct-SSH trust text is being asked. */
+  trustFor = $state.raw<Workspace | null>(null);
+  trustOpen = $state(false);
   deleting = $state.raw<DeleteState | null>(null);
   deleteOpen = $state(false);
   /** The workspace whose delete check is being read. */
@@ -106,20 +111,44 @@ export class WorkspaceActions {
     if (!result.ok) this.#fail(result.message);
   };
 
-  /** One click opens VS Code; the first time it says what that trusts first. */
-  attach = (w: Workspace): void => {
-    if (w.first_connect_notice_due) {
-      this.noticeFor = w;
-      this.noticeOpen = true;
-      return;
-    }
-    void this.#openDesktop(w);
+  /** Opens the connect step. */
+  connect = (w: Workspace): void => {
+    this.connectFor = w;
+    this.connectOpen = true;
   };
 
-  confirmNotice = (): void => {
-    const w = this.noticeFor;
-    this.noticeFor = null;
-    if (w) void this.#openDesktop(w);
+  /** The switch in the connect step or the settings: off at once, on after the trust text. */
+  requestDirectSsh = (w: Workspace, on: boolean): void => {
+    if (on) {
+      this.trustFor = w;
+      this.trustOpen = true;
+      return;
+    }
+    void this.#setDirectSsh(w, false);
+  };
+
+  confirmTrust = (): void => {
+    const w = this.trustFor;
+    this.trustFor = null;
+    if (w) void this.#setDirectSsh(w, true);
+  };
+
+  async #setDirectSsh(w: Workspace, on: boolean): Promise<void> {
+    const result = await this.#store.setDirectSsh(w.name, on);
+    if (!result.ok) {
+      this.#fail(result.message);
+      return;
+    }
+    this.#toasts.push(
+      on
+        ? `Direct SSH is on for ${w.name}: it is trusted now.`
+        : `Direct SSH is off for ${w.name}.`,
+    );
+  }
+
+  /** Opens desktop VS Code; the connect step only offers it while direct SSH is on. */
+  openDesktop = (w: Workspace): void => {
+    void this.#openDesktop(w);
   };
 
   async #openDesktop(w: Workspace): Promise<void> {
@@ -131,7 +160,6 @@ export class WorkspaceActions {
     const { opened, message } = result.value;
     if (opened) {
       this.#toasts.push(`Opening ${w.name} in VS Code.`);
-      void this.#store.refresh(); // the notice is not due any more
     } else {
       this.#toasts.push(
         message ?? `puddle couldn't open VS Code for ${w.name}.`,

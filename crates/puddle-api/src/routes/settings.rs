@@ -98,6 +98,7 @@ pub(crate) async fn put_global(
     State(state): State<AppState>,
     crate::extract::Json(body): crate::extract::Json<GlobalSettingsRequest>,
 ) -> Result<Json<GlobalSettingsView>, ApiError> {
+    let workspaces = state.workspaces.clone();
     let _lock = state.settings_lock.lock().await;
     let loaded = blocking(move || {
         let repo = state.settings.as_ref();
@@ -122,6 +123,7 @@ pub(crate) async fn put_global(
     })
     .await?;
     tracing::info!("global settings changed");
+    workspaces.settings_changed().await;
     Ok(Json(GlobalSettingsView::new(&loaded)))
 }
 
@@ -172,6 +174,7 @@ pub(crate) async fn put_sandbox(
     Path(sandbox): Path<SandboxName>,
     crate::extract::Json(body): crate::extract::Json<SandboxSettingsRequest>,
 ) -> Result<Json<SandboxSettingsView>, ApiError> {
+    let workspaces = state.workspaces.clone();
     let _lock = state.settings_lock.lock().await;
     let view = blocking(move || {
         let repo = state.settings.as_ref();
@@ -183,6 +186,7 @@ pub(crate) async fn put_sandbox(
         Ok(sandbox_view(sandbox, &global.settings, &loaded))
     })
     .await?;
+    workspaces.settings_changed().await;
     Ok(Json(view))
 }
 

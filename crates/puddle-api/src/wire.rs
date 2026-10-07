@@ -1101,6 +1101,12 @@ pub struct SettingsLayer {
     #[serde(default)]
     #[schema(required = true)]
     pub clipboard_read: Option<ClipboardRead>,
+    /// Whether puddle opens an SSH way into the workspace for the user's own tools (desktop
+    /// VS Code, a terminal `ssh`). Off by default; while off there is no SSH endpoint and no ssh
+    /// config entry. Turning it on marks the workspace trusted.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub direct_ssh: Option<bool>,
 }
 
 impl From<&settings::SandboxLayer> for SettingsLayer {
@@ -1114,6 +1120,7 @@ impl From<&settings::SandboxLayer> for SettingsLayer {
                 .map(settings::ReconnectionGrace::secs),
             zoom_hotkeys: layer.zoom_hotkeys,
             clipboard_read: layer.clipboard_read.map(Into::into),
+            direct_ssh: layer.direct_ssh,
         }
     }
 }
@@ -1129,6 +1136,7 @@ impl SettingsLayer {
             reconnection_grace,
             zoom_hotkeys,
             clipboard_read,
+            direct_ssh,
         } = self;
         layer.memory = memory.map(MemoryMib::new).transpose().map_err(invalid)?;
         local_toggles.apply_to(&mut layer.local_toggles);
@@ -1139,6 +1147,7 @@ impl SettingsLayer {
             .map_err(invalid)?;
         layer.zoom_hotkeys = zoom_hotkeys;
         layer.clipboard_read = clipboard_read.map(Into::into);
+        layer.direct_ssh = direct_ssh;
         Ok(())
     }
 }
@@ -1471,6 +1480,8 @@ pub struct EffectiveSettings {
     pub zoom_hotkeys: ResolvedBool,
     /// Clipboard reads.
     pub clipboard_read: ResolvedClipboardRead,
+    /// Whether direct SSH is on.
+    pub direct_ssh: ResolvedBool,
 }
 
 impl From<settings::Effective> for EffectiveSettings {
@@ -1482,6 +1493,7 @@ impl From<settings::Effective> for EffectiveSettings {
             reconnection_grace,
             zoom_hotkeys,
             clipboard_read,
+            direct_ssh,
         } = e;
         let settings::EffectiveToggles {
             loopback,
@@ -1512,6 +1524,7 @@ impl From<settings::Effective> for EffectiveSettings {
                 value: clipboard_read.value.into(),
                 source: clipboard_read.source.into(),
             },
+            direct_ssh: rb(direct_ssh),
         }
     }
 }
@@ -1768,7 +1781,8 @@ mod tests {
                 "wildcards_reach_local": true,
                 "reconnection_grace": 60,
                 "zoom_hotkeys": false,
-                "clipboard_read": "deny"
+                "clipboard_read": "deny",
+                "direct_ssh": true
             }
         });
         let loaded = settings::SandboxSettings::from_document(doc).unwrap();

@@ -519,7 +519,8 @@ async fn seeded_workspaces_are_listed_with_what_deleting_them_would_lose() {
     assert_eq!(status("data-tools"), "created");
     let docs = rows.iter().find(|w| w["name"] == "docs-site").unwrap();
     assert_eq!(docs["memory_mib"], 4096);
-    assert_eq!(docs["first_connect_notice_due"], true);
+    assert_eq!(docs["direct_ssh"], false);
+    assert_eq!(docs["first_connect_notice_due"], false);
 
     let check = run
         .get("/api/workspaces/docs-site/delete-check")

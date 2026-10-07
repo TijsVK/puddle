@@ -576,7 +576,6 @@ impl State {
         };
         record.created_at = now.saturating_sub(seed.ago_ms);
         record.disk_used_mib = seed.disk_used_mib;
-        record.first_connect_notice_due = seed.first_connect_notice_due;
         let list = |items: &[String]| Listing {
             items: items.to_vec(),
             more: 0,

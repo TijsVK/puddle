@@ -21,6 +21,7 @@ export function workspace(
     created_at: 1_000_000,
     disk_size_mib: 32_768,
     disk_used_mib: 2048,
+    direct_ssh: false,
     first_connect_notice_due: false,
     ...over,
   };
@@ -61,6 +62,7 @@ export function dirtyCheck(name: string): DeleteCheck {
 
 const noLayer = (): Layer => ({
   clipboard_read: null,
+  direct_ssh: null,
   local_toggles: {
     link_local: null,
     loopback: null,
@@ -147,6 +149,7 @@ export class FakeWorkspaces {
       reconnection_grace: resolved(300, "default"),
       wildcards_reach_local: resolved(false, "default"),
       zoom_hotkeys: resolved(true, "default"),
+      direct_ssh: pick(o.direct_ssh),
     };
   }
 
@@ -258,6 +261,11 @@ export class FakeWorkspaces {
     if (refused) return refused;
     const name = init.params.path.sandbox;
     this.overrides[name] = init.body.overrides;
+    this.list = this.list.map((w) =>
+      w.name === name
+        ? { ...w, direct_ssh: init.body.overrides.direct_ssh === true }
+        : w,
+    );
     return this.reply(200, {
       sandbox: name,
       overrides: this.overrides[name],

@@ -62,13 +62,20 @@ pub struct Workspace {
     /// What the disk holds in MiB; `null` when not known.
     #[schema(required = true)]
     pub disk_used_mib: Option<u64>,
-    /// Whether the first-connect notice has to be shown before the first desktop attach. A
-    /// successful desktop attach clears it.
+    /// Whether direct SSH is on for this workspace (its effective setting, `direct_ssh` in the
+    /// settings). The workspace is then "trusted": desktop VS Code and other SSH tools can
+    /// connect, and what runs in the workspace can reach this computer through them.
+    pub direct_ssh: bool,
+    /// Deprecated and always `false`: the first-connect notice is the "Allow direct SSH"
+    /// confirmation now. Read `direct_ssh` instead.
+    #[deprecated(note = "always false; read `direct_ssh`")]
     pub first_connect_notice_due: bool,
 }
 
-impl From<domain::WorkspaceRecord> for Workspace {
-    fn from(record: domain::WorkspaceRecord) -> Self {
+impl Workspace {
+    /// The workspace as the API shows it, with whether direct SSH is on for it.
+    #[must_use]
+    pub fn new(record: domain::WorkspaceRecord, direct_ssh: bool) -> Self {
         let domain::WorkspaceRecord {
             id,
             name,
@@ -80,9 +87,9 @@ impl From<domain::WorkspaceRecord> for Workspace {
             created_at,
             disk_size_mib,
             disk_used_mib,
-            first_connect_notice_due,
             ..
         } = record;
+        #[expect(deprecated, reason = "the field stays on the wire, always false")]
         Self {
             id: id.to_string(),
             name,
@@ -94,7 +101,8 @@ impl From<domain::WorkspaceRecord> for Workspace {
             created_at,
             disk_size_mib,
             disk_used_mib,
-            first_connect_notice_due,
+            direct_ssh,
+            first_connect_notice_due: false,
         }
     }
 }

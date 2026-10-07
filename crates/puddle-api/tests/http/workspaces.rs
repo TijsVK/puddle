@@ -103,7 +103,8 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
             "created_at": START_MS,
             "disk_size_mib": puddle_api::DEFAULT_DISK_MIB,
             "disk_used_mib": 0,
-            "first_connect_notice_due": true
+            "direct_ssh": false,
+            "first_connect_notice_due": false
         })
     );
     api.workspaces.idle().await;
@@ -561,18 +562,19 @@ async fn browser_attach_returns_the_url_and_opens_nothing() {
     assert!(body["url"].as_str().unwrap().contains("/web/"));
     assert_eq!(body["message"], Value::Null);
     assert_eq!(api.launcher.opened().len(), 0);
-    // A browser attach doesn't count as the first desktop connect.
+    // A browser attach needs no SSH: it works while direct SSH is off.
     assert_eq!(
-        api.get("/api/workspaces/web").await.json()["first_connect_notice_due"],
-        true
+        api.get("/api/workspaces/web").await.json()["direct_ssh"],
+        false
     );
     api.running.shutdown().await;
 }
 
 #[tokio::test]
-async fn desktop_attach_opens_the_editor_and_clears_the_first_connect_notice() {
+async fn desktop_attach_opens_the_editor_when_direct_ssh_is_on() {
     let api = start().await;
     running(&api, "web").await;
+    allow_direct_ssh(&api, "web").await;
     let reply = api
         .send(
             "POST",
@@ -586,17 +588,124 @@ async fn desktop_attach_opens_the_editor_and_clears_the_first_connect_notice() {
         json!({"opened": true, "url": null, "message": null})
     );
     assert_eq!(api.launcher.opened(), [WorkspaceId::new("web").unwrap()]);
+    api.running.shutdown().await;
+}
+
+async fn allow_direct_ssh(api: &Api, sandbox: &str) {
+    let reply = api
+        .send(
+            "PUT",
+            &format!("/api/settings/sandboxes/{sandbox}"),
+            Some(&json!({"overrides": {"direct_ssh": true}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+}
+
+#[tokio::test]
+async fn desktop_attach_is_refused_while_direct_ssh_is_off() {
+    let api = start().await;
+    running(&api, "web").await;
+    let reply = api
+        .send(
+            "POST",
+            "/api/workspaces/web/attach",
+            Some(&json!({"mode": "desktop"})),
+        )
+        .await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert!(
+        reply.json()["message"]
+            .as_str()
+            .unwrap()
+            .contains("direct SSH is off"),
+        "{}",
+        reply.body
+    );
+    assert_eq!(api.launcher.opened().len(), 0, "nothing was launched");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_workspace_is_trusted_by_its_own_switch_or_the_global_default() {
+    let api = start().await;
+    running(&api, "web").await;
+    running(&api, "db").await;
+    let direct = |name: &'static str| {
+        let api = &api;
+        async move { api.get(&format!("/api/workspaces/{name}")).await.json()["direct_ssh"].clone() }
+    };
     assert_eq!(
-        api.get("/api/workspaces/web").await.json()["first_connect_notice_due"],
-        false
+        (direct("web").await, direct("db").await),
+        (json!(false), json!(false))
+    );
+
+    allow_direct_ssh(&api, "web").await;
+    assert_eq!(
+        (direct("web").await, direct("db").await),
+        (json!(true), json!(false))
+    );
+
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"sandbox_defaults": {"direct_ssh": true}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        (direct("web").await, direct("db").await),
+        (json!(true), json!(true))
+    );
+
+    // An override of off beats the global default.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings/sandboxes/db",
+            Some(&json!({"overrides": {"direct_ssh": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(direct("db").await, json!(false));
+    let list = api.get("/api/workspaces").await.json();
+    let flags: Vec<_> = list["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["direct_ssh"].clone())
+        .collect();
+    assert!(
+        flags.contains(&json!(true)) && flags.contains(&json!(false)),
+        "{flags:?}"
     );
     api.running.shutdown().await;
 }
 
 #[tokio::test]
-async fn a_desktop_that_cannot_open_says_why_and_keeps_the_notice() {
+async fn changing_settings_tells_the_workspaces_service() {
+    let api = start().await;
+    assert_eq!(api.workspaces.settings_changes(), 0);
+    allow_direct_ssh(&api, "web").await;
+    assert_eq!(api.workspaces.settings_changes(), 1);
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"sandbox_defaults": {"direct_ssh": true}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(api.workspaces.settings_changes(), 2);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_desktop_that_cannot_open_says_why() {
     let api = start().await;
     running(&api, "web").await;
+    allow_direct_ssh(&api, "web").await;
     api.launcher.fail_next("VS Code is not installed");
     let reply = api
         .send(
@@ -609,10 +718,6 @@ async fn a_desktop_that_cannot_open_says_why_and_keeps_the_notice() {
     assert_eq!(
         reply.json(),
         json!({"opened": false, "url": null, "message": "VS Code is not installed"})
-    );
-    assert_eq!(
-        api.get("/api/workspaces/web").await.json()["first_connect_notice_due"],
-        true
     );
     api.running.shutdown().await;
 }

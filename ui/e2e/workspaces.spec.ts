@@ -16,7 +16,7 @@ interface Ws {
   name: string;
   status: string;
   busy: string | null;
-  first_connect_notice_due: boolean;
+  direct_ssh: boolean;
   memory_mib: number;
 }
 
@@ -110,11 +110,9 @@ test.describe("the list and the start screen", () => {
     await expect(card(page, "docs-site")).toContainText("4 GiB memory");
     await expect(card(page, "data-tools")).toContainText("Not started");
     await expect(
-      running.getByRole("button", { name: "Open in VS Code (web-shop)" }),
+      running.getByRole("button", { name: "Connect to web-shop" }),
     ).toBeEnabled();
-    await expect(
-      running.getByRole("button", { name: "Browser (web-shop)" }),
-    ).toBeDisabled();
+    await expect(running).not.toContainText("Trusted");
     await expect(
       card(page, "docs-site").getByRole("button", { name: "Start docs-site" }),
     ).toBeEnabled();
@@ -354,7 +352,7 @@ test.describe("start and stop", () => {
     await expect(toast(page, "docs-site is running.")).toBeVisible();
     await expect(docs).toContainText("Running");
     await expect(
-      docs.getByRole("button", { name: "Open in VS Code (docs-site)" }),
+      docs.getByRole("button", { name: "Connect to docs-site" }),
     ).toBeEnabled();
     expect(
       (await workspaceList(request, backend)).find(
@@ -452,73 +450,97 @@ test.describe("start and stop", () => {
   });
 });
 
-test.describe("opening in VS Code", () => {
-  test("one click when the notice was already accepted", async ({
+test.describe("connecting", () => {
+  test("the step puts the browser editor first and keeps direct SSH off until allowed", async ({
     page,
     backend,
   }) => {
     await openList(page, backend);
     await card(page, "web-shop")
-      .getByRole("button", { name: "Open in VS Code (web-shop)" })
+      .getByRole("button", { name: "Connect to web-shop" })
       .click();
-    await expect(page.getByRole("alertdialog")).toHaveCount(0);
-    await expect(toast(page, "Opening web-shop in VS Code.")).toBeVisible();
+    const step = page.getByRole("dialog", { name: "Connect to web-shop" });
+    await expect(step.getByRole("heading", { level: 3 })).toHaveText([
+      "In the browser",
+      "On this computer",
+    ]);
+    await expect(
+      step.getByRole("button", { name: "Open in the browser" }),
+    ).toBeDisabled();
+    await expect(
+      step.getByRole("checkbox", { name: "Allow direct SSH" }),
+    ).not.toBeChecked();
+    await expect(
+      step.getByRole("button", { name: "Open in VS Code" }),
+    ).toBeDisabled();
   });
 
-  test("the first time says what it trusts, once", async ({
+  test("allowing direct SSH says what it trusts, then marks the workspace trusted", async ({
     page,
     request,
     backend,
   }) => {
     await openList(page, backend);
-    const docs = card(page, "docs-site");
-    await docs.getByRole("button", { name: "Start docs-site" }).click();
-    const open = docs.getByRole("button", {
-      name: "Open in VS Code (docs-site)",
+    const shop = card(page, "web-shop");
+    await shop.getByRole("button", { name: "Connect to web-shop" }).click();
+    const step = page.getByRole("dialog", { name: "Connect to web-shop" });
+    await step.getByRole("checkbox", { name: "Allow direct SSH" }).check();
+    const trust = page.getByRole("alertdialog", {
+      name: "Allow direct SSH to web-shop?",
     });
-    await expect(open).toBeEnabled();
-    await open.click();
-    const notice = page.getByRole("alertdialog", {
-      name: "Open docs-site in VS Code?",
-    });
-    await expect(notice).toContainText("trusted");
-    await expect(notice).toContainText("GitHub token");
-    await expect(notice.getByRole("button", { name: "Cancel" })).toBeFocused();
-    await notice.getByRole("button", { name: "Cancel" }).click();
-    await expect(open).toBeFocused();
+    await expect(trust).toContainText("trusted workspace");
+    await expect(trust).toContainText("GitHub token");
+    await expect(trust.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await trust.getByRole("button", { name: "Cancel" }).click();
+    await expect(
+      step.getByRole("checkbox", { name: "Allow direct SSH" }),
+    ).not.toBeChecked();
     expect(
-      (await workspaceList(request, backend)).find(
-        (w) => w.name === "docs-site",
-      )?.first_connect_notice_due,
-    ).toBe(true);
+      (await workspaceList(request, backend)).find((w) => w.name === "web-shop")
+        ?.direct_ssh,
+    ).toBe(false);
 
-    await open.click();
+    await step.getByRole("checkbox", { name: "Allow direct SSH" }).check();
+    await trust.getByRole("button", { name: "Allow direct SSH" }).click();
+    await expect(
+      toast(page, "Direct SSH is on for web-shop: it is trusted now."),
+    ).toBeVisible();
+    await expect(
+      step.getByRole("checkbox", { name: "Allow direct SSH" }),
+    ).toBeChecked();
+    await expect(step).toContainText("Trusted");
+    await expect(shop).toContainText("Trusted");
+
+    await step.getByRole("button", { name: "Open in VS Code" }).click();
+    await expect(toast(page, "Opening web-shop in VS Code.")).toBeVisible();
+  });
+
+  test("turning it off needs no question and drops the trusted mark", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop");
+    await page.getByRole("button", { name: "Connect to web-shop" }).click();
+    const step = page.getByRole("dialog", { name: "Connect to web-shop" });
+    await step.getByRole("checkbox", { name: "Allow direct SSH" }).check();
     await page
       .getByRole("alertdialog")
-      .getByRole("button", { name: "Open in VS Code" })
+      .getByRole("button", { name: "Allow direct SSH" })
       .click();
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await expect(page.getByText("Trusted").first()).toBeVisible();
+    await step.getByRole("checkbox", { name: "Allow direct SSH" }).uncheck();
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
-    await expect(toast(page, "Opening docs-site in VS Code.")).toBeVisible();
+    await expect(toast(page, "Direct SSH is off for web-shop.")).toBeVisible();
     await expect
       .poll(
         async () =>
           (await workspaceList(request, backend)).find(
-            (w) => w.name === "docs-site",
-          )?.first_connect_notice_due,
+            (w) => w.name === "web-shop",
+          )?.direct_ssh,
       )
       .toBe(false);
-    await open.click();
-    await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  });
-
-  test("the browser editor is there but not available yet", async ({
-    page,
-    backend,
-  }) => {
-    await openDetail(page, backend, "web-shop");
-    const browser = page.getByRole("button", { name: /^Browser/ });
-    await expect(browser).toBeDisabled();
-    await expect(browser).toHaveAccessibleDescription(/not available yet/);
   });
 });
 
@@ -1020,10 +1042,11 @@ test.describe("accessibility", () => {
       const docs = card(page, "docs-site");
       await docs.getByRole("button", { name: "Start docs-site" }).click();
       await expect(docs).toContainText("Running");
-      await docs
-        .getByRole("button", { name: "Open in VS Code (docs-site)" })
-        .click();
-      expect(await axeViolations(page), "first-connect notice").toEqual([]);
+      await docs.getByRole("button", { name: "Connect to docs-site" }).click();
+      expect(await axeViolations(page), "connect step").toEqual([]);
+      await page.getByRole("checkbox", { name: "Allow direct SSH" }).check();
+      expect(await axeViolations(page), "direct SSH trust text").toEqual([]);
+      await page.keyboard.press("Escape");
       await page.keyboard.press("Escape");
 
       await backend.control.step({

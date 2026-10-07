@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from "svelte";
+  import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
   import { api } from "#lib/api/client.ts";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
@@ -19,6 +20,11 @@
   import { globalSettings as store } from "#lib/stores/global-settings.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import { theme } from "#lib/theme/theme.svelte.ts";
+  import {
+    DIRECT_SSH_HINT,
+    DIRECT_SSH_LABEL,
+    TRUST_WORDS_GLOBAL,
+  } from "#lib/workspaces/direct-ssh.ts";
   import { isThemeChoice } from "#lib/theme/theme.ts";
   import "#lib/theme/controls.css";
 
@@ -43,6 +49,7 @@
   let saved = $state<string | null>(null);
   let problem = $state<string | null>(null);
   let graceError = $state<string | null>(null);
+  let trustOpen = $state(false);
   let popupOpen = $state(false);
   let popupBusy = $state(false);
   let popupError = $state<string | null>(null);
@@ -293,6 +300,34 @@
               <option value={String(size.value)}>{size.label}</option>
             {/each}
           </select>
+        </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-direct-ssh"
+              >{DIRECT_SSH_LABEL} for new workspaces</label
+            >
+            <p class="desc" id="set-direct-ssh-desc">
+              {DIRECT_SSH_HINT} Off by default. A workspace can set its own switch.
+            </p>
+          </div>
+          <input
+            id="set-direct-ssh"
+            type="checkbox"
+            aria-describedby="set-direct-ssh-desc"
+            checked={eff.direct_ssh.value}
+            onchange={(e) => {
+              const box = e.currentTarget;
+              if (box.checked) {
+                // Turning it on says the trust text first; the dialog saves.
+                box.checked = eff.direct_ssh.value;
+                trustOpen = true;
+                return;
+              }
+              void layerPatch({ direct_ssh: false }, DIRECT_SSH_LABEL, () => {
+                box.checked = eff.direct_ssh.value;
+              });
+            }}
+          />
         </div>
       </section>
 
@@ -555,6 +590,13 @@
     </div>
   </div>
 {/if}
+
+<DirectSshDialog
+  bind:open={trustOpen}
+  words={TRUST_WORDS_GLOBAL}
+  onConfirm={() =>
+    void layerPatch({ direct_ssh: true }, DIRECT_SSH_LABEL, () => undefined)}
+/>
 
 <MicrosoftServerDialog
   bind:open={popupOpen}

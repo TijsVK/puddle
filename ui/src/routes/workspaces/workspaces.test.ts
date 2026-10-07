@@ -63,7 +63,8 @@ function reset() {
   workspaces.progress = {};
   workspaces.oom = {};
   workspaceActions.createOpen = false;
-  workspaceActions.noticeOpen = false;
+  workspaceActions.connectOpen = false;
+  workspaceActions.trustOpen = false;
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 }
 

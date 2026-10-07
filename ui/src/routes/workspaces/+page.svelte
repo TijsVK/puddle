@@ -78,7 +78,7 @@
           oom={workspaces.oom[workspace.name]}
           onStart={actions.start}
           onStop={actions.stop}
-          onAttach={actions.attach}
+          onConnect={actions.connect}
           onDismiss={actions.dismissProgress}
         />
       </li>

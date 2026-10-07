@@ -123,7 +123,8 @@ function reset() {
   workspaces.progress = {};
   workspaces.oom = {};
   workspaceActions.createOpen = false;
-  workspaceActions.noticeOpen = false;
+  workspaceActions.connectOpen = false;
+  workspaceActions.trustOpen = false;
   workspaceActions.deleteOpen = false;
   workspaceActions.deleting = null;
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
@@ -220,6 +221,21 @@ describe("the detail layout", () => {
     api.list = [];
     await workspaces.refresh();
     await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/workspaces"));
+  });
+});
+
+describe("the trusted mark", () => {
+  it("shows on the workspace page only while direct SSH is on", async () => {
+    api.list = [workspace("demo", { status: "running", direct_ssh: true })];
+    await workspaces.refresh();
+    const { unmount } = render(DetailLayout, { children: (() => {}) as never });
+    expect(await screen.findByText("Trusted")).toBeInTheDocument();
+    unmount();
+    api.list = [workspace("demo", { status: "running" })];
+    await workspaces.refresh();
+    render(DetailLayout, { children: (() => {}) as never });
+    await screen.findByRole("heading", { name: "demo" });
+    expect(screen.queryByText("Trusted")).toBeNull();
   });
 });
 
@@ -512,6 +528,26 @@ describe("the settings tab", () => {
     await fireEvent.change(memory, { target: { value: "4096" } });
     await screen.findByText("Memory saved.");
     expect(screen.queryByText(/applies the next time/)).toBeNull();
+  });
+
+  it("turns direct SSH off or back to the global default at once, and asks the trust text before on", async () => {
+    await open();
+    const select = screen.getByLabelText(
+      "Allow direct SSH",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("inherit");
+    await fireEvent.change(select, { target: { value: "on" } });
+    expect(workspaceActions.trustOpen).toBe(true);
+    expect(workspaceActions.trustFor?.name).toBe("demo");
+    expect(api.overrides["demo"]?.direct_ssh ?? null).toBeNull();
+    expect(select.value).toBe("inherit");
+    await fireEvent.change(select, { target: { value: "off" } });
+    await screen.findByText("Allow direct SSH saved.");
+    expect(api.overrides["demo"]?.direct_ssh).toBe(false);
+    await fireEvent.change(select, { target: { value: "inherit" } });
+    await vi.waitFor(() =>
+      expect(api.overrides["demo"]?.direct_ssh).toBeNull(),
+    );
   });
 
   it("saves a local toggle and the clipboard, keeping the others as they were", async () => {

@@ -3,7 +3,12 @@
   import { page } from "$app/state";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
   import { WorkspaceSettings } from "#lib/stores/workspace-settings.svelte.ts";
+  import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+  import {
+    DIRECT_SSH_HINT,
+    DIRECT_SSH_LABEL,
+  } from "#lib/workspaces/direct-ssh.ts";
   import {
     clipboardOptions,
     memoryFromChoice,
@@ -30,6 +35,17 @@
   const name = $derived(workspace?.name);
   $effect(() => {
     if (name) void settings.load(name);
+  });
+
+  // Direct SSH can change from the connect step too: read the overrides again when it does.
+  const directSsh = $derived(workspace?.direct_ssh);
+  let lastDirectSsh: boolean | undefined;
+  $effect(() => {
+    const now = directSsh;
+    if (lastDirectSsh !== undefined && now !== lastDirectSsh && name) {
+      void settings.load(name, true);
+    }
+    lastDirectSsh = now;
   });
 
   const CATEGORIES: LocalCategory[] = [
@@ -83,6 +99,20 @@
         select.value = toggleToChoice(current[category]);
       },
     );
+  }
+
+  /** Off and "follow the global default" save at once; on asks the trust text first. */
+  async function saveDirectSsh(select: HTMLSelectElement) {
+    const choice = toggleFromChoice(select.value);
+    if (choice === true && workspace) {
+      select.value = toggleToChoice(settings.overrides?.direct_ssh ?? null);
+      actions.requestDirectSsh(workspace, true);
+      return;
+    }
+    const ok = await save({ direct_ssh: choice }, DIRECT_SSH_LABEL, () => {
+      select.value = toggleToChoice(settings.overrides?.direct_ssh ?? null);
+    });
+    if (ok) await workspaces.refresh();
   }
 
   async function saveClipboard(select: HTMLSelectElement) {
@@ -172,6 +202,30 @@
           </select>
         </div>
       {/each}
+    </section>
+
+    <section class="card" aria-labelledby="ssh-h">
+      <h2 id="ssh-h">Direct SSH</h2>
+      <div class="setting">
+        <div class="grow">
+          <label for="ws-direct-ssh">{DIRECT_SSH_LABEL}</label>
+          <p class="desc" id="ws-direct-ssh-desc">
+            {DIRECT_SSH_HINT} While it is off, puddle opens no SSH way in and writes
+            no ssh config entry. It applies at once.
+            <span class="chip">{sourceLabel(effective.direct_ssh.source)}</span>
+          </p>
+        </div>
+        <select
+          id="ws-direct-ssh"
+          aria-describedby="ws-direct-ssh-desc"
+          value={toggleToChoice(overrides.direct_ssh)}
+          onchange={(e) => void saveDirectSsh(e.currentTarget)}
+        >
+          {#each toggleOptions(global.direct_ssh.value) as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
     </section>
 
     <section class="card" aria-labelledby="clip-h">

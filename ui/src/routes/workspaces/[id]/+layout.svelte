@@ -5,6 +5,7 @@
   import AttachButtons from "#lib/components/AttachButtons.svelte";
   import ProgressLine from "#lib/components/ProgressLine.svelte";
   import StatusChip from "#lib/components/StatusChip.svelte";
+  import TrustedBadge from "#lib/components/TrustedBadge.svelte";
   import { pending } from "#lib/stores/pending.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
@@ -34,12 +35,13 @@
       <h1>{workspace.name}</h1>
     </div>
     <StatusChip status={workspace.status} busy={workspace.busy} />
+    {#if workspace.direct_ssh}<TrustedBadge />{/if}
     <div class="acts">
       <AttachButtons
         {workspace}
         onStart={actions.start}
         onStop={actions.stop}
-        onAttach={actions.attach}
+        onConnect={actions.connect}
       />
     </div>
   </div>

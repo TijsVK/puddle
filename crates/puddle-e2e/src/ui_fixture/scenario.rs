@@ -124,16 +124,9 @@ pub struct WorkspaceSeed {
     /// What the disk holds, in MiB.
     #[serde(default)]
     pub disk_used_mib: Option<u64>,
-    /// Whether the first-connect notice is still due; `true` when left out.
-    #[serde(default = "yes")]
-    pub first_connect_notice_due: bool,
     /// What deleting it would lose; nothing when left out.
     #[serde(default)]
     pub unsaved: UnsavedSeed,
-}
-
-const fn yes() -> bool {
-    true
 }
 
 /// A workspace's state at start.

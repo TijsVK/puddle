@@ -215,6 +215,39 @@ describe("workspace defaults and the network", () => {
     await waitFor(() => expect(api.layer.clipboard_read).toBe("deny"));
   });
 
+  it("turns the global direct SSH default on only after the trust text, and off at once", async () => {
+    await open();
+    const box = screen.getByLabelText("Allow direct SSH for new workspaces");
+    expect(box).not.toBeChecked();
+    await fireEvent.click(box);
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Allow direct SSH for new workspaces?",
+    });
+    expect(dialog).toHaveTextContent("signed-in GitHub token");
+    expect(putBodies()).toHaveLength(0);
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Allow for new workspaces" }),
+    );
+    await waitFor(() => expect(api.layer.direct_ssh).toBe(true));
+    await screen.findByText("Allow direct SSH saved.");
+    await fireEvent.click(
+      screen.getByLabelText("Allow direct SSH for new workspaces"),
+    );
+    await waitFor(() => expect(api.layer.direct_ssh).toBe(false));
+  });
+
+  it("cancelling the global trust text changes nothing", async () => {
+    await open();
+    await fireEvent.click(
+      screen.getByLabelText("Allow direct SSH for new workspaces"),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel" }),
+    );
+    expect(putBodies()).toHaveLength(0);
+    expect(api.layer.direct_ssh).toBeNull();
+  });
+
   it("checks the reconnection grace before saving it", async () => {
     await open();
     const input = screen.getByLabelText("Reconnection grace (seconds)");

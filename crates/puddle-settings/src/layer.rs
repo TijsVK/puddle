@@ -43,6 +43,10 @@ pub struct SandboxLayer {
     /// Programmatic clipboard reads in sandbox windows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clipboard_read: Option<ClipboardRead>,
+    /// Whether puddle opens an SSH way into the workspace for the user's own tools (desktop
+    /// VS Code, a terminal `ssh`). Off means no SSH endpoint and no ssh config entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_ssh: Option<bool>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -149,11 +153,12 @@ mod tests {
             reconnection_grace: Some(ReconnectionGrace::new(60).unwrap()),
             zoom_hotkeys: Some(false),
             clipboard_read: Some(ClipboardRead::Deny),
+            direct_ssh: Some(true),
             extra: BTreeMap::new(),
         };
         assert_eq!(
             serde_json::to_string(&l).unwrap(),
-            r#"{"memory":1024,"local_toggles":{"metadata":false},"wildcards_reach_local":true,"reconnection_grace":60,"zoom_hotkeys":false,"clipboard_read":"deny"}"#
+            r#"{"memory":1024,"local_toggles":{"metadata":false},"wildcards_reach_local":true,"reconnection_grace":60,"zoom_hotkeys":false,"clipboard_read":"deny","direct_ssh":true}"#
         );
         assert_eq!(
             serde_json::from_str::<SandboxLayer>(&serde_json::to_string(&l).unwrap()).unwrap(),

@@ -66,10 +66,6 @@ pub struct WorkspaceRecord {
     pub disk_size_mib: u64,
     /// What the volume holds now in MiB, when known.
     pub disk_used_mib: Option<u64>,
-    /// Whether the first-connect notice must be shown before the first desktop attach
-    /// (the editor runs project code with the workspace's reach). Cleared by a successful
-    /// desktop attach.
-    pub first_connect_notice_due: bool,
 }
 
 impl WorkspaceRecord {
@@ -87,7 +83,6 @@ impl WorkspaceRecord {
             created_at: 0,
             disk_size_mib: DEFAULT_DISK_MIB,
             disk_used_mib: None,
-            first_connect_notice_due: true,
         }
     }
 }
@@ -421,6 +416,13 @@ pub trait WorkspaceService: Send + Sync {
         id: &'a WorkspaceId,
         mode: AttachMode,
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>>;
+
+    /// Tells the service that settings changed, so it can apply what takes effect at once (the
+    /// SSH endpoint of a running workspace opens or closes with its `direct_ssh` setting).
+    /// The default does nothing.
+    fn settings_changed(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 
 /// Opens VS Code on the desktop for a workspace; the desktop shell implements it.

@@ -784,11 +784,15 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
         .await;
     assert_eq!(before.status, 404);
     create(&api, &mut events, "acme").await;
-    assert!(
-        api.get("/api/workspaces/acme").await.json()["first_connect_notice_due"]
-            .as_bool()
-            .unwrap()
-    );
+    let refused = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "desktop"}).to_string(),
+        )
+        .await;
+    assert_eq!(refused.status, 409, "direct SSH is off: {}", refused.body);
+    assert!(rig.launcher.opened.lock().unwrap().is_empty());
+    allow_direct_ssh(&api, "acme", true).await;
     let reply = api
         .post(
             "/api/workspaces/acme/attach",
@@ -798,11 +802,6 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(reply.json()["opened"], true);
     assert_eq!(*rig.launcher.opened.lock().unwrap(), ["acme"]);
-    assert!(
-        !api.get("/api/workspaces/acme").await.json()["first_connect_notice_due"]
-            .as_bool()
-            .unwrap()
-    );
     let browser = api
         .post(
             "/api/workspaces/acme/attach",
@@ -1389,17 +1388,109 @@ async fn a_delete_is_refused_when_the_workspace_list_cannot_be_saved() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_ssh_endpoint_exists_while_the_workspace_runs() {
+async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
     create(&api, &mut events, "acme").await;
     let name = SandboxName::new("acme").unwrap();
     let endpoint: PathBuf = host.workspaces().ssh_endpoint(&name).await.unwrap();
     assert_ne!(endpoint.as_os_str(), "");
     api.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(host.workspaces().ssh_endpoint(&name).await.is_none());
+    host.shutdown().await;
+}
+
+async fn allow_direct_ssh(api: &Api, name: &str, on: bool) {
+    let reply = api
+        .put(
+            &format!("/api/settings/sandboxes/{name}"),
+            &json!({"overrides": {"direct_ssh": on}}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_direct_ssh_off_there_is_no_ssh_endpoint_and_the_gate_says_no() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let name = SandboxName::new("acme").unwrap();
+    assert_eq!(
+        api.get("/api/workspaces/acme").await.json()["status"],
+        "running"
+    );
+    assert!(
+        host.workspaces().ssh_endpoint(&name).await.is_none(),
+        "no endpoint while the switch is off"
+    );
+    assert!(
+        !host.workspaces().direct_ssh_allowed(&name),
+        "the gate says no, so nothing else may open a way in"
+    );
+    assert_eq!(
+        api.get("/api/workspaces/acme").await.json()["direct_ssh"],
+        false
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn turning_direct_ssh_on_and_off_opens_and_closes_the_endpoint_at_once() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let name = SandboxName::new("acme").unwrap();
+
+    allow_direct_ssh(&api, "acme", true).await;
+    assert!(host.workspaces().direct_ssh_allowed(&name));
+    host.workspaces()
+        .ssh_endpoint(&name)
+        .await
+        .expect("endpoint opens live");
+    assert_eq!(
+        api.get("/api/workspaces/acme").await.json()["direct_ssh"],
+        true
+    );
+
+    allow_direct_ssh(&api, "acme", false).await;
+    assert!(
+        host.workspaces().ssh_endpoint(&name).await.is_none(),
+        "endpoint closes live"
+    );
+    assert_eq!(
+        api.get("/api/workspaces/acme").await.json()["direct_ssh"],
+        false
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let reply = api
+        .put(
+            "/api/settings",
+            &json!({"sandbox_defaults": {"direct_ssh": true}}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    create(&api, &mut events, "acme").await;
+    let name = SandboxName::new("acme").unwrap();
+    assert!(host.workspaces().ssh_endpoint(&name).await.is_some());
+    // Its own switch wins over the default.
+    allow_direct_ssh(&api, "acme", false).await;
     assert!(host.workspaces().ssh_endpoint(&name).await.is_none());
     host.shutdown().await;
 }

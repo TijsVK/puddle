@@ -7,14 +7,14 @@ import AttachButtons from "./AttachButtons.svelte";
 afterEach(cleanup);
 
 function mount(over: Parameters<typeof workspace>[1] = {}) {
-  const calls = { start: vi.fn(), stop: vi.fn(), attach: vi.fn() };
+  const calls = { start: vi.fn(), stop: vi.fn(), connect: vi.fn() };
   const w = workspace("demo", over);
   render(AttachButtons, {
     props: {
       workspace: w,
       onStart: calls.start,
       onStop: calls.stop,
-      onAttach: calls.attach,
+      onConnect: calls.connect,
     },
   });
   return { calls, w };
@@ -29,29 +29,26 @@ describe("AttachButtons", () => {
     expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
   });
 
-  it("opens VS Code in one click and stops, on a running workspace", async () => {
+  it("opens the connect step and stops, on a running workspace", async () => {
     const { calls, w } = mount({ status: "running" });
     await fireEvent.click(
-      screen.getByRole("button", { name: "Open in VS Code (demo)" }),
+      screen.getByRole("button", { name: "Connect to demo" }),
     );
-    expect(calls.attach).toHaveBeenCalledWith(w);
+    expect(calls.connect).toHaveBeenCalledWith(w);
     await fireEvent.click(screen.getByRole("button", { name: "Stop demo" }));
     expect(calls.stop).toHaveBeenCalledWith(w);
   });
 
-  it("shows the browser editor as unavailable, with the reason for readers", () => {
+  it("has no separate VS Code or browser buttons: the connect step offers both", () => {
     mount({ status: "running" });
-    const browser = screen.getByRole("button", { name: "Browser (demo)" });
-    expect(browser).toBeDisabled();
-    expect(browser).toHaveAccessibleDescription(
-      "Browser VS Code is not available yet.",
-    );
+    expect(screen.queryByRole("button", { name: /VS Code/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Browser/ })).toBeNull();
   });
 
   it("disables what can't be done while the workspace changes", () => {
     mount({ status: "starting", busy: "starting" });
     expect(
-      screen.getByRole("button", { name: "Open in VS Code (demo)" }),
+      screen.getByRole("button", { name: "Connect to demo" }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Stop demo" })).toBeDisabled();
   });

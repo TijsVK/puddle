@@ -6,8 +6,7 @@
       "repo_url": "https://github.com/acme/web-shop.git",
       "status": "running",
       "ago_ms": 1209600000,
-      "disk_used_mib": 6144,
-      "first_connect_notice_due": false
+      "disk_used_mib": 6144
     },
     {
       "name": "docs-site",

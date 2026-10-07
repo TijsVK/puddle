@@ -22,8 +22,8 @@ beforeEach(async () => {
   api = new FakeWorkspaces();
   api.list = [
     workspace("down"),
-    workspace("up", { status: "running", first_connect_notice_due: true }),
-    workspace("trusted", { status: "running" }),
+    workspace("up", { status: "running" }),
+    workspace("trusted", { status: "running", direct_ssh: true }),
   ];
   store = new WorkspaceStore({ api: api as never });
   await store.refresh();
@@ -66,29 +66,114 @@ describe("start, stop and reclaim", () => {
   });
 });
 
-describe("opening in VS Code", () => {
-  it("asks first when the notice is due, and opens only after the yes", async () => {
-    actions.attach(w("up"));
-    expect(actions.noticeOpen).toBe(true);
-    expect(actions.noticeFor?.name).toBe("up");
+describe("connecting", () => {
+  it("opens the connect step for a workspace and opens nothing yet", () => {
+    actions.connect(w("up"));
+    expect(actions.connectOpen).toBe(true);
+    expect(actions.connectFor?.name).toBe("up");
     expect(api.calls).not.toContain("POST /api/workspaces/{id}/attach");
-    actions.confirmNotice();
-    await expect.poll(() => messages()).toEqual(["Opening up in VS Code."]);
-    expect(api.bodies.at(-1)).toEqual({ mode: "desktop" });
-    expect(actions.noticeFor).toBeNull();
   });
 
-  it("opens at once when the notice was accepted before", async () => {
-    actions.attach(w("trusted"));
-    expect(actions.noticeOpen).toBe(false);
+  it("turning direct SSH on asks the trust text first and changes nothing until the yes", async () => {
+    actions.requestDirectSsh(w("up"), true);
+    expect(actions.trustOpen).toBe(true);
+    expect(actions.trustFor?.name).toBe("up");
+    expect(api.calls).not.toContain("PUT /api/settings/sandboxes/{sandbox}");
+    actions.confirmTrust();
     await expect
       .poll(() => messages())
-      .toEqual(["Opening trusted in VS Code."]);
+      .toEqual(["Direct SSH is on for up: it is trusted now."]);
+    expect(api.bodies.at(-1)).toMatchObject({
+      overrides: { direct_ssh: true },
+    });
+    expect(w("up").direct_ssh).toBe(true);
+    expect(actions.trustFor).toBeNull();
+  });
+
+  it("keeps the other overrides of the workspace when it turns direct SSH on", async () => {
+    api.overrides["up"] = {
+      clipboard_read: null,
+      direct_ssh: null,
+      local_toggles: {
+        link_local: null,
+        loopback: null,
+        metadata: null,
+        private: null,
+        special: null,
+      },
+      memory: 4096,
+      reconnection_grace: null,
+      wildcards_reach_local: null,
+      zoom_hotkeys: null,
+    };
+    actions.requestDirectSsh(w("up"), true);
+    actions.confirmTrust();
+    await expect.poll(() => messages()).toHaveLength(1);
+    expect(api.bodies.at(-1)).toMatchObject({
+      overrides: { direct_ssh: true, memory: 4096 },
+    });
+  });
+
+  it("turning it off needs no question and says so", async () => {
+    actions.requestDirectSsh(w("trusted"), false);
+    expect(actions.trustOpen).toBe(false);
+    await expect
+      .poll(() => messages())
+      .toEqual(["Direct SSH is off for trusted."]);
+    expect(api.bodies.at(-1)).toMatchObject({
+      overrides: { direct_ssh: false },
+    });
+    expect(w("trusted").direct_ssh).toBe(false);
   });
 
   it("a confirm with nothing to confirm does nothing", () => {
-    actions.confirmNotice();
-    expect(api.calls).not.toContain("POST /api/workspaces/{id}/attach");
+    actions.confirmTrust();
+    expect(api.calls).not.toContain("PUT /api/settings/sandboxes/{sandbox}");
+  });
+
+  it("a refused change is an error toast and the workspace stays as it was", async () => {
+    api.refuse.set("PUT /api/settings/sandboxes/{sandbox}", {
+      status: 422,
+      message: "storage failed",
+    });
+    actions.requestDirectSsh(w("up"), true);
+    actions.confirmTrust();
+    await expect
+      .poll(() => toasts.items[0])
+      .toMatchObject({
+        message: "storage failed",
+        tone: "error",
+      });
+    expect(w("up").direct_ssh).toBe(false);
+  });
+
+  it("says so when the settings cannot be read", async () => {
+    api.refuse.set("GET /api/settings/sandboxes/{sandbox}", {
+      status: 404,
+      message: "no settings",
+    });
+    actions.requestDirectSsh(w("up"), true);
+    actions.confirmTrust();
+    await expect.poll(() => messages()).toEqual(["no settings"]);
+  });
+
+  it("says the service is down when it does not answer", async () => {
+    api.down = true;
+    actions.requestDirectSsh(w("up"), true);
+    actions.confirmTrust();
+    await expect
+      .poll(() => messages())
+      .toEqual(["puddle's service isn't answering."]);
+  });
+});
+
+describe("opening in VS Code", () => {
+  it("opens desktop VS Code", async () => {
+    actions.openDesktop(w("trusted"));
+    await expect
+      .poll(() => messages())
+      .toEqual(["Opening trusted in VS Code."]);
+    expect(api.bodies.at(-1)).toEqual({ mode: "desktop" });
   });
 
   it("says why when VS Code could not be opened, with the service's words", async () => {
@@ -97,7 +182,7 @@ describe("opening in VS Code", () => {
       url: null,
       message: "VS Code isn't installed.",
     };
-    actions.attach(w("trusted"));
+    actions.openDesktop(w("trusted"));
     await expect
       .poll(() => toasts.items[0])
       .toMatchObject({
@@ -108,19 +193,21 @@ describe("opening in VS Code", () => {
 
   it("has words of its own when the service gave none", async () => {
     api.attachReply = { opened: false, url: null, message: null };
-    actions.attach(w("trusted"));
+    actions.openDesktop(w("trusted"));
     await expect
       .poll(() => messages())
       .toEqual(["puddle couldn't open VS Code for trusted."]);
   });
 
-  it("a refused attach is an error toast", async () => {
+  it("a refused attach (direct SSH off) is an error toast", async () => {
     api.refuse.set("POST /api/workspaces/{id}/attach", {
       status: 409,
-      message: "not running",
+      message: "direct SSH is off for this workspace; allow it first",
     });
-    actions.attach(w("trusted"));
-    await expect.poll(() => messages()).toEqual(["not running"]);
+    actions.openDesktop(w("up"));
+    await expect
+      .poll(() => messages())
+      .toEqual(["direct SSH is off for this workspace; allow it first"]);
   });
 });
 

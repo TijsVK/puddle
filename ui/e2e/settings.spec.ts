@@ -96,6 +96,30 @@ for (const scheme of ["light", "dark"] as const) {
   });
 }
 
+test("the global direct SSH default is off, asks the trust text, and is kept", async ({
+  page,
+  backend,
+}) => {
+  await openSettings(page, backend);
+  const box = page.getByLabel("Allow direct SSH for new workspaces");
+  await expect(box).not.toBeChecked();
+  await box.check();
+  const trust = page.getByRole("alertdialog", {
+    name: "Allow direct SSH for new workspaces?",
+  });
+  await expect(trust).toContainText("GitHub token");
+  expect(await axeViolations(page), "trust text").toEqual([]);
+  await trust.getByRole("button", { name: "Cancel" }).click();
+  await expect(box).not.toBeChecked();
+  await box.check();
+  await trust.getByRole("button", { name: "Allow for new workspaces" }).click();
+  await expect(page.getByText("Allow direct SSH saved.")).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByLabel("Allow direct SSH for new workspaces"),
+  ).toBeChecked();
+});
+
 test("the licences open on request and are scrollable by keyboard", async ({
   page,
   backend,

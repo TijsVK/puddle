@@ -95,6 +95,10 @@ impl Api {
         self.request("POST", path, Some(body), true).await
     }
 
+    pub(crate) async fn put(&self, path: &str, body: &str) -> Reply {
+        self.request("PUT", path, Some(body), true).await
+    }
+
     pub(crate) async fn delete(&self, path: &str, body: Option<&str>) -> Reply {
         self.request("DELETE", path, body, true).await
     }
