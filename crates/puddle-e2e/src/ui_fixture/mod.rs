@@ -512,10 +512,10 @@ impl State {
             .map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
         let mut record = WorkspaceRecord::new(id, name, repo_url.as_str());
         if let Some(image) = &seed.image {
-            record.image = ImageRef::new(image)
+            ImageRef::new(image)
                 .map_err(|err| format!("workspace {:?}: {err}", seed.name))?
                 .as_str()
-                .to_owned();
+                .clone_into(&mut record.image);
         }
         if let Some(mib) = seed.memory_mib {
             record.memory =
