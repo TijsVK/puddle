@@ -144,15 +144,17 @@ impl Fixture {
         Ok(fixture)
     }
 
-    /// The fakes behind the API, seeded. A new service behind the API gets its fake here.
+    /// The fakes behind the API, seeded. The store emits its events into the same hub the API's
+    /// streams read, so a scenario's decisions and rule changes reach the page as they would live.
     fn build_state(scenario: &Scenario) -> Result<State, String> {
         let start = scenario.start_ms();
         let clock = Arc::new(ManualClock::new(start));
+        let events = Arc::new(EventHub::default());
         let store = Arc::new(
             Store::open_in_memory(clock.clone() as Arc<dyn Clock>, Limits::default())
-                .map_err(|err| err.to_string())?,
+                .map_err(|err| err.to_string())?
+                .with_events(events.clone()),
         );
-        let events = Arc::new(EventHub::default());
         let settings = Arc::new(MemorySettings::default());
         let workspaces = FakeWorkspaces::with_options(
             events.clone(),
