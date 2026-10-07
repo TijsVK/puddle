@@ -125,15 +125,16 @@ impl IntoResponse for ApiError {
 impl From<StoreError> for ApiError {
     fn from(err: StoreError) -> Self {
         match err {
-            StoreError::UnknownPending(_) | StoreError::UnknownRule(_) => {
-                Self::not_found(err.to_string())
-            }
-            StoreError::PendingNotOpen { .. } => {
+            StoreError::UnknownPending(_)
+            | StoreError::UnknownRule(_)
+            | StoreError::UnknownRuleSet(_) => Self::not_found(err.to_string()),
+            StoreError::PendingNotOpen { .. } | StoreError::RuleSetOff { .. } => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, err.to_string())
             }
-            StoreError::Pattern(_) | StoreError::ExpiryNotInFuture => {
-                Self::invalid(err.to_string())
-            }
+            StoreError::Pattern(_)
+            | StoreError::ExpiryNotInFuture
+            | StoreError::NotSwitchable
+            | StoreError::RuleSetName(_) => Self::invalid(err.to_string()),
             _ => Self::internal(&err),
         }
     }
@@ -208,6 +209,22 @@ mod tests {
                 StatusCode::NOT_FOUND,
             ),
             (StoreError::UnknownRule(RuleId(1)), StatusCode::NOT_FOUND),
+            (
+                StoreError::UnknownRuleSet("user:1".into()),
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                StoreError::RuleSetOff {
+                    set: "user:1".into(),
+                    sandbox: "a".into(),
+                },
+                StatusCode::CONFLICT,
+            ),
+            (StoreError::NotSwitchable, StatusCode::UNPROCESSABLE_ENTITY),
+            (
+                StoreError::RuleSetName("taken".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
             (
                 StoreError::PendingNotOpen {
                     id: PendingId(1),

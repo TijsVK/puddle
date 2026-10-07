@@ -36,7 +36,10 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
 ## 2. Matching
 
 - **R-1 Nothing is pre-decided.** A fresh install has no rules, allow or deny. Every request
-  with no matching rule becomes pending (§3); there is no built-in deny list.
+  with no matching rule becomes pending (§3); there is no built-in deny list. The built-in rule
+  sets ship switched off (R-36); the one thing puddle allows by itself is the short System managed
+  list, derived from the user's own setup choices and shown with a reason for every host
+  (R-40, R-41). *Note added 2026-10-08.*
 - **R-2 Exact rules** match the identical normalised host or IP literal, on any port. Port rules are
   later; the port is still recorded on pending rows and in the audit.
 - **R-3 Suffix rules** `.example.com` match every name ending in `.example.com` at any depth, and
@@ -58,7 +61,8 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
   *(default)*; the next connection is decided anew.
 - **R-9 The decision says how it matched:** `allow { rule_id, pattern }`, `deny { rule_id }` or
   `pending { pending_id, outcome }` (`outcome`: `new`, `repeat`, `suppressed`). The proxy needs the
-  pattern kind for R-14.
+  pattern kind for R-14. A rule set's entry decides as `set_allow { set, rule_id?, pattern }` or
+  `set_deny { set, rule_id, pattern }` (§7).
 
 ## 3. Pending requests
 
@@ -108,7 +112,8 @@ States: `requested → allowed | denied | expired`. The three end states are fin
 - **R-15 Approve and deny** take a row id and four choices: effect (`allow`/`deny`), scope (`sandbox`,
   the default, or `global`), pattern (`exact`, the default, or a suffix of the row's host that passes
   R-4) and expiry (permanent, the default, or a duration). This covers the inbox's four outcomes
-  (allow/deny × this sandbox/everyone). Defaults are never widened implicitly.
+  (allow/deny × this sandbox/everyone). Defaults are never widened implicitly. Instead of a scope,
+  the rule can go into a rule set the user made (R-38).
 - **R-16 A decision is one transaction:** create the rule, set the row to `allowed`/`denied` with
   `rule_id`, `decided_at` and `decided_by`, and close every other `requested` row the new rule now
   decides (same sandbox for a sandbox rule, any sandbox for a global one) the same way.
@@ -144,11 +149,12 @@ readable as JSONL (one record per line).
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `sandbox_id`, `host`, `port`,
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `local_address`,
-  `policy_unavailable`, `suppressed`, ...), `rule_id`, `pending_id`, `binding_id`, `injected`,
+  `policy_unavailable`, `suppressed`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`,
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired`,
   `pending_suppressed` (`sandbox_id`, `count`), `rule_created`, `rule_updated`, `rule_deleted`,
-  `rule_expired` (with the full rule), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`).
+  `rule_expired` (with the full rule), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`), and
+  the rule set records of R-43.
   The proxy writes one `connection` record per request whose destination it parsed, when the
   connection ends; a request refused before that (bad request, head too large or too slow, the
   sandbox over its connection limit) has no destination and only goes to the log. `resolved_ip`
@@ -195,7 +201,8 @@ readable as JSONL (one record per line).
   row), `pending_updated` (a repeat: `attempts`, `last_seen`), `pending_closed` (decided by a user
   or a rule, or expired: `state`, `rule_id`), `suppression_changed` (R-13: when it starts or ends,
   and at most twice a second while the count grows), `rules_changed` (any rule created, changed,
-  deleted or expired) and `audit_appended` (once per commit that wrote audit records, with the
+  deleted or expired, any rule set made, renamed, deleted or switched, and any change of System
+  managed) and `audit_appended` (once per commit that wrote audit records, with the
   newest id). Events carry ids and counts, not decisions: a client that missed some refetches.
   A failed change emits nothing. `network_changed` (with the new network epoch) is not a store
   event: puddle sends it when the network or the system's proxy settings change, and a client
@@ -258,10 +265,75 @@ a number) with `NXDOMAIN`. Every other name, including single labels and zones s
 allowed. Every other record type (`AAAA`, `HTTPS`, ...) gets no data, so dual-stack
 clients use the stand-in at once.
 
-## 7. Out of scope here
+## 7. Rule sets and System managed
 
-The AI judge (no field or placeholder until its flow is designed), rule sets the user can
-enable (v1; they will be a third scope), path rules (after v1), port rules, and the
-"Dangerous settings" unblock of puddle's endpoints (later). Address classification, name
-normalisation and the 403 body belong to the proxy and `puddle-netpolicy`; the API and CLI shape of R-15
-to `puddle-api` and `puddle`.
+A **rule set** is a named bundle of entries switched on or off as one. *Built-in* sets ship with
+puddle; the user makes *their own*. **System managed** is a separate, read-only list: the hosts
+puddle allows because of choices the user made (which browser editor server, direct SSH), each
+with its reason. The user's own global and sandbox rules (§1) are called *own rules* below. These
+rules are tested in `puddle-store` (`rule_sets_spec`, the engine's property tests), the proxy and
+the API. *Added 2026-10-08.*
+
+- **R-36 Built-in sets ship off, only allow, and update with puddle.** A built-in set is data in
+  puddle (an id `builtin:<slug>`, a name, a description, entries with a note each), checked at
+  build time against R-4 and for duplicates. It is read-only and never copied into the database, so
+  an update of puddle updates it. puddle ships no deny list: built-in entries only allow. Each
+  ships switched off. When an update changes a set's entries, the store writes one
+  `rule_set_changed` record (`added`, `removed`) when it opens, and the set shows when it changed.
+- **R-37 Switches.** Every set has a switch for every sandbox and an override per sandbox, each
+  on, off or unset; unset passes to the next level (the sandbox's, then every sandbox's, then the
+  set's default: built-in sets off, the user's own sets on). A switch applies to the next request
+  (R-8). Switching a set on closes the open requests it now decides, like a new rule (R-16), and
+  says which. System managed has no switch.
+- **R-38 Sets the user makes.** A set has a name (1 to 64 characters, unique among all sets,
+  case-insensitive), a description, and entries that are ordinary rules with the scope `set`
+  (exact or suffix, allow or deny, with an optional expiry, R-7). Entries are added like any rule,
+  or by approving or denying a pending request **into the set** (R-15): the set must be on for
+  the request's sandbox, or the decision is refused (it would not allow the request). Deleting a
+  set deletes its entries (`rule_deleted`, reason `set_deleted`) and its switches.
+- **R-39 Precedence: a set never opens what an own rule closes.** For a request, the own rules
+  are ranked as R-6 and the entries of the sets that are on for its sandbox are ranked by pattern
+  specificity, then deny over allow. When an own rule matches, it decides, unless a set's deny is
+  strictly more specific than it. When no own rule matches, the most specific set entry decides,
+  deny over allow. So a set's allow only fills gaps; a set's deny acts like a rule at its level of
+  detail, ranked below an own rule of the same detail. Examples: a global own deny of
+  `*.visualstudio.com` beats System managed's `update.code.visualstudio.com`; an own allow of
+  `*.example.com` loses to a set's deny of `ads.example.com`, and an own exact allow of
+  `ads.example.com` wins again. Between two sets the same order applies.
+- **R-40 System managed is shown, with reasons.** The Rules screen lists every System managed
+  host with its reason in words and where it applies (every sandbox or one). Nothing in it is
+  stored as a rule or hidden. To block one of its hosts, the user adds an own deny (R-39); to
+  remove the reason, the user changes the choice behind it.
+- **R-41 System managed follows the setup.** puddle derives it from the settings at start and
+  after every settings or consent change, and stores only the reasons (so a restart with the same
+  setup changes and records nothing):
+
+  | Setting | Hosts | Applies to |
+  |---|---|---|
+  | The browser editor runs Microsoft's VS Code server (consent granted) | `update.code.visualstudio.com`, `vscode.download.prss.microsoft.com`, `marketplace.visualstudio.com`, `*.gallery.vsassets.io`, `*.gallerycdn.vsassets.io` | every sandbox |
+  | The browser editor runs the bundled code-server (the default) | `open-vsx.org`, `openvsx.eclipsecontent.org` | every sandbox |
+  | Direct SSH is on for a workspace | the five Microsoft hosts | that sandbox |
+
+  Telemetry, experiment and certificate-status hosts are not in it: they are ordinary traffic
+  (R-1). When the reasons change, one `system_managed_changed` record per scope says which reasons
+  were added and removed, and open requests the new hosts decide are closed by `system` (R-37).
+  Until the direct SSH switch exists, no sandbox has it on.
+- **R-42 A set's allow reaches a local destination only like a wildcard.** After resolving a name
+  a set allowed, an address in a local category counts as reached by a wildcard rule (R-14): with
+  "wildcards reach local addresses" off, it needs an own exact allow of the name or the address,
+  and goes pending for the exact name otherwise. A set's deny of an IP literal excludes that
+  address like an own one (R-27).
+- **R-43 Rule set records.** `rule_set_created`, `rule_set_updated` (rename), `rule_set_deleted`
+  (each with the set and the actor), `rule_set_switched` (`set_id`, `sandbox_id` or `null` for
+  every sandbox, `enabled` true, false or `null`, actor), `rule_set_changed` (R-36) and
+  `system_managed_changed` (R-41). A connection decided by a set's entry has `reason: rule`, the
+  entry's `rule_id` (`null` for built-in and System managed entries) and `rule_set`; a pending
+  row closed by one records the set in `rule_set`. A refusal by a set's deny carries
+  `x-puddle-rule-set` next to `x-puddle-rule`.
+
+## 8. Out of scope here
+
+The AI judge (no field or placeholder until its flow is designed), subscribed lists (a rule set
+fetched from a URL), path rules (after v1), port rules, and the "Dangerous settings" unblock of
+puddle's endpoints (later). Address classification, name normalisation and the 403 body belong to
+the proxy and `puddle-netpolicy`; the API and CLI shape of R-15 to `puddle-api` and `puddle`.

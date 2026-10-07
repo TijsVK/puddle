@@ -9,8 +9,10 @@ export interface Decided {
   effect: Rule["effect"];
   pattern: string;
   patternKind: Rule["pattern_kind"];
-  /** `null` is every workspace. */
+  /** `null` is every workspace (or a rule set's entry). */
   workspace: string | null;
+  /** The rule set the rule went into, by name; `null` for a plain rule. */
+  ruleSet: string | null;
   expiresAt: number | null;
   alsoClosed: number;
   at: number;
@@ -36,7 +38,11 @@ export function expiryPhrase(expiresAt: number | null, locale?: string) {
 /** "Allowed *.example.com for every workspace, permanently". */
 export function decidedSentence(d: Decided, locale?: string): string {
   const verb = d.effect === "allow" ? "Allowed" : "Denied";
+  const when = expiryPhrase(d.expiresAt, locale);
+  if (d.ruleSet !== null) {
+    return `${verb} ${decidedPattern(d)} in rule set ${d.ruleSet}, ${when}`;
+  }
   const who =
     d.workspace === null ? "every workspace" : `workspace ${d.workspace}`;
-  return `${verb} ${decidedPattern(d)} for ${who}, ${expiryPhrase(d.expiresAt, locale)}`;
+  return `${verb} ${decidedPattern(d)} for ${who}, ${when}`;
 }

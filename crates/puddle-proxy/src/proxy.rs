@@ -879,7 +879,9 @@ fn ip_rule(
             rule_id,
             pattern: PatternKind::Exact,
         }) => IpRule::Allow(rule_id),
-        Some(Decision::Deny { rule_id, .. }) => IpRule::Deny(rule_id),
+        Some(Decision::Deny { rule_id, .. } | Decision::SetDeny { rule_id, .. }) => {
+            IpRule::Deny(rule_id)
+        }
         _ => IpRule::NoRule,
     })
 }
@@ -956,6 +958,23 @@ fn allowed(
             )
             .header("x-puddle-decision", "deny")
             .header("x-puddle-rule", rule_id.to_string()))
+        }
+        // A set's allow counts like a wildcard allow for local destinations (R-42).
+        Ok(Decision::SetAllow { set, .. }) => {
+            tracing::info!(%sandbox, %host, port, %set, "allowed by a rule set");
+            Ok(PatternKind::Suffix)
+        }
+        Ok(Decision::SetDeny { set, rule_id, .. }) => {
+            tracing::info!(%sandbox, %host, port, %set, rule = %rule_id, "denied by a rule set");
+            Err(Refusal::new(
+                "403 Forbidden",
+                format!(
+                    "{host} is denied by rule {rule_id} of your rule set {set}; remove it there, switch the set off for this workspace, or add an exact allow of your own"
+                ),
+            )
+            .header("x-puddle-decision", "deny")
+            .header("x-puddle-rule", rule_id.to_string())
+            .header("x-puddle-rule-set", set.to_string()))
         }
         Ok(Decision::Pending(outcome)) => {
             tracing::info!(%sandbox, %host, port, pending = ?outcome.pending_id(), "pending approval");

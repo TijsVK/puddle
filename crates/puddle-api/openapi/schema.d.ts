@@ -216,6 +216,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/rule-sets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every rule set (built-in first, then yours) and the System managed hosts with their reasons. */
+        get: operations["list_rule_sets"];
+        put?: never;
+        /**
+         * Makes a rule set of your own, empty and on everywhere. Add entries with `POST /api/rules`
+         *     (scope `set`) or by approving a request into it.
+         */
+        post: operations["create_rule_set"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rule-sets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Renames a rule set of yours or changes its description. */
+        put: operations["update_rule_set"];
+        post?: never;
+        /** Deletes a rule set of yours with its entries and switches. */
+        delete: operations["delete_rule_set"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rule-sets/{id}/switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Switches a set on or off for every sandbox or for one (`enabled: null` removes that switch),
+         *     and closes the open requests the set now decides.
+         */
+        put: operations["switch_rule_set"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/rules": {
         parameters: {
             query?: never;
@@ -576,6 +635,8 @@ export interface components {
              * @description The deciding rule.
              */
             rule_id: number | null;
+            /** @description The rule set whose entry decided it. */
+            rule_set: string | null;
             /** @description The sandbox. */
             sandbox_id: string;
             /** @description `requested`, `allowed`, `denied` or `expired`. */
@@ -636,6 +697,8 @@ export interface components {
              * @description The deciding rule.
              */
             rule_id: number | null;
+            /** @description The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`). */
+            rule_set: string | null;
             /** @description The sandbox; `null` for puddle's own connections (`origin` is `puddle`). */
             sandbox_id: string | null;
             /**
@@ -746,6 +809,88 @@ export interface components {
             /** @enum {string} */
             type: "rule_expired";
         } | {
+            /** @description Who made it. */
+            actor: string;
+            /** @description The set. */
+            rule_set: components["schemas"]["AuditRuleSet"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "rule_set_created";
+        } | {
+            /** @description Who changed it. */
+            actor: string;
+            /** @description The set before. */
+            before: components["schemas"]["AuditRuleSet"];
+            /** @description The set after. */
+            rule_set: components["schemas"]["AuditRuleSet"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "rule_set_updated";
+        } | {
+            /** @description Who deleted it. */
+            actor: string;
+            /** @description The set as it was. */
+            rule_set: components["schemas"]["AuditRuleSet"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "rule_set_deleted";
+        } | {
+            /** @description Who switched it. */
+            actor: string;
+            /** @description On, off, or `null` to follow the next level. */
+            enabled: boolean | null;
+            /** @description The sandbox whose override changed; `null` for every sandbox. */
+            sandbox_id: string | null;
+            /** @description `builtin:<slug>` or `user:<id>`. */
+            set_id: string;
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "rule_set_switched";
+        } | {
+            /** @description Patterns added. */
+            added: string[];
+            /** @description Patterns removed. */
+            removed: string[];
+            /** @description `builtin:<slug>`. */
+            set_id: string;
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "rule_set_changed";
+        } | {
+            /** @description Reasons that now apply. */
+            added: components["schemas"]["SystemReason"][];
+            /** @description Reasons that no longer apply. */
+            removed: components["schemas"]["SystemReason"][];
+            /** @description The sandbox; `null` for every sandbox. */
+            sandbox_id: string | null;
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "system_managed_changed";
+        } | {
             /**
              * Format: int64
              * @description Records deleted.
@@ -791,19 +936,43 @@ export interface components {
             pattern_kind: string;
             /** @description The sandbox, for a sandbox rule. */
             sandbox_id: string | null;
-            /** @description `global` or `sandbox`. */
+            /** @description `global`, `sandbox` or `set`. */
             scope: string;
+            /**
+             * Format: int64
+             * @description The rule set you made, for a set's entry (`scope` is `set`).
+             */
+            set_id: number | null;
             /**
              * Format: int64
              * @description The pending request it came from.
              */
             source_pending_id: number | null;
         };
+        /** @description A rule set you made, as an audit record shows it. */
+        AuditRuleSet: {
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            created_at: number;
+            /** @description `cli`, `ui` or `api`. */
+            created_by: string;
+            /** @description Description. */
+            description: string;
+            /**
+             * Format: int64
+             * @description The set's number; its id is `user:<id>`.
+             */
+            id: number;
+            /** @description Name. */
+            name: string;
+        };
         /**
          * @description The record types, for the `type` filter.
          * @enum {string}
          */
-        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "audit_trimmed";
+        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "audit_trimmed";
         /**
          * @description What a programmatic clipboard read in the browser window does.
          * @enum {string}
@@ -907,6 +1076,13 @@ export interface components {
              * @description Seconds until the rule expires; left out or `null` is permanent.
              */
             expires_in_secs?: number | null;
+            /**
+             * Format: int64
+             * @description Put the rule into this rule set of yours (the number of `user:<id>`) instead: it then
+             *     applies wherever the set is on. `scope` must be left at `sandbox`. The set must be on
+             *     for the request's sandbox.
+             */
+            rule_set?: number | null;
             /** @description This sandbox (default) or every sandbox. */
             scope?: components["schemas"]["ScopeChoice"];
             /**
@@ -1223,6 +1399,13 @@ export interface components {
             /** @description Global or one sandbox. */
             scope: components["schemas"]["RuleScope"];
         };
+        /** @description A rule set to make. */
+        NewRuleSetRequest: {
+            /** @description At most 500 characters. */
+            description?: string;
+            /** @description 1 to 64 characters, not used by another set. */
+            name: string;
+        };
         /** @description `POST /api/workspaces`. */
         NewWorkspaceRequest: {
             /** @description The image to boot; left out or `null` is the default devcontainer image. */
@@ -1309,6 +1492,11 @@ export interface components {
              * @description The rule that decided it.
              */
             rule_id: number | null;
+            /**
+             * @description The rule set whose entry decided it (`system`, `builtin:<slug>`, `user:<id>`), when one
+             *     did.
+             */
+            rule_set: string | null;
             /** @description The requesting sandbox. */
             sandbox: components["schemas"]["SandboxName"];
             /** @description Where the row is in its life. */
@@ -1541,7 +1729,7 @@ export interface components {
          * @description Why a rule was deleted.
          * @enum {string}
          */
-        RuleDeleteReason: "user" | "sandbox_deleted";
+        RuleDeleteReason: "user" | "sandbox_deleted" | "set_deleted";
         /** @description A rule's new expiry. */
         RuleExpiryRequest: {
             /**
@@ -1564,6 +1752,112 @@ export interface components {
             sandbox: components["schemas"]["SandboxName"];
             /** @enum {string} */
             type: "sandbox";
+        } | {
+            /**
+             * Format: int64
+             * @description The set's number (its id is `user:<set>`).
+             */
+            set: number;
+            /** @enum {string} */
+            type: "set";
+        };
+        /** @description One entry of a rule set. */
+        RuleSetEntry: {
+            /** @description Allow or deny (built-in sets only allow). */
+            effect: components["schemas"]["Effect"];
+            /**
+             * Format: int64
+             * @description Epoch ms from which the entry no longer counts; `null` is permanent.
+             */
+            expires_at: number | null;
+            /** @description What it is for (built-in sets); empty for your own entries. */
+            note: string;
+            /**
+             * @description `example.com`, or `.example.com` for every name under it (a built-in entry is written
+             *     `*.example.com`).
+             */
+            pattern: string;
+            /** @description Exact or suffix. */
+            pattern_kind: components["schemas"]["PatternKind"];
+            /**
+             * Format: int64
+             * @description The entry's rule, for a set you made (delete or change it through `/api/rules`).
+             */
+            rule_id: number | null;
+        };
+        /**
+         * @description Who made a rule set.
+         * @enum {string}
+         */
+        RuleSetKind: "built_in" | "user";
+        /** @description Every rule set, and the System managed hosts. */
+        RuleSetList: {
+            /** @description Built-in sets first, then yours by name. */
+            sets: components["schemas"]["RuleSetView"][];
+            /**
+             * @description The hosts puddle allows because of your setup, each with its reason. Your own rules
+             *     decide first: a deny of yours blocks one.
+             */
+            system_managed: components["schemas"]["SystemManagedHost"][];
+        };
+        /** @description One sandbox's own switch for a set. */
+        RuleSetOverride: {
+            /** @description On or off there. */
+            enabled: boolean;
+            /** @description The sandbox. */
+            sandbox: components["schemas"]["SandboxName"];
+        };
+        /** @description Switch a set on or off, for every sandbox or for one. */
+        RuleSetSwitchRequest: {
+            /**
+             * @description On or off; `null` removes the switch, so the next level decides (the global switch, then
+             *     the set's default).
+             */
+            enabled: boolean | null;
+            sandbox?: components["schemas"]["SandboxName"] | null;
+        };
+        /** @description What a switch did. */
+        RuleSetSwitched: {
+            /** @description Open requests the set now decides, closed the same way. */
+            closed: number[];
+            /** @description The set as it is now. */
+            set: components["schemas"]["RuleSetView"];
+        };
+        /** @description A rule set's new name and description. */
+        RuleSetUpdateRequest: {
+            /** @description At most 500 characters. */
+            description?: string;
+            /** @description 1 to 64 characters, not used by another set. */
+            name: string;
+        };
+        /** @description A rule set: where it is on, and its entries. */
+        RuleSetView: {
+            /**
+             * Format: int64
+             * @description Built-in sets: epoch ms when a puddle update last changed the entries; `null` if never.
+             */
+            changed_at: number | null;
+            /**
+             * Format: int64
+             * @description Your sets: epoch ms it was made.
+             */
+            created_at: number | null;
+            /** @description Whether it is on where nobody switched it: built-in sets ship off, your sets start on. */
+            default_on: boolean;
+            /** @description What it is for. */
+            description: string;
+            /** @description Its entries. */
+            entries: components["schemas"]["RuleSetEntry"][];
+            /** @description The switch for every sandbox; `null` follows `default_on`. */
+            global: boolean | null;
+            /** @description `builtin:<slug>` or `user:<id>`. */
+            id: string;
+            /** @description Built-in or yours. */
+            kind: components["schemas"]["RuleSetKind"];
+            /** @description Name. */
+            name: string;
+            /** @description Sandboxes with a switch of their own. */
+            overrides: components["schemas"]["RuleSetOverride"][];
         };
         /**
          * @description A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), not `tauri`, `ipc` or `asset`.
@@ -1704,6 +1998,23 @@ export interface components {
             /** @description The subject's common name, when it has one. Comes from a certificate: escape it. */
             subject: string | null;
         };
+        /** @description One host puddle allows because of your setup, and why. */
+        SystemManagedHost: {
+            /** @description What the host is for. */
+            note: string;
+            /** @description `example.com`, or `*.example.com` for every name under it. */
+            pattern: string;
+            /** @description Why it is allowed. */
+            reason: components["schemas"]["SystemReason"];
+            /** @description The reason in words. */
+            reason_text: string;
+            sandbox: components["schemas"]["SandboxName"] | null;
+        };
+        /**
+         * @description Why puddle allows a System managed host: a choice you made.
+         * @enum {string}
+         */
+        SystemReason: "microsoft_server" | "code_server" | "direct_ssh";
         /**
          * @description The colour theme of puddle's window.
          * @enum {string}
@@ -2589,6 +2900,370 @@ export interface operations {
                 };
             };
             /** @description invalid suffix or expiry */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_rule_sets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the rule sets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleSetList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_rule_set: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewRuleSetRequest"];
+            };
+        };
+        responses: {
+            /** @description the new set */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleSetView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description name empty, too long or taken */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    update_rule_set: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `user:<id>` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleSetUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description the set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleSetView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such set */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a built-in set, or name empty, too long or taken */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_rule_set: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `user:<id>` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the deleted set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleSetView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such set */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a built-in set */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    switch_rule_set: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `builtin:<slug>` or `user:<id>` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleSetSwitchRequest"];
+            };
+        };
+        responses: {
+            /** @description the set and the requests it closed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleSetSwitched"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such set */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description System managed has no switch */
             422: {
                 headers: {
                     [name: string]: unknown;

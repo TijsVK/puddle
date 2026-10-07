@@ -24,12 +24,18 @@ use utoipa::ToSchema;
 use crate::error::ApiError;
 
 mod network_health;
+mod rule_sets;
 mod workspaces;
 
 pub use network_health::{
     DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyReport, PullProxyReport,
     RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt, SignInReport, SignInResult,
     SkippedRoot, SyncedRoot,
+};
+pub use rule_sets::{
+    NewRuleSetRequest, RuleSetEntry, RuleSetKind, RuleSetList, RuleSetOverride,
+    RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost,
+    SystemReason,
 };
 
 pub use workspaces::{
@@ -164,6 +170,10 @@ pub struct PendingRequest {
     /// The rule that decided it.
     #[schema(required = true)]
     pub rule_id: Option<i64>,
+    /// The rule set whose entry decided it (`system`, `builtin:<slug>`, `user:<id>`), when one
+    /// did.
+    #[schema(required = true)]
+    pub rule_set: Option<String>,
     /// For an open request to a local destination (host loopback, private network, link-local,
     /// metadata, special) whose toggle is off in this workspace: the toggle that blocks approval.
     /// An allow rule would not let the connection through until the toggle is on. `null`
@@ -186,6 +196,7 @@ impl PendingRequest {
             decided_at,
             decided_by,
             rule_id,
+            rule_set,
         } = row;
         Ok(Self {
             id: id.0,
@@ -199,6 +210,7 @@ impl PendingRequest {
             decided_at,
             decided_by: decided_by.map(Actor::from_store).transpose()?,
             rule_id: rule_id.map(|r| r.0),
+            rule_set,
             blocked_by: None,
         })
     }
@@ -249,6 +261,12 @@ pub enum RuleScope {
         /// The sandbox.
         sandbox: SandboxName,
     },
+    /// An entry of a rule set you made: it applies wherever the set is on, and your own global
+    /// and sandbox rules decide first.
+    Set {
+        /// The set's number (its id is `user:<set>`).
+        set: i64,
+    },
 }
 
 impl RuleScope {
@@ -256,6 +274,7 @@ impl RuleScope {
         Ok(match scope {
             store::Scope::Global => Self::Global,
             store::Scope::Sandbox(sandbox) => Self::Sandbox { sandbox },
+            store::Scope::Set(set) => Self::Set { set },
             other => {
                 return Err(ApiError::internal(&format_args!(
                     "unmapped scope {other:?}"
@@ -270,6 +289,7 @@ impl From<RuleScope> for store::Scope {
         match scope {
             RuleScope::Global => Self::Global,
             RuleScope::Sandbox { sandbox } => Self::Sandbox(sandbox),
+            RuleScope::Set { set } => Self::Set(set),
         }
     }
 }
@@ -364,6 +384,11 @@ pub struct DecisionRequest {
     /// This sandbox (default) or every sandbox.
     #[serde(default)]
     pub scope: ScopeChoice,
+    /// Put the rule into this rule set of yours (the number of `user:<id>`) instead: it then
+    /// applies wherever the set is on. `scope` must be left at `sandbox`. The set must be on
+    /// for the request's sandbox.
+    #[serde(default)]
+    pub rule_set: Option<i64>,
     /// A suffix of the host (`example.com`, `.example.com` or `*.example.com`) to cover every
     /// name under it; left out or `null` means the exact host. A public suffix is refused.
     #[serde(default)]
@@ -378,6 +403,7 @@ impl DecisionRequest {
     pub(crate) fn into_resolution(self, effect: Effect) -> Result<store::Resolution, ApiError> {
         let Self {
             scope,
+            rule_set,
             suffix,
             expires_in_secs,
         } = self;
@@ -385,9 +411,15 @@ impl DecisionRequest {
             Effect::Allow => store::Resolution::allow(),
             Effect::Deny => store::Resolution::deny(),
         };
-        resolution.scope = match scope {
-            ScopeChoice::Sandbox => store::ScopeChoice::Sandbox,
-            ScopeChoice::Global => store::ScopeChoice::Global,
+        resolution.scope = match (scope, rule_set) {
+            (ScopeChoice::Sandbox, None) => store::ScopeChoice::Sandbox,
+            (ScopeChoice::Global, None) => store::ScopeChoice::Global,
+            (ScopeChoice::Sandbox, Some(set)) => store::ScopeChoice::Set(set),
+            (ScopeChoice::Global, Some(_)) => {
+                return Err(ApiError::invalid(
+                    "rule_set: a rule set's entry applies wherever the set is on; leave scope out",
+                ));
+            }
         };
         resolution.pattern = match suffix {
             None => store::PatternChoice::Exact,
@@ -511,7 +543,7 @@ pub struct RuleExpiryRequest {
 pub struct AuditRule {
     /// Row id.
     pub id: i64,
-    /// `global` or `sandbox`.
+    /// `global`, `sandbox` or `set`.
     pub scope: String,
     /// The sandbox, for a sandbox rule.
     #[schema(required = true)]
@@ -532,6 +564,10 @@ pub struct AuditRule {
     /// The pending request it came from.
     #[schema(required = true)]
     pub source_pending_id: Option<i64>,
+    /// The rule set you made, for a set's entry (`scope` is `set`).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub set_id: Option<i64>,
 }
 
 impl From<store::RuleWire> for AuditRule {
@@ -547,6 +583,7 @@ impl From<store::RuleWire> for AuditRule {
             created_at,
             created_by,
             source_pending_id,
+            set_id,
         } = rule;
         Self {
             id,
@@ -559,6 +596,41 @@ impl From<store::RuleWire> for AuditRule {
             created_at,
             created_by,
             source_pending_id,
+            set_id,
+        }
+    }
+}
+
+/// A rule set you made, as an audit record shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AuditRuleSet {
+    /// The set's number; its id is `user:<id>`.
+    pub id: i64,
+    /// Name.
+    pub name: String,
+    /// Description.
+    pub description: String,
+    /// Epoch ms.
+    pub created_at: u64,
+    /// `cli`, `ui` or `api`.
+    pub created_by: String,
+}
+
+impl From<store::RuleSetWire> for AuditRuleSet {
+    fn from(set: store::RuleSetWire) -> Self {
+        let store::RuleSetWire {
+            id,
+            name,
+            description,
+            created_at,
+            created_by,
+        } = set;
+        Self {
+            id,
+            name,
+            description,
+            created_at,
+            created_by,
         }
     }
 }
@@ -591,6 +663,10 @@ pub struct AuditPending {
     /// The deciding rule.
     #[schema(required = true)]
     pub rule_id: Option<i64>,
+    /// The rule set whose entry decided it.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub rule_set: Option<String>,
 }
 
 impl From<store::PendingWire> for AuditPending {
@@ -607,6 +683,7 @@ impl From<store::PendingWire> for AuditPending {
             decided_at,
             decided_by,
             rule_id,
+            rule_set,
         } = row;
         Self {
             id,
@@ -620,6 +697,7 @@ impl From<store::PendingWire> for AuditPending {
             decided_at,
             decided_by,
             rule_id,
+            rule_set,
         }
     }
 }
@@ -698,6 +776,8 @@ pub enum RuleDeleteReason {
     User,
     /// Its sandbox was deleted.
     SandboxDeleted,
+    /// It was an entry of a rule set that was deleted.
+    SetDeleted,
 }
 
 /// One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
@@ -739,6 +819,10 @@ pub enum AuditRecord {
         /// The deciding rule.
         #[schema(required = true)]
         rule_id: Option<i64>,
+        /// The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`).
+        #[serde(default)]
+        #[schema(required = true)]
+        rule_set: Option<String>,
         /// The pending request.
         #[schema(required = true)]
         pending_id: Option<i64>,
@@ -831,6 +915,73 @@ pub enum AuditRecord {
         /// The rule.
         rule: AuditRule,
     },
+    /// A rule set made.
+    RuleSetCreated {
+        /// Epoch ms.
+        ts: u64,
+        /// The set.
+        rule_set: AuditRuleSet,
+        /// Who made it.
+        actor: String,
+    },
+    /// A rule set renamed or described anew.
+    RuleSetUpdated {
+        /// Epoch ms.
+        ts: u64,
+        /// The set before.
+        before: AuditRuleSet,
+        /// The set after.
+        rule_set: AuditRuleSet,
+        /// Who changed it.
+        actor: String,
+    },
+    /// A rule set deleted with its entries (each also has a `rule_deleted`).
+    RuleSetDeleted {
+        /// Epoch ms.
+        ts: u64,
+        /// The set as it was.
+        rule_set: AuditRuleSet,
+        /// Who deleted it.
+        actor: String,
+    },
+    /// A rule set switched on or off, or back to following the next level.
+    RuleSetSwitched {
+        /// Epoch ms.
+        ts: u64,
+        /// `builtin:<slug>` or `user:<id>`.
+        set_id: String,
+        /// The sandbox whose override changed; `null` for every sandbox.
+        #[schema(required = true)]
+        sandbox_id: Option<String>,
+        /// On, off, or `null` to follow the next level.
+        #[schema(required = true)]
+        enabled: Option<bool>,
+        /// Who switched it.
+        actor: String,
+    },
+    /// A puddle update changed a built-in set's entries.
+    RuleSetChanged {
+        /// Epoch ms.
+        ts: u64,
+        /// `builtin:<slug>`.
+        set_id: String,
+        /// Patterns added.
+        added: Vec<String>,
+        /// Patterns removed.
+        removed: Vec<String>,
+    },
+    /// The reasons for the System managed hosts changed, because your setup did.
+    SystemManagedChanged {
+        /// Epoch ms.
+        ts: u64,
+        /// The sandbox; `null` for every sandbox.
+        #[schema(required = true)]
+        sandbox_id: Option<String>,
+        /// Reasons that now apply.
+        added: Vec<SystemReason>,
+        /// Reasons that no longer apply.
+        removed: Vec<SystemReason>,
+    },
     /// The oldest records were deleted to keep the audit under its size cap.
     AuditTrimmed {
         /// Epoch ms.
@@ -856,6 +1007,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             decision,
             reason,
             rule_id,
+            rule_set,
             pending_id,
             binding_id,
             injected,
@@ -877,6 +1029,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             decision: decision.map(Into::into),
             reason,
             rule_id,
+            rule_set,
             pending_id,
             binding_id,
             injected,
@@ -891,6 +1044,10 @@ impl From<store::ConnectionRecord> for AuditRecord {
 }
 
 impl From<store::AuditRecord> for AuditRecord {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one plain arm per record type; splitting it would hide a missing one"
+    )]
     fn from(record: store::AuditRecord) -> Self {
         use store::AuditRecord as R;
         match record {
@@ -952,12 +1109,77 @@ impl From<store::AuditRecord> for AuditRecord {
                 reason: match reason {
                     store::RuleDeleteReason::User => RuleDeleteReason::User,
                     store::RuleDeleteReason::SandboxDeleted => RuleDeleteReason::SandboxDeleted,
+                    store::RuleDeleteReason::SetDeleted => RuleDeleteReason::SetDeleted,
                 },
                 actor,
             },
             R::RuleExpired { ts, rule } => Self::RuleExpired {
                 ts,
                 rule: rule.into(),
+            },
+            R::RuleSetCreated {
+                ts,
+                rule_set,
+                actor,
+            } => Self::RuleSetCreated {
+                ts,
+                rule_set: rule_set.into(),
+                actor,
+            },
+            R::RuleSetUpdated {
+                ts,
+                before,
+                rule_set,
+                actor,
+            } => Self::RuleSetUpdated {
+                ts,
+                before: before.into(),
+                rule_set: rule_set.into(),
+                actor,
+            },
+            R::RuleSetDeleted {
+                ts,
+                rule_set,
+                actor,
+            } => Self::RuleSetDeleted {
+                ts,
+                rule_set: rule_set.into(),
+                actor,
+            },
+            R::RuleSetSwitched {
+                ts,
+                set_id,
+                sandbox_id,
+                enabled,
+                actor,
+            } => Self::RuleSetSwitched {
+                ts,
+                set_id,
+                sandbox_id,
+                enabled,
+                actor,
+            },
+            R::RuleSetChanged {
+                ts,
+                set_id,
+                added,
+                removed,
+            } => Self::RuleSetChanged {
+                ts,
+                set_id,
+                added,
+                removed,
+            },
+            R::SystemManagedChanged {
+                ts,
+                sandbox_id,
+                added,
+                removed,
+            } => Self::SystemManagedChanged {
+                ts,
+                sandbox_id,
+                added: SystemReason::parse_all(&added),
+                removed: SystemReason::parse_all(&removed),
             },
             R::AuditTrimmed {
                 ts,
@@ -1046,6 +1268,18 @@ pub enum AuditType {
     RuleDeleted,
     /// A rule expired.
     RuleExpired,
+    /// A rule set made.
+    RuleSetCreated,
+    /// A rule set renamed.
+    RuleSetUpdated,
+    /// A rule set deleted.
+    RuleSetDeleted,
+    /// A rule set switched.
+    RuleSetSwitched,
+    /// A built-in rule set changed by an update.
+    RuleSetChanged,
+    /// The System managed reasons changed.
+    SystemManagedChanged,
     /// The audit trimmed to its size cap.
     AuditTrimmed,
 }
@@ -1063,6 +1297,12 @@ impl AuditType {
             Self::RuleUpdated => "rule_updated",
             Self::RuleDeleted => "rule_deleted",
             Self::RuleExpired => "rule_expired",
+            Self::RuleSetCreated => "rule_set_created",
+            Self::RuleSetUpdated => "rule_set_updated",
+            Self::RuleSetDeleted => "rule_set_deleted",
+            Self::RuleSetSwitched => "rule_set_switched",
+            Self::RuleSetChanged => "rule_set_changed",
+            Self::SystemManagedChanged => "system_managed_changed",
             Self::AuditTrimmed => "audit_trimmed",
         }
     }
@@ -1888,6 +2128,7 @@ mod tests {
         assert_eq!(r, store::Resolution::allow());
         let r = DecisionRequest {
             scope: ScopeChoice::Global,
+            rule_set: None,
             suffix: Some("example.com".into()),
             expires_in_secs: Some(60),
         }
@@ -1904,6 +2145,29 @@ mod tests {
         assert_eq!(parsed, DecisionRequest::default());
         assert!(serde_json::from_str::<DecisionRequest>(r#"{"scope":"everything"}"#).is_err());
         assert!(serde_json::from_str::<DecisionRequest>(r#"{"extra":1}"#).is_err());
+    }
+
+    #[test]
+    fn a_decision_into_a_rule_set_needs_the_default_scope() {
+        let parsed: DecisionRequest = serde_json::from_str(r#"{"rule_set":4}"#).unwrap();
+        assert_eq!(
+            parsed.into_resolution(Effect::Allow).unwrap().scope,
+            store::ScopeChoice::Set(4)
+        );
+        let both: DecisionRequest =
+            serde_json::from_str(r#"{"rule_set":4,"scope":"global"}"#).unwrap();
+        assert!(both.into_resolution(Effect::Allow).is_err());
+    }
+
+    #[test]
+    fn set_scopes_map_both_ways() {
+        let wire = RuleScope::from_store(store::Scope::Set(3)).unwrap();
+        assert_eq!(wire, RuleScope::Set { set: 3 });
+        assert_eq!(
+            serde_json::to_value(&wire).unwrap(),
+            serde_json::json!({"type": "set", "set": 3})
+        );
+        assert_eq!(store::Scope::from(wire), store::Scope::Set(3));
     }
 
     #[test]
@@ -1980,8 +2244,10 @@ mod tests {
             decided_at: None,
             decided_by: None,
             rule_id: None,
+            rule_set: Some("system".into()),
         };
         let v = serde_json::to_value(PendingRequest::from_store(row).unwrap()).unwrap();
+        assert_eq!(v["rule_set"], "system");
         assert_eq!(v["decided_at"], Value::Null);
         assert_eq!(v["decided_by"], Value::Null);
         assert_eq!(v["rule_id"], Value::Null);
@@ -2113,6 +2379,7 @@ mod tests {
     fn a_decision_suffix_is_normalised_too() {
         let r = DecisionRequest {
             scope: ScopeChoice::Sandbox,
+            rule_set: None,
             suffix: Some("*.GitHub.COM".into()),
             expires_in_secs: None,
         }
@@ -2122,6 +2389,7 @@ mod tests {
         assert!(
             DecisionRequest {
                 scope: ScopeChoice::Sandbox,
+                rule_set: None,
                 suffix: Some("https://github.com".into()),
                 expires_in_secs: None,
             }
@@ -2142,6 +2410,12 @@ mod tests {
             AuditType::RuleUpdated,
             AuditType::RuleDeleted,
             AuditType::RuleExpired,
+            AuditType::RuleSetCreated,
+            AuditType::RuleSetUpdated,
+            AuditType::RuleSetDeleted,
+            AuditType::RuleSetSwitched,
+            AuditType::RuleSetChanged,
+            AuditType::SystemManagedChanged,
             AuditType::AuditTrimmed,
         ]
         .into_iter()
@@ -2167,6 +2441,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn rule_set_records_serialise_as_stored() {
+        let set = serde_json::json!({
+            "id": 3, "name": "Work", "description": "", "created_at": 1, "created_by": "ui"
+        });
+        let rule = serde_json::json!({
+            "id": 9, "scope": "set", "sandbox_id": null, "set_id": 3, "pattern_kind": "exact",
+            "pattern": "a.example", "effect": "deny", "expires_at": null, "created_at": 1,
+            "created_by": "ui", "source_pending_id": null
+        });
+        let pending = serde_json::json!({
+            "id": 2, "sandbox_id": "box", "host": "open-vsx.org", "port": 443, "first_seen": 1,
+            "last_seen": 1, "attempts": 1, "state": "allowed", "decided_at": 2,
+            "decided_by": "system", "rule_id": null, "rule_set": "system"
+        });
+        for stored in [
+            serde_json::json!({"type": "rule_set_created", "ts": 1, "rule_set": set, "actor": "ui"}),
+            serde_json::json!({"type": "rule_set_updated", "ts": 1, "before": set, "rule_set": set, "actor": "api"}),
+            serde_json::json!({"type": "rule_set_deleted", "ts": 1, "rule_set": set, "actor": "ui"}),
+            serde_json::json!({"type": "rule_set_switched", "ts": 1, "set_id": "builtin:github",
+                "sandbox_id": null, "enabled": null, "actor": "ui"}),
+            serde_json::json!({"type": "rule_set_changed", "ts": 1, "set_id": "builtin:github",
+                "added": ["api.github.com"], "removed": []}),
+            serde_json::json!({"type": "system_managed_changed", "ts": 1, "sandbox_id": "box",
+                "added": ["direct_ssh"], "removed": ["code_server"]}),
+            serde_json::json!({"type": "rule_deleted", "ts": 1, "rule": rule, "reason": "set_deleted",
+                "actor": "ui"}),
+            serde_json::json!({"type": "pending_decided", "ts": 1, "pending": pending}),
+        ] {
+            let record: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(AuditRecord::from(record)).unwrap(),
+                stored
+            );
+        }
+        // A reason a later puddle added is left out rather than failing the page.
+        let newer = serde_json::json!({"type": "system_managed_changed", "ts": 1,
+            "sandbox_id": null, "added": ["zed"], "removed": []});
+        let record: store::AuditRecord = serde_json::from_value(newer).unwrap();
+        assert_eq!(
+            serde_json::to_value(AuditRecord::from(record)).unwrap()["added"],
+            serde_json::json!([])
+        );
+    }
+
     /// The typed record serialises to the very JSON the store wrote, so the API adds no layer
     /// that could drop or rename a field, including `upstream` and records older than it.
     #[test]
@@ -2174,8 +2493,8 @@ mod tests {
         let stored = serde_json::json!({
             "type": "connection", "ts": 5, "sandbox_id": "box", "origin": "sandbox", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
-            "decision": "allow", "reason": "rule", "rule_id": 4, "pending_id": null,
-            "binding_id": null, "injected": false, "method": "GET", "path": "/",
+            "decision": "allow", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
+            "pending_id": null, "binding_id": null, "injected": false, "method": "GET", "path": "/",
             "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
         });
         let record: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();

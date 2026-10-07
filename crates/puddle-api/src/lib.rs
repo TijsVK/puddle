@@ -54,6 +54,7 @@ mod openapi;
 mod routes;
 mod server;
 mod settings;
+mod system_managed;
 mod token;
 mod ui;
 pub mod wire;

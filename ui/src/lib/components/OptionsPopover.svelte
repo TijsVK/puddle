@@ -9,7 +9,7 @@
     type Choice,
     type Effect,
     type Match,
-    type Scope,
+    type RuleSetChoice,
     type Target,
   } from "#lib/decision/model.ts";
   import "#lib/theme/controls.css";
@@ -22,6 +22,7 @@
     workspace,
     anchor,
     exactOnly = false,
+    sets = [],
     onDecide,
     onClose,
   }: {
@@ -32,11 +33,14 @@
     anchor: HTMLElement | null;
     /** Local destinations: only an exact rule counts (R-14), so no subdomain choice. */
     exactOnly?: boolean;
+    /** Your rule sets that are on for this workspace: the rule can go into one of them. */
+    sets?: readonly RuleSetChoice[];
     onDecide: (choice: Choice) => void;
     onClose: () => void;
   } = $props();
 
-  let scope = $state<Scope>("sandbox");
+  // "sandbox", "global", or "set:<id>".
+  let who = $state("sandbox");
   let match = $state<Match>("exact");
   let duration = $state("0");
 
@@ -47,14 +51,16 @@
   $effect(() => {
     // Every time it opens it starts from the narrowest choice (R-15).
     if (open) {
-      scope = "sandbox";
+      who = "sandbox";
       match = "exact";
       duration = "0";
     }
   });
 
   function decide(effect: Effect) {
-    onDecide({ effect, scope, match, durationSecs });
+    const ruleSet = sets.find((s) => `set:${s.id}` === who) ?? null;
+    const scope = who === "global" ? "global" : "sandbox";
+    onDecide({ effect, scope, ruleSet, match, durationSecs });
   }
 </script>
 
@@ -95,7 +101,7 @@
             type="radio"
             name="{id}-scope"
             value="sandbox"
-            bind:group={scope}
+            bind:group={who}
           />
           Only <b class="mono">{workspace}</b>
         </label>
@@ -104,10 +110,23 @@
             type="radio"
             name="{id}-scope"
             value="global"
-            bind:group={scope}
+            bind:group={who}
           />
           Every workspace <span class="hint">(asks to confirm)</span>
         </label>
+        {#each sets as set (set.id)}
+          <label>
+            <input
+              type="radio"
+              name="{id}-scope"
+              value="set:{set.id}"
+              bind:group={who}
+            />
+            Into rule set <b>{set.name}</b>
+            {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
+              >{/if}
+          </label>
+        {/each}
       </fieldset>
       <fieldset>
         <legend>Which hosts</legend>

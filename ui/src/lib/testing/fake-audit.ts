@@ -24,6 +24,7 @@ export function connection(
       decision: "allow",
       reason: "rule",
       rule_id: 1,
+      rule_set: null,
       pending_id: null,
       binding_id: null,
       bytes_up: 0,

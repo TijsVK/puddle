@@ -19,8 +19,9 @@ mod events;
 mod meta;
 mod network_health;
 mod pending;
+mod rule_sets;
 mod rules;
-mod settings;
+pub(crate) mod settings;
 mod workspaces;
 
 /// What the handlers share.
@@ -53,6 +54,15 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(rules::list_rules, rules::create_rule))
         .routes(routes!(rules::delete_rule))
         .routes(routes!(rules::set_rule_expiry))
+        .routes(routes!(
+            rule_sets::list_rule_sets,
+            rule_sets::create_rule_set
+        ))
+        .routes(routes!(
+            rule_sets::update_rule_set,
+            rule_sets::delete_rule_set
+        ))
+        .routes(routes!(rule_sets::switch_rule_set))
         .routes(routes!(audit::audit))
         .routes(routes!(settings::get_global, settings::put_global))
         .routes(routes!(settings::get_sandbox, settings::put_sandbox))

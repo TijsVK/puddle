@@ -31,7 +31,13 @@ function everyChoice(): Choice[] {
     for (const scope of ["sandbox", "global"] as Scope[])
       for (const match of ["exact", "suffix"] as Match[])
         for (const d of DURATIONS)
-          out.push({ effect, scope, match, durationSecs: d.secs });
+          out.push({
+            effect,
+            scope,
+            ruleSet: null,
+            match,
+            durationSecs: d.secs,
+          });
   return out;
 }
 
@@ -40,6 +46,7 @@ describe("narrowest", () => {
     expect(narrowest("allow")).toEqual({
       effect: "allow",
       scope: "sandbox",
+      ruleSet: null,
       match: "exact",
       durationSecs: null,
     });
@@ -74,8 +81,8 @@ describe("build: no path produces scope global without the confirm step", () => 
   });
 
   it("agrees with needsConfirm", () => {
-    expect(needsConfirm({ scope: "global" })).toBe(true);
-    expect(needsConfirm({ scope: "sandbox" })).toBe(false);
+    expect(needsConfirm({ scope: "global", ruleSet: null })).toBe(true);
+    expect(needsConfirm({ scope: "sandbox", ruleSet: null })).toBe(false);
   });
 });
 
@@ -153,6 +160,7 @@ describe("wording", () => {
         {
           effect: "deny",
           scope: "global",
+          ruleSet: null,
           match: "suffix",
           durationSecs: 28_800,
         },
@@ -170,5 +178,40 @@ describe("wording", () => {
 
   it("phrases an unlisted duration in seconds", () => {
     expect(durationPhrase(90)).toBe("for 90 s");
+  });
+});
+
+describe("into a rule set (R-38)", () => {
+  const into = (everywhere: boolean): Choice => ({
+    ...narrowest("allow"),
+    ruleSet: { id: 4, name: "Client X", everywhere },
+  });
+
+  it("sends the set instead of a scope", () => {
+    const built = build(into(false), target, false);
+    expect(built).toEqual({
+      ok: true,
+      effect: "allow",
+      body: { scope: "sandbox", rule_set: 4 },
+    });
+  });
+
+  it("asks first when the set is on for every workspace", () => {
+    expect(needsConfirm(into(true))).toBe(true);
+    expect(needsConfirm(into(false))).toBe(false);
+    expect(build(into(true), target, false)).toEqual({
+      ok: false,
+      error: "confirmation_required",
+    });
+    expect(build(into(true), target, true).ok).toBe(true);
+  });
+
+  it("names the set and where it is on", () => {
+    expect(describeChoice(into(true), target, "demo")).toBe(
+      "Allow api.registry.example.co.uk in rule set Client X (which is on for every workspace), permanently",
+    );
+    expect(describeChoice(into(false), target, "demo")).toBe(
+      "Allow api.registry.example.co.uk in rule set Client X (which is on for demo), permanently",
+    );
   });
 });

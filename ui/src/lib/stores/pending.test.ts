@@ -400,7 +400,13 @@ describe("decide", () => {
     const { store } = await loaded();
     const result = await store.decide(
       rowOf(store, 1),
-      { effect: "deny", scope: "global", match: "suffix", durationSecs: 3600 },
+      {
+        effect: "deny",
+        scope: "global",
+        ruleSet: null,
+        match: "suffix",
+        durationSecs: 3600,
+      },
       true,
     );
     expect(result).toMatchObject({

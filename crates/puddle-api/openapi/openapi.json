@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "paths": {
     "/api/audit": {
@@ -1024,6 +1024,440 @@
           },
           "422": {
             "description": "invalid suffix or expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rule-sets": {
+      "get": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Every rule set (built-in first, then yours) and the System managed hosts with their reasons.",
+        "operationId": "list_rule_sets",
+        "responses": {
+          "200": {
+            "description": "the rule sets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleSetList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Makes a rule set of your own, empty and on everywhere. Add entries with `POST /api/rules`\n(scope `set`) or by approving a request into it.",
+        "operationId": "create_rule_set",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewRuleSetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "the new set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleSetView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "name empty, too long or taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rule-sets/{id}": {
+      "put": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Renames a rule set of yours or changes its description.",
+        "operationId": "update_rule_set",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "`user:<id>`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleSetUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleSetView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a built-in set, or name empty, too long or taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Deletes a rule set of yours with its entries and switches.",
+        "operationId": "delete_rule_set",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "`user:<id>`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the deleted set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleSetView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a built-in set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rule-sets/{id}/switch": {
+      "put": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Switches a set on or off for every sandbox or for one (`enabled: null` removes that switch),\nand closes the open requests the set now decides.",
+        "operationId": "switch_rule_set",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "`builtin:<slug>` or `user:<id>`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleSetSwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the set and the requests it closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleSetSwitched"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "System managed has no switch",
             "content": {
               "application/json": {
                 "schema": {
@@ -2784,7 +3218,8 @@
           "state",
           "decided_at",
           "decided_by",
-          "rule_id"
+          "rule_id",
+          "rule_set"
         ],
         "properties": {
           "attempts": {
@@ -2844,6 +3279,13 @@
             "format": "int64",
             "description": "The deciding rule."
           },
+          "rule_set": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The rule set whose entry decided it."
+          },
           "sandbox_id": {
             "type": "string",
             "description": "The sandbox."
@@ -2870,6 +3312,7 @@
               "decision",
               "reason",
               "rule_id",
+              "rule_set",
               "pending_id",
               "binding_id",
               "injected",
@@ -2989,6 +3432,13 @@
                 ],
                 "format": "int64",
                 "description": "The deciding rule."
+              },
+              "rule_set": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`)."
               },
               "sandbox_id": {
                 "type": [
@@ -3268,6 +3718,244 @@
           },
           {
             "type": "object",
+            "description": "A rule set made.",
+            "required": [
+              "ts",
+              "rule_set",
+              "actor",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string",
+                "description": "Who made it."
+              },
+              "rule_set": {
+                "$ref": "#/components/schemas/AuditRuleSet",
+                "description": "The set."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rule_set_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A rule set renamed or described anew.",
+            "required": [
+              "ts",
+              "before",
+              "rule_set",
+              "actor",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string",
+                "description": "Who changed it."
+              },
+              "before": {
+                "$ref": "#/components/schemas/AuditRuleSet",
+                "description": "The set before."
+              },
+              "rule_set": {
+                "$ref": "#/components/schemas/AuditRuleSet",
+                "description": "The set after."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rule_set_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A rule set deleted with its entries (each also has a `rule_deleted`).",
+            "required": [
+              "ts",
+              "rule_set",
+              "actor",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string",
+                "description": "Who deleted it."
+              },
+              "rule_set": {
+                "$ref": "#/components/schemas/AuditRuleSet",
+                "description": "The set as it was."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rule_set_deleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A rule set switched on or off, or back to following the next level.",
+            "required": [
+              "ts",
+              "set_id",
+              "sandbox_id",
+              "enabled",
+              "actor",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string",
+                "description": "Who switched it."
+              },
+              "enabled": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "On, off, or `null` to follow the next level."
+              },
+              "sandbox_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The sandbox whose override changed; `null` for every sandbox."
+              },
+              "set_id": {
+                "type": "string",
+                "description": "`builtin:<slug>` or `user:<id>`."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rule_set_switched"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A puddle update changed a built-in set's entries.",
+            "required": [
+              "ts",
+              "set_id",
+              "added",
+              "removed",
+              "type"
+            ],
+            "properties": {
+              "added": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Patterns added."
+              },
+              "removed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Patterns removed."
+              },
+              "set_id": {
+                "type": "string",
+                "description": "`builtin:<slug>`."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rule_set_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The reasons for the System managed hosts changed, because your setup did.",
+            "required": [
+              "ts",
+              "sandbox_id",
+              "added",
+              "removed",
+              "type"
+            ],
+            "properties": {
+              "added": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SystemReason"
+                },
+                "description": "Reasons that now apply."
+              },
+              "removed": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SystemReason"
+                },
+                "description": "Reasons that no longer apply."
+              },
+              "sandbox_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The sandbox; `null` for every sandbox."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "system_managed_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "The oldest records were deleted to keep the audit under its size cap.",
             "required": [
               "ts",
@@ -3321,7 +4009,8 @@
           "expires_at",
           "created_at",
           "created_by",
-          "source_pending_id"
+          "source_pending_id",
+          "set_id"
         ],
         "properties": {
           "created_at": {
@@ -3369,7 +4058,15 @@
           },
           "scope": {
             "type": "string",
-            "description": "`global` or `sandbox`."
+            "description": "`global`, `sandbox` or `set`."
+          },
+          "set_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The rule set you made, for a set's entry (`scope` is `set`)."
           },
           "source_pending_id": {
             "type": [
@@ -3378,6 +4075,42 @@
             ],
             "format": "int64",
             "description": "The pending request it came from."
+          }
+        }
+      },
+      "AuditRuleSet": {
+        "type": "object",
+        "description": "A rule set you made, as an audit record shows it.",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_at",
+          "created_by"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms.",
+            "minimum": 0
+          },
+          "created_by": {
+            "type": "string",
+            "description": "`cli`, `ui` or `api`."
+          },
+          "description": {
+            "type": "string",
+            "description": "Description."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The set's number; its id is `user:<id>`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name."
           }
         }
       },
@@ -3394,6 +4127,12 @@
           "rule_updated",
           "rule_deleted",
           "rule_expired",
+          "rule_set_created",
+          "rule_set_updated",
+          "rule_set_deleted",
+          "rule_set_switched",
+          "rule_set_changed",
+          "system_managed_changed",
           "audit_trimmed"
         ]
       },
@@ -3627,6 +4366,14 @@
             "format": "int64",
             "description": "Seconds until the rule expires; left out or `null` is permanent.",
             "minimum": 1
+          },
+          "rule_set": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Put the rule into this rule set of yours (the number of `user:<id>`) instead: it then\napplies wherever the set is on. `scope` must be left at `sandbox`. The set must be on\nfor the request's sandbox."
           },
           "scope": {
             "$ref": "#/components/schemas/ScopeChoice",
@@ -4391,6 +5138,24 @@
         },
         "additionalProperties": false
       },
+      "NewRuleSetRequest": {
+        "type": "object",
+        "description": "A rule set to make.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "At most 500 characters."
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 64 characters, not used by another set."
+          }
+        },
+        "additionalProperties": false
+      },
       "NewWorkspaceRequest": {
         "type": "object",
         "description": "`POST /api/workspaces`.",
@@ -4493,6 +5258,7 @@
           "decided_at",
           "decided_by",
           "rule_id",
+          "rule_set",
           "blocked_by"
         ],
         "properties": {
@@ -4567,6 +5333,13 @@
             ],
             "format": "int64",
             "description": "The rule that decided it."
+          },
+          "rule_set": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The rule set whose entry decided it (`system`, `builtin:<slug>`, `user:<id>`), when one\ndid."
           },
           "sandbox": {
             "$ref": "#/components/schemas/SandboxName",
@@ -5060,7 +5833,8 @@
         "description": "Why a rule was deleted.",
         "enum": [
           "user",
-          "sandbox_deleted"
+          "sandbox_deleted",
+          "set_deleted"
         ]
       },
       "RuleExpiryRequest": {
@@ -5134,9 +5908,272 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "An entry of a rule set you made: it applies wherever the set is on, and your own global\nand sandbox rules decide first.",
+            "required": [
+              "set",
+              "type"
+            ],
+            "properties": {
+              "set": {
+                "type": "integer",
+                "format": "int64",
+                "description": "The set's number (its id is `user:<set>`)."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              }
+            }
           }
         ],
         "description": "Which sandboxes a rule applies to."
+      },
+      "RuleSetEntry": {
+        "type": "object",
+        "description": "One entry of a rule set.",
+        "required": [
+          "pattern",
+          "pattern_kind",
+          "effect",
+          "note",
+          "rule_id",
+          "expires_at"
+        ],
+        "properties": {
+          "effect": {
+            "$ref": "#/components/schemas/Effect",
+            "description": "Allow or deny (built-in sets only allow)."
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms from which the entry no longer counts; `null` is permanent.",
+            "minimum": 0
+          },
+          "note": {
+            "type": "string",
+            "description": "What it is for (built-in sets); empty for your own entries."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "`example.com`, or `.example.com` for every name under it (a built-in entry is written\n`*.example.com`)."
+          },
+          "pattern_kind": {
+            "$ref": "#/components/schemas/PatternKind",
+            "description": "Exact or suffix."
+          },
+          "rule_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The entry's rule, for a set you made (delete or change it through `/api/rules`)."
+          }
+        }
+      },
+      "RuleSetKind": {
+        "type": "string",
+        "description": "Who made a rule set.",
+        "enum": [
+          "built_in",
+          "user"
+        ]
+      },
+      "RuleSetList": {
+        "type": "object",
+        "description": "Every rule set, and the System managed hosts.",
+        "required": [
+          "sets",
+          "system_managed"
+        ],
+        "properties": {
+          "sets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleSetView"
+            },
+            "description": "Built-in sets first, then yours by name."
+          },
+          "system_managed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SystemManagedHost"
+            },
+            "description": "The hosts puddle allows because of your setup, each with its reason. Your own rules\ndecide first: a deny of yours blocks one."
+          }
+        }
+      },
+      "RuleSetOverride": {
+        "type": "object",
+        "description": "One sandbox's own switch for a set.",
+        "required": [
+          "sandbox",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "On or off there."
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/SandboxName",
+            "description": "The sandbox."
+          }
+        }
+      },
+      "RuleSetSwitchRequest": {
+        "type": "object",
+        "description": "Switch a set on or off, for every sandbox or for one.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "On or off; `null` removes the switch, so the next level decides (the global switch, then\nthe set's default)."
+          },
+          "sandbox": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SandboxName",
+                "description": "The sandbox whose own switch to set; left out or `null` for every sandbox."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetSwitched": {
+        "type": "object",
+        "description": "What a switch did.",
+        "required": [
+          "set",
+          "closed"
+        ],
+        "properties": {
+          "closed": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Open requests the set now decides, closed the same way."
+          },
+          "set": {
+            "$ref": "#/components/schemas/RuleSetView",
+            "description": "The set as it is now."
+          }
+        }
+      },
+      "RuleSetUpdateRequest": {
+        "type": "object",
+        "description": "A rule set's new name and description.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "At most 500 characters."
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 64 characters, not used by another set."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetView": {
+        "type": "object",
+        "description": "A rule set: where it is on, and its entries.",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "description",
+          "default_on",
+          "global",
+          "overrides",
+          "entries",
+          "changed_at",
+          "created_at"
+        ],
+        "properties": {
+          "changed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Built-in sets: epoch ms when a puddle update last changed the entries; `null` if never.",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Your sets: epoch ms it was made.",
+            "minimum": 0
+          },
+          "default_on": {
+            "type": "boolean",
+            "description": "Whether it is on where nobody switched it: built-in sets ship off, your sets start on."
+          },
+          "description": {
+            "type": "string",
+            "description": "What it is for."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleSetEntry"
+            },
+            "description": "Its entries."
+          },
+          "global": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The switch for every sandbox; `null` follows `default_on`."
+          },
+          "id": {
+            "type": "string",
+            "description": "`builtin:<slug>` or `user:<id>`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RuleSetKind",
+            "description": "Built-in or yours."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name."
+          },
+          "overrides": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleSetOverride"
+            },
+            "description": "Sandboxes with a switch of their own."
+          }
+        }
       },
       "SandboxName": {
         "type": "string",
@@ -5467,6 +6504,55 @@
           }
         },
         "additionalProperties": false
+      },
+      "SystemManagedHost": {
+        "type": "object",
+        "description": "One host puddle allows because of your setup, and why.",
+        "required": [
+          "pattern",
+          "note",
+          "reason",
+          "reason_text",
+          "sandbox"
+        ],
+        "properties": {
+          "note": {
+            "type": "string",
+            "description": "What the host is for."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "`example.com`, or `*.example.com` for every name under it."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/SystemReason",
+            "description": "Why it is allowed."
+          },
+          "reason_text": {
+            "type": "string",
+            "description": "The reason in words."
+          },
+          "sandbox": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SandboxName",
+                "description": "The one sandbox it is allowed for; `null` for every sandbox."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SystemReason": {
+        "type": "string",
+        "description": "Why puddle allows a System managed host: a choice you made.",
+        "enum": [
+          "microsoft_server",
+          "code_server",
+          "direct_ssh"
+        ]
       },
       "ThemeChoice": {
         "type": "string",

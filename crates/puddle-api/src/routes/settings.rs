@@ -119,6 +119,7 @@ pub(crate) async fn put_global(
             ));
         }
         repo.save_global(loaded.settings.to_document())?;
+        crate::system_managed::refresh(&state.store, repo)?;
         Ok(loaded)
     })
     .await?;
@@ -235,6 +236,7 @@ pub(crate) async fn put_consent(
         let mut loaded = load_global(repo)?;
         loaded.settings.consents.set(kind.into(), consent);
         repo.save_global(loaded.settings.to_document())?;
+        crate::system_managed::refresh(&state.store, repo)?;
         Ok(Consents::from(&loaded.settings.consents))
     })
     .await?;

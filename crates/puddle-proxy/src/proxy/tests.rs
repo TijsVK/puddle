@@ -5,7 +5,7 @@
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use puddle_types::{NullSink, PendingId, RuleId};
+use puddle_types::{NullSink, PendingId, RuleId, RuleSetId};
 use tokio::net::TcpListener;
 
 use super::*;
@@ -171,6 +171,58 @@ async fn a_policy_error_fails_closed_with_503() {
     );
     let refusal = admit(&p, &request("example.com")).await.unwrap_err();
     assert_eq!(refusal.status, "503 Service Unavailable");
+}
+
+#[tokio::test]
+async fn a_rule_set_deny_names_the_rule_and_the_set() {
+    let p = proxy(
+        FnPolicy::new(|_| {
+            Ok(Decision::SetDeny {
+                set: RuleSetId::User(2),
+                rule_id: RuleId(8),
+                pattern: PatternKind::Exact,
+            })
+        }),
+        StaticResolver::new(),
+    );
+    let refusal = admit(&p, &request("ads.example")).await.unwrap_err();
+    assert_eq!(refusal.status, "403 Forbidden");
+    assert_eq!(header(&refusal, "x-puddle-decision"), Some("deny"));
+    assert_eq!(header(&refusal, "x-puddle-rule"), Some("8"));
+    assert_eq!(header(&refusal, "x-puddle-rule-set"), Some("user:2"));
+    assert!(
+        refusal.message.contains("rule set user:2"),
+        "{}",
+        refusal.message
+    );
+}
+
+#[tokio::test]
+async fn a_rule_set_allow_reaches_public_addresses_but_counts_as_a_wildcard_for_local_ones() {
+    let policy = FnPolicy::new(|mode| {
+        Ok(match mode {
+            SuffixAllows::Count => Decision::SetAllow {
+                set: RuleSetId::System,
+                rule_id: None,
+                pattern: PatternKind::Exact,
+            },
+            // Asked again for a local address, the engine drops every set allow (R-42).
+            SuffixAllows::Ignore => Decision::Pending(PendingOutcome::New(PendingId(1))),
+        })
+    });
+    let resolver = || {
+        StaticResolver::new()
+            .with("pub.example", &[ip("8.8.8.8")])
+            .with("lan.example", &[ip("10.0.0.5")])
+    };
+    let p = proxy(policy.clone(), resolver()).with_address_check(Arc::new(Toggles));
+    assert_eq!(
+        admit(&p, &request("pub.example")).await.unwrap(),
+        vec![SocketAddr::new(ip("8.8.8.8"), 443)]
+    );
+    let refusal = admit(&p, &request("lan.example")).await.unwrap_err();
+    assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
+    assert_eq!(policy.ignore_calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

@@ -145,7 +145,7 @@ enum Allowed {
 async fn allowed(proxy: &Proxy, sandbox: &SandboxName, host: &Host) -> Allowed {
     let request = EgressRequest::new(sandbox.clone(), host.clone(), 0);
     match proxy.look_up_rule(request, SuffixAllows::Count).await {
-        Ok(Some(puddle_types::Decision::Allow { .. })) => Allowed::Yes,
+        Ok(Some(decision)) if decision.is_allow() => Allowed::Yes,
         Ok(Some(_)) => Allowed::No,
         Ok(None) => Allowed::Unmatched,
         Err(err) => {

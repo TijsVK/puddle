@@ -13,6 +13,7 @@ const base: Decided = {
   pattern: "example.com",
   patternKind: "exact",
   workspace: "demo",
+  ruleSet: null,
   expiresAt: null,
   alsoClosed: 0,
   at: 0,
@@ -49,5 +50,13 @@ describe("decided wording", () => {
         pattern: ".x.org",
       }),
     ).toBe("Denied *.x.org for every workspace, permanently");
+  });
+});
+
+describe("a decision into a rule set", () => {
+  it("names the set instead of a workspace", () => {
+    expect(
+      decidedSentence({ ...base, workspace: null, ruleSet: "Client X" }),
+    ).toBe("Allowed example.com in rule set Client X, permanently");
   });
 });

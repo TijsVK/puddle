@@ -646,7 +646,8 @@ async fn a_history_step_writes_connection_records_across_a_week() {
         .await;
     assert_eq!(step.status, 204, "{}", step.body);
     let now = run.state().await["now_ms"].as_u64().unwrap();
-    let page = run.get("/api/audit?limit=500").await.json();
+    // Connections only: the fixture's API also records System managed when it starts.
+    let page = run.get("/api/audit?type=connection&limit=500").await.json();
     let entries = page["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 500);
     // Newest first, and the newest is just before now; ids and times fall together.
@@ -655,7 +656,7 @@ async fn a_history_step_writes_connection_records_across_a_week() {
     assert!(ts(0) > ts(499));
     let oldest = run
         .get(&format!(
-            "/api/audit?before={}&limit=500",
+            "/api/audit?type=connection&before={}&limit=500",
             page["next_before"]
         ))
         .await

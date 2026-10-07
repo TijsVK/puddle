@@ -53,6 +53,12 @@ export const TYPES: readonly { value: AuditType; label: string }[] = [
   { value: "rule_updated", label: "Rule changed" },
   { value: "rule_deleted", label: "Rule deleted" },
   { value: "rule_expired", label: "Rule expired" },
+  { value: "rule_set_created", label: "Rule set added" },
+  { value: "rule_set_updated", label: "Rule set renamed" },
+  { value: "rule_set_deleted", label: "Rule set deleted" },
+  { value: "rule_set_switched", label: "Rule set switched" },
+  { value: "rule_set_changed", label: "Rule set updated by puddle" },
+  { value: "system_managed_changed", label: "System managed changed" },
   { value: "audit_trimmed", label: "Log trimmed" },
 ];
 
@@ -201,11 +207,28 @@ function endpoint(host: string | null, port: number | null): string | null {
 }
 
 function ruleLabel(rule: Schemas["AuditRule"]): string {
+  if (rule.scope === "set")
+    return `${rule.effect} in rule set ${rule.set_id ?? "?"}`;
   const where =
     rule.scope === "global"
       ? "every workspace"
       : `workspace ${rule.sandbox_id ?? "?"}`;
   return `${rule.effect} for ${where}`;
+}
+
+const SYSTEM_REASONS: Record<string, string> = {
+  microsoft_server: "Microsoft's VS Code server",
+  code_server: "code-server",
+  direct_ssh: "direct SSH",
+};
+
+function reasonList(reasons: readonly string[]): string {
+  return reasons.map((r) => SYSTEM_REASONS[r] ?? r).join(", ");
+}
+
+function switchLabel(enabled: boolean | null): string {
+  if (enabled === null) return "follows the next level";
+  return enabled ? "on" : "off";
 }
 
 function pendingOutcome(state: string): RowView["outcome"] {
@@ -223,9 +246,10 @@ function connectionDetail(
     parts.push(`${record.method} ${record.path ?? ""}`.trim());
   }
   const reason = REASONS[record.reason] ?? record.reason;
-  parts.push(
-    record.rule_id !== null ? `rule ${record.rule_id}` : `because ${reason}`,
-  );
+  if (record.rule_set === "system") parts.push("System managed");
+  else if (record.rule_set !== null) parts.push(`rule set ${record.rule_set}`);
+  if (record.rule_id !== null) parts.push(`rule ${record.rule_id}`);
+  else if (record.rule_set === null) parts.push(`because ${reason}`);
   if (record.bytes_up > 0 || record.bytes_down > 0) {
     parts.push(
       `${bytesLabel(record.bytes_up)} up, ${bytesLabel(record.bytes_down)} down`,
@@ -259,7 +283,7 @@ export function describe(record: AuditRecord): RowView {
         record.type === "pending_expired"
           ? `expired: ${record.reason}`
           : record.type === "pending_decided"
-            ? `by ${p.decided_by ?? "unknown"}${p.rule_id === null ? "" : `, rule ${p.rule_id}`}`
+            ? `by ${p.decided_by ?? "unknown"}${p.rule_id === null ? "" : `, rule ${p.rule_id}`}${p.rule_set === null ? "" : `, ${p.rule_set === "system" ? "System managed" : `rule set ${p.rule_set}`}`}`
             : p.attempts > 1
               ? `${p.attempts} attempts`
               : "";
@@ -305,6 +329,58 @@ export function describe(record: AuditRecord): RowView {
         detail,
       };
     }
+    case "rule_set_created":
+    case "rule_set_updated":
+    case "rule_set_deleted":
+      return {
+        ts: record.ts,
+        workspace: null,
+        type,
+        destination: record.rule_set.name,
+        outcome: null,
+        detail: `user:${record.rule_set.id}, by ${record.actor}`,
+      };
+    case "rule_set_switched":
+      return {
+        ts: record.ts,
+        workspace: record.sandbox_id,
+        type,
+        destination: record.set_id,
+        outcome: null,
+        detail: `${switchLabel(record.enabled)} for ${record.sandbox_id === null ? "every workspace" : `workspace ${record.sandbox_id}`}, by ${record.actor}`,
+      };
+    case "rule_set_changed":
+      return {
+        ts: record.ts,
+        workspace: null,
+        type,
+        destination: record.set_id,
+        outcome: null,
+        detail: [
+          record.added.length > 0 ? `added ${record.added.join(", ")}` : "",
+          record.removed.length > 0
+            ? `removed ${record.removed.join(", ")}`
+            : "",
+        ]
+          .filter((part) => part !== "")
+          .join("; "),
+      };
+    case "system_managed_changed":
+      return {
+        ts: record.ts,
+        workspace: record.sandbox_id,
+        type,
+        destination: null,
+        outcome: null,
+        detail: [
+          record.added.length > 0 ? `now for ${reasonList(record.added)}` : "",
+          record.removed.length > 0
+            ? `no longer for ${reasonList(record.removed)}`
+            : "",
+        ]
+          .filter((part) => part !== "")
+          .join("; "),
+      };
     case "audit_trimmed":
       return {
         ts: record.ts,

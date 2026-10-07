@@ -19,6 +19,7 @@ export function request(id: number, over: Partial<Req> = {}): Req {
     decided_at: null,
     decided_by: null,
     rule_id: null,
+    rule_set: null,
     blocked_by: null,
     ...over,
   };

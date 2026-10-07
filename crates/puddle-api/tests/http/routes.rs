@@ -315,7 +315,11 @@ async fn audit_pages_back_newest_first_and_follow_the_tail_oldest_first() {
     oldest_first.sort_unstable();
     oldest_first.dedup();
     assert_eq!(oldest_first.len(), seen.len(), "no record twice: {seen:?}");
-    assert_eq!(oldest_first.len(), 9, "3 x (created, rule, decided)");
+    assert_eq!(
+        oldest_first.len(),
+        10,
+        "System managed at start, then 3 x (created, rule, decided)"
+    );
     // `after` reads oldest first.
     let tail = api
         .get(&format!("/api/audit?after={}&limit=100", oldest_first[2]))
@@ -392,10 +396,11 @@ async fn audit_filters_run_on_the_server() {
         types(api.get("/api/audit?host_contains=nothing").await),
         Vec::<String>::new()
     );
-    // An empty filter value is no filter (a form that sends `host_contains=`).
+    // An empty filter value is no filter (a form that sends `host_contains=`). The fifth record is
+    // System managed's, written when the API started.
     assert_eq!(
         types(api.get("/api/audit?host_contains=&sandbox=").await).len(),
-        4
+        5
     );
     assert_eq!(
         types(api.get(&format!("/api/audit?from={t}")).await),

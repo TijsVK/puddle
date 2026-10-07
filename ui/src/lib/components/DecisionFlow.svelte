@@ -7,6 +7,11 @@
   import { localCategory } from "#lib/decision/local.ts";
   import { describe, needsConfirm, type Choice } from "#lib/decision/model.ts";
   import { pending as defaultStore } from "#lib/stores/pending.svelte.ts";
+  import { isOn, setsOnFor, userSetNumber } from "#lib/rules/sets.ts";
+  import {
+    ruleSets as defaultSets,
+    type RuleSetsStore,
+  } from "#lib/stores/rule-sets.svelte.ts";
   import type { PendingStore, Row } from "#lib/stores/pending.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
 
@@ -16,9 +21,12 @@
   // `more`; this draws the rest.
   let {
     store = defaultStore,
+    sets = defaultSets,
     heading,
   }: {
     store?: PendingStore;
+    /** Your rule sets, for "into rule set" in the popover. */
+    sets?: Pick<RuleSetsStore, "sets">;
     /** Where focus goes when no row is left. */
     heading: () => HTMLElement | undefined;
   } = $props();
@@ -32,6 +40,15 @@
 
   const optionsRow = $derived(
     store.rows.find((r) => r.request.id === shown?.id),
+  );
+  const setChoices = $derived(
+    optionsRow
+      ? setsOnFor(sets.sets, optionsRow.request.sandbox).map((set) => ({
+          id: userSetNumber(set) ?? 0,
+          name: set.name,
+          everywhere: isOn(set, null),
+        }))
+      : [],
   );
   const confirmText = $derived(
     confirming
@@ -136,7 +153,9 @@
     ? "Deny for every workspace?"
     : "Allow for every workspace?"}
   summary={confirmText}
-  detail="This covers every workspace you have now and any you create later. You can undo it right after, or delete the rule on the Rules page."
+  detail={confirming?.choice.ruleSet
+    ? "The rule set is on for every workspace you have now and any you create later, except where you switched it off. You can undo it right after, or delete the entry on the Rules page."
+    : "This covers every workspace you have now and any you create later. You can undo it right after, or delete the rule on the Rules page."}
   confirmLabel={confirming?.choice.effect === "deny"
     ? "Deny in every workspace"
     : "Allow in every workspace"}
@@ -156,6 +175,7 @@
     workspace={optionsRow.request.sandbox}
     anchor={shown?.anchor ?? null}
     exactOnly={localCategory(optionsRow.request.host) !== null}
+    sets={setChoices}
     onDecide={(choice) => decide(optionsRow, choice)}
     onClose={() => {
       optionsOpen = false;

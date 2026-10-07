@@ -42,12 +42,18 @@ export function isExpired(
   return rule.expires_at !== null && rule.expires_at <= now;
 }
 
-/** The workspace a rule belongs to, or `null` for every workspace. */
+/** Your own rule (every workspace or one), not an entry of a rule set you made. */
+export function isOwn(rule: Pick<Rule, "scope">): boolean {
+  return rule.scope.type !== "set";
+}
+
+/** The workspace a rule belongs to, or `null` for every workspace (and for a set's entry). */
 export function workspaceOf(rule: Pick<Rule, "scope">): string | null {
-  return rule.scope.type === "global" ? null : rule.scope.sandbox;
+  return rule.scope.type === "sandbox" ? rule.scope.sandbox : null;
 }
 
 export function scopeLabel(rule: Pick<Rule, "scope">): string {
+  if (rule.scope.type === "set") return "A rule set";
   const workspace = workspaceOf(rule);
   return workspace === null ? "Every workspace" : workspace;
 }
@@ -62,11 +68,14 @@ export function patternLabel(rule: Pick<Rule, "pattern" | "pattern_kind">) {
 
 /** "Allow *.example.com, every workspace": how a rule is named in buttons and messages. */
 export function ruleName(rule: Rule): string {
+  const verb = rule.effect === "allow" ? "allow" : "deny";
+  if (rule.scope.type === "set")
+    return `${verb} ${patternLabel(rule)} in a rule set`;
   const who =
     rule.scope.type === "global"
       ? "every workspace"
       : `workspace ${rule.scope.sandbox}`;
-  return `${rule.effect === "allow" ? "allow" : "deny"} ${patternLabel(rule)} for ${who}`;
+  return `${verb} ${patternLabel(rule)} for ${who}`;
 }
 
 export function matches(rule: Rule, filter: Filter, now: number): boolean {
@@ -163,4 +172,4 @@ export function sentence(message: string): string {
 }
 
 export const PRECEDENCE =
-  "The most specific rule wins: an exact host beats a pattern, and a longer pattern beats a shorter one. At the same specificity a workspace rule beats an every-workspace rule, then deny beats allow.";
+  "The most specific rule wins: an exact host beats a pattern, and a longer pattern beats a shorter one. At the same specificity a workspace rule beats an every-workspace rule, then deny beats allow. Rule sets come after your rules: a set never opens what your rules close.";

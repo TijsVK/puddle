@@ -16,6 +16,7 @@ pub(crate) mod events;
 mod guard;
 mod network_health;
 mod routes;
+mod rule_sets;
 mod settings;
 mod ui;
 mod workspaces;

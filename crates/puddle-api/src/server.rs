@@ -217,6 +217,21 @@ impl ApiServer {
             network_health: services.network_health,
             shutdown,
         };
+        // System managed follows the stored setup from the first request on (rules spec R-41).
+        let (store, settings) = (state.store.clone(), state.settings.clone());
+        let refreshed = tokio::task::spawn_blocking(move || {
+            crate::system_managed::refresh(&store, settings.as_ref())
+        })
+        .await;
+        match refreshed {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::warn!(error = ?err, "System managed hosts not derived; the stored ones stay");
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "System managed hosts not derived; the stored ones stay");
+            }
+        }
         let ui = config.ui.clone().map(UiService::new);
         let guard_state =
             Guard::new(token.clone(), addr.port(), &config.extra_origins).serving_ui(ui.is_some());

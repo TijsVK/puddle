@@ -464,14 +464,14 @@ fn r41_system_managed_follows_the_plan_and_records_each_change() {
     // The same plan again changes and records nothing.
     let before = audit_of(&store, "system_managed_changed").len();
     assert_eq!(before, 2);
-    assert!(
+    assert_eq!(
         store
             .set_system_managed(&plan(
                 &[SystemReason::CodeServer],
                 &[("ssh", &[SystemReason::DirectSsh])],
             ))
-            .unwrap()
-            .is_empty()
+            .unwrap(),
+        Vec::<PendingId>::new()
     );
     assert_eq!(audit_of(&store, "system_managed_changed").len(), before);
     // Switching to Microsoft's server: Open VSX goes, the Marketplace comes, for everyone.
@@ -495,7 +495,7 @@ fn r41_system_managed_follows_the_plan_and_records_each_change() {
     assert!(decide(&store, "a", "marketplace.visualstudio.com").is_allow());
     // Nothing chosen: nothing allowed.
     store.set_system_managed(&SystemPlan::default()).unwrap();
-    assert!(store.system_managed().unwrap().is_empty());
+    assert_eq!(store.system_managed().unwrap(), Vec::new());
     assert!(matches!(
         decide(&store, "a", "marketplace.visualstudio.com"),
         Decision::Pending(_)
@@ -517,9 +517,9 @@ fn r41_deleting_a_sandbox_removes_its_switches_and_system_reasons() {
         )
         .unwrap();
     store.delete_sandbox(&sb("gone")).unwrap();
-    assert!(store.system_managed().unwrap().is_empty());
+    assert_eq!(store.system_managed().unwrap(), Vec::new());
     let github = store.rule_set(RuleSetId::BuiltIn("github")).unwrap();
-    assert!(github.overrides.is_empty());
+    assert_eq!(github.overrides, Vec::new());
 }
 
 #[test]
@@ -566,4 +566,30 @@ fn r43_connection_records_name_the_set_that_decided() {
     assert_eq!(event.decision, ConnectionDecision::Allow);
     let rows: Vec<RuleId> = store.rules().iter().map(|r| r.id).collect();
     assert!(rows.is_empty(), "System managed writes no rule rows");
+}
+
+#[test]
+fn r40_system_managed_lists_every_host_with_its_reason_and_no_rule_rows() {
+    let (_, store) = fixture();
+    store
+        .set_system_managed(&plan(&[SystemReason::MicrosoftServer], &[]))
+        .unwrap();
+    let hosts = store.system_managed().unwrap();
+    assert_eq!(hosts.len(), SystemReason::MicrosoftServer.hosts().len());
+    for host in &hosts {
+        assert_eq!(host.reason, SystemReason::MicrosoftServer);
+        assert_eq!(host.sandbox, None);
+        assert!(!host.note.is_empty());
+    }
+    assert!(
+        SystemReason::MicrosoftServer
+            .describe()
+            .contains("Microsoft's VS Code server")
+    );
+    assert_eq!(store.rules(), Vec::new());
+    // Not a set: it can't be listed or switched as one.
+    assert!(matches!(
+        store.rule_set(RuleSetId::System),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
 }

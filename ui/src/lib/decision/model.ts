@@ -30,9 +30,20 @@ export const DURATIONS: readonly DurationOption[] = [
   { secs: 604_800, label: "7 days", phrase: "for 7 days" },
 ];
 
+/** A rule set you made, as a place to put the rule instead of a workspace (rules spec R-38). */
+export interface RuleSetChoice {
+  /** The number of `user:<id>`. */
+  id: number;
+  name: string;
+  /** On for every workspace that doesn't switch it off: the rule then reaches beyond this one. */
+  everywhere: boolean;
+}
+
 export interface Choice {
   effect: Effect;
   scope: Scope;
+  /** Put the rule into this set instead (`scope` stays `sandbox`); `null` for a plain rule. */
+  ruleSet: RuleSetChoice | null;
   match: Match;
   durationSecs: DurationSecs;
 }
@@ -46,7 +57,13 @@ export interface Target {
 
 /** R-15's defaults: this workspace, the exact host, permanent. Never widened implicitly. */
 export function narrowest(effect: Effect): Choice {
-  return { effect, scope: "sandbox", match: "exact", durationSecs: null };
+  return {
+    effect,
+    scope: "sandbox",
+    ruleSet: null,
+    match: "exact",
+    durationSecs: null,
+  };
 }
 
 /**
@@ -67,7 +84,10 @@ export function isIpLiteral(host: string): boolean {
 }
 
 /** True for every choice that reaches beyond the request's own workspace. */
-export function needsConfirm(choice: Pick<Choice, "scope">): boolean {
+export function needsConfirm(
+  choice: Pick<Choice, "scope" | "ruleSet">,
+): boolean {
+  if (choice.ruleSet !== null) return choice.ruleSet.everywhere;
   return choice.scope === "global";
 }
 
@@ -89,7 +109,10 @@ export function build(
   if (needsConfirm(choice) && !confirmed) {
     return { ok: false, error: "confirmation_required" };
   }
-  const body: DecisionBody = { scope: choice.scope };
+  const body: DecisionBody =
+    choice.ruleSet === null
+      ? { scope: choice.scope }
+      : { scope: "sandbox", rule_set: choice.ruleSet.id };
   if (choice.match === "suffix") {
     const suffix = suffixFor(target);
     if (suffix === null) return { ok: false, error: "no_suffix" };
@@ -119,7 +142,14 @@ export function describe(
   workspace: string,
 ): string {
   const verb = choice.effect === "allow" ? "Allow" : "Deny";
+  const when = durationPhrase(choice.durationSecs);
+  if (choice.ruleSet !== null) {
+    const reach = choice.ruleSet.everywhere
+      ? "which is on for every workspace"
+      : `which is on for ${workspace}`;
+    return `${verb} ${patternLabel(choice, target)} in rule set ${choice.ruleSet.name} (${reach}), ${when}`;
+  }
   const who =
     choice.scope === "global" ? "every workspace" : `workspace ${workspace}`;
-  return `${verb} ${patternLabel(choice, target)} for ${who}, ${durationPhrase(choice.durationSecs)}`;
+  return `${verb} ${patternLabel(choice, target)} for ${who}, ${when}`;
 }
