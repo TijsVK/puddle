@@ -839,13 +839,21 @@ async fn vm_kill_mid_commit_then_boot_clears_the_locks() {
     sh_ok(
         sb.ungated(),
         &format!(
-            "cd {repo} && setsid sh -c 'i=0; while :; do i=$((i+1)); echo $i > f$((i % 64)); \
-             git add -A && git commit -qm l-$i; done' </dev/null >/tmp/commit-loop.log 2>&1 &"
+            "cd {repo} && setsid sh -c 'i=0; while [ ! -e /tmp/stop-loop ]; do i=$((i+1)); echo $i > f$((i % 64)); \
+             git add -A && git commit -qm l-$i; done; touch /tmp/loop-done' </dev/null >/tmp/commit-loop.log 2>&1 &"
         ),
     )
     .await;
     wait_for_commits(sb.ungated(), repo, 1, 25).await;
-    // Locks a killed git would have left (the loop stalls on them, which is what a kill does).
+    // A git still running would delete a lock planted while it holds the same one (seen on K and W).
+    // The loop runs its git calls one after another, so once it has exited nothing is left to race.
+    sh_ok(
+        sb.ungated(),
+        "touch /tmp/stop-loop; for _ in $(seq 1 300); do [ -e /tmp/loop-done ] && exit 0; sleep 0.1; done; \
+         echo the commit loop did not stop >&2; exit 1",
+    )
+    .await;
+    // The locks a killed git leaves.
     sh_ok(
         sb.ungated(),
         &format!(
