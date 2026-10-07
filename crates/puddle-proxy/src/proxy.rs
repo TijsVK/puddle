@@ -969,7 +969,7 @@ fn allowed(
             Err(Refusal::new(
                 "403 Forbidden",
                 format!(
-                    "{host} is denied by rule {rule_id} of your rule set {set}; remove it there, switch the set off for this workspace, or add an exact allow of your own"
+                    "{host} is denied by rule {rule_id} of your rule set {set} (listed under Rules, Rule sets); delete that entry, switch the set off for this workspace, or add an exact allow of your own"
                 ),
             )
             .header("x-puddle-decision", "deny")

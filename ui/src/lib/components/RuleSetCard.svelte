@@ -59,6 +59,9 @@
   <header>
     <h3 id="{id}-name">{set.name}</h3>
     <span class="chip">{mine ? "Yours" : "Built in"}</span>
+    <span class="muted mono" title="The id refusals and the activity log use"
+      >{set.id}</span
+    >
     {#if set.changed_at !== null}
       <span class="chip warn">Updated by puddle {changed(set.changed_at)}</span>
     {/if}
