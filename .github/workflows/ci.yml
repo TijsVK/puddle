@@ -13,11 +13,13 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same PR or to develop supersedes the run in flight (its result would be about
-# a commit that is no longer the head). main runs are never cancelled: every one is a version.
+# A newer push to the same PR or task branch supersedes the run in flight (its result would be about a
+# commit that is no longer the head). develop and main runs are never cancelled: every commit there gets a
+# finished run, so a regression cannot land unseen. They get one group per commit, because a group also
+# keeps only one pending run (a queued run is dropped for a newer one even with cancel-in-progress false).
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/develop' }}
+  group: ci-${{ (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always

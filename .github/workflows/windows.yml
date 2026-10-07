@@ -16,9 +16,9 @@ on:
 permissions:
   contents: read
 
-# Superseded runs on a PR or task branch stop; develop's (the nightly, a dispatch) run to the end.
+# Superseded runs on a PR or task branch stop; develop's (the nightly, a dispatch) run to the end, each in its own group so none is dropped as a pending run.
 concurrency:
-  group: windows-${{ github.ref }}
+  group: windows-${{ github.ref == 'refs/heads/develop' && github.run_id || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
 
 env:
