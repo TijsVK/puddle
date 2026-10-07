@@ -99,7 +99,7 @@ utoipa-axum = "0.3.0"
 tower-http = { version = "0.7.1", default-features = false, features = ["timeout"] }
 subtle = { version = "2.6.1", default-features = false, features = ["std"] }
 # Basic credentials of the image-pull proxy; already in the tree through reqwest.
-base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 # Test-only: the lab registry of the image-pull test. Both already in the tree; ring, not
 # aws-lc-rs (see rcgen).
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
