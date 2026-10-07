@@ -556,3 +556,62 @@ async fn host_side_connections_use_the_same_route_and_let_the_proxy_resolve_unkn
     round_trip(&mut connected.stream, b"host side").await;
     assert_eq!(proxy.seen()[0].target, "telemetry.nowhere.invalid:443");
 }
+
+/// Signs in with Negotiate before any challenge, like Kerberos does.
+#[derive(Debug)]
+struct PreemptiveNegotiate;
+
+#[derive(Debug)]
+struct NegotiateSession;
+
+impl AuthSession for NegotiateSession {
+    fn step(&mut self, _challenge: Option<&str>) -> Result<AuthStep, AuthError> {
+        Ok(AuthStep::Authorization("Negotiate tok".into()))
+    }
+}
+
+impl ProxyAuth for PreemptiveNegotiate {
+    fn begin(
+        &self,
+        _proxy: &ProxyAddr,
+        offered: &[&str],
+    ) -> Result<Option<Box<dyn AuthSession>>, AuthError> {
+        Ok(
+            (offered.is_empty() || offered.iter().any(|s| s.eq_ignore_ascii_case("negotiate")))
+                .then(|| Box::new(NegotiateSession) as Box<dyn AuthSession>),
+        )
+    }
+}
+
+#[tokio::test]
+async fn a_preemptive_negotiate_meets_a_basic_only_proxy_and_falls_back_on_the_same_request() {
+    let echo = start_echo().await;
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "u".into(),
+        password: "p".into(),
+    })
+    .await;
+    proxy.resolve_name("basic.test", echo.addr);
+    let list = AuthList::new()
+        .with(Arc::new(PreemptiveNegotiate))
+        .with(Arc::new(
+            BasicAuth::new().with_default(Credentials::new("u", "p")),
+        ));
+    let chain = chain(vec![via(&proxy)], Arc::new(list));
+    let dest = https("basic.test");
+    let mut connected = chain
+        .connect(&Request::new(&dest, Form::Tunnel, &[]).name_ok(true))
+        .await
+        .unwrap();
+    round_trip(&mut connected.stream, b"first request").await;
+    let seen = proxy.seen();
+    let auth: Vec<_> = seen
+        .iter()
+        .map(|s| {
+            s.proxy_authorization
+                .as_deref()
+                .map(|a| a.split(' ').next().unwrap())
+        })
+        .collect();
+    assert_eq!(auth, [Some("Negotiate"), Some("Basic")]);
+}

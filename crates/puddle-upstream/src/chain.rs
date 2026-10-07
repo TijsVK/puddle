@@ -422,6 +422,7 @@ impl Chain {
         let memo = self.memo(proxy);
         let mut header = memo.as_ref().and_then(|m| m.basic.clone());
         let mut session: Option<Box<dyn AuthSession>> = None;
+        let mut preemptive = false;
         if header.is_none()
             && let Some(mut started) = self
                 .auth
@@ -435,6 +436,7 @@ impl Chain {
                 header = Some(value);
             }
             session = Some(started);
+            preemptive = true;
         }
         let mut stream = self.dial(proxy).await?;
         if form == Form::Absolute
@@ -463,10 +465,15 @@ impl Chain {
                 return Err(failed("407 without a Proxy-Authenticate header".into()));
             }
             let offered_owned = wire::schemes(&challenges);
-            if session.is_none() {
+            // A preemptive session (Negotiate sent unasked) met a 407: ask again with what the proxy
+            // actually offers, so a Basic-only proxy still works on the first request. Keep the
+            // preemptive session when nothing else can answer.
+            if session.is_none() || preemptive {
                 let offered: Vec<&str> = offered_owned.iter().map(String::as_str).collect();
+                preemptive = false;
                 match self.auth.begin(proxy, &offered) {
                     Ok(Some(started)) => session = Some(started),
+                    Ok(None) if session.is_some() => {}
                     Ok(None) => {
                         return Err(HopError::Final(ChainError::AuthRequired {
                             proxy: proxy.clone(),
