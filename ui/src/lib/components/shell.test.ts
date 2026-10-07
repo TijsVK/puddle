@@ -22,7 +22,6 @@ vi.mock("#lib/stores/live.svelte.ts", () => ({ live }));
 
 import Layout from "../../routes/+layout.svelte";
 import ErrorPage from "../../routes/+error.svelte";
-import InboxPage from "../../routes/inbox/+page.svelte";
 import WorkspacesPage from "../../routes/workspaces/+page.svelte";
 import RulesPage from "../../routes/rules/+page.svelte";
 import ActivityPage from "../../routes/activity/+page.svelte";
@@ -127,7 +126,6 @@ describe("root layout", () => {
 
 describe("pages", () => {
   it.each([
-    ["Inbox", InboxPage],
     ["Workspaces", WorkspacesPage],
     ["Rules", RulesPage],
     ["Activity", ActivityPage],

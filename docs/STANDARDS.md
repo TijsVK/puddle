@@ -312,7 +312,7 @@ and in `ci.yml` (Linux); `windows.yml` runs `ui` and `ui-e2e`:
   test). A new API service gets its fake and a scenario field in `Fixture::build_state`; a new event needs
   nothing (an `Event` in JSON is a step).
 - **Coverage** (`ui/vite.config.ts`): lines ≥ 85 %, branches ≥ 80 % overall; `src/lib/api/**` (client,
-  event stream) ≥ 95 % lines, ≥ 90 % branches. Thresholds only go up.
+  event stream) and `src/lib/decision/**` (the four-outcome model) ≥ 95 % lines, ≥ 90 % branches. Thresholds only go up.
 - **The API client is generated:** `cargo xtask openapi` writes `ui/src/lib/api/schema.d.ts` (and
   checks it in the `openapi` gate); never hand-write a request.
 - **Tokens only:** components use the custom properties in `ui/src/lib/theme/tokens.css`, never a

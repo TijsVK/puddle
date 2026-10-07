@@ -169,7 +169,9 @@ test.describe("the origin and the token", () => {
     page,
   }) => {
     await page.goto("/inbox");
-    await expect(page.getByRole("status")).toContainText("can't sign in");
+    await expect(
+      page.getByRole("status").filter({ hasText: "can't sign in" }),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { level: 1, name: "Inbox" }),
     ).toBeVisible();

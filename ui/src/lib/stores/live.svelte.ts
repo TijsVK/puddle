@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/* eslint-disable svelte/prefer-svelte-reactivity -- the maps and sets here are bookkeeping that no template reads, so they need no reactivity */
 // Shell-level live state: the pending-request count for the nav badge and the document title,
 // and how the event stream is doing. Screens that need more subscribe to `eventStream` themselves.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
@@ -11,14 +12,26 @@ import {
 /** Why the count could not be read. */
 export type LiveProblem = "unauthorized" | "unreachable";
 
+/** What a screen hears from the shell's one event stream. */
+export interface LiveListener {
+  event?: (event: unknown) => void;
+  /** Events were or may have been missed (`lagged`, reconnect): refetch what the screen shows. */
+  resync?: () => void;
+}
+
+/** Where a screen subscribes to the shell's stream instead of opening a second connection. */
+export interface LiveSource {
+  subscribe(listener: LiveListener): () => void;
+}
+
 export interface LiveDeps {
   api?: Pick<ApiClient, "GET">;
   events?: (options: EventStreamOptions) => AsyncIterable<unknown>;
-  /** Interim refresh while the API has no pending-request events (T-172). */
+  /** Interim refresh while the API has no pending-request events. */
   pollMs?: number;
 }
 
-export class LiveState {
+export class LiveState implements LiveSource {
   pending = $state(0);
   stream = $state<StreamState>("connecting");
   problem = $state<LiveProblem | null>(null);
@@ -26,11 +39,25 @@ export class LiveState {
   readonly #api: Pick<ApiClient, "GET">;
   readonly #events: (options: EventStreamOptions) => AsyncIterable<unknown>;
   readonly #pollMs: number;
+  readonly #listeners = new Set<LiveListener>();
 
   constructor(deps: LiveDeps = {}) {
     this.#api = deps.api ?? defaultApi;
     this.#events = deps.events ?? eventStream;
     this.#pollMs = deps.pollMs ?? 15_000;
+  }
+
+  /** Screens that show more than the count listen here; returns the function that stops it. */
+  subscribe(listener: LiveListener): () => void {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  }
+
+  /** A screen that knows the count (the inbox, after a decision) tells the badge at once. */
+  setPending(count: number): void {
+    this.pending = count;
   }
 
   /** Reads the open-request count. Never throws: a failure sets `problem`. */
@@ -59,10 +86,14 @@ export class LiveState {
         onState: (state) => {
           this.stream = state;
         },
-        onResync: () => void this.refresh(),
+        onResync: () => {
+          void this.refresh();
+          for (const l of [...this.#listeners]) l.resync?.();
+        },
       });
-      for await (const _event of stream) {
-        // Today's events (status, OOM) don't change the count; pending events arrive with T-172.
+      for await (const event of stream) {
+        // The count itself still comes from the poll until the API sends pending events.
+        for (const l of [...this.#listeners]) l.event?.(event);
       }
     })();
     return () => {
