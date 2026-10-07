@@ -395,12 +395,29 @@ mod tests {
             .iter()
             .map(|v| v["properties"]["type"]["enum"][0].as_str().unwrap())
             .collect();
-        assert_eq!(tags, ["status_changed", "oom_kill", "test_global"]);
+        assert_eq!(
+            tags,
+            [
+                "status_changed",
+                "oom_kill",
+                "workspace_progress",
+                "test_global"
+            ]
+        );
         for v in variants {
             let required = v["required"].as_array().unwrap();
             assert!(required.iter().any(|r| r == "type"), "{v}");
         }
-        let global = &variants[2];
+        let progress = &variants[2];
+        assert!(
+            progress["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r == "detail"),
+            "detail is always present, null when empty: {progress}"
+        );
+        let global = &variants[3];
         assert!(global["properties"].get("sandbox").is_none());
         assert_eq!(
             variants[0]["properties"]["sandbox"]["$ref"],
