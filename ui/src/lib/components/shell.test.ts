@@ -23,7 +23,6 @@ vi.mock("#lib/stores/live.svelte.ts", () => ({ live }));
 import Layout from "../../routes/+layout.svelte";
 import ErrorPage from "../../routes/+error.svelte";
 import WorkspacesPage from "../../routes/workspaces/+page.svelte";
-import RulesPage from "../../routes/rules/+page.svelte";
 import ActivityPage from "../../routes/activity/+page.svelte";
 import SettingsPage from "../../routes/settings/+page.svelte";
 import { load as rootLoad } from "../../routes/+page.ts";
@@ -127,7 +126,6 @@ describe("root layout", () => {
 describe("pages", () => {
   it.each([
     ["Workspaces", WorkspacesPage],
-    ["Rules", RulesPage],
     ["Activity", ActivityPage],
     ["Settings", SettingsPage],
   ])("%s has one h1 and an empty state", (name, component) => {

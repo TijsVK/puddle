@@ -43,6 +43,10 @@ describe("ConfirmDialog", () => {
     );
     expect(onConfirm).toHaveBeenCalledOnce();
     expect(onCancel).not.toHaveBeenCalled();
+    // The action button does not close a bits-ui alert dialog by itself; this one does.
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).toBeNull(),
+    );
   });
 
   it("cancels with Cancel and with Escape, and focuses Cancel first", async () => {

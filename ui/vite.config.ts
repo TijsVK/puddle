@@ -38,6 +38,7 @@ export default defineConfig({
         statements: 85,
         "src/lib/api/**": { lines: 95, branches: 90 },
         "src/lib/decision/**": { lines: 95, branches: 90 },
+        "src/lib/rules/**": { lines: 95, branches: 90 },
       },
     },
   },

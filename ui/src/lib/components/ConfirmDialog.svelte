@@ -55,6 +55,8 @@
         <AlertDialog.Action
           class="btn {tone}"
           onclick={() => {
+            // Action does not close the dialog by itself, unlike Cancel.
+            open = false;
             onConfirm();
           }}>{confirmLabel}</AlertDialog.Action
         >
@@ -64,38 +66,10 @@
 </AlertDialog.Root>
 
 <style>
-  :global(.confirm-overlay) {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    background: rgb(0 0 0 / 0.5);
-  }
-  :global(.confirm-content) {
-    position: fixed;
-    z-index: 51;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: min(32rem, calc(100vw - 2 * var(--space-4)));
-    padding: var(--space-6);
-    display: grid;
-    gap: var(--space-4);
-    background: var(--color-surface);
-    color: var(--color-text);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-  }
-  :global(.confirm-title) {
-    margin: 0;
-    font-size: var(--text-lg);
-  }
   :global(.confirm-body) {
     display: grid;
     gap: var(--space-2);
     margin: 0;
-  }
-  :global(.confirm-detail) {
-    color: var(--color-text-muted);
   }
   :global(.confirm-summary) {
     overflow-wrap: anywhere;
