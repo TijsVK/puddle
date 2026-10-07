@@ -219,7 +219,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
   runs share a host. Laptop-only tests are named `vm_laptop_*`.
 - **Redaction:** tests that handle a credential use a canary value and assert it never appears in
   logs, errors, audit entries or the guest's view.
-- **Flaky tests:** nextest never retries (`retries = 0`). A test that fails without a code change
+- **Flaky tests:** nextest never retries (`retries = 0`); only the Windows nightly retries once, to list flakes. A test that fails without a code change
   is fixed or quarantined within a day (still runs, doesn't gate, linked issue, max 14 days).
   Proxy, transparency and security tests can't be quarantined: a flaky one is the bug (D-2).
 - Test names say the behaviour: `denied_request_is_held_until_approved`, not `test_pending_2`.
@@ -240,15 +240,22 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 | Workflow | Trigger | Runner | Gates |
 |---|---|---|---|
-| `ci.yml` | push to `develop`/`main`, every PR, manual | `ubuntu-24.04` | all of `scripts/check.sh all` in one job; every gate runs even if an earlier one fails |
-| `windows.yml` | nightly 02:30 UTC (skipped if unchanged since the last green nightly), PRs to `main`, manual | `windows-2025` | clippy, nextest, doc tests, release build (MSVC) |
-| `vm-linux.yml` | manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if unchanged) | `ubuntu-24.04` (KVM) | VM tests, tier K; no KVM ⇒ warning, infrastructure skip |
-| `vm-windows.yml` | manual on any branch, nightly 03:15 UTC on `develop` (skipped if unchanged) | `windows-2025` (WHP) | VM tests, tier W; no WHP ⇒ warning, infrastructure skip |
+| `ci.yml` | push to `develop`/`main`, every PR, manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` in one job; every gate runs even if an earlier one fails |
+| `windows.yml` | nightly 02:30 UTC (skipped if it already has a green run on that commit), PRs to `main`, manual | `windows-2025` | clippy, nextest, doc tests, release build (MSVC; not on a manual run from a task branch). The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
+| `vm-linux.yml` | manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if it already has a green run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K; no KVM ⇒ warning, infrastructure skip |
+| `vm-windows.yml` | manual on any branch, nightly 03:15 UTC on `develop` (skipped if it already has a green run on that commit) | `windows-2025` (WHP) | VM tests, tier W; no WHP ⇒ warning, infrastructure skip |
+| `cache-gc.yml` | nightly 03:45 UTC, manual | `ubuntu-24.04` | deletes superseded rust-cache entries and stale branch caches (`ci/cache-gc.sh`) |
 | Dependabot | weekly, grouped | — | opens PRs to `develop` |
 
-The repo is public, so standard hosted runners are free and have no minute quota. They are still
-shared: keep jobs lean, don't add triggers without a reason, and keep Windows on nightly/PR-to-main.
-Actions are pinned to commit SHAs; workflows get `contents: read` unless they need more.
+The repo is public, so standard hosted runners are free with no minute quota. They are still
+shared (20 concurrent jobs), and the Actions cache is capped at 10 GB for the whole repo: only
+`develop` saves the Rust cache (`save-if`), one entry per workflow, so task branches restore it and
+the cargo-xwin cache isn't evicted. The nightly workflows gate themselves inside their job
+(`ci/should-run.sh`), not in a separate job that is billed a full minute. Keep Windows on
+nightly/PR-to-main.
+Actions are pinned to commit SHAs and must be GitHub-owned or on the repo's allow-list (selected
+actions, SHA pinning required; an unpinned `uses:` ends as a `startup_failure` with no jobs).
+Workflows get `contents: read` unless they need more.
 VM jobs never run per push: dispatch them on your task branch when your change needs K/W evidence.
 The msb runtime they boot is the SDK's fork tag (`ci/msb-tag.sh`, read from `Cargo.lock`): release
 assets pinned by SHA-256 in `ci/msb-runtime.sha256`, and on Linux, where the fork releases no msb,

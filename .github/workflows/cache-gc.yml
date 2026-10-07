@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Keeps the Actions caches under the repo's 10 GB cap (ci/cache-gc.sh): drops superseded rust-cache
+# entries on develop and stale task-branch caches, so the cargo-xwin cache is never evicted.
+name: cache-gc
+
+on:
+  schedule:
+    - cron: "45 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: cache-gc
+  cancel-in-progress: false
+
+jobs:
+  gc:
+    name: delete superseded caches
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: delete superseded and stale caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/cache-gc.sh | tee -a "$GITHUB_STEP_SUMMARY"

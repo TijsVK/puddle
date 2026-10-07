@@ -61,7 +61,7 @@ run_gate() {
         ;;
     test) "$cargo" nextest run --workspace --all-features --locked ;;
     doc)
-        "$cargo" test --doc --workspace --all-features --locked
+        "$cargo" test --doc --workspace --all-features --locked --no-fail-fast
         RUSTDOCFLAGS="-D warnings" "$cargo" doc --workspace --no-deps --all-features --locked
         ;;
     coverage)

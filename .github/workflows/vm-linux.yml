@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # VM tests on Linux KVM (T-032 tier K): crate puddle-vm-tests under `nextest --profile vm`, real
 # msb microVMs on the hosted runner. Runner time is shared (docs/STANDARDS.md, "CI"), so this runs
-# by hand on any branch (`gh workflow run vm-linux.yml --ref <branch>`) and nightly on develop when
-# develop moved since the last green nightly. VM tests are never retried (T-032); a runner without
+# by hand on any branch (`gh workflow run vm-linux.yml --ref <branch>`) and nightly on develop unless
+# it already has a green run on that commit. VM tests are never retried (T-032); a runner without
 # KVM is reported as an infrastructure skip, not a test result.
 name: vm-linux
 
@@ -35,42 +35,26 @@ env:
   VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle
 
 jobs:
-  changed:
-    name: anything new since the last green nightly?
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      actions: read
-    outputs:
-      run: ${{ steps.check.outputs.run }}
-    steps:
-      - id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          last=$(gh run list -R "${{ github.repository }}" --workflow vm-linux.yml \
-            --event schedule --status success --limit 1 --json headSha --jq '.[0].headSha // ""')
-          if [ "$last" = "${{ github.sha }}" ]; then
-            echo "develop unchanged since the last green nightly ($last); skipping"
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
-
   vm-linux:
     name: vm-linux (KVM, msb microVMs)
-    needs: changed
-    if: needs.changed.outputs.run == 'true'
+    # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-24.04
     # A cold build of the SDK takes ~10 min on windows-2025; the tests have their own 30-minute cap.
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: anything new since the last green run?
+        id: changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/should-run.sh vm-linux.yml
       - name: KVM preflight (infrastructure)
         id: kvm
+        if: steps.changed.outputs.run == 'true'
         run: |
           if [ ! -e /dev/kvm ]; then
             echo "::warning title=vm-linux skipped::/dev/kvm is missing on this runner; VM tests did not run (infrastructure, not a test result)"
@@ -94,6 +78,8 @@ jobs:
         with:
           key: vm
           cache-on-failure: true
+          # Only develop saves (10 GB cap for the whole repo); other refs restore it.
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         if: steps.kvm.outputs.ok == 'true'
         with:

@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Native Windows MSVC build and tests (D-35). Windows runners are the slowest and
-# priciest to queue, so this runs nightly (skipped when develop didn't change since the last green nightly), on pull
+# Native Windows MSVC build and tests (D-35). Windows runners are the slowest to start, so this
+# runs nightly (skipped when this workflow already has a green run on develop's head), on pull
 # requests to main, and by hand. Linux CI already cross-checks clippy for the msvc target.
+# The nightly also reruns each failed test once and lists the ones that pass only on retry
+# (ci/flaky-report.py); it never turns the run red.
 name: windows
 
 on:
@@ -14,9 +16,10 @@ on:
 permissions:
   contents: read
 
+# Superseded runs on a PR or task branch stop; develop's (the nightly, a dispatch) run to the end.
 concurrency:
   group: windows-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,65 +27,65 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  changed:
-    name: anything new since the last green nightly?
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      actions: read
-    outputs:
-      run: ${{ steps.check.outputs.run }}
-    steps:
-      - id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          last=$(gh run list -R "${{ github.repository }}" --workflow windows.yml \
-            --event schedule --status success --limit 1 --json headSha --jq '.[0].headSha // ""')
-          if [ "$last" = "${{ github.sha }}" ]; then
-            echo "develop unchanged since the last green nightly ($last); skipping"
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
-
   windows:
     name: windows-msvc (build, clippy, tests)
-    needs: changed
-    if: needs.changed.outputs.run == 'true'
     runs-on: windows-2025
     # A cold cache (any Cargo.lock change) takes ~40 min: clippy 6, tests 14, release build 15,
     # then the cache save (T-117, run 37431418875 was cut off at 40 while saving).
     timeout-minutes: 60
+    # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: anything new since the last green run?
+        id: changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/should-run.sh windows.yml
       - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
+      # Only develop saves the cache (10 GB cap for the whole repo); other refs restore it.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.changed.outputs.run == 'true'
+        with:
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+        if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
       - name: clippy
+        if: steps.changed.outputs.run == 'true'
         shell: bash
         run: scripts/check.sh clippy
       - name: tests
-        if: ${{ !cancelled() }}
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash
-        run: cargo nextest run --workspace --all-features --locked --profile ci
+        env:
+          # The nightly retries a failed test once, only to report flakes (below). The profile
+          # keeps retries at 0 for every other run (docs/STANDARDS.md, "Flaky tests").
+          RETRIES: ${{ github.event_name == 'schedule' && '1' || '0' }}
+        run: cargo nextest run --workspace --all-features --locked --profile ci --retries "$RETRIES"
+      - name: flaky tests (nightly report)
+        if: ${{ github.event_name == 'schedule' && steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: bash
+        run: python3 ci/flaky-report.py target/nextest/ci/junit.xml | tee -a "$GITHUB_STEP_SUMMARY"
       - name: doc tests
-        if: ${{ !cancelled() }}
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash
-        run: cargo test --doc --workspace --all-features --locked
+        run: cargo test --doc --workspace --all-features --locked --no-fail-fast
+      # Nightly, PRs to main and develop dispatches only (it compiles everything a second time, and
+      # a develop cache save should hold it so the nightly isn't cold).
       - name: release build
-        if: ${{ !cancelled() }}
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/develop') }}
         shell: bash
         run: cargo build --workspace --release --locked
       - name: upload test results
-        if: ${{ !cancelled() }}
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-test-results
