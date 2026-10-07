@@ -23,7 +23,12 @@ pub(super) fn create_file(path: &Path) -> io::Result<File> {
 
 pub(super) fn check(meta: &Metadata) -> Result<(), u32> {
     let mode = meta.permissions().mode() & 0o777;
-    if mode & 0o077 == 0 { Ok(()) } else { Err(mode) }
+    // No group or other bit: the low six bits are clear.
+    if mode.trailing_zeros() >= 6 {
+        Ok(())
+    } else {
+        Err(mode)
+    }
 }
 
 #[cfg(test)]
