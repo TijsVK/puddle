@@ -499,7 +499,7 @@ async fn relay(
         }
     };
     event.resolved_ip = out.addr.map(|addr| addr.ip());
-    event.upstream = out.hop.clone();
+    event.upstream.clone_from(&out.hop);
     tracing::info!(host = %target.host, port = target.port, addr = ?out.addr, hop = ?out.hop, "image-pull connection");
     match path {
         None => {

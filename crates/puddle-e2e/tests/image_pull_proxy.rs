@@ -342,6 +342,45 @@ fn decoy_environment() -> std::net::TcpListener {
     decoy
 }
 
+/// The pulls are in the audit as puddle's own connections: no sandbox, the address connected to,
+/// and the bytes that went through.
+async fn assert_pulls_are_audited(store: &Store, token: &str) {
+    // connected to, and the bytes that went through.
+    let puddle_only = AuditFilter {
+        origin: Some(ConnectionOrigin::Puddle),
+        ..AuditFilter::default()
+    };
+    let mut records = Vec::new();
+    for _ in 0..100 {
+        records = connection_records(store, &puddle_only);
+        if records.iter().any(|r| r.bytes_down > 0) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(!records.is_empty(), "the pull proxy wrote no audit record");
+    for record in &records {
+        assert_eq!(record.sandbox_id, None);
+        assert_eq!(record.origin, ConnectionOrigin::Puddle);
+        assert_eq!(record.host.as_deref(), Some(REGISTRY));
+        assert_eq!(record.port, Some(443));
+        assert_eq!(record.decision, Some(ConnectionDecision::Allow));
+        assert_eq!(record.reason, "puddle_request");
+        assert_eq!(record.resolved_ip.as_deref(), Some("127.0.0.1"));
+        assert_eq!(record.upstream, None, "no company proxy is configured");
+        assert!(!format!("{record:?}").contains(token));
+    }
+    assert!(
+        records.iter().any(|r| r.bytes_up > 0 && r.bytes_down > 0),
+        "{records:?}"
+    );
+    let sandbox_only = AuditFilter {
+        origin: Some(ConnectionOrigin::Sandbox),
+        ..AuditFilter::default()
+    };
+    assert_eq!(connection_records(store, &sandbox_only).len(), 0);
+}
+
 /// The `connection` records `filter` matches, oldest first.
 fn connection_records(store: &Store, filter: &AuditFilter) -> Vec<puddle_store::ConnectionRecord> {
     store
@@ -446,41 +485,7 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
             requests.len(),
             "served from the cache"
         );
-        // The pulls are in the audit as puddle's own connections: no sandbox, the address
-        // connected to, and the bytes that went through.
-        let puddle_only = AuditFilter {
-            origin: Some(ConnectionOrigin::Puddle),
-            ..AuditFilter::default()
-        };
-        let mut records = Vec::new();
-        for _ in 0..100 {
-            records = connection_records(&store, &puddle_only);
-            if records.iter().any(|r| r.bytes_down > 0) {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        assert!(!records.is_empty(), "the pull proxy wrote no audit record");
-        for record in &records {
-            assert_eq!(record.sandbox_id, None);
-            assert_eq!(record.origin, ConnectionOrigin::Puddle);
-            assert_eq!(record.host.as_deref(), Some(REGISTRY));
-            assert_eq!(record.port, Some(443));
-            assert_eq!(record.decision, Some(ConnectionDecision::Allow));
-            assert_eq!(record.reason, "puddle_request");
-            assert_eq!(record.resolved_ip.as_deref(), Some("127.0.0.1"));
-            assert_eq!(record.upstream, None, "no company proxy is configured");
-            assert!(!format!("{record:?}").contains(&token));
-        }
-        assert!(
-            records.iter().any(|r| r.bytes_up > 0 && r.bytes_down > 0),
-            "{records:?}"
-        );
-        let sandbox_only = AuditFilter {
-            origin: Some(ConnectionOrigin::Sandbox),
-            ..AuditFilter::default()
-        };
-        assert!(connection_records(&store, &sandbox_only).is_empty());
+        assert_pulls_are_audited(&store, &token).await;
         route.shutdown().await;
     });
 

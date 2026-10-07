@@ -1166,7 +1166,7 @@ fn r24_a_record_written_before_origin_existed_reads_as_a_sandbox_connection() {
     let mut value: Value = serde_json::from_str(&line).unwrap();
     assert!(value.as_object_mut().unwrap().remove("origin").is_some());
     let old = serde_json::to_string(&value).unwrap();
-    let record: puddle_store::AuditRecord = serde_json::from_str(&old).unwrap();
+    let record: AuditRecord = serde_json::from_str(&old).unwrap();
     assert_eq!(record.origin(), Some(ConnectionOrigin::Sandbox));
     assert_eq!(record.sandbox_id(), Some("a"));
 }
