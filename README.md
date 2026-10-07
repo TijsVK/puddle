@@ -31,6 +31,8 @@ cargo nextest run                     # tests only
 cargo run -p puddle -- --version
 ```
 
+What the product promises its users and never does, which every change keeps:
+[docs/principles.md](docs/principles.md).
 Layout, coding and testing rules, coverage thresholds and the workflow for agents and humans:
 [docs/STANDARDS.md](docs/STANDARDS.md).
 Architecture decisions and why: [docs/adr/](docs/adr/README.md).

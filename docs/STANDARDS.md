@@ -2,7 +2,9 @@
 
 puddle is a security tool built mostly by agents, so the gates below are what make its code
 trustworthy. They apply to every change, by a human or an agent. "Done" means: the behaviour is
-tested at the right tiers, `scripts/check.sh` passes, and Linux CI is green on `develop`.
+tested at the right tiers, `scripts/check.sh` passes, Linux CI is green on `develop`, and the change
+keeps the product [principles](principles.md) (a change that would break one doesn't land; open an
+issue instead).
 
 Contents: [layout](#1-workspace-layout) · [toolchain](#2-toolchain) · [workflow](#3-workflow-for-agents-and-humans)
 · [commits](#4-commits-and-pull-requests) · [code](#5-code) · [errors](#6-error-handling) ·
