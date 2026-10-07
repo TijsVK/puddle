@@ -805,8 +805,12 @@ test.describe("the network tab", () => {
     await openDetail(page, backend, "data-tools", "network");
     // data-tools has requests in this scenario; decide them all.
     const rows = page.locator("li.req");
-    while ((await rows.count()) > 0) {
+    await expect(rows.first()).toBeVisible();
+    // Wait for each row to go before the next click: a row that is still on its way out can
+    // be counted but not clicked, and the click then waits for a button that never returns.
+    for (let left = await rows.count(); left > 0; left -= 1) {
       await rows.first().getByRole("button", { name: /^Deny/ }).click();
+      await expect(rows).toHaveCount(left - 1);
     }
     await expect(
       page.getByText("Nothing is waiting for data-tools."),
