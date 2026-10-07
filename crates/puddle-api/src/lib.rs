@@ -49,7 +49,6 @@ mod error;
 mod events;
 mod extract;
 mod fake_workspaces;
-mod network_health;
 mod openapi;
 mod routes;
 mod server;
@@ -62,10 +61,6 @@ mod workspaces;
 pub use error::{ApiErrorBody, ErrorCode};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
-pub use network_health::{
-    FakeNetworkHealth, HostNetworkHealth, NetworkHealthError, NetworkHealthService,
-    NoNetworkHealth, forward_network_changes,
-};
 pub use openapi::{API_VERSION, openapi, openapi_json};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};

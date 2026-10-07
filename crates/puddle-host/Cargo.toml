@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-host"
+description = "The host process: one start-up and shutdown sequence that wires the store, proxies, runtime, workspaces, lifecycle and API; embedded by the desktop app and run by `puddle serve`"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# Serves the built single-page app from the API's origin (see puddle-api).
+embedded-ui = ["puddle-api/embedded-ui"]
+
+[dependencies]
+futures-util = { workspace = true }
+puddle-api = { workspace = true }
+puddle-boot = { workspace = true }
+puddle-ca = { workspace = true }
+puddle-certs = { workspace = true }
+puddle-compute = { workspace = true }
+puddle-compute-msb = { workspace = true }
+puddle-fs = { workspace = true }
+puddle-guest-env = { workspace = true }
+puddle-ipc = { workspace = true }
+puddle-lifecycle = { workspace = true }
+puddle-netpolicy = { workspace = true }
+puddle-proxy = { workspace = true }
+puddle-runtime = { workspace = true }
+puddle-settings = { workspace = true }
+puddle-ssh = { workspace = true }
+puddle-store = { workspace = true }
+puddle-types = { workspace = true }
+puddle-upstream = { workspace = true }
+puddle-workspace = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "sync", "time"] }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+microsandbox = { workspace = true }
+puddle-compute = { workspace = true, features = ["fake"] }
+puddle-vm-tests = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+tracing-subscriber = { workspace = true }
+
+# Changing the process environment is only sound before a second thread exists, which the
+# default test harness never allows, so these run as plain programs (child processes of this one).
+[[test]]
+name = "pin_environment"
+harness = false
+
+[lints]
+workspace = true

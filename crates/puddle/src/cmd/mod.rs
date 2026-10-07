@@ -2,4 +2,5 @@
 //! One module per subcommand that does more than print a line.
 
 pub mod doctor;
+pub mod serve;
 pub mod ssh_bridge;

@@ -26,8 +26,8 @@ env:
   # Line tables only: backtraces keep file:line, builds and the cache stay much smaller.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, HG-01/02, memory),
-  # the boot hook, the workspace lifecycle, shutdown and reconcile.
-  VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle
+  # the boot hook, the workspace lifecycle, shutdown and reconcile, the whole host.
+  VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle -p puddle-host
   # msb's sandbox runtimes log at debug, and the harness keeps each removed sandbox's logs beside
   # the run home, so a boot that fails keeps its VMM trace and kernel.log in the artefact.
   PUDDLE_VM_MSB_LOG_LEVEL: debug

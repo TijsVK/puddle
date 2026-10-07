@@ -44,3 +44,18 @@ fn unknown_argument_exits_2_with_usage_on_stderr() {
     assert!(stderr.contains("unknown argument: --bogus"), "{stderr}");
     assert!(stderr.contains("usage: puddle"), "{stderr}");
 }
+
+#[test]
+fn serve_without_a_bundled_runtime_exits_1_and_says_why() {
+    // The test binary has no `runtime` folder beside it.
+    let out = puddle(&["serve", "--port", "0"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.starts_with("puddle: "), "{stderr}");
+}
+
+#[test]
+fn serve_rejects_a_bad_port_with_exit_2() {
+    let out = puddle(&["serve", "--port", "nope"]);
+    assert_eq!(out.status.code(), Some(2));
+}

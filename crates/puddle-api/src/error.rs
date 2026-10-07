@@ -9,7 +9,6 @@ use puddle_store::StoreError;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::network_health::NetworkHealthError;
 use crate::settings::SettingsRepoError;
 use crate::workspaces::WorkspaceError;
 
@@ -162,16 +161,6 @@ impl From<WorkspaceError> for ApiError {
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
             }
             WorkspaceError::Internal(m) => Self::internal(&m),
-        }
-    }
-}
-
-impl From<NetworkHealthError> for ApiError {
-    fn from(err: NetworkHealthError) -> Self {
-        match err {
-            NetworkHealthError::Unavailable(m) => {
-                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
-            }
         }
     }
 }

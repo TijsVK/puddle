@@ -10,12 +10,20 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# Serve the built single-page app from the binary (needs `ui/build`; see puddle-api).
+embedded-ui = ["puddle-host/embedded-ui"]
+
 [dependencies]
 puddle-doctor = { workspace = true }
+puddle-host = { workspace = true }
+puddle-lifecycle = { workspace = true }
 puddle-ssh = { workspace = true }
 puddle-types = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["io-std", "net", "rt", "time"] }
+tokio = { workspace = true, features = ["io-std", "net", "rt", "rt-multi-thread", "time"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

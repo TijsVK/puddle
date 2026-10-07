@@ -13,6 +13,7 @@ use std::fmt;
 
 use futures_util::future::BoxFuture;
 use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus, WorkspaceId};
+use sha2::{Digest, Sha256};
 
 /// The long operation a workspace is in the middle of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -249,6 +250,28 @@ pub struct DeleteCheck {
 }
 
 impl DeleteCheck {
+    /// A report with its fingerprint computed from the findings, so every service (the real one
+    /// and the fake) digests a report the same way.
+    #[must_use]
+    pub fn new(
+        workspace: WorkspaceId,
+        repos: Vec<RepoFindings>,
+        other: Listing,
+        errors: Vec<String>,
+        removes_sandbox: Option<SandboxName>,
+    ) -> Self {
+        let mut check = Self {
+            workspace,
+            repos,
+            other,
+            errors,
+            removes_sandbox,
+            fingerprint: String::new(),
+        };
+        check.fingerprint = fingerprint(&check);
+        check
+    }
+
     /// Whether deleting loses nothing the check can see.
     #[must_use]
     pub fn is_clean(&self) -> bool {
@@ -495,6 +518,40 @@ impl WorkspaceService for NoWorkspaces {
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
         unavailable()
     }
+}
+
+/// A digest over everything a user sees in the report, so a delete can prove it is for that
+/// report.
+fn fingerprint(check: &DeleteCheck) -> String {
+    let mut hash = Sha256::new();
+    let mut put = |text: &str| {
+        hash.update(u64::try_from(text.len()).unwrap_or(u64::MAX).to_be_bytes());
+        hash.update(text.as_bytes());
+    };
+    let mut list = |name: &str, l: &Listing| {
+        put(name);
+        for item in &l.items {
+            put(item);
+        }
+        put(&l.more.to_string());
+    };
+    for repo in &check.repos {
+        list(&format!("dir:{}", repo.dir), &Listing::default());
+        list("uncommitted", &repo.uncommitted);
+        list("unpushed", &repo.unpushed);
+        list("stashes", &repo.stashes);
+    }
+    list("other", &check.other);
+    let mut errors = Listing::default();
+    errors.items.clone_from(&check.errors);
+    list("errors", &errors);
+    hash.finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut out, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 #[cfg(test)]

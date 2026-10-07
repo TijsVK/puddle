@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_upstream::{
-    Config, Destination, Detected, Discovery, EnvFallback, EnvOs, Hop, ModeKind, OsProxy, PacError,
-    PacQuery, ProxyAddr, RouteSource, Scheme, WinOs,
+    Config, Destination, Discovery, EnvFallback, EnvOs, Hop, OsProxy, PacError, PacQuery,
+    ProxyAddr, RouteSource, Scheme, WinOs,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -169,9 +169,6 @@ fn the_settings_call_works_on_any_machine_and_never_panics() {
 
 const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
-/// The tests share one registry key: one at a time.
-static REGISTRY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 fn on_throwaway_runner() -> bool {
     let yes = std::env::var_os("GITHUB_ACTIONS").is_some();
     if !yes {
@@ -223,7 +220,6 @@ async fn settings_and_discovery_follow_the_registry_end_to_end() {
     if !on_throwaway_runner() {
         return;
     }
-    let _registry = REGISTRY.lock().await;
     let pac = pac_server().await;
     let _url = RegValue::set("AutoConfigURL", "REG_SZ", &pac);
     let settings = WinOs::new().config().unwrap();
@@ -248,58 +244,10 @@ async fn settings_and_discovery_follow_the_registry_end_to_end() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_health_report_names_what_windows_holds_and_hides_what_is_secret() {
-    if !on_throwaway_runner() {
-        return;
-    }
-    let _registry = REGISTRY.lock().await;
-    let discovery = || {
-        Discovery::new(
-            Arc::new(EnvFallback::new(Arc::new(WinOs::new()), EnvOs::default())),
-            Config::default(),
-        )
-    };
-    let pac = pac_server().await;
-    let with_secrets = pac.replacen("http://", "http://svc:hunter2@", 1) + "?key=topsecret";
-    let _url = RegValue::set("AutoConfigURL", "REG_SZ", &with_secrets);
-    let health = discovery().health().await;
-    assert_eq!(health.detected, Detected::Pac);
-    assert_eq!(health.pac_url.as_deref(), Some(pac.as_str()));
-    assert_eq!(health.mode, ModeKind::System);
-    assert_eq!(health.settings_error, None);
-    let shown = format!("{health:?}");
-    assert!(
-        !shown.contains("hunter2") && !shown.contains("topsecret"),
-        "{shown}"
-    );
-
-    // The PAC address gone, a static proxy with a bypass list is what Windows holds.
-    assert!(reg(&["delete", KEY, "/v", "AutoConfigURL", "/f"]));
-    let _server = RegValue::set("ProxyServer", "REG_SZ", "static.corp:3128");
-    let _bypass = RegValue::set("ProxyOverride", "REG_SZ", "*.corp.test;<local>");
-    let _on = RegValue::set("ProxyEnable", "REG_DWORD", "1");
-    let health = discovery().health().await;
-    // Windows may have "detect settings automatically" on (a runner does): WPAD is then asked
-    // first and the static proxy is what it falls back to. Both are reported.
-    let expected = if health.auto_detect {
-        Detected::Wpad
-    } else {
-        Detected::Static
-    };
-    assert_eq!(health.detected, expected);
-    assert_eq!(
-        health.https_proxy,
-        Some(ProxyAddr::new("static.corp", 3128))
-    );
-    assert_eq!(health.bypass_entries, 2);
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn the_proxy_enable_switch_hides_a_static_proxy() {
     if !on_throwaway_runner() {
         return;
     }
-    let _registry = REGISTRY.lock().await;
     let _server = RegValue::set("ProxyServer", "REG_SZ", "static.corp:3128");
     let _bypass = RegValue::set("ProxyOverride", "REG_SZ", "*.corp.test;<local>");
     let _on = RegValue::set("ProxyEnable", "REG_DWORD", "1");
@@ -336,7 +284,6 @@ async fn a_registry_change_ends_the_epoch_once_after_the_debounce() {
     if !on_throwaway_runner() {
         return;
     }
-    let _registry = REGISTRY.lock().await;
     let config = Config {
         debounce: Duration::from_millis(300),
         ..Config::default()

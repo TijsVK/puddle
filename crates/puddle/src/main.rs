@@ -23,6 +23,7 @@ fn main() -> ExitCode {
         }
         Ok(Command::SshBridge { endpoint }) => puddle::cmd::ssh_bridge::run(&endpoint),
         Ok(Command::Doctor(args)) => puddle::cmd::doctor::run(args),
+        Ok(Command::Serve(args)) => puddle::cmd::serve::run(&args),
         Err(err) => {
             eprintln!("puddle: {err}\n{USAGE}");
             ExitCode::from(2)

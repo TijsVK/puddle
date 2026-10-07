@@ -86,14 +86,6 @@ impl BasicAuth {
 }
 
 impl ProxyAuth for BasicAuth {
-    fn methods(&self) -> Vec<&'static str> {
-        if self.default.is_some() || !self.per_proxy.is_empty() {
-            vec!["basic"]
-        } else {
-            Vec::new()
-        }
-    }
-
     fn begin(
         &self,
         proxy: &ProxyAddr,
@@ -165,16 +157,6 @@ impl AuthList {
 }
 
 impl ProxyAuth for AuthList {
-    fn methods(&self) -> Vec<&'static str> {
-        let mut all: Vec<&'static str> = Vec::new();
-        for method in self.members.iter().flat_map(|member| member.methods()) {
-            if !all.contains(&method) {
-                all.push(method);
-            }
-        }
-        all
-    }
-
     fn begin(
         &self,
         proxy: &ProxyAddr,

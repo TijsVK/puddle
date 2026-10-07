@@ -5608,13 +5608,17 @@ version = "0.0.0"
 dependencies = [
  "puddle-compute",
  "puddle-doctor",
+ "puddle-host",
  "puddle-ipc",
+ "puddle-lifecycle",
  "puddle-ssh",
  "puddle-types",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5662,14 +5666,11 @@ dependencies = [
  "hyper",
  "hyper-util",
  "proptest",
- "puddle-certs",
  "puddle-fs",
  "puddle-netpolicy",
  "puddle-settings",
  "puddle-store",
  "puddle-types",
- "puddle-upstream",
- "rcgen",
  "rust-embed",
  "serde",
  "serde_json",
@@ -5838,6 +5839,43 @@ dependencies = [
  "puddle-types",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "puddle-host"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "microsandbox",
+ "puddle-api",
+ "puddle-boot",
+ "puddle-ca",
+ "puddle-certs",
+ "puddle-compute",
+ "puddle-compute-msb",
+ "puddle-fs",
+ "puddle-guest-env",
+ "puddle-ipc",
+ "puddle-lifecycle",
+ "puddle-netpolicy",
+ "puddle-proxy",
+ "puddle-runtime",
+ "puddle-settings",
+ "puddle-ssh",
+ "puddle-store",
+ "puddle-types",
+ "puddle-upstream",
+ "puddle-vm-tests",
+ "puddle-workspace",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

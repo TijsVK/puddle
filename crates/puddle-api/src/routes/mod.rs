@@ -10,14 +10,12 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::events::EventHub;
-use crate::network_health::NetworkHealthService;
 use crate::settings::SettingsRepo;
 use crate::workspaces::WorkspaceService;
 
 mod audit;
 mod events;
 mod meta;
-mod network_health;
 mod pending;
 mod rules;
 mod settings;
@@ -33,7 +31,6 @@ pub(crate) struct AppState {
     pub(crate) events: Arc<EventHub>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) workspaces: Arc<dyn WorkspaceService>,
-    pub(crate) network_health: Arc<dyn NetworkHealthService>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }
@@ -43,7 +40,6 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(meta::health))
         .routes(routes!(events::events))
-        .routes(routes!(network_health::network_health))
         .routes(routes!(pending::list_pending))
         .routes(routes!(pending::inbox))
         .routes(routes!(pending::get_pending))

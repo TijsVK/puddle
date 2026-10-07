@@ -13,7 +13,6 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use puddle_store::Clock;
 use puddle_types::{Event, EventSink, SandboxStatus, WorkspaceId, WorkspaceStep};
-use sha2::{Digest, Sha256};
 use tokio::sync::watch;
 
 use crate::workspaces::{
@@ -342,50 +341,13 @@ fn delete_check(entry: &Entry) -> DeleteCheck {
         .status
         .is_down()
         .then(|| entry.record.name.clone());
-    let mut check = DeleteCheck {
-        workspace: entry.record.id.clone(),
-        repos: entry.unsaved.repos.clone(),
-        other: entry.unsaved.other.clone(),
-        errors: entry.unsaved.errors.clone(),
+    DeleteCheck::new(
+        entry.record.id.clone(),
+        entry.unsaved.repos.clone(),
+        entry.unsaved.other.clone(),
+        entry.unsaved.errors.clone(),
         removes_sandbox,
-        fingerprint: String::new(),
-    };
-    check.fingerprint = fingerprint(&check);
-    check
-}
-
-/// A digest over everything a user sees in the report, so a delete can prove it is for that
-/// report.
-fn fingerprint(check: &DeleteCheck) -> String {
-    let mut hash = Sha256::new();
-    let mut put = |text: &str| {
-        hash.update(u64::try_from(text.len()).unwrap_or(u64::MAX).to_be_bytes());
-        hash.update(text.as_bytes());
-    };
-    let mut list = |name: &str, l: &Listing| {
-        put(name);
-        for item in &l.items {
-            put(item);
-        }
-        put(&l.more.to_string());
-    };
-    for repo in &check.repos {
-        list(&format!("dir:{}", repo.dir), &Listing::default());
-        list("uncommitted", &repo.uncommitted);
-        list("unpushed", &repo.unpushed);
-        list("stashes", &repo.stashes);
-    }
-    list("other", &check.other);
-    let mut errors = Listing::default();
-    errors.items.clone_from(&check.errors);
-    list("errors", &errors);
-    hash.finalize()
-        .iter()
-        .fold(String::with_capacity(64), |mut out, byte| {
-            use std::fmt::Write as _;
-            let _ = write!(out, "{byte:02x}");
-            out
-        })
+    )
 }
 
 impl WorkspaceService for FakeWorkspaces {

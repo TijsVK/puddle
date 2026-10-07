@@ -120,28 +120,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/network-health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The proxy setup puddle sees (PAC, WPAD, fixed proxy or environment), how it signs in to the
-         *     company proxy, the company roots copied into workspaces, the route chosen per destination
-         *     and whether image pulls go through the pull proxy. Safe to show: it holds no password, token,
-         *     proxy credential or PAC script. A client refetches on the `network_changed` event.
-         */
-        get: operations["network_health"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/pending": {
         parameters: {
             query?: never;
@@ -878,16 +856,6 @@ export interface components {
             /** @description Microsoft's VS Code server and its licence terms. */
             vscode_server: components["schemas"]["Consent"];
         };
-        /** @description A proxy that did not answer and is tried last for a while. */
-        DeadProxy: {
-            /** @description `host:port`. */
-            proxy: string;
-            /**
-             * Format: int64
-             * @description Seconds until it is tried in its normal order again, if the network does not change first.
-             */
-            retry_in_secs: number;
-        };
         /** @description What an approve or deny did (R-16, R-17). */
         DecisionOutcome: {
             /** @description Other open requests the new rule closed the same way. */
@@ -1089,14 +1057,6 @@ export interface components {
             id: number;
             /** @enum {string} */
             type: "audit_appended";
-        } | {
-            /**
-             * Format: int64
-             * @description The network epoch that began; it only grows while puddle runs.
-             */
-            epoch: number;
-            /** @enum {string} */
-            type: "network_changed";
         };
         /** @description A bounded list of lines from the unsaved-work check. */
         FindingList: {
@@ -1186,24 +1146,6 @@ export interface components {
             /** @description Other special-purpose ranges. */
             special: boolean | null;
         };
-        /** @description `GET /api/network-health`: everything puddle knows about how it reaches the internet. */
-        NetworkHealth: {
-            /**
-             * Format: int64
-             * @description Epoch ms the report was made.
-             */
-            generated_at: number;
-            /** @description The proxy setup. */
-            proxy: components["schemas"]["ProxyReport"];
-            /** @description Image pulls. */
-            pull_proxy: components["schemas"]["PullProxyReport"];
-            /** @description Company roots copied into workspaces. */
-            roots: components["schemas"]["RootsReport"];
-            /** @description Routes chosen so far in this network epoch, sorted by host (at most 100). */
-            routes: components["schemas"]["RouteDecision"][];
-            /** @description Signing in to the proxy. */
-            sign_in: components["schemas"]["SignInReport"];
-        };
         /** @description A rule to create directly (not from a pending request). */
         NewRuleRequest: {
             /** @description Allow or deny. */
@@ -1238,11 +1180,6 @@ export interface components {
              */
             repo_url: string;
         };
-        /**
-         * @description Whether the PAC script or WPAD answered.
-         * @enum {string}
-         */
-        PacState: "not_used" | "not_asked" | "answering" | "unreachable";
         /**
          * @description How a rule's pattern matches.
          * @enum {string}
@@ -1357,59 +1294,6 @@ export interface components {
             /** @description The sandbox that asked. */
             sandbox: components["schemas"]["SandboxName"];
         };
-        /**
-         * @description What puddle found out about the proxy setup.
-         * @enum {string}
-         */
-        ProxyDetected: "pac" | "wpad" | "static" | "env" | "direct";
-        /**
-         * @description Where puddle gets its proxy setting from.
-         * @enum {string}
-         */
-        ProxyMode: "system" | "direct" | "manual";
-        /** @description The proxy setup puddle sees. */
-        ProxyReport: {
-            /** @description Automatic detection (WPAD) is on. */
-            auto_detect: boolean;
-            /**
-             * Format: int32
-             * @description How many destinations the fixed settings exempt (the bypass list's length).
-             */
-            bypass_entries: number;
-            /** @description Proxies marked unreachable. */
-            dead_proxies: components["schemas"]["DeadProxy"][];
-            /** @description What was found. */
-            detected: components["schemas"]["ProxyDetected"];
-            /**
-             * Format: int64
-             * @description The network epoch; it grows each time a network or settings change is noticed.
-             */
-            epoch: number;
-            /** @description The fixed proxy for plain HTTP (`host:port`), or `null`. */
-            http_proxy: string | null;
-            /** @description The fixed proxy for HTTPS (`host:port`), or `null`. */
-            https_proxy: string | null;
-            /**
-             * Format: int64
-             * @description Epoch ms when the last change was noticed; `null` when none since puddle started.
-             */
-            last_change_at: number | null;
-            /** @description Where the setting comes from. */
-            mode: components["schemas"]["ProxyMode"];
-            /** @description Whether the PAC or WPAD answered. */
-            pac_state: components["schemas"]["PacState"];
-            /** @description The PAC script's address, without user info, query or fragment; `null` when none. */
-            pac_url: string | null;
-            /** @description Why the system settings could not be read; `null` when they could. */
-            settings_error: string | null;
-        };
-        /** @description Image pulls and the pull proxy. */
-        PullProxyReport: {
-            /** @description Image pulls go through puddle's pull proxy (where the rules and the guard apply). */
-            active: boolean;
-            /** @description The pull proxy reaches the internet through the company proxy setup above. */
-            via_upstream: boolean;
-        };
         /** @description What one checkout holds that is not on a remote. */
         RepoFindings: {
             /** @description Whether nothing in it would be lost. */
@@ -1447,61 +1331,6 @@ export interface components {
              */
             value: number;
         };
-        /**
-         * @description A certificate kind.
-         * @enum {string}
-         */
-        RootKind: "root" | "intermediate";
-        /** @description The company roots puddle copied into workspaces. */
-        RootsReport: {
-            /** @description What workspaces get. */
-            certificates: components["schemas"]["SyncedRoot"][];
-            /**
-             * Format: int32
-             * @description How many intermediates workspaces get.
-             */
-            intermediates: number;
-            /**
-             * Format: int32
-             * @description How many trust anchors workspaces get.
-             */
-            roots: number;
-            /** @description What was left out. */
-            skipped: components["schemas"]["SkippedRoot"][];
-            /**
-             * @description Whether the host's certificate stores have been read (false until the first sync, and
-             *     on systems where puddle has no store to read).
-             */
-            synced: boolean;
-            /**
-             * Format: int64
-             * @description Epoch ms of the last read; `null` when none.
-             */
-            synced_at: number | null;
-            /** @description Stores that could not be read, with the system's reason. */
-            unreadable_stores: string[];
-        };
-        /** @description The route puddle chose for one destination in this network epoch. */
-        RouteDecision: {
-            /** @description The hops in order: `PROXY host:port` or `DIRECT`. */
-            hops: string[];
-            /** @description The host, from a guest request: escape it. */
-            host: string;
-            /**
-             * Format: int32
-             * @description The port.
-             */
-            port: number;
-            /** @description `http` or `https`. */
-            scheme: string;
-            /** @description How it was chosen. */
-            source: components["schemas"]["RouteSource"];
-        };
-        /**
-         * @description How a route was chosen.
-         * @enum {string}
-         */
-        RouteSource: "loopback" | "disabled" | "manual" | "pac" | "pac_unsupported" | "system" | "env" | "bypass" | "no_proxy";
         /** @description A rule. */
         Rule: {
             /**
@@ -1628,46 +1457,6 @@ export interface components {
             /** @description Whether the browser window's zoom hotkeys work. */
             zoom_hotkeys: boolean | null;
         };
-        /** @description The latest sign-in attempt to one proxy. */
-        SignInAttempt: {
-            /**
-             * Format: int64
-             * @description Epoch ms.
-             */
-            at: number;
-            /** @description More, in words; `null` when there is nothing to add. */
-            detail: string | null;
-            /** @description `host:port`. */
-            proxy: string;
-            /** @description How it ended. */
-            result: components["schemas"]["SignInResult"];
-            /** @description The scheme sent (`Negotiate`, `NTLM`, `Basic`); `null` when none was. */
-            scheme: string | null;
-        };
-        /** @description How puddle signs in to the company proxy. */
-        SignInReport: {
-            /** @description The latest attempt per proxy, newest first. */
-            attempts: components["schemas"]["SignInAttempt"][];
-            /**
-             * @description The schemes puddle can answer a proxy with, lower case (`negotiate`, `ntlm`, `basic`).
-             *     Empty: puddle can not sign in to a proxy on this system.
-             */
-            methods: string[];
-        };
-        /**
-         * @description How a sign-in to a proxy ended.
-         * @enum {string}
-         */
-        SignInResult: "signed_in" | "not_required" | "failed" | "unsupported";
-        /** @description A certificate in the host's stores that workspaces do not get. */
-        SkippedRoot: {
-            /** @description SHA-256 of the certificate, lower-case hex. */
-            fingerprint: string;
-            /** @description Why, in words. */
-            reason: string;
-            /** @description The subject's common name, when readable. */
-            subject: string | null;
-        };
         /** @description Whether a sandbox's new pending requests are being suppressed (R-13). */
         Suppression: {
             /** @description Whether requests are being suppressed now. */
@@ -1679,22 +1468,6 @@ export interface components {
             count: number;
             /** @description The sandbox. */
             sandbox: components["schemas"]["SandboxName"];
-        };
-        /** @description A certificate copied into workspaces. */
-        SyncedRoot: {
-            /** @description SHA-256 of the certificate, lower-case hex. */
-            fingerprint: string;
-            /** @description Root or intermediate. */
-            kind: components["schemas"]["RootKind"];
-            /**
-             * Format: int64
-             * @description Expiry, epoch ms.
-             */
-            not_after: number;
-            /** @description The stores it was found in (`LocalMachine\Root\.GroupPolicy`). */
-            sources: string[];
-            /** @description The subject's common name, when it has one. Comes from a certificate: escape it. */
-            subject: string | null;
         };
         /**
          * @description The colour theme of puddle's window.
@@ -2203,71 +1976,6 @@ export interface operations {
             };
             /** @description puddle failed; see its log */
             500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-        };
-    };
-    network_health: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description the report */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NetworkHealth"];
-                };
-            };
-            /** @description missing or wrong bearer token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description forbidden origin */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description Host is not the API's own address */
-            421: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description puddle failed; see its log */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description the report is not available in this build */
-            503: {
                 headers: {
                     [name: string]: unknown;
                 };

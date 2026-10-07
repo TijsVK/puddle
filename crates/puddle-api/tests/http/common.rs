@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, FakeLauncher, FakeWorkspaces, Launcher,
-    MemorySettings, NetworkHealthService, RunningApi, Services, SettingsRepo,
+    MemorySettings, RunningApi, Services, SettingsRepo,
 };
 use puddle_store::{Limits, ManualClock, Store};
 use puddle_types::{EgressRequest, Host, PendingId, SandboxName, SuffixAllows};
@@ -40,24 +40,15 @@ pub(crate) async fn start() -> Api {
 }
 
 pub(crate) async fn start_with(config: ApiConfig) -> Api {
-    start_inner(config, true, None).await
-}
-
-/// An API serving this network-health report.
-pub(crate) async fn start_with_network(network: Arc<dyn NetworkHealthService>) -> Api {
-    start_inner(ApiConfig::default(), true, Some(network)).await
+    start_inner(config, true).await
 }
 
 /// An API whose services have no workspaces implementation (what `Services::new` gives).
 pub(crate) async fn start_without_workspaces() -> Api {
-    start_inner(ApiConfig::default(), false, None).await
+    start_inner(ApiConfig::default(), false).await
 }
 
-async fn start_inner(
-    config: ApiConfig,
-    with_workspaces: bool,
-    network: Option<Arc<dyn NetworkHealthService>>,
-) -> Api {
+async fn start_inner(config: ApiConfig, with_workspaces: bool) -> Api {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
     let store = Arc::new(
@@ -84,10 +75,6 @@ async fn start_inner(
         services.with_workspaces(Arc::new(workspaces.clone()))
     } else {
         services
-    };
-    let services = match network {
-        Some(network) => services.with_network_health(network),
-        None => services,
     };
     let server = ApiServer::bind(config, token.clone(), services)
         .await

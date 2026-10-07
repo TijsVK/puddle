@@ -23,14 +23,7 @@ use utoipa::ToSchema;
 
 use crate::error::ApiError;
 
-mod network_health;
 mod workspaces;
-
-pub use network_health::{
-    DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyReport, PullProxyReport,
-    RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt, SignInReport, SignInResult,
-    SkippedRoot, SyncedRoot,
-};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,
