@@ -23,6 +23,7 @@ pub struct SystemProbe {
     runtime_dir: PathBuf,
     expected: RuntimeVersion,
     dev: DevOverride,
+    keep_boot_logs: Option<PathBuf>,
     opened: OnceCell<BundledRuntime>,
 }
 
@@ -35,8 +36,17 @@ impl SystemProbe {
             runtime_dir,
             expected,
             dev,
+            keep_boot_logs: None,
             opened: OnceCell::new(),
         }
+    }
+
+    /// Keeps msb's logs of a failed test boot in a new folder inside `dir` (see
+    /// [`boot::test_boot`]). Unset, a failed boot's logs go with its throwaway home.
+    #[must_use]
+    pub fn with_keep_boot_logs(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.keep_boot_logs = Some(dir.into());
+        self
     }
 
     /// Probes the installed runtime: `runtime/` next to `exe` (normally
@@ -132,7 +142,12 @@ impl Probe for SystemProbe {
     }
 
     fn boot(&self, limit: Duration) -> BootFacts {
-        boot::test_boot(&self.runtime_dir, std::env::consts::ARCH, limit)
+        boot::test_boot(
+            &self.runtime_dir,
+            std::env::consts::ARCH,
+            limit,
+            self.keep_boot_logs.as_deref(),
+        )
     }
 
     fn job(&self) -> Option<JobFacts> {

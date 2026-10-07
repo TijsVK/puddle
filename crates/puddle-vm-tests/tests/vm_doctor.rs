@@ -27,10 +27,13 @@ const BAR: Duration = Duration::from_secs(30);
 /// Windows's, and CI installs it as `libkrunfw.so.5` for the SDK's explicit config.
 const LINUX_LIBKRUNFW: &str = "libkrunfw.so.5.6.1";
 
+fn settings() -> Settings {
+    Settings::from_lookup(|var| std::env::var(var).ok()).expect("VM settings")
+}
+
 /// The runtime pair CI installed (`PUDDLE_VM_RUNTIME_DIR`).
 fn ci_runtime() -> RuntimePair {
-    let settings = Settings::from_lookup(|var| std::env::var(var).ok()).expect("VM settings");
-    RuntimePair::find_in(&settings.runtime_dir).expect("runtime pair")
+    RuntimePair::find_in(&settings().runtime_dir).expect("runtime pair")
 }
 
 /// A puddle-style runtime folder in `root` with a copy (never a link: the permission test
@@ -51,7 +54,9 @@ fn runtime_copy(root: &Path) -> PathBuf {
 }
 
 fn run(dir: PathBuf, expected: RuntimeVersion, options: &Options) -> Report {
-    let probe = SystemProbe::new(dir, expected, DevOverride::none());
+    // A failed test boot's msb logs land beside the other kept sandbox logs (the CI artifact).
+    let probe = SystemProbe::new(dir, expected, DevOverride::none())
+        .with_keep_boot_logs(settings().kept_logs());
     let report = diagnose(&probe, options, "vm-test");
     eprintln!("{}", report.to_text());
     report
@@ -99,8 +104,9 @@ fn vm_doctor_is_all_green_with_a_test_boot_under_30_s() {
 fn vm_test_boot_passes_20_in_a_row_without_a_retry() {
     let root = tempfile::tempdir().unwrap();
     let dir = runtime_copy(root.path());
+    let kept = settings().kept_logs();
     for round in 1..=20 {
-        let facts = puddle_doctor::boot::test_boot(&dir, "x86_64", BAR);
+        let facts = puddle_doctor::boot::test_boot(&dir, "x86_64", BAR, Some(&kept));
         let ok = matches!(
             &facts,
             puddle_doctor::BootFacts::Ran {
@@ -110,7 +116,11 @@ fn vm_test_boot_passes_20_in_a_row_without_a_retry() {
                 }
             }
         );
-        assert!(ok, "boot {round} of 20: {facts:?}");
+        assert!(
+            ok,
+            "boot {round} of 20: {facts:?} (msb's logs kept in {})",
+            kept.display()
+        );
     }
 }
 

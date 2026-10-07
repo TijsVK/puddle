@@ -4,7 +4,8 @@
 //! hypervisor made a VM, the guest kernel and msb's agent came up, and a program ran inside.
 //!
 //! It needs no image download and no network. msb runs with a throwaway `MSB_HOME`, so the test
-//! leaves nothing in puddle's real one.
+//! leaves nothing in puddle's real one. The runtime logs at `debug`; when a boot fails and a keep
+//! folder is given, its `logs/` folder (runtime, kernel and exec logs) is copied there first.
 
 use std::path::Path;
 use std::process::Command;
@@ -13,11 +14,18 @@ use std::time::{Duration, Instant};
 use puddle_runtime::{GuestArch, RuntimeEnv, RuntimeLayout};
 
 use crate::diagnose::PROBE_EXIT_CODE;
-use crate::facts::BootFacts;
+use crate::facts::{BootFacts, ProcessOutcome};
 use crate::launch;
 
 /// The probe's path inside the guest.
 const PROBE_GUEST_PATH: &str = "/probe";
+
+/// The test VM's sandbox name. Named, so msb keeps the sandbox (and its logs) after the probe
+/// exits instead of removing it as a one-off run; the throwaway home goes with it.
+const BOOT_SANDBOX: &str = "puddle-doctor-boot";
+
+/// Log level of the test VM's runtime (`runtime.log`): the VMM trace a failed boot needs.
+const BOOT_LOG_LEVEL: &str = "debug";
 
 /// A statically linked x86-64 Linux program of 132 bytes, without libc or loader: one ELF header,
 /// one loadable segment, and the code `mov edi, 42; mov eax, 231 (exit_group); syscall`.
@@ -97,9 +105,16 @@ pub fn write_rootfs(dir: &Path, probe_program: &[u8]) -> std::io::Result<()> {
 }
 
 /// Boots a test VM with the msb in `runtime_dir`, giving up after `limit`. Uses a throwaway msb
-/// home and root file system in the temp dir;.
+/// home and root file system in the temp dir. If the probe doesn't exit with
+/// [`PROBE_EXIT_CODE`] and `keep_logs` is set, msb's logs of the boot are copied to
+/// `<keep_logs>/puddle-doctor-boot-<ms since 1970>/logs/` before the home is deleted.
 #[must_use]
-pub fn test_boot(runtime_dir: &Path, arch: &str, limit: Duration) -> BootFacts {
+pub fn test_boot(
+    runtime_dir: &Path,
+    arch: &str,
+    limit: Duration,
+    keep_logs: Option<&Path>,
+) -> BootFacts {
     let Some(probe) = GuestArch::parse(arch).and_then(probe_for) else {
         return BootFacts::UnsupportedArch {
             arch: arch.to_owned(),
@@ -133,15 +148,70 @@ pub fn test_boot(runtime_dir: &Path, arch: &str, limit: Duration) -> BootFacts {
         &mut command(&layout, &rootfs),
         limit.saturating_sub(start.elapsed()),
     );
+    let booted = matches!(
+        outcome,
+        ProcessOutcome::Exited {
+            code: Some(PROBE_EXIT_CODE),
+            ..
+        }
+    );
+    if let Some(dir) = keep_logs.filter(|_| !booted) {
+        keep_boot_logs(layout.home(), dir);
+    }
     BootFacts::Ran { outcome }
+}
+
+/// Copies the test sandbox's log files from msb `home` to a new folder in `dir`, best effort: a
+/// boot that never got a log folder has nothing to keep, and keeping must not change the result.
+fn keep_boot_logs(home: &Path, dir: &Path) {
+    let from = home.join("sandboxes").join(BOOT_SANDBOX).join("logs");
+    let Ok(entries) = std::fs::read_dir(&from) else {
+        return;
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    let Some(to) = new_folder(dir, &format!("{BOOT_SANDBOX}-{stamp}")) else {
+        return;
+    };
+    let to = to.join("logs");
+    if std::fs::create_dir_all(&to).is_err() {
+        return;
+    }
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_file() {
+            let _ = std::fs::copy(&path, to.join(entry.file_name()));
+        }
+    }
+}
+
+/// Creates and returns a folder in `dir` named `name`, or `name-2`, `name-3`, ... when taken, so
+/// two boots kept in the same millisecond don't share one. `None` if none can be created.
+fn new_folder(dir: &Path, name: &str) -> Option<std::path::PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    (1..=100).find_map(|n| {
+        let path = if n == 1 {
+            dir.join(name)
+        } else {
+            dir.join(format!("{name}-{n}"))
+        };
+        std::fs::create_dir(&path).ok().map(|()| path)
+    })
 }
 
 fn command(layout: &RuntimeLayout, rootfs: &Path) -> Command {
     let mut cmd = Command::new(layout.msb_path());
     RuntimeEnv::plan(layout, std::env::vars_os()).apply_to(&mut cmd);
-    cmd.arg("run")
-        .arg(rootfs)
-        .args(["--no-stdin", "--", PROBE_GUEST_PATH]);
+    cmd.arg("run").arg(rootfs).args([
+        "--name",
+        BOOT_SANDBOX,
+        "--log-level",
+        BOOT_LOG_LEVEL,
+        "--no-stdin",
+        "--",
+        PROBE_GUEST_PATH,
+    ]);
     cmd
 }
 
@@ -199,7 +269,12 @@ mod tests {
     #[test]
     fn unknown_architectures_are_not_booted() {
         assert_eq!(
-            test_boot(Path::new("/nonexistent"), "riscv64", Duration::from_secs(1)),
+            test_boot(
+                Path::new("/nonexistent"),
+                "riscv64",
+                Duration::from_secs(1),
+                None
+            ),
             BootFacts::UnsupportedArch {
                 arch: "riscv64".into()
             }
@@ -209,11 +284,48 @@ mod tests {
     #[test]
     fn other_architectures_are_not_booted() {
         assert_eq!(
-            test_boot(Path::new("/nonexistent"), "aarch64", Duration::from_secs(1)),
+            test_boot(
+                Path::new("/nonexistent"),
+                "aarch64",
+                Duration::from_secs(1),
+                None
+            ),
             BootFacts::UnsupportedArch {
                 arch: "aarch64".into()
             }
         );
+    }
+
+    #[test]
+    fn a_failed_boots_logs_are_kept_in_a_new_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let logs = home.path().join("sandboxes/puddle-doctor-boot/logs");
+        std::fs::create_dir_all(logs.join("nested")).unwrap();
+        std::fs::write(logs.join("runtime.log"), b"vmm").unwrap();
+        std::fs::write(logs.join("kernel.log"), b"").unwrap();
+        let keep = tempfile::tempdir().unwrap();
+        keep_boot_logs(home.path(), keep.path());
+        keep_boot_logs(home.path(), keep.path());
+        let kept: Vec<_> = std::fs::read_dir(keep.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        for dir in &kept {
+            let name = dir.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(name.starts_with("puddle-doctor-boot-"), "{name}");
+            assert_eq!(std::fs::read(dir.join("logs/runtime.log")).unwrap(), b"vmm");
+            assert!(dir.join("logs/kernel.log").is_file());
+            assert!(!dir.join("logs/nested").exists());
+        }
+    }
+
+    #[test]
+    fn a_boot_without_logs_keeps_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let keep = tempfile::tempdir().unwrap();
+        keep_boot_logs(home.path(), keep.path());
+        assert_eq!(std::fs::read_dir(keep.path()).unwrap().count(), 0);
     }
 
     #[test]
@@ -228,7 +340,20 @@ mod tests {
             .get_args()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(args, ["run", "/r", "--no-stdin", "--", "/probe"]);
+        assert_eq!(
+            args,
+            [
+                "run",
+                "/r",
+                "--name",
+                "puddle-doctor-boot",
+                "--log-level",
+                "debug",
+                "--no-stdin",
+                "--",
+                "/probe"
+            ]
+        );
         assert!(
             cmd.get_envs()
                 .any(|(k, v)| k == "MSB_HOME" && v == Some(layout.home().as_os_str()))

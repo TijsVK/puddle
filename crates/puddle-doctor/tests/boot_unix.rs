@@ -43,13 +43,15 @@ const LIMIT: Duration = Duration::from_secs(20);
 fn msb_runs_the_probe_in_a_rootfs_with_a_private_home() {
     // Checks what msb is given, then runs the probe the way the guest would.
     let dir = runtime(
-        r#"[ "$1" = run ] && [ "$3" = --no-stdin ] && [ "$4" = -- ] && [ "$5" = /probe ] || exit 9
+        r#"[ "$1" = run ] && [ "$3" = --name ] && [ "$4" = puddle-doctor-boot ] || exit 10
+[ "$5" = --log-level ] && [ "$6" = debug ] || exit 11
+[ "$7" = --no-stdin ] && [ "$8" = -- ] && [ "$9" = /probe ] || exit 9
 case "$MSB_HOME" in */home) ;; *) exit 8 ;; esac
 [ -z "$MSB_USER_SET" ] || exit 7
 [ "$(cut -d: -f1,3,7 "$2/etc/passwd")" = root:0:/probe ] || exit 6
 exec "$2/probe""#,
     );
-    let facts = test_boot(dir.path(), "x86_64", LIMIT);
+    let facts = test_boot(dir.path(), "x86_64", LIMIT, None);
     let expected = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         Some(PROBE_EXIT_CODE)
     } else {
@@ -62,7 +64,7 @@ exec "$2/probe""#,
 #[test]
 fn a_failed_boot_is_reported_once() {
     let dir = runtime("echo 'error: something else' >&2; exit 1");
-    let facts = test_boot(dir.path(), "x86_64", LIMIT);
+    let facts = test_boot(dir.path(), "x86_64", LIMIT, None);
     let BootFacts::Ran {
         outcome: ProcessOutcome::Exited { stderr_tail, .. },
     } = facts
@@ -75,7 +77,7 @@ fn a_failed_boot_is_reported_once() {
 #[test]
 fn a_hanging_boot_times_out() {
     let dir = runtime("sleep 30");
-    let facts = test_boot(dir.path(), "x86_64", Duration::from_millis(500));
+    let facts = test_boot(dir.path(), "x86_64", Duration::from_millis(500), None);
     assert!(matches!(
         facts,
         BootFacts::Ran {
@@ -87,7 +89,43 @@ fn a_hanging_boot_times_out() {
 #[test]
 fn a_relative_runtime_dir_is_a_setup_failure() {
     assert!(matches!(
-        test_boot(Path::new("relative/runtime"), "x86_64", LIMIT),
+        test_boot(Path::new("relative/runtime"), "x86_64", LIMIT, None),
         BootFacts::SetupFailed { .. }
     ));
+}
+
+/// A fake msb that leaves a runtime log for the test sandbox, as msb does, and exits with `code`.
+fn logging_runtime(code: i32) -> tempfile::TempDir {
+    runtime(&format!(
+        r#"logs="$MSB_HOME/sandboxes/$4/logs"
+mkdir -p "$logs" && echo "vmm trace" > "$logs/runtime.log" && : > "$logs/kernel.log"
+exit {code}"#
+    ))
+}
+
+#[test]
+fn a_failed_boot_keeps_msbs_logs_when_asked() {
+    let dir = logging_runtime(1);
+    let keep = tempfile::tempdir().unwrap();
+    let facts = test_boot(dir.path(), "x86_64", LIMIT, Some(keep.path()));
+    assert_eq!(exit_code(&facts), Some(1));
+    let kept: Vec<_> = std::fs::read_dir(keep.path())
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(
+        std::fs::read_to_string(kept[0].join("logs/runtime.log")).unwrap(),
+        "vmm trace\n"
+    );
+    assert!(kept[0].join("logs/kernel.log").is_file());
+}
+
+#[test]
+fn a_good_boot_keeps_nothing() {
+    let dir = logging_runtime(PROBE_EXIT_CODE);
+    let keep = tempfile::tempdir().unwrap();
+    let facts = test_boot(dir.path(), "x86_64", LIMIT, Some(keep.path()));
+    assert_eq!(exit_code(&facts), Some(PROBE_EXIT_CODE));
+    assert_eq!(std::fs::read_dir(keep.path()).unwrap().count(), 0);
 }
