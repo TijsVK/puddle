@@ -242,9 +242,10 @@ store.
   the answer is "unavailable" (`SERVFAIL` in the guest). Each lookup has a timeout. An unreadable
   rules engine is "unavailable", never "not allowed".
 
-The stub answers names that never leave the sandbox itself (single labels, `localhost`, `.local`,
-`.internal`, `.home.arpa`, `.svc`, `.cluster.local`, reverse zones, names that end in a number)
-with `NXDOMAIN`, and every other record type (`AAAA`, `HTTPS`, ...) with no data, so dual-stack
+The stub answers names that can never be a connect target itself (reverse zones, names that end in
+a number) with `NXDOMAIN`. Every other name, including single labels and zones such as `.local` or
+`.internal`, is decided by the rules like any other, so a company's intranet names work once
+allowed. Every other record type (`AAAA`, `HTTPS`, ...) gets no data, so dual-stack
 clients use the stand-in at once.
 
 ## 7. Out of scope here

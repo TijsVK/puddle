@@ -283,17 +283,9 @@ async fn aaaa_is_nodata_without_asking_and_nxdomain_when_the_name_is_known_missi
 }
 
 #[tokio::test]
-async fn names_that_stay_in_the_sandbox_are_nxdomain_without_asking() {
+async fn names_that_can_never_be_a_connect_target_are_nxdomain_without_asking() {
     let (stub, fake, _) = answers_with(stand_in());
-    for name in [
-        "printer",
-        "localhost",
-        "host.local",
-        "db.default.svc.cluster.local",
-        "4.3.2.1.in-addr.arpa",
-        "box.internal",
-        "1.2.3.4",
-    ] {
+    for name in ["4.3.2.1.in-addr.arpa", "1.2.3.4"] {
         for qtype in [TYPE_A, 28, TYPE_SRV, TYPE_TXT, 12] {
             let r = ask_stub(&stub, name, qtype).await;
             assert_eq!(r.rcode(), 3, "{name} type {qtype}");
@@ -445,7 +437,7 @@ async fn srv_records_come_with_a_stand_in_for_each_target() {
                 port: 27017,
                 target: "shard0.db.example.net".into(),
             },
-            // Not plain: dropped. A TXT in an SRV answer: dropped. A local target: no stand-in.
+            // Not plain: dropped. A TXT in an SRV answer: dropped. A single label is a target like any other.
             HostRecord::Srv {
                 priority: 0,
                 weight: 1,
@@ -472,8 +464,8 @@ async fn srv_records_come_with_a_stand_in_for_each_target() {
     assert_eq!(r.answers[0].target(6), "shard0.db.example.net");
     assert_eq!(r.answers[1].target(6), "shard1.db.example.net");
     assert_eq!(r.answers[3].target(6), "single-label");
-    // One stand-in per distinct target that isn't local, in the additional section.
-    assert_eq!(r.additional.len(), 2);
+    // One stand-in per distinct target, in the additional section.
+    assert_eq!(r.additional.len(), 3);
     for extra in &r.additional {
         assert_eq!(extra.rtype, TYPE_A);
         assert_eq!(

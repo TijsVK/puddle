@@ -8,7 +8,7 @@
 //!
 //! What the stub answers itself, without asking the host:
 //!
-//! - names that never leave the sandbox ([`names::is_local_only`]): `NXDOMAIN`;
+//! - names that can never be a connect target ([`names::is_local_only`]): `NXDOMAIN`;
 //! - `AAAA` and every other type that isn't forwarded: `NODATA` (so dual-stack clients use the
 //!   stand-in at once), or `NXDOMAIN` when the name is already known not to exist;
 //! - anything it already learned recently (the cache, for the time the host said).

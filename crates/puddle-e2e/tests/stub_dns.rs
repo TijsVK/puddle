@@ -426,17 +426,30 @@ async fn srv_and_txt_are_forwarded_for_an_allowed_name_with_a_stand_in_for_each_
 }
 
 #[tokio::test]
-async fn names_that_stay_in_the_sandbox_never_reach_the_host() {
+async fn names_that_can_never_be_a_connect_target_never_reach_the_host() {
+    let rig = rig().await;
+    let (udp, _) = rig.agent.dns_addrs().unwrap();
+    for name in ["1.0.0.127.in-addr.arpa", "example.123"] {
+        assert_eq!(dns(udp, name, TYPE_A).await.rcode, 3, "{name}");
+    }
+    assert_eq!(footprint(&rig.store), (0, 0));
+    assert_eq!(rig.counted.resolver.lookups(), 0);
+}
+
+#[tokio::test]
+async fn intranet_style_names_are_decided_by_the_rules_like_any_other() {
     let rig = rig().await;
     let (udp, _) = rig.agent.dns_addrs().unwrap();
     for name in [
         "printer",
         "box.local",
+        "wiki.corp.internal",
         "db.default.svc.cluster.local",
-        "1.0.0.127.in-addr.arpa",
     ] {
-        assert_eq!(dns(udp, name, TYPE_A).await.rcode, 3, "{name}");
+        let answer = dns(udp, name, TYPE_A).await;
+        assert_eq!((answer.rcode, answer.answers), (0, 1), "{name}");
     }
+    // No rule allows them: a stand-in, no host lookup, no row from DNS.
     assert_eq!(footprint(&rig.store), (0, 0));
     assert_eq!(rig.counted.resolver.lookups(), 0);
 }

@@ -3,28 +3,17 @@
 
 use puddle_agent_proto::resolve::MAX_NAME;
 
-/// Names (and zones) that never leave the sandbox: answered `NXDOMAIN` here, without asking the
-/// host. Cluster-local DNS (`.svc`, `.cluster.local`) is the cluster's own; `.local` is mDNS;
-/// the reverse zones are never forwarded.
-const LOCAL_SUFFIXES: [&str; 8] = [
-    ".local",
-    ".localhost",
-    ".internal",
-    ".home.arpa",
-    ".in-addr.arpa",
-    ".ip6.arpa",
-    ".svc",
-    ".cluster.local",
-];
+/// Zones that can never be a connect target: the reverse zones are address lookups, not hosts.
+const LOCAL_SUFFIXES: [&str; 2] = [".in-addr.arpa", ".ip6.arpa"];
 
-/// Whether `name` (lower case, no trailing dot) is answered locally with `NXDOMAIN`: a single
-/// label, `localhost`, a local zone, or something shaped like an address (a name never ends in a
-/// number, so it is no host to connect to).
+/// Whether `name` (lower case, no trailing dot) is answered locally with `NXDOMAIN`: empty, a
+/// reverse zone, or something shaped like an address (a name never ends in a number, so it is no
+/// host to connect to). Everything else, including single labels and zones such as `.internal`
+/// or `.local`, goes to the host, which decides by the rules like any other name: a company's
+/// intranet names must work once allowed, and nothing is denied in advance.
 #[must_use]
 pub fn is_local_only(name: &str) -> bool {
     name.is_empty()
-        || !name.contains('.')
-        || name == "localhost"
         || LOCAL_SUFFIXES.iter().any(|zone| name.ends_with(zone))
         || name
             .rsplit('.')
@@ -54,19 +43,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn single_labels_local_zones_and_address_shaped_names_stay_in_the_sandbox() {
+    fn reverse_zones_and_address_shaped_names_stay_in_the_sandbox() {
         for name in [
             "",
-            "localhost",
-            "printer",
-            "host.local",
-            "a.b.localhost",
-            "metadata.google.internal",
-            "router.home.arpa",
             "4.3.2.1.in-addr.arpa",
             "1.0.0.127.ip6.arpa",
-            "db.default.svc",
-            "db.default.svc.cluster.local",
             "1.2.3.4",
             "example.123",
         ] {
@@ -79,6 +60,11 @@ mod tests {
         for name in [
             "example.com",
             "api.github.com",
+            "printer",
+            "localhost",
+            "host.local",
+            "metadata.google.internal",
+            "db.default.svc.cluster.local",
             "xn--bcher-kva.example",
             "x.localdomain.example",
             "notlocal.example",
