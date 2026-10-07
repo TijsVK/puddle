@@ -7,6 +7,7 @@ import {
   NO_FILTER,
   expiryFrom,
   isExpired,
+  isOwn,
   matches,
   patternLabel,
   ruleName,
@@ -52,6 +53,14 @@ describe("reading a rule", () => {
     expect(isExpired(set[1]!, NOW)).toBe(false);
     expect(isExpired(set[2]!, NOW)).toBe(true);
     expect(isExpired({ expires_at: NOW }, NOW)).toBe(true);
+  });
+
+  it("tells your own rules from a rule set's entries", () => {
+    const entry = rule(9, { scope: { type: "set", set: 4 } });
+    expect(isOwn(entry)).toBe(false);
+    expect(isOwn(set[0]!)).toBe(true);
+    expect(scopeLabel(entry)).toBe("A rule set");
+    expect(ruleName(entry)).toBe("allow h9.example.com in a rule set");
   });
 });
 

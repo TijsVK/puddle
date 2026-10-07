@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The rule sets and the System managed hosts (`GET /api/rule-sets`), and what a user does to a
-// set: make one, rename it, delete it, switch it, add an entry. It refetches on `rules_changed`
+// set: make one, rename it, delete it, switch it. Entries are rules (`/api/rules`, scope `set`).
+// It refetches on `rules_changed`
 // and on a resync, and polls slowly as a safety net.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
@@ -9,7 +10,6 @@ import { sentence } from "#lib/rules/model.ts";
 import type { RuleSet, SystemHost } from "#lib/rules/sets.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 
-type Effect = components["schemas"]["Effect"];
 type StoreApi = Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
 
 export type Status = "loading" | "ready" | "failed";
@@ -155,30 +155,6 @@ export class RuleSetsStore {
       this.#put(data.set);
       if (data.closed.length > 0) this.#onChange?.();
       return { ok: true, value: data.closed.length };
-    } catch {
-      return { ok: false, message: DOWN };
-    }
-  }
-
-  /** Adds an entry to one of your sets: a rule with the set's scope. */
-  async addEntry(
-    set: number,
-    pattern: string,
-    effect: Effect,
-  ): Promise<Result> {
-    try {
-      const { data, error } = await this.#api.POST("/api/rules", {
-        body: { scope: { type: "set", set }, pattern, effect },
-      });
-      if (!data) {
-        return {
-          ok: false,
-          message: sentence(error?.message ?? "puddle refused the entry"),
-        };
-      }
-      await this.refresh();
-      this.#onChange?.();
-      return { ok: true };
     } catch {
       return { ok: false, message: DOWN };
     }

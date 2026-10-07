@@ -12,10 +12,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const h = await vi.hoisted(async () => {
   const fakes = await import("#lib/testing/fake-rules.ts");
   const inbox = await import("#lib/testing/fake-inbox.ts");
+  const sets = await import("#lib/testing/fake-rule-sets.ts");
   return {
     api: new fakes.FakeRules(),
+    setsApi: new sets.FakeRuleSets(),
     source: new inbox.FakeSource(),
     rule: fakes.rule,
+    builtIn: sets.builtIn,
+    mine: sets.mine,
+    systemHost: sets.systemHost,
+  };
+});
+
+vi.mock("#lib/stores/rule-sets.svelte.ts", async (original) => {
+  const mod =
+    await original<typeof import("#lib/stores/rule-sets.svelte.ts")>();
+  return {
+    ...mod,
+    ruleSets: new mod.RuleSetsStore({
+      api: h.setsApi as never,
+      source: h.source,
+      pollMs: 60_000,
+    }),
   };
 });
 
@@ -31,11 +49,12 @@ vi.mock("#lib/stores/rules.svelte.ts", async (original) => {
   };
 });
 
+import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
 import { rulesStore } from "#lib/stores/rules.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import RulesPage from "./+page.svelte";
 
-const { api, source, rule } = h;
+const { api, setsApi, source, rule, builtIn, mine, systemHost } = h;
 
 beforeEach(() => {
   api.rules = [];
@@ -45,6 +64,14 @@ beforeEach(() => {
   api.refuse = null;
   rulesStore.rules = [];
   rulesStore.status = "loading";
+  setsApi.sets = [];
+  setsApi.system = [];
+  setsApi.calls = [];
+  setsApi.bodies = [];
+  setsApi.down = false;
+  ruleSets.sets = [];
+  ruleSets.system = [];
+  ruleSets.status = "loading";
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 });
 afterEach(cleanup);
@@ -523,5 +550,113 @@ describe("live", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("rule sets and System managed (rules spec §7)", () => {
+  async function withSets() {
+    setsApi.sets = [
+      builtIn("github", { name: "GitHub" }),
+      mine(4, {
+        name: "Client X",
+        entries: [
+          {
+            pattern: "x.example",
+            pattern_kind: "exact",
+            effect: "deny",
+            note: "",
+            rule_id: 9,
+            expires_at: null,
+          },
+        ],
+      }),
+    ];
+    setsApi.system = [systemHost("open-vsx.org")];
+    api.rules = [
+      rule(1, { pattern: "mine.example" }),
+      rule(9, { pattern: "x.example", scope: { type: "set", set: 4 } }),
+    ];
+    await loaded();
+    await waitFor(() => expect(ruleSets.status).toBe("ready"));
+  }
+  const section = (name: string) =>
+    screen.getByRole("region", { name }) as HTMLElement;
+
+  it("keeps a set's entries out of your rules and shows them under the set", async () => {
+    await withSets();
+    const table = screen.getAllByRole("table")[0]!;
+    expect(within(table).getByText("mine.example")).toBeInTheDocument();
+    expect(within(table).queryByText("x.example")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("1 rule", { selector: ".count" }),
+    ).toBeInTheDocument();
+    const sets = section("Rule sets");
+    const card = within(sets).getByRole("article", { name: "Client X" });
+    expect(within(card).getByText("x.example")).toBeInTheDocument();
+    const system = section("System managed");
+    expect(within(system).getByText("open-vsx.org")).toBeInTheDocument();
+    expect(
+      within(system).getByText(/bundled code-server/, { selector: "b" }),
+    ).toBeInTheDocument();
+  });
+
+  it("asks before turning a set on for every workspace", async () => {
+    await withSets();
+    const card = within(section("Rule sets")).getByRole("article", {
+      name: "GitHub",
+    });
+    await fireEvent.click(
+      within(card).getByRole("switch", { name: "On for every workspace" }),
+    );
+    const confirm = await screen.findByRole("alertdialog", {
+      name: "Turn on for every workspace?",
+    });
+    await fireEvent.click(
+      within(confirm).getByRole("button", { name: "Turn on everywhere" }),
+    );
+    await waitFor(() =>
+      expect(setsApi.calls).toContain("PUT /api/rule-sets/{id}/switch"),
+    );
+    expect(setsApi.bodies.at(-1)).toEqual({ sandbox: null, enabled: true });
+  });
+
+  it("adds an entry into a set and deletes one", async () => {
+    await withSets();
+    const card = within(section("Rule sets")).getByRole("article", {
+      name: "Client X",
+    });
+    await fireEvent.click(
+      within(card).getByRole("button", { name: "Add entry" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Add a rule" });
+    expect(
+      within(dialog).getByRole("radio", { name: /In rule set Client X/ }),
+    ).toBeChecked();
+    await fireEvent.input(within(dialog).getByLabelText("Host"), {
+      target: { value: "y.example" },
+    });
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Add rule" }),
+    );
+    // The set is on for every workspace, so it asks first.
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent(
+      "Allow y.example in rule set Client X, which is on for every workspace",
+    );
+    await fireEvent.click(
+      within(confirm).getByRole("button", { name: "Allow in every workspace" }),
+    );
+    await waitFor(() =>
+      expect(api.bodies.at(-1)).toMatchObject({
+        pattern: "y.example",
+        scope: { type: "set", set: 4 },
+      }),
+    );
+    await fireEvent.click(
+      within(card).getByRole("button", {
+        name: "Delete x.example from Client X",
+      }),
+    );
+    await waitFor(() => expect(api.calls).toContain("DELETE /api/rules/{id}"));
   });
 });

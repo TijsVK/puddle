@@ -98,6 +98,7 @@ describe("asInboxEvent", () => {
         decided_at: null,
         decided_by: null,
         rule_id: null,
+        rule_set: null,
         blocked_by: null,
       },
       registrable_domain: "example.com",

@@ -5,6 +5,7 @@
     expiryFrom,
     workspaceNameError,
   } from "#lib/rules/model.ts";
+  import type { RuleSetChoice } from "#lib/decision/model.ts";
   import type { NewRule, ServerError } from "#lib/stores/rules.svelte.ts";
   import FormDialog from "./FormDialog.svelte";
 
@@ -14,6 +15,7 @@
   let {
     open = $bindable(false),
     workspaces,
+    sets = [],
     now,
     error = $bindable(null),
     onSubmit,
@@ -21,6 +23,8 @@
     open?: boolean;
     /** Workspaces the rules already name, offered as suggestions. */
     workspaces: string[];
+    /** Your rule sets: the rule can go into one of them instead. */
+    sets?: readonly RuleSetChoice[];
     now: () => number;
     error?: ServerError | null;
     onSubmit: (rule: NewRule) => Promise<ServerError | null>;
@@ -29,7 +33,8 @@
   const id = $props.id();
   let pattern = $state("");
   let effect = $state<"allow" | "deny">("allow");
-  let scope = $state<"sandbox" | "global">("sandbox");
+  // "sandbox", "global", or "set:<id>".
+  let scope = $state("sandbox");
   let workspace = $state("");
   let duration = $state("0");
   let busy = $state(false);
@@ -69,16 +74,26 @@
       const refusal = await onSubmit({
         effect,
         pattern: pattern.trim(),
-        scope:
-          scope === "global"
-            ? { type: "global" }
-            : { type: "sandbox", sandbox: workspace.trim() as never },
+        scope: scopeOf(scope),
         expires_at: expires,
       });
       if (refusal) error = refusal;
     } finally {
       busy = false;
     }
+  }
+
+  function scopeOf(choice: string): NewRule["scope"] {
+    const set = sets.find((s) => `set:${s.id}` === choice);
+    if (set) return { type: "set", set: set.id };
+    if (choice === "global") return { type: "global" };
+    return { type: "sandbox", sandbox: workspace.trim() as never };
+  }
+
+  /** Empties the form and puts the rule into this set; the page calls it from a set's card. */
+  export function intoSet(set: number): void {
+    reset();
+    scope = `set:${set}`;
   }
 
   /** Empties the form; the page calls it after a rule was added. */
@@ -160,6 +175,19 @@
         />
         Every workspace <span class="hint">(asks to confirm)</span>
       </label>
+      {#each sets as set (set.id)}
+        <label class="choice">
+          <input
+            type="radio"
+            name="{id}-scope"
+            value="set:{set.id}"
+            bind:group={scope}
+          />
+          In rule set <b>{set.name}</b>
+          {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
+            >{/if}
+        </label>
+      {/each}
       {#if scope === "sandbox"}
         <div class="field">
           <label for="{id}-workspace">Workspace name</label>

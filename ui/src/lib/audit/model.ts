@@ -226,6 +226,13 @@ function reasonList(reasons: readonly string[]): string {
   return reasons.map((r) => SYSTEM_REASONS[r] ?? r).join(", ");
 }
 
+/** "System managed", "rule set builtin:github", or `null` when no set decided (also for records
+ * written before rule sets existed, which have no such field). */
+function setLabel(set: string | null | undefined): string | null {
+  if (set === undefined || set === null) return null;
+  return set === "system" ? "System managed" : `rule set ${set}`;
+}
+
 function switchLabel(enabled: boolean | null): string {
   if (enabled === null) return "follows the next level";
   return enabled ? "on" : "off";
@@ -246,10 +253,10 @@ function connectionDetail(
     parts.push(`${record.method} ${record.path ?? ""}`.trim());
   }
   const reason = REASONS[record.reason] ?? record.reason;
-  if (record.rule_set === "system") parts.push("System managed");
-  else if (record.rule_set !== null) parts.push(`rule set ${record.rule_set}`);
+  const set = setLabel(record.rule_set);
+  if (set !== null) parts.push(set);
   if (record.rule_id !== null) parts.push(`rule ${record.rule_id}`);
-  else if (record.rule_set === null) parts.push(`because ${reason}`);
+  else if (set === null) parts.push(`because ${reason}`);
   if (record.bytes_up > 0 || record.bytes_down > 0) {
     parts.push(
       `${bytesLabel(record.bytes_up)} up, ${bytesLabel(record.bytes_down)} down`,
@@ -283,7 +290,7 @@ export function describe(record: AuditRecord): RowView {
         record.type === "pending_expired"
           ? `expired: ${record.reason}`
           : record.type === "pending_decided"
-            ? `by ${p.decided_by ?? "unknown"}${p.rule_id === null ? "" : `, rule ${p.rule_id}`}${p.rule_set === null ? "" : `, ${p.rule_set === "system" ? "System managed" : `rule set ${p.rule_set}`}`}`
+            ? `by ${p.decided_by ?? "unknown"}${p.rule_id === null ? "" : `, rule ${p.rule_id}`}${setLabel(p.rule_set) === null ? "" : `, ${setLabel(p.rule_set)}`}`
             : p.attempts > 1
               ? `${p.attempts} attempts`
               : "";

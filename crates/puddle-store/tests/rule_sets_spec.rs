@@ -579,7 +579,7 @@ fn r40_system_managed_lists_every_host_with_its_reason_and_no_rule_rows() {
     for host in &hosts {
         assert_eq!(host.reason, SystemReason::MicrosoftServer);
         assert_eq!(host.sandbox, None);
-        assert!(!host.note.is_empty());
+        assert_ne!(host.note, "");
     }
     assert!(
         SystemReason::MicrosoftServer

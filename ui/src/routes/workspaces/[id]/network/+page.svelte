@@ -5,8 +5,10 @@
   import DecisionFlow from "#lib/components/DecisionFlow.svelte";
   import RequestRow from "#lib/components/RequestRow.svelte";
   import RuleTable from "#lib/components/RuleTable.svelte";
-  import { DEFAULT_SORT, view, workspaceOf } from "#lib/rules/model.ts";
+  import WorkspaceSets from "#lib/components/WorkspaceSets.svelte";
+  import { DEFAULT_SORT, isOwn, view, workspaceOf } from "#lib/rules/model.ts";
   import { pending } from "#lib/stores/pending.svelte.ts";
+  import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
   import { rulesStore } from "#lib/stores/rules.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import { NO_FILTER } from "#lib/rules/model.ts";
@@ -21,11 +23,13 @@
 
   onMount(() => {
     const stopRules = rulesStore.start();
+    const stopSets = ruleSets.start();
     const clock = setInterval(() => {
       now = Date.now();
     }, 30_000);
     return () => {
       stopRules();
+      stopSets();
       clearInterval(clock);
     };
   });
@@ -42,6 +46,7 @@
   const rules = $derived(
     view(
       rulesStore.rules.filter((r) => {
+        if (!isOwn(r)) return false;
         const owner = workspaceOf(r);
         return owner === null || owner === workspace?.name;
       }),
@@ -100,6 +105,8 @@
       </p>
     {/if}
   </section>
+
+  <WorkspaceSets workspace={workspace.name} />
 
   <DecisionFlow bind:this={flow} heading={() => heading} />
 {/if}

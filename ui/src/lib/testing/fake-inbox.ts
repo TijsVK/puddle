@@ -132,9 +132,12 @@ export class FakeInbox {
     this.open = this.open.filter((o) => !covers(o));
     const rule: components["schemas"]["Rule"] = {
       id: this.#rule++,
-      scope: global
-        ? { type: "global" }
-        : { type: "sandbox", sandbox: found.request.sandbox },
+      scope:
+        init.body.rule_set !== undefined && init.body.rule_set !== null
+          ? { type: "set", set: init.body.rule_set }
+          : global
+            ? { type: "global" }
+            : { type: "sandbox", sandbox: found.request.sandbox },
       pattern: suffix ?? found.request.host,
       pattern_kind: suffix === null ? "exact" : "suffix",
       effect,

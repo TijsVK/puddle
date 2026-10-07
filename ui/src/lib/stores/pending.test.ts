@@ -422,6 +422,22 @@ describe("decide", () => {
     expect(store.count).toBe(0);
   });
 
+  it("puts the rule into a rule set when asked, and says so", async () => {
+    const { store } = await loaded();
+    const result = await store.decide(
+      rowOf(store, 1),
+      {
+        ...narrowest("allow"),
+        ruleSet: { id: 4, name: "Client X", everywhere: false },
+      },
+      false,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      decided: { workspace: null, ruleSet: "Client X" },
+    });
+  });
+
   it("keeps at most eight decided entries, newest first", async () => {
     const { store, inbox } = setup();
     for (let i = 1; i <= 10; i += 1) inbox.add(request(i), `d${i}.com`);

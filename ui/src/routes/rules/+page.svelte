@@ -5,11 +5,14 @@
   import AddRuleDialog from "#lib/components/AddRuleDialog.svelte";
   import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
   import ExpiryDialog from "#lib/components/ExpiryDialog.svelte";
+  import RuleSetsSection from "#lib/components/RuleSetsSection.svelte";
   import RuleTable from "#lib/components/RuleTable.svelte";
+  import SystemManagedList from "#lib/components/SystemManagedList.svelte";
   import Toast from "#lib/components/Toast.svelte";
   import {
     DEFAULT_SORT,
     NO_FILTER,
+    isOwn,
     PRECEDENCE,
     patternLabel,
     ruleName,
@@ -26,6 +29,14 @@
     type ServerError,
   } from "#lib/stores/rules.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
+  import {
+    entryPattern,
+    isOn,
+    userSetNumber,
+    type RuleSet,
+    type RuleSetEntry,
+  } from "#lib/rules/sets.ts";
+  import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
   import "#lib/theme/controls.css";
 
   let now = $state(Date.now());
@@ -34,7 +45,10 @@
   let heading = $state<HTMLElement>();
   let addOpen = $state(false);
   let addError = $state<ServerError | null>(null);
-  let addDialog = $state<{ clear: () => void }>();
+  let addDialog = $state<{
+    clear: () => void;
+    intoSet: (set: number) => void;
+  }>();
   let draft = $state<NewRule | null>(null);
   let confirmGlobalOpen = $state(false);
   let expiryRule = $state<Rule | null>(null);
@@ -42,8 +56,18 @@
   let deleting = $state<Rule | null>(null);
   let deleteOpen = $state(false);
 
-  const shown = $derived(view(store.rules, filter, sort, now));
+  const own = $derived(store.rules.filter(isOwn));
+  const shown = $derived(view(own, filter, sort, now));
   const workspaces = $derived(workspacesIn(store.rules));
+  const setChoices = $derived(
+    ruleSets.sets
+      .filter((s) => s.kind === "user")
+      .map((s) => ({
+        id: userSetNumber(s) ?? 0,
+        name: s.name,
+        everywhere: isOn(s, null),
+      })),
+  );
   const filtered = $derived(
     filter.host.trim() !== "" ||
       filter.scope !== "any" ||
@@ -53,11 +77,13 @@
 
   onMount(() => {
     const stop = store.start();
+    const stopSets = ruleSets.start();
     const clock = setInterval(() => {
       now = Date.now();
     }, 30_000);
     return () => {
       stop();
+      stopSets();
       clearInterval(clock);
     };
   });
@@ -96,8 +122,43 @@
     heading?.focus();
   }
 
+  /** Every workspace, or a set that is on for every workspace: asks first. */
+  function widens(rule: NewRule): boolean {
+    const scope = rule.scope;
+    if (scope.type === "global") return true;
+    if (scope.type !== "set") return false;
+    return setChoices.some((s) => s.id === scope.set && s.everywhere);
+  }
+
+  /** "every workspace", or "rule set Client X". */
+  function draftWhere(rule: NewRule): string {
+    const scope = rule.scope;
+    if (scope.type !== "set") return "for every workspace";
+    const name = setChoices.find((s) => s.id === scope.set)?.name ?? "?";
+    return `in rule set ${name}, which is on for every workspace`;
+  }
+
+  function addEntry(set: RuleSet) {
+    const number = userSetNumber(set);
+    if (number === null) return;
+    addDialog?.intoSet(number);
+    addOpen = true;
+  }
+
+  async function deleteEntry(set: RuleSet, entry: RuleSetEntry) {
+    if (entry.rule_id === null) return;
+    const result = await store.remove(entry.rule_id);
+    await ruleSets.refresh();
+    toasts.push(
+      result.ok
+        ? `Deleted ${entryPattern(entry)} from ${set.name}.`
+        : result.message,
+      result.ok ? {} : { tone: "error", ms: 8000 },
+    );
+  }
+
   async function create(rule: NewRule): Promise<ServerError | null> {
-    if (rule.scope.type === "global") {
+    if (widens(rule)) {
       draft = rule;
       addOpen = false;
       confirmGlobalOpen = true;
@@ -111,6 +172,7 @@
     if (!result.ok) return { field: result.field, message: result.message };
     addOpen = false;
     addDialog?.clear();
+    if (result.rule.scope.type === "set") await ruleSets.refresh();
     toasts.push(`Added: ${ruleName(result.rule)}.`);
     return null;
   }
@@ -196,7 +258,7 @@
 {:else if store.status === "failed"}
   <p class="muted">Couldn't read the rules yet. Trying again.</p>
 {:else}
-  {#if store.rules.length > 0}
+  {#if own.length > 0}
     <form
       class="filters"
       role="search"
@@ -248,13 +310,13 @@
       {/if}
     </form>
     <p class="count" aria-live="polite">
-      {shown.length === store.rules.length
-        ? `${store.rules.length} ${store.rules.length === 1 ? "rule" : "rules"}`
-        : `${shown.length} of ${store.rules.length} rules`}
+      {shown.length === own.length
+        ? `${own.length} ${own.length === 1 ? "rule" : "rules"}`
+        : `${shown.length} of ${own.length} rules`}
     </p>
   {/if}
 
-  {#if store.rules.length === 0}
+  {#if own.length === 0}
     <section class="empty">
       <h2>No rules yet</h2>
       <p>
@@ -279,11 +341,20 @@
   {/if}
 {/if}
 
+<RuleSetsSection
+  store={ruleSets}
+  {workspaces}
+  onAddEntry={addEntry}
+  onDeleteEntry={(set, entry) => void deleteEntry(set, entry)}
+/>
+<SystemManagedList hosts={ruleSets.system} />
+
 <AddRuleDialog
   bind:this={addDialog}
   bind:open={addOpen}
   bind:error={addError}
   {workspaces}
+  sets={setChoices}
   now={() => Date.now()}
   onSubmit={create}
 />
@@ -311,7 +382,7 @@
     ? "Deny for every workspace?"
     : "Allow for every workspace?"}
   summary={draft
-    ? `${draft.effect === "deny" ? "Deny" : "Allow"} ${draft.pattern} for every workspace`
+    ? `${draft.effect === "deny" ? "Deny" : "Allow"} ${draft.pattern} ${draftWhere(draft)}`
     : ""}
   detail="This covers every workspace you have now and any you create later. You can delete the rule here."
   confirmLabel={draft?.effect === "deny"

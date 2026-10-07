@@ -10,6 +10,7 @@
   import { narrowest, type Effect } from "#lib/decision/model.ts";
   import { relativeTime } from "#lib/format/relative-time.ts";
   import { limitGroups, pending } from "#lib/stores/pending.svelte.ts";
+  import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import "#lib/theme/controls.css";
 
@@ -38,11 +39,13 @@
 
   onMount(() => {
     const stop = pending.start();
+    const stopSets = ruleSets.start();
     const clock = setInterval(() => {
       now = Date.now();
     }, 30_000);
     return () => {
       stop();
+      stopSets();
       clearInterval(clock);
     };
   });

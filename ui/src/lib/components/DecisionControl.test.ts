@@ -29,7 +29,12 @@ describe("the one-click buttons", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: "Deny api.example.com for demo" }),
     );
-    const narrow = { scope: "sandbox", match: "exact", durationSecs: null };
+    const narrow = {
+      scope: "sandbox",
+      ruleSet: null,
+      match: "exact",
+      durationSecs: null,
+    };
     expect(onDecide).toHaveBeenNthCalledWith(1, { effect: "allow", ...narrow });
     expect(onDecide).toHaveBeenNthCalledWith(2, { effect: "deny", ...narrow });
   });

@@ -45,6 +45,32 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe("OptionsPopover", () => {
+  it("offers your rule sets that are on here, and sends the one chosen", async () => {
+    const { onDecide } = mount({
+      sets: [
+        { id: 4, name: "Client X", everywhere: true },
+        { id: 5, name: "Local", everywhere: false },
+      ],
+    });
+    const dialog = await show();
+    expect(
+      within(dialog).getByRole("radio", { name: /Into rule set Client X/ }),
+    ).toHaveAccessibleName(/on everywhere; asks/);
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: /Into rule set Local/ }),
+    );
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: /Allow/ }),
+    );
+    expect(onDecide).toHaveBeenCalledWith({
+      effect: "allow",
+      scope: "sandbox",
+      ruleSet: { id: 5, name: "Local", everywhere: false },
+      match: "exact",
+      durationSecs: null,
+    });
+  });
+
   it("is a named dialog that starts at the narrowest choice and lists the durations", async () => {
     mount();
     const dialog = await show();
@@ -82,6 +108,7 @@ describe("OptionsPopover", () => {
     expect(onDecide).toHaveBeenCalledWith({
       effect: "deny",
       scope: "global",
+      ruleSet: null,
       match: "suffix",
       durationSecs: 28_800,
     });

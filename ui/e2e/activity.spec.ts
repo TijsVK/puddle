@@ -148,12 +148,16 @@ test.describe("the list", () => {
     expect((await detail.boundingBox())?.height).toBeCloseTo(280, 0);
   });
 
-  test("shows an empty log as nothing recorded", async ({ page, backend }) => {
+  test("a fresh install's log holds only what puddle allowed by itself, and a filter with no match says so", async ({
+    page,
+    backend,
+  }) => {
     await backend.control.reset("empty");
     await visit(page, backend, "?range=all");
-    await expect(
-      page.getByRole("heading", { name: "Nothing recorded yet" }),
-    ).toBeVisible();
+    // System managed, derived from the default editor server when the API started.
+    await total(page, 1);
+    await expect(region(page)).toContainText("System managed changed");
+    await expect(region(page)).toContainText("now for code-server");
     await page.goto("/activity?host=zzz");
     await expect(
       page.getByRole("heading", { name: "No records match" }),

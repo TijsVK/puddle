@@ -27,6 +27,28 @@ export function globalState(set: RuleSet): string {
   return "Off (built-in sets ship off)";
 }
 
+/** "On here", "Off, as for every workspace": a set's state for one workspace and where it comes from. */
+export function stateFor(set: RuleSet, workspace: string): string {
+  const own = set.overrides.find((o) => o.sandbox === workspace);
+  if (own) return own.enabled ? "On here" : "Off here";
+  return isOn(set, null)
+    ? "On, as for every workspace"
+    : "Off, as for every workspace";
+}
+
+/** Whether `workspace` switches the set for itself. */
+export function overrides(set: RuleSet, workspace: string): boolean {
+  return set.overrides.some((o) => o.sandbox === workspace);
+}
+
+/** The System managed hosts that apply to `workspace`. */
+export function systemFor(
+  hosts: readonly SystemHost[],
+  workspace: string,
+): SystemHost[] {
+  return hosts.filter((h) => h.sandbox === null || h.sandbox === workspace);
+}
+
 /** "On in demo; off in api": the workspaces that switch the set for themselves. */
 export function overridesLabel(set: RuleSet): string {
   return set.overrides
