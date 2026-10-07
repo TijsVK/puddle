@@ -35,7 +35,7 @@
     workspace={connecting}
     {server}
     onDesktop={actions.openDesktop}
-    onDirectSsh={actions.requestDirectSsh}
+    onDirectSsh={(w, on) => actions.requestDirectSsh(w, on, true)}
   />
 {/if}
 
@@ -44,9 +44,7 @@
   bind:open={actions.trustOpen}
   words={trustWordsFor(actions.trustFor?.name ?? "this workspace")}
   onConfirm={actions.confirmTrust}
-  onCancel={() => {
-    actions.trustFor = null;
-  }}
+  onCancel={actions.cancelTrust}
 />
 
 {#if actions.deleting}

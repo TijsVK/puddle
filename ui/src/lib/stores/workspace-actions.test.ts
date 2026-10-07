@@ -126,6 +126,21 @@ describe("connecting", () => {
     expect(w("trusted").direct_ssh).toBe(false);
   });
 
+  it("closes the connect step while the trust text shows, and brings it back after either answer", async () => {
+    actions.connect(w("up"));
+    actions.requestDirectSsh(w("up"), true, true);
+    expect(actions.connectOpen).toBe(false);
+    expect(actions.trustOpen).toBe(true);
+    actions.cancelTrust();
+    expect(actions.connectOpen).toBe(true);
+    expect(actions.trustFor).toBeNull();
+    actions.cancelTrust(); // a second cancel changes nothing
+    actions.requestDirectSsh(w("up"), true, true);
+    actions.confirmTrust();
+    expect(actions.connectOpen).toBe(true);
+    await expect.poll(() => messages()).toHaveLength(1);
+  });
+
   it("a confirm with nothing to confirm does nothing", () => {
     actions.confirmTrust();
     expect(api.calls).not.toContain("PUT /api/settings/sandboxes/{sandbox}");

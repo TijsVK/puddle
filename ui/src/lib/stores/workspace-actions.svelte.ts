@@ -67,6 +67,8 @@ export class WorkspaceActions {
   /** The workspace whose direct-SSH trust text is being asked. */
   trustFor = $state.raw<Workspace | null>(null);
   trustOpen = $state(false);
+  /** The trust text was asked from the connect step, which closes while it is shown. */
+  #backToConnect = false;
   deleting = $state.raw<DeleteState | null>(null);
   deleteOpen = $state(false);
   /** The workspace whose delete check is being read. */
@@ -118,10 +120,13 @@ export class WorkspaceActions {
   };
 
   /** The switch in the connect step or the settings: off at once, on after the trust text. */
-  requestDirectSsh = (w: Workspace, on: boolean): void => {
+  requestDirectSsh = (w: Workspace, on: boolean, fromConnect = false): void => {
     if (on) {
       this.trustFor = w;
       this.trustOpen = true;
+      // One dialog at a time: the connect step comes back once the question is answered.
+      this.#backToConnect = fromConnect;
+      if (fromConnect) this.connectOpen = false;
       return;
     }
     void this.#setDirectSsh(w, false);
@@ -131,7 +136,20 @@ export class WorkspaceActions {
     const w = this.trustFor;
     this.trustFor = null;
     if (w) void this.#setDirectSsh(w, true);
+    this.#reopenConnect();
   };
+
+  /** The trust text was cancelled (or closed): nothing changes. */
+  cancelTrust = (): void => {
+    if (!this.trustFor) return; // already answered
+    this.trustFor = null;
+    this.#reopenConnect();
+  };
+
+  #reopenConnect(): void {
+    if (this.#backToConnect) this.connectOpen = true;
+    this.#backToConnect = false;
+  }
 
   async #setDirectSsh(w: Workspace, on: boolean): Promise<void> {
     const result = await this.#store.setDirectSsh(w.name, on);
