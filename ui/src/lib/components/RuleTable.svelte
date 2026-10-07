@@ -28,10 +28,13 @@
     rules: Rule[];
     sort: Sort;
     now: number;
-    onSort: (key: SortKey) => void;
-    onExpiry: (rule: Rule, anchor: HTMLElement) => void;
-    onDelete: (rule: Rule, anchor: HTMLElement) => void;
+    /** Left out, the headers are plain text. */
+    onSort?: (key: SortKey) => void;
+    /** Left out together with `onDelete`, the table is read-only. */
+    onExpiry?: (rule: Rule, anchor: HTMLElement) => void;
+    onDelete?: (rule: Rule, anchor: HTMLElement) => void;
   } = $props();
+  const editable = $derived(onExpiry !== undefined && onDelete !== undefined);
 
   const columns: { key: SortKey; label: string }[] = [
     { key: "pattern", label: "Host" },
@@ -56,24 +59,30 @@
       <tr>
         {#each columns as column (column.key)}
           <th scope="col" aria-sort={ariaSort(column.key)}>
-            <button
-              type="button"
-              class="sort"
-              onclick={() => onSort(column.key)}
-              aria-label="Sort by {column.label.toLowerCase()}"
-            >
-              {column.label}
-              {#if sort.key === column.key}
-                {#if sort.direction === "asc"}
-                  <ArrowUp aria-hidden="true" size={14} />
-                {:else}
-                  <ArrowDown aria-hidden="true" size={14} />
+            {#if onSort}
+              <button
+                type="button"
+                class="sort"
+                onclick={() => onSort(column.key)}
+                aria-label="Sort by {column.label.toLowerCase()}"
+              >
+                {column.label}
+                {#if sort.key === column.key}
+                  {#if sort.direction === "asc"}
+                    <ArrowUp aria-hidden="true" size={14} />
+                  {:else}
+                    <ArrowDown aria-hidden="true" size={14} />
+                  {/if}
                 {/if}
-              {/if}
-            </button>
+              </button>
+            {:else}
+              {column.label}
+            {/if}
           </th>
         {/each}
-        <th scope="col"><span class="visually-hidden">Actions</span></th>
+        {#if editable}
+          <th scope="col"><span class="visually-hidden">Actions</span></th>
+        {/if}
       </tr>
     </thead>
     <tbody>
@@ -119,24 +128,26 @@
               >{relativeTime(rule.created_at, now)}</time
             >
           </td>
-          <td class="actions">
-            <button
-              type="button"
-              class="btn"
-              aria-label="Change expiry: {ruleName(rule)}"
-              onclick={(e) => onExpiry(rule, e.currentTarget)}
-            >
-              <Clock aria-hidden="true" size={16} />Expiry
-            </button>
-            <button
-              type="button"
-              class="btn deny"
-              aria-label="Delete rule: {ruleName(rule)}"
-              onclick={(e) => onDelete(rule, e.currentTarget)}
-            >
-              <Trash2 aria-hidden="true" size={16} />Delete
-            </button>
-          </td>
+          {#if onExpiry && onDelete}
+            <td class="actions">
+              <button
+                type="button"
+                class="btn"
+                aria-label="Change expiry: {ruleName(rule)}"
+                onclick={(e) => onExpiry(rule, e.currentTarget)}
+              >
+                <Clock aria-hidden="true" size={16} />Expiry
+              </button>
+              <button
+                type="button"
+                class="btn deny"
+                aria-label="Delete rule: {ruleName(rule)}"
+                onclick={(e) => onDelete(rule, e.currentTarget)}
+              >
+                <Trash2 aria-hidden="true" size={16} />Delete
+              </button>
+            </td>
+          {/if}
         </tr>
       {/each}
     </tbody>
