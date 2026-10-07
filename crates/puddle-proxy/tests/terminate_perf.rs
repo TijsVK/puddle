@@ -11,11 +11,7 @@
 //! It reports the ratio and asserts only that both finish and the bytes arrive intact. The goal
 //! (decrypting costs at most ten percent more than splicing) is for a quiet machine, not for a
 //! shared runner.
-#![expect(
-    clippy::unwrap_used,
-    clippy::print_stderr,
-    reason = "tests fail by panicking, and report by printing"
-)]
+#![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 mod terminate_support;
 
 use std::sync::Arc;
