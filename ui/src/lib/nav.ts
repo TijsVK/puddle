@@ -19,13 +19,13 @@ export interface NavItem {
 }
 
 export const NAV: readonly NavItem[] = [
+  { href: "/workspaces", label: "Workspaces", icon: Boxes as Component },
   {
     href: "/inbox",
     label: "Inbox",
     icon: Inbox as Component,
     badge: "pending",
   },
-  { href: "/workspaces", label: "Workspaces", icon: Boxes as Component },
   { href: "/rules", label: "Rules", icon: ShieldCheck as Component },
   { href: "/activity", label: "Activity", icon: ScrollText as Component },
   { href: "/settings", label: "Settings", icon: Settings as Component },

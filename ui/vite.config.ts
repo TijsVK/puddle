@@ -39,6 +39,7 @@ export default defineConfig({
         "src/lib/api/**": { lines: 95, branches: 90 },
         "src/lib/decision/**": { lines: 95, branches: 90 },
         "src/lib/rules/**": { lines: 95, branches: 90 },
+        "src/lib/workspaces/**": { lines: 95, branches: 90 },
       },
     },
   },

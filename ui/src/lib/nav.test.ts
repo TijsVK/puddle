@@ -5,8 +5,8 @@ import { documentTitle, NAV, sectionFor } from "./nav.ts";
 describe("nav", () => {
   it("has the five top-level sections, in order", () => {
     expect(NAV.map((n) => n.label)).toEqual([
-      "Inbox",
       "Workspaces",
+      "Inbox",
       "Rules",
       "Activity",
       "Settings",

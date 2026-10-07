@@ -22,7 +22,6 @@ vi.mock("#lib/stores/live.svelte.ts", () => ({ live }));
 
 import Layout from "../../routes/+layout.svelte";
 import ErrorPage from "../../routes/+error.svelte";
-import WorkspacesPage from "../../routes/workspaces/+page.svelte";
 import ActivityPage from "../../routes/activity/+page.svelte";
 import SettingsPage from "../../routes/settings/+page.svelte";
 import { load as rootLoad } from "../../routes/+page.ts";
@@ -46,8 +45,8 @@ describe("Sidebar", () => {
     render(Sidebar);
     const links = screen.getAllByRole("link");
     expect(links.map((l) => l.textContent?.trim())).toEqual([
-      "Inbox",
       "Workspaces",
+      "Inbox",
       "Rules",
       "Activity",
       "Settings",
@@ -125,7 +124,6 @@ describe("root layout", () => {
 
 describe("pages", () => {
   it.each([
-    ["Workspaces", WorkspacesPage],
     ["Activity", ActivityPage],
     ["Settings", SettingsPage],
   ])("%s has one h1 and an empty state", (name, component) => {
@@ -134,9 +132,9 @@ describe("pages", () => {
     expect(screen.getByRole("heading", { level: 1, name })).toBeInTheDocument();
   });
 
-  it("the start page redirects to the inbox, and the app renders in the browser only", () => {
+  it("the start page redirects to the workspaces, and the app renders in the browser only", () => {
     expect(() => rootLoad()).toThrowError(
-      expect.objectContaining({ status: 307, location: "/inbox" }),
+      expect.objectContaining({ status: 307, location: "/workspaces" }),
     );
     expect({ ssr, prerender }).toEqual({ ssr: false, prerender: false });
   });
