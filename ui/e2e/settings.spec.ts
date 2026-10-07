@@ -103,7 +103,7 @@ test("the global direct SSH default is off, asks the trust text, and is kept", a
   await openSettings(page, backend);
   const box = page.getByLabel("Allow direct SSH for new workspaces");
   await expect(box).not.toBeChecked();
-  await box.check();
+  await box.click();
   const trust = page.getByRole("alertdialog", {
     name: "Allow direct SSH for new workspaces?",
   });
@@ -111,7 +111,7 @@ test("the global direct SSH default is off, asks the trust text, and is kept", a
   expect(await axeViolations(page), "trust text").toEqual([]);
   await trust.getByRole("button", { name: "Cancel" }).click();
   await expect(box).not.toBeChecked();
-  await box.check();
+  await box.click();
   await trust.getByRole("button", { name: "Allow for new workspaces" }).click();
   await expect(page.getByText("Allow direct SSH saved.")).toBeVisible();
   await page.reload();

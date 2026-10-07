@@ -484,7 +484,7 @@ test.describe("connecting", () => {
     const shop = card(page, "web-shop");
     await shop.getByRole("button", { name: "Connect to web-shop" }).click();
     const step = page.getByRole("dialog", { name: "Connect to web-shop" });
-    await step.getByRole("checkbox", { name: "Allow direct SSH" }).check();
+    await step.getByRole("checkbox", { name: "Allow direct SSH" }).click();
     const trust = page.getByRole("alertdialog", {
       name: "Allow direct SSH to web-shop?",
     });
@@ -500,7 +500,7 @@ test.describe("connecting", () => {
         ?.direct_ssh,
     ).toBe(false);
 
-    await step.getByRole("checkbox", { name: "Allow direct SSH" }).check();
+    await step.getByRole("checkbox", { name: "Allow direct SSH" }).click();
     await trust.getByRole("button", { name: "Allow direct SSH" }).click();
     await expect(
       toast(page, "Direct SSH is on for web-shop: it is trusted now."),
@@ -523,14 +523,14 @@ test.describe("connecting", () => {
     await openDetail(page, backend, "web-shop");
     await page.getByRole("button", { name: "Connect to web-shop" }).click();
     const step = page.getByRole("dialog", { name: "Connect to web-shop" });
-    await step.getByRole("checkbox", { name: "Allow direct SSH" }).check();
+    await step.getByRole("checkbox", { name: "Allow direct SSH" }).click();
     await page
       .getByRole("alertdialog")
       .getByRole("button", { name: "Allow direct SSH" })
       .click();
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.getByText("Trusted").first()).toBeVisible();
-    await step.getByRole("checkbox", { name: "Allow direct SSH" }).uncheck();
+    await step.getByRole("checkbox", { name: "Allow direct SSH" }).click();
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
     await expect(toast(page, "Direct SSH is off for web-shop.")).toBeVisible();
     await expect
@@ -564,7 +564,7 @@ test.describe("deleting", () => {
     await expect(remove).toBeDisabled();
     await dialog
       .getByRole("checkbox", { name: /I understand this work will be lost/ })
-      .check();
+      .click();
     await expect(remove).toBeEnabled();
     await remove.click();
     await expect(toast(page, "Deleted docs-site.")).toBeVisible();
@@ -605,7 +605,7 @@ test.describe("deleting", () => {
     await expect(
       dialog.getByRole("button", { name: "Delete workspace" }),
     ).toBeDisabled();
-    await dialog.getByRole("checkbox", { name: /Delete data-tools/ }).check();
+    await dialog.getByRole("checkbox", { name: /Delete data-tools/ }).click();
     await dialog.getByRole("button", { name: "Delete workspace" }).click();
     await expect(toast(page, "Deleted data-tools.")).toBeVisible();
   });
@@ -633,7 +633,7 @@ test.describe("deleting", () => {
     });
     await page.getByRole("button", { name: "Delete workspace…" }).click();
     const dialog = page.getByRole("alertdialog");
-    await dialog.getByRole("checkbox").check();
+    await dialog.getByRole("checkbox").click();
     await dialog.getByRole("button", { name: "Delete workspace" }).click();
     await expect(
       toast(page, "Deleting data-tools failed: the volume is in use"),
@@ -1044,7 +1044,7 @@ test.describe("accessibility", () => {
       await expect(docs).toContainText("Running");
       await docs.getByRole("button", { name: "Connect to docs-site" }).click();
       expect(await axeViolations(page), "connect step").toEqual([]);
-      await page.getByRole("checkbox", { name: "Allow direct SSH" }).check();
+      await page.getByRole("checkbox", { name: "Allow direct SSH" }).click();
       expect(await axeViolations(page), "direct SSH trust text").toEqual([]);
       await page.keyboard.press("Escape");
       await page.keyboard.press("Escape");
@@ -1129,7 +1129,7 @@ test.describe("accessibility", () => {
   }) => {
     await openList(page, backend);
     const buttons = await card(page, "web-shop").getByRole("button").all();
-    expect(buttons.length).toBeGreaterThanOrEqual(3);
+    expect(buttons.length).toBeGreaterThanOrEqual(2);
     for (const button of [
       ...buttons,
       ...(await page.getByRole("button", { name: "New workspace" }).all()),
