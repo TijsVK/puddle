@@ -10,8 +10,9 @@
 //!   [`OsProxy`] is WinINet and WinHTTP's PAC and WPAD engine, machine-wide WinHTTP and group
 //!   policy, with the `HTTP(S)_PROXY` variables behind them; on Unix it is the variables alone
 //!   ([`EnvOs`], T-148 L-2). WinINet's field names and syntax stay inside `windows/`.
-//! - [`ProxyAuth`]: the seam for authenticating to the proxy (T-135: Windows SSPI Negotiate, later
-//!   GSSAPI on Linux). [`NoAuth`] until then. A hop names a proxy by [`ProxyAddr`] (host and
+//! - [`ProxyAuth`]: the seam for authenticating to the proxy (T-135). On Windows, [`system_auth`] signs
+//!   in with SSPI Negotiate and NTLM as the logged-on user ([`NegotiateAuth`] over SSPI, never a
+//!   password prompt); elsewhere it is [`NoAuth`] until a GSSAPI [`TokenSource`] exists. A hop names a proxy by [`ProxyAddr`] (host and
 //!   port) only, so an implementation derives the `HTTP/<host>` service name from it and holds
 //!   any credentials itself.
 //!
@@ -43,6 +44,7 @@ mod fake;
 mod fake_proxy;
 mod hop;
 pub mod host;
+mod negotiate;
 mod os;
 mod parse;
 #[cfg(windows)]
@@ -59,6 +61,7 @@ pub use fake::FakeOs;
 #[cfg(any(test, feature = "testing"))]
 pub use fake_proxy::{Behaviour, FakeProxy, Seen};
 pub use hop::{Destination, Hop, ParseError, ProxyAddr, Route, Scheme};
+pub use negotiate::{Leg, NegotiateAuth, Package, SecurityContext, TokenSource};
 pub use os::{
     ChangeCallback, Origin, OsProxy, PacError, PacQuery, ProxyConfig, SettingsError, WatchGuard,
     system_os,

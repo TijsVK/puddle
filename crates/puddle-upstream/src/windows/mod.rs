@@ -9,7 +9,10 @@
 
 mod pac;
 mod settings;
+mod sspi;
 mod watch;
+
+pub(crate) use sspi::SspiSource;
 
 use crate::hop::Hop;
 use crate::os::{

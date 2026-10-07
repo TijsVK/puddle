@@ -57,8 +57,7 @@ pub trait ProxyAuth: Send + Sync + std::fmt::Debug {
     ) -> Result<Option<Box<dyn AuthSession>>, AuthError>;
 }
 
-/// No authentication: every proxy is used as it is. The default everywhere until T-135, and the
-/// Unix implementation.
+/// No authentication: every proxy is used as it is. The Unix implementation of [`system_auth`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoAuth;
 
@@ -72,10 +71,21 @@ impl ProxyAuth for NoAuth {
     }
 }
 
-/// The authentication of the current platform. [`NoAuth`] for now; T-135 returns SSPI on Windows.
+/// The authentication of the current platform: Windows SSPI Negotiate and NTLM as the logged-on
+/// user (T-135). [`NoAuth`] elsewhere (T-148 L-2); a GSSAPI [`TokenSource`] for
+/// [`NegotiateAuth`](crate::NegotiateAuth) is the Linux follow-up.
 #[must_use]
 pub fn system_auth() -> Arc<dyn ProxyAuth> {
-    Arc::new(NoAuth)
+    #[cfg(windows)]
+    {
+        Arc::new(crate::negotiate::NegotiateAuth::new(Arc::new(
+            crate::windows::SspiSource,
+        )))
+    }
+    #[cfg(not(windows))]
+    {
+        Arc::new(NoAuth)
+    }
 }
 
 #[cfg(test)]
@@ -117,6 +127,9 @@ mod tests {
         let proxy = ProxyAddr::new("p", 1);
         assert!(NoAuth.begin(&proxy, &[]).unwrap().is_none());
         assert!(NoAuth.begin(&proxy, &["Negotiate"]).unwrap().is_none());
+        // Basic is never answered by any platform implementation: no password prompt exists.
+        assert!(system_auth().begin(&proxy, &["Basic"]).unwrap().is_none());
+        #[cfg(not(windows))]
         assert!(system_auth().begin(&proxy, &["NTLM"]).unwrap().is_none());
     }
 
