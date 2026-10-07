@@ -20,16 +20,6 @@ pub(crate) fn keep(from: &Path, to: &Path) {
     }
 }
 
-/// Moves `runtime.log` in `logs` to `runtime.log.1` (replacing an older one) when it has grown
-/// past `cap` bytes. msb rotates it itself on Linux and macOS but only appends on Windows. Call
-/// it while the sandbox is down; best effort.
-pub(crate) fn cap_runtime_log(logs: &Path, cap: u64) {
-    let log = logs.join("runtime.log");
-    if std::fs::metadata(&log).is_ok_and(|m| m.len() > cap) {
-        let _ = std::fs::rename(&log, logs.join("runtime.log.1"));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,23 +46,6 @@ mod tests {
         let none = d.join("kept").join("never-booted");
         keep(&d.join("missing"), &none);
         assert!(!none.exists());
-        std::fs::remove_dir_all(&d).unwrap();
-    }
-
-    #[test]
-    fn a_runtime_log_past_the_cap_moves_aside_and_replaces_the_older_one() {
-        let d = dir("cap");
-        std::fs::write(d.join("runtime.log"), b"0123456789").unwrap();
-        std::fs::write(d.join("runtime.log.1"), b"older").unwrap();
-        cap_runtime_log(&d, 10);
-        assert_eq!(std::fs::read(d.join("runtime.log")).unwrap(), b"0123456789");
-        cap_runtime_log(&d, 9);
-        assert!(!d.join("runtime.log").exists());
-        assert_eq!(
-            std::fs::read(d.join("runtime.log.1")).unwrap(),
-            b"0123456789"
-        );
-        cap_runtime_log(&d.join("missing"), 0);
         std::fs::remove_dir_all(&d).unwrap();
     }
 }

@@ -68,15 +68,8 @@ pub struct MsbConfig {
 }
 
 /// The default [`MsbConfig::runtime_log_level`]. `info` is a few lines per boot; msb rotates
-/// `runtime.log` at 10 MiB on Linux and macOS (3 rotated files kept). On Windows msb appends
-/// without rotating, which [`crate::MsbRuntime`] bounds itself (see [`RUNTIME_LOG_CAP_BYTES`]).
+/// `runtime.log` at 10 MiB on every platform, keeping a few rotated files.
 pub const DEFAULT_RUNTIME_LOG_LEVEL: &str = "info";
-
-/// The size at which [`crate::MsbRuntime`] moves a sandbox's `runtime.log` aside to
-/// `runtime.log.1` (replacing an older one) before it starts the sandbox. It matches msb's own
-/// rotation size on Linux and macOS, and makes Windows, where msb never rotates, as bounded
-/// (about twice the cap per sandbox).
-pub const RUNTIME_LOG_CAP_BYTES: u64 = 10 * 1024 * 1024;
 
 impl MsbConfig {
     /// A config for msb home `home`, runtime pair `msb` + `libkrunfw` and guest-share root
