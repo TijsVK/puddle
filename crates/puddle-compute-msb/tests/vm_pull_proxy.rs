@@ -70,7 +70,8 @@ fn vm_image_pulls_through_the_pull_proxy_from_docker_hub_and_mcr() {
         let msb = MsbRuntime::open(
             MsbConfig::new(&home, pair.msb, pair.libkrunfw, home.join("guest-share"))
                 .with_ssh_key(support::TEST_SSH_KEY)
-                .with_registry_proxy(proxy_url),
+                .with_registry_proxy(proxy_url)
+                .with_runtime_log_level(settings.msb_log_level.clone()),
         )
         .await
         .expect("open msb");

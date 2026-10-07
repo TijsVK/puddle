@@ -13,7 +13,7 @@ use puddle_types::SandboxName;
 use crate::error::HarnessError;
 use crate::prefix::RunPrefix;
 use crate::runtime::{RuntimePair, refuse_ambient_msb_vars};
-use crate::{PREFIX_VAR, ROOT_VAR, RUN_LABEL, RUNTIME_DIR_VAR};
+use crate::{MSB_LOG_LEVEL_VAR, PREFIX_VAR, ROOT_VAR, RUN_LABEL, RUNTIME_DIR_VAR};
 
 /// Memory for harness sandboxes: enough for the devcontainer image, small enough that three
 /// runs fit a 2-vCPU / 8 GB hosted runner.
@@ -31,7 +31,12 @@ pub struct Settings {
     pub prefix: RunPrefix,
     /// Directory the private home goes under.
     pub root: PathBuf,
+    /// Default log level of msb's sandbox runtimes (`runtime.log`); `None` leaves them silent.
+    pub msb_log_level: Option<String>,
 }
+
+/// The levels msb's `config.json` accepts for `log_level`.
+const MSB_LOG_LEVELS: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
 
 impl Settings {
     /// Reads the settings through `lookup` (the process environment in [`VmEnv::from_env`]).
@@ -40,7 +45,8 @@ impl Settings {
     ///
     /// [`HarnessError::AmbientMsbVar`] when an msb variable is set,
     /// [`HarnessError::MissingVar`] without a runtime directory,
-    /// [`HarnessError::InvalidPrefix`] for a bad `PUDDLE_VM_PREFIX`.
+    /// [`HarnessError::InvalidPrefix`] for a bad `PUDDLE_VM_PREFIX`,
+    /// [`HarnessError::InvalidLogLevel`] for a bad `PUDDLE_VM_MSB_LOG_LEVEL`.
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, HarnessError> {
         let get = |var: &str| lookup(var).filter(|value| !value.is_empty());
         refuse_ambient_msb_vars(get)?;
@@ -50,10 +56,19 @@ impl Settings {
         })?;
         let prefix = RunPrefix::from_value_or_generate(get(PREFIX_VAR).as_deref())?;
         let root = get(ROOT_VAR).map_or_else(|| std::env::temp_dir().join("pvm"), PathBuf::from);
+        let msb_log_level = get(MSB_LOG_LEVEL_VAR).map(|v| v.to_ascii_lowercase());
+        if let Some(level) = &msb_log_level
+            && !MSB_LOG_LEVELS.contains(&level.as_str())
+        {
+            return Err(HarnessError::InvalidLogLevel {
+                value: level.chars().take(64).collect(),
+            });
+        }
         Ok(Self {
             runtime_dir: PathBuf::from(runtime_dir),
             prefix,
             root,
+            msb_log_level,
         })
     }
 
@@ -72,6 +87,14 @@ impl Settings {
         self.root.join(format!("{}-{tag}", self.prefix.as_str()))
     }
 
+    /// Where [`VmEnv::cleanup`] keeps the logs of the sandboxes it removes:
+    /// `<root>/<prefix>-kept/<sandbox>/logs/`. A sibling of [`Self::home`], so a later passing
+    /// test's [`VmEnv::remove_home`] doesn't delete a failed test's evidence.
+    #[must_use]
+    pub fn kept_logs(&self) -> PathBuf {
+        self.root.join(format!("{}-kept", self.prefix.as_str()))
+    }
+
     /// Finds the runtime pair, creates the private home and writes its `config.json`.
     ///
     /// # Errors
@@ -82,7 +105,7 @@ impl Settings {
         let home = self.home();
         std::fs::create_dir_all(&home).map_err(|e| HarnessError::io("create", &home, e))?;
         let config = config_path(&home);
-        std::fs::write(&config, pair.config_json())
+        std::fs::write(&config, pair.config_json(self.msb_log_level.as_deref()))
             .map_err(|e| HarnessError::io("write", &config, e))?;
         Ok(pair)
     }
@@ -97,6 +120,7 @@ pub struct VmEnv {
     settings: Settings,
     runtime: RuntimePair,
     backend: Arc<dyn Backend>,
+    sandboxes_dir: PathBuf,
 }
 
 impl VmEnv {
@@ -126,6 +150,7 @@ impl VmEnv {
         Ok(Self {
             settings,
             runtime,
+            sandboxes_dir: local.sandboxes_dir(),
             backend: Arc::new(local),
         })
     }
@@ -174,7 +199,9 @@ impl VmEnv {
     }
 
     /// Stops and removes every sandbox of this run, including ones a failed test left behind.
-    /// Returns the names it removed.
+    /// Returns the names it removed. Each sandbox's msb logs are copied to
+    /// [`Settings::kept_logs`] first, so a boot that failed keeps its evidence for the CI
+    /// artefact (T-164); [`VmEnv::remove_home`] deletes them after a passing test.
     ///
     /// # Errors
     ///
@@ -196,6 +223,10 @@ impl VmEnv {
                 {
                     first_error.get_or_insert(HarnessError::from(e));
                 }
+                keep_logs(
+                    &self.sandboxes_dir.join(&name).join(MSB_LOGS_DIR),
+                    &self.settings.kept_logs().join(&name).join(MSB_LOGS_DIR),
+                );
                 match Sandbox::remove(&name).await {
                     Ok(()) => removed.push(name),
                     Err(e) => {
@@ -220,8 +251,30 @@ impl VmEnv {
     /// [`HarnessError::Io`] when the directory still can't be removed.
     pub async fn remove_home(self) -> Result<(), HarnessError> {
         let home = self.settings.home();
+        let kept = self.settings.kept_logs();
         drop(self);
-        remove_dir_retrying(&home, REMOVE_ATTEMPTS, REMOVE_BACKOFF).await
+        remove_dir_retrying(&home, REMOVE_ATTEMPTS, REMOVE_BACKOFF).await?;
+        remove_dir_retrying(&kept, REMOVE_ATTEMPTS, REMOVE_BACKOFF).await
+    }
+}
+
+/// The directory under `sandboxes/<name>/` where msb writes `runtime.log` and `kernel.log`.
+const MSB_LOGS_DIR: &str = "logs";
+
+/// Copies the files of `from` into `to`, best effort: a sandbox that never got a log directory
+/// has nothing to keep, and a copy that fails must not fail the cleanup.
+fn keep_logs(from: &Path, to: &Path) {
+    let Ok(entries) = std::fs::read_dir(from) else {
+        return;
+    };
+    if std::fs::create_dir_all(to).is_err() {
+        return;
+    }
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_file() {
+            let _ = std::fs::copy(&path, to.join(entry.file_name()));
+        }
     }
 }
 
@@ -319,6 +372,50 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn settings_read_the_msb_log_level_and_refuse_unknown_ones() {
+        let base = [(RUNTIME_DIR_VAR, "/rt"), (PREFIX_VAR, "r9-1")];
+        let unset = Settings::from_lookup(lookup(&base)).unwrap();
+        assert_eq!(unset.msb_log_level, None);
+        let empty = Settings::from_lookup(lookup(&[base[0], base[1], (MSB_LOG_LEVEL_VAR, "")]));
+        assert_eq!(empty.unwrap().msb_log_level, None);
+        let debug =
+            Settings::from_lookup(lookup(&[base[0], base[1], (MSB_LOG_LEVEL_VAR, "Debug")]));
+        assert_eq!(debug.unwrap().msb_log_level.as_deref(), Some("debug"));
+        let err = Settings::from_lookup(lookup(&[base[0], base[1], (MSB_LOG_LEVEL_VAR, "loud")]))
+            .unwrap_err();
+        assert!(matches!(err, HarnessError::InvalidLogLevel { value } if value == "loud"));
+    }
+
+    #[test]
+    fn kept_logs_are_a_sibling_of_the_run_home() {
+        let settings = Settings::from_lookup(lookup(&[
+            (RUNTIME_DIR_VAR, "/rt"),
+            (PREFIX_VAR, "r9-1"),
+            (ROOT_VAR, "/vm"),
+        ]))
+        .unwrap();
+        assert_eq!(settings.kept_logs(), PathBuf::from("/vm").join("r9-1-kept"));
+        assert!(!settings.kept_logs().starts_with(settings.home()));
+    }
+
+    #[test]
+    fn keep_logs_copies_the_files_and_tolerates_a_missing_dir() {
+        let dir = TempDir::new("keep");
+        let from = dir.path().join("sandboxes").join("sb").join("logs");
+        std::fs::create_dir_all(from.join("nested")).unwrap();
+        std::fs::write(from.join("runtime.log"), b"vmm").unwrap();
+        std::fs::write(from.join("kernel.log"), b"").unwrap();
+        let to = dir.path().join("kept").join("sb").join("logs");
+        keep_logs(&from, &to);
+        assert_eq!(std::fs::read(to.join("runtime.log")).unwrap(), b"vmm");
+        assert!(to.join("kernel.log").is_file());
+        assert!(!to.join("nested").exists());
+        let none = dir.path().join("kept").join("never-booted");
+        keep_logs(&dir.path().join("missing"), &none);
+        assert!(!none.exists());
+    }
+
+    #[test]
     fn a_scratch_home_is_a_short_sibling_of_the_run_home() {
         let settings = Settings::from_lookup(lookup(&[
             (RUNTIME_DIR_VAR, "/rt"),
@@ -386,10 +483,18 @@ pub(crate) mod tests {
             runtime_dir: runtime.path().to_owned(),
             prefix: RunPrefix::new("r1-1").unwrap(),
             root: root.path().to_owned(),
+            msb_log_level: None,
         };
         let pair = settings.prepare().unwrap();
         let written = std::fs::read_to_string(config_path(&settings.home())).unwrap();
-        assert_eq!(written, pair.config_json());
+        assert_eq!(written, pair.config_json(None));
+        let debug = Settings {
+            msb_log_level: Some("debug".into()),
+            ..settings.clone()
+        };
+        debug.prepare().unwrap();
+        let written = std::fs::read_to_string(config_path(&debug.home())).unwrap();
+        assert_eq!(written, pair.config_json(Some("debug")));
         assert_eq!(pair.libkrunfw, runtime.path().join(library));
     }
 
@@ -400,6 +505,7 @@ pub(crate) mod tests {
             runtime_dir: runtime.path().to_owned(),
             prefix: RunPrefix::new("r1-2").unwrap(),
             root: runtime.path().to_owned(),
+            msb_log_level: None,
         };
         assert!(matches!(
             settings.prepare().unwrap_err(),
@@ -420,6 +526,7 @@ pub(crate) mod tests {
             runtime_dir: runtime.path().to_owned(),
             prefix: RunPrefix::new("r1-3").unwrap(),
             root,
+            msb_log_level: None,
         };
         assert!(matches!(
             settings.prepare().unwrap_err(),
@@ -442,6 +549,7 @@ pub(crate) mod tests {
             runtime_dir: dir.path().to_owned(),
             prefix: RunPrefix::new("r7-1").unwrap(),
             root: dir.path().join("root"),
+            msb_log_level: None,
         };
         (dir, settings)
     }
@@ -461,8 +569,10 @@ pub(crate) mod tests {
         assert!(builder.is_ok());
         assert!(env.sandbox("Bad_Tag", crate::DEBIAN_DEVCONTAINER).is_err());
         assert_eq!(Box::pin(env.cleanup()).await.unwrap(), Vec::<String>::new());
+        std::fs::create_dir_all(settings.kept_logs().join("sb").join("logs")).unwrap();
         env.remove_home().await.unwrap();
         assert!(!settings.home().exists());
+        assert!(!settings.kept_logs().exists());
     }
 
     #[tokio::test]

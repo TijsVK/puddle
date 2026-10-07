@@ -56,6 +56,10 @@ pub struct MsbConfig {
     /// directly (T-144), so the token is never in the process environment. `None` leaves pulls
     /// to the process environment, which is what tests without a pull proxy want.
     pub registry_proxy: Option<RegistryProxy>,
+    /// Default log level of msb's sandbox runtimes (`runtime.log`, msb's `log_level`): `error`,
+    /// `warn`, `info`, `debug` or `trace`. `None` (the default) leaves them silent. The VM tests
+    /// set `debug`, so a failed boot keeps the VMM's trace (T-164).
+    pub runtime_log_level: Option<String>,
 }
 
 impl MsbConfig {
@@ -76,7 +80,15 @@ impl MsbConfig {
             ssh: SshConfig::default(),
             registry_roots: Vec::new(),
             registry_proxy: None,
+            runtime_log_level: None,
         }
+    }
+
+    /// The same config, with msb's sandbox runtimes logging at `level` (`None`: silent).
+    #[must_use]
+    pub fn with_runtime_log_level(mut self, level: Option<impl Into<String>>) -> Self {
+        self.runtime_log_level = level.map(Into::into);
+        self
     }
 
     /// The same config, with image pulls also trusting `roots` (PEM, one or more certificates
@@ -110,15 +122,21 @@ impl MsbConfig {
         self.home.join("config.json")
     }
 
-    /// The `config.json` contents: version 1 and the two runtime paths, nothing else, so every
-    /// other setting is the SDK default listed in [`crate::SDK_OPTIONS`].
+    /// The `config.json` contents: version 1, the two runtime paths and, when set, the
+    /// runtimes' `log_level`; nothing else, so every other setting is the SDK default listed in
+    /// [`crate::SDK_OPTIONS`].
     #[must_use]
     pub fn config_json(&self) -> String {
-        serde_json::json!({
-            "version": 1,
-            "paths": { "msb": self.msb, "libkrunfw": self.libkrunfw },
-        })
-        .to_string()
+        let mut config = serde_json::Map::new();
+        config.insert("version".into(), 1.into());
+        config.insert(
+            "paths".into(),
+            serde_json::json!({ "msb": self.msb, "libkrunfw": self.libkrunfw }),
+        );
+        if let Some(level) = &self.runtime_log_level {
+            config.insert("log_level".into(), level.as_str().into());
+        }
+        serde_json::Value::Object(config).to_string()
     }
 
     /// Checks that `host` lies under [`MsbConfig::guest_share`] after resolving symlinks and
@@ -198,6 +216,18 @@ mod tests {
         assert_eq!(v["paths"]["libkrunfw"], "/rt/libkrunfw.so");
         assert_eq!(v.as_object().unwrap().len(), 2);
         assert_eq!(c.config_path(), PathBuf::from("/h").join("config.json"));
+    }
+
+    #[test]
+    fn config_json_carries_the_runtime_log_level_only_when_set() {
+        let plain = MsbConfig::new("/h", "/m", "/l", "/s");
+        assert_eq!(plain.runtime_log_level, None);
+        let c = plain.clone().with_runtime_log_level(Some("debug"));
+        let v: serde_json::Value = serde_json::from_str(&c.config_json()).unwrap();
+        assert_eq!(v["log_level"], "debug");
+        assert_eq!(v["paths"]["msb"], "/m");
+        let off = c.with_runtime_log_level(None::<String>);
+        assert_eq!(off.config_json(), plain.config_json());
     }
 
     #[test]

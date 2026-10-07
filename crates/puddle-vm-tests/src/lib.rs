@@ -59,5 +59,10 @@ pub const PREFIX_VAR: &str = "PUDDLE_VM_PREFIX";
 /// Environment variable with the directory private msb homes go under; the temp dir when unset.
 pub const ROOT_VAR: &str = "PUDDLE_VM_ROOT";
 
+/// Environment variable with the default log level of msb's sandbox runtimes (`error`, `warn`,
+/// `info`, `debug` or `trace`); unset leaves them silent. The VM workflows set `debug`, so a failed
+/// boot's `runtime.log` has the VMM trace (T-164).
+pub const MSB_LOG_LEVEL_VAR: &str = "PUDDLE_VM_MSB_LOG_LEVEL";
+
 /// Label every harness-created sandbox carries, with the run prefix as its value.
 pub const RUN_LABEL: &str = "puddle-vm-run";

@@ -87,14 +87,20 @@ impl RuntimePair {
         Ok(Self { msb, libkrunfw })
     }
 
-    /// The msb `config.json` that pins this pair: the SDK reads runtime paths from it.
+    /// The msb `config.json` that pins this pair: the SDK reads runtime paths from it, and the
+    /// sandbox runtimes' default `log_level` when one is given.
     #[must_use]
-    pub fn config_json(&self) -> String {
-        serde_json::json!({
-            "version": 1,
-            "paths": { "msb": self.msb, "libkrunfw": self.libkrunfw },
-        })
-        .to_string()
+    pub fn config_json(&self, log_level: Option<&str>) -> String {
+        let mut config = serde_json::Map::new();
+        config.insert("version".into(), 1.into());
+        config.insert(
+            "paths".into(),
+            serde_json::json!({ "msb": self.msb, "libkrunfw": self.libkrunfw }),
+        );
+        if let Some(level) = log_level {
+            config.insert("log_level".into(), level.into());
+        }
+        serde_json::Value::Object(config).to_string()
     }
 }
 
@@ -212,9 +218,14 @@ mod tests {
             msb: PathBuf::from("/rt/msb"),
             libkrunfw: PathBuf::from("/rt/libkrunfw.so.5"),
         };
-        let value: serde_json::Value = serde_json::from_str(&pair.config_json()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&pair.config_json(None)).unwrap();
         assert_eq!(value["version"], 1);
         assert_eq!(value["paths"]["msb"], "/rt/msb");
         assert_eq!(value["paths"]["libkrunfw"], "/rt/libkrunfw.so.5");
+        assert_eq!(value.as_object().unwrap().len(), 2);
+        let debug: serde_json::Value =
+            serde_json::from_str(&pair.config_json(Some("debug"))).unwrap();
+        assert_eq!(debug["log_level"], "debug");
+        assert_eq!(debug["paths"], value["paths"]);
     }
 }

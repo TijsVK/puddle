@@ -33,6 +33,9 @@ env:
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, HG-01/02, memory),
   # the boot hook (T-108), the workspace lifecycle (T-112), shutdown and reconcile (T-113).
   VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle
+  # msb's sandbox runtimes log at debug, and the harness keeps each removed sandbox's logs beside
+  # the run home, so a boot that fails keeps its VMM trace and kernel.log in the artefact (T-164).
+  PUDDLE_VM_MSB_LOG_LEVEL: debug
 
 jobs:
   vm-linux:

@@ -34,7 +34,8 @@ async fn runtime() -> (MsbRuntime, Settings) {
     let settings = Settings::from_lookup(|var| std::env::var(var).ok()).expect("VM test settings");
     let pair = settings.prepare().expect("msb runtime pair");
     let home = settings.home();
-    let config = MsbConfig::new(&home, pair.msb, pair.libkrunfw, home.join("guest-share"));
+    let config = MsbConfig::new(&home, pair.msb, pair.libkrunfw, home.join("guest-share"))
+        .with_runtime_log_level(settings.msb_log_level.clone());
     (MsbRuntime::open(config).await.expect("open msb"), settings)
 }
 

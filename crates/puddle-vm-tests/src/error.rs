@@ -33,6 +33,12 @@ pub enum HarnessError {
         /// The length limit.
         max: usize,
     },
+    /// `PUDDLE_VM_MSB_LOG_LEVEL` isn't one of msb's log levels.
+    #[error("invalid PUDDLE_VM_MSB_LOG_LEVEL {value:?}: use error, warn, info, debug or trace")]
+    InvalidLogLevel {
+        /// The rejected value, cut to 64 characters.
+        value: String,
+    },
     /// A prefixed sandbox name isn't a valid puddle sandbox name.
     #[error("invalid sandbox name for tag {tag:?}: {reason}")]
     InvalidName {
@@ -124,6 +130,10 @@ mod tests {
             limit: Duration::from_secs(3),
         };
         assert_eq!(timeout.to_string(), "create took longer than 3s");
+        let level = HarnessError::InvalidLogLevel {
+            value: "loud".into(),
+        };
+        assert!(level.to_string().contains("\"loud\": use error, warn"));
         let io = HarnessError::io("create", "/x", std::io::Error::other("boom"));
         assert_eq!(io.to_string(), "create /x: boom");
     }
