@@ -41,12 +41,19 @@ fn command(program: &str) -> Command {
     cmd
 }
 
+/// Git for the fixture repositories. Auto maintenance is off: newer git starts
+/// `git maintenance run --auto` detached after a commit, and it holds
+/// `.git/objects/maintenance.lock` for a moment after the commit has returned, so the fixture's
+/// lock files would change under the test (seen with git 2.55).
 fn git(dir: &Path, args: &[&str]) -> std::process::Output {
     command("git")
         .args(args)
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "maintenance.auto")
+        .env("GIT_CONFIG_VALUE_0", "false")
         .env("GIT_AUTHOR_NAME", "T")
         .env("GIT_AUTHOR_EMAIL", "t@example.org")
         .env("GIT_COMMITTER_NAME", "T")

@@ -41,12 +41,18 @@ fn command(program: &str) -> Command {
     cmd
 }
 
+/// Git for the fixture repositories, with auto maintenance off: newer git starts
+/// `git maintenance run --auto` detached after a commit, which would still be working in the
+/// repository while the script under test reads it.
 fn git(dir: &Path, args: &[&str]) {
     let out = command("git")
         .args(args)
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "maintenance.auto")
+        .env("GIT_CONFIG_VALUE_0", "false")
         .env("GIT_AUTHOR_NAME", "T")
         .env("GIT_AUTHOR_EMAIL", "t@example.org")
         .env("GIT_COMMITTER_NAME", "T")
