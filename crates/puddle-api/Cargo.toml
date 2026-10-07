@@ -15,10 +15,6 @@ publish.workspace = true
 # builds and tests without Node; the app turns it on.
 embedded-ui = ["dep:rust-embed"]
 
-[[example]]
-name = "serve_ui"
-required-features = ["embedded-ui"]
-
 [dependencies]
 axum = { workspace = true }
 base64 = { workspace = true }

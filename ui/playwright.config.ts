@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// End-to-end tests against the real puddle-api serving the built app on 127.0.0.1 (the same
-// origin the desktop shell loads), with one seeded pending request. T-171 replaces the server
-// with the full fixture backend.
+// End-to-end tests against the UI fixture backend (T-171): the real puddle-api serving the built
+// app on 127.0.0.1 (the same origin the desktop shell loads), on fake services with seeded data.
+// This config starts one shared, read-only server (scenario `default`: one pending request).
+// A test that changes state uses e2e/fixture.ts instead, which gives each worker its own.
 //   Linux: Chromium and WebKit (WebKit stands in for WebKitGTK and, later, WKWebView).
 //   Windows: the installed Edge (WebView2's engine), so no browser download.
 import { defineConfig, devices } from "@playwright/test";
@@ -49,7 +50,7 @@ export default defineConfig({
       ]
   ).filter((project) => only.length === 0 || only.includes(project.name)),
   webServer: {
-    command: `${cargo} run --quiet --locked -p puddle-api --features embedded-ui --example serve_ui -- ${PORT} "${CONNECTION_FILE}"`,
+    command: `${cargo} run --quiet --locked -p puddle-e2e --features embedded-ui --bin puddle-ui-fixture -- ${PORT} "${CONNECTION_FILE}"`,
     cwd: resolve(import.meta.dirname, ".."),
     url: `http://127.0.0.1:${PORT}/`,
     reuseExistingServer: false,

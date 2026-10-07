@@ -1,0 +1,4 @@
+{
+  "name": "default",
+  "requests": [{ "sandbox": "demo", "host": "registry.example.org" }]
+}

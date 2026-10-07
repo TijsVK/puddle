@@ -1,0 +1,178 @@
+{
+  "name": "lived-in",
+  "rules": [
+    { "effect": "allow", "pattern": "registry.npmjs.org", "ago_ms": 864000000 },
+    { "effect": "allow", "pattern": ".github.com", "ago_ms": 864000000 },
+    {
+      "effect": "allow",
+      "pattern": "crates.io",
+      "sandbox": "web-shop",
+      "ago_ms": 172800000
+    },
+    {
+      "effect": "allow",
+      "pattern": ".crates.io",
+      "sandbox": "web-shop",
+      "ago_ms": 172800000
+    },
+    {
+      "effect": "allow",
+      "pattern": "api.example.com",
+      "sandbox": "web-shop",
+      "ago_ms": 3600000,
+      "expires_in_ms": 14400000
+    },
+    {
+      "effect": "deny",
+      "pattern": "telemetry.example.net",
+      "ago_ms": 432000000
+    },
+    {
+      "effect": "deny",
+      "pattern": "ads.example.net",
+      "sandbox": "docs-site",
+      "ago_ms": 7200000,
+      "expires_in_ms": 86400000
+    }
+  ],
+  "requests": [
+    {
+      "sandbox": "web-shop",
+      "host": "registry.npmjs.org",
+      "repeat": 3,
+      "ago_ms": 600000
+    },
+    {
+      "sandbox": "web-shop",
+      "host": "telemetry.example.net",
+      "repeat": 2,
+      "ago_ms": 540000
+    },
+    {
+      "sandbox": "web-shop",
+      "host": "cdn.example.org",
+      "repeat": 4,
+      "ago_ms": 300000
+    },
+    {
+      "sandbox": "web-shop",
+      "host": "img.cdn.example.org",
+      "repeat": 1,
+      "ago_ms": 240000
+    },
+    {
+      "sandbox": "web-shop",
+      "host": "api.stripe-sandbox.example.com",
+      "port": 8443,
+      "ago_ms": 120000
+    },
+    {
+      "sandbox": "docs-site",
+      "host": "fonts.example.org",
+      "repeat": 2,
+      "ago_ms": 900000
+    },
+    { "sandbox": "docs-site", "host": "search.example.io", "ago_ms": 60000 },
+    {
+      "sandbox": "data-tools",
+      "host": "pypi.example.org",
+      "repeat": 6,
+      "ago_ms": 1800000
+    },
+    {
+      "sandbox": "data-tools",
+      "host": "files.pythonhosted.example.org",
+      "repeat": 6,
+      "ago_ms": 1700000
+    },
+    {
+      "sandbox": "data-tools",
+      "host": "xn--bcher-kva.example.com",
+      "ago_ms": 30000
+    }
+  ],
+  "connections": [
+    {
+      "sandbox": "web-shop",
+      "host": "github.com",
+      "decision": "allow",
+      "bytes_up": 5120,
+      "bytes_down": 2097152,
+      "ago_ms": 3000000
+    },
+    {
+      "sandbox": "web-shop",
+      "host": "index.crates.io",
+      "decision": "allow",
+      "bytes_up": 812,
+      "bytes_down": 40960,
+      "ago_ms": 2900000
+    },
+    {
+      "sandbox": "web-shop",
+      "host": "static.crates.io",
+      "decision": "allow",
+      "bytes_up": 640,
+      "bytes_down": 15728640,
+      "ago_ms": 2800000
+    },
+    {
+      "sandbox": "docs-site",
+      "host": "ads.example.net",
+      "decision": "deny",
+      "ago_ms": 2000000
+    },
+    {
+      "sandbox": "docs-site",
+      "host": "localhost",
+      "port": 5432,
+      "decision": "blocked",
+      "reason": "local_address",
+      "ago_ms": 1500000
+    },
+    {
+      "sandbox": "data-tools",
+      "host": "repo.example.org",
+      "port": 22,
+      "decision": "blocked",
+      "reason": "ssh_unsupported",
+      "ago_ms": 1200000
+    }
+  ],
+  "scripts": {
+    "arrivals": [
+      { "do": "request", "sandbox": "web-shop", "host": "new-1.example.org" },
+      { "do": "wait", "ms": 200 },
+      {
+        "do": "request",
+        "sandbox": "docs-site",
+        "host": "new-2.example.org",
+        "repeat": 3
+      },
+      { "do": "wait", "ms": 200 },
+      { "do": "request", "sandbox": "data-tools", "host": "new-3.example.org" }
+    ],
+    "oom": [
+      {
+        "do": "emit",
+        "event": {
+          "type": "oom_kill",
+          "sandbox": "web-shop",
+          "pid": 4242,
+          "process": "node"
+        }
+      }
+    ],
+    "workspace-stopped": [
+      {
+        "do": "emit",
+        "event": {
+          "type": "status_changed",
+          "sandbox": "web-shop",
+          "status": "stopped"
+        }
+      }
+    ],
+    "rule-expires": [{ "do": "advance", "ms": 18000000 }]
+  }
+}

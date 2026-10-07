@@ -40,7 +40,7 @@ different crates and rarely collides.
 | `crates/puddle-ssh` | lib | A sandbox's SSH endpoint (one runtime SSH connection per client, served only through the readiness gate, refusal line) and the `puddle ssh-bridge` relay (T-114) | W1 |
 | `crates/puddle-doctor` | lib | `puddle doctor` (T-115, D-23, D-24): host prerequisites (firmware virtualization, WHP/KVM, code integrity, job object), the bundled runtime (present, permitted, exact version), msb starting, a test boot of a 132-byte probe in a tiny root file system, Global Secure Access; each finding with its exact fix, text and JSON (`schema_version`). Checks are pure over a `Probe` (faked in tests); the Win32 calls (its only `unsafe`) are in `sys/windows.rs` | W1 |
 | `crates/puddle-lifecycle` | lib | Shutdown and reconcile (D-20): trim + stop of every sandbox when puddle exits, shutdown triggers (Ctrl-C, console close, signals), the front/worker split that keeps console events away from the VMs, the one kill-on-close job puddle and every msb child run in (D-27 limits go there), reconcile at start that touches only puddle-owned names. Its `unsafe` (Win32 job and console calls) is in `windows/sys.rs` (T-113) | W1 |
-| `crates/puddle-e2e` | lib (tests) | Harness for end-to-end and hostile-guest tests; never a dependency of product crates | W7, T-035 |
+| `crates/puddle-e2e` | lib (tests) + bin `puddle-ui-fixture` | Harness for end-to-end and hostile-guest tests, and the UI fixture backend (section 13); never a dependency of product crates | W7, T-035, T-171 |
 | `crates/puddle-vm-tests` | lib (tests) | VM test harness on the msb SDK: per-run prefix, private msb home, runtime pair, scoped backend; the `vm_*` tests of tiers K/W/L. Never a dependency of product crates | W1, T-102 |
 
 `ui/` is the Svelte single-page app (W5, section 13), not a crate. Later, not yet created: the Tauri
@@ -299,10 +299,18 @@ and in `ci.yml` (Linux); `windows.yml` runs `ui` and `ui-e2e`:
 | Gate | What |
 |---|---|
 | `ui` | `prettier --check`, `eslint` (with `eslint-plugin-svelte`), `svelte-check --fail-on-warnings` (Svelte's accessibility warnings fail), `vitest run --coverage`, `vite build` |
-| `ui-e2e` | Playwright against the real API serving the built app: Chromium and WebKit on Linux, the installed Edge on Windows; axe (WCAG 2.0 to 2.2, A and AA) on every route in both themes; no CSP violations |
+| `ui-e2e` | Playwright against the UI fixture backend (the real API on fake services, below), serving the built app: Chromium and WebKit on Linux, the installed Edge on Windows; axe (WCAG 2.0 to 2.2, A and AA) on every route in both themes; no CSP violations |
 | `ui-licences` | every npm package in the bundle is MIT, ISC, Apache-2.0, BSD-2/3-Clause, 0BSD or OFL-1.1, and is in `ui/THIRD-PARTY-NOTICES.txt` (`cd ui && npm run build && npm run licences` rewrites it) |
 | `ui-audit` | `npm audit --omit=dev --audit-level=moderate`, minus `ui/audit-exceptions.json` (id, reason, review-by date) |
 
+- **The fixture backend** (`puddle-ui-fixture`, `crates/puddle-e2e/src/ui_fixture/`) is the real
+  `puddle-api` router on an in-memory store, a manual clock and in-memory settings, seeded from a JSON
+  scenario (`ui/e2e/fixtures/*.json`: built-ins `default`, `empty`, `lived-in`, or any file) and driven by
+  scripts and a loopback control server (emit an event, advance the clock, restart, reset). Screens are
+  developed with `cd ui && npm run dev:fixture`; e2e tests that only read use the shared server of
+  `playwright.config.ts`, tests that change state use `e2e/fixture.ts` (a backend per worker, reset per
+  test). A new API service gets its fake and a scenario field in `Fixture::build_state`; a new event needs
+  nothing (an `Event` in JSON is a step).
 - **Coverage** (`ui/vite.config.ts`): lines ≥ 85 %, branches ≥ 80 % overall; `src/lib/api/**` (client,
   event stream) ≥ 95 % lines, ≥ 90 % branches. Thresholds only go up.
 - **The API client is generated:** `cargo xtask openapi` writes `ui/src/lib/api/schema.d.ts` (and

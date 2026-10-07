@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-e2e"
-description = "End-to-end and hostile-guest test harness (T-032, T-035); tests only, no product code"
+description = "End-to-end and hostile-guest test harness (T-032, T-035) and the UI fixture backend (T-171); tests and dev only, no product code"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,22 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# The fixture backend serves the built SPA (`ui/build`) from inside the binary, like the app.
+embedded-ui = ["puddle-api/embedded-ui"]
+
+[[bin]]
+name = "puddle-ui-fixture"
+path = "src/bin/puddle-ui-fixture.rs"
+
 [dependencies]
+axum = { workspace = true }
+puddle-api = { workspace = true }
+puddle-store = { workspace = true }
+puddle-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 
 [dev-dependencies]
 puddle-agent = { workspace = true }
@@ -19,12 +34,9 @@ puddle-compute-msb = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
-puddle-store = { workspace = true }
-puddle-types = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }
 rcgen = { workspace = true }
 rustls = { workspace = true }
-serde_json = { workspace = true }
 sha2 = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
