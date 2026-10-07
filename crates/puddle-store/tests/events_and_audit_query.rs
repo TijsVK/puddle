@@ -86,7 +86,7 @@ fn kinds(events: &[Event]) -> Vec<&'static str> {
 #[test]
 fn a_new_request_opens_a_pending_row_and_appends_to_the_audit() {
     let (_, sink, store) = fixture(Limits::default());
-    let id = new_id(ask(&store, "a", "example.com"));
+    let id = new_id(ask(&store, "a", "api.example.co.uk"));
     let events = sink.take();
     assert_eq!(kinds(&events), ["pending_opened", "audit_appended"]);
     let Event::PendingOpened { request } = &events[0] else {
@@ -94,8 +94,9 @@ fn a_new_request_opens_a_pending_row_and_appends_to_the_audit() {
     };
     assert_eq!(
         (request.id, request.sandbox.as_str(), request.host.as_str()),
-        (id.0, "a", "example.com")
+        (id.0, "a", "api.example.co.uk")
     );
+    assert_eq!(request.registrable_domain, "example.co.uk");
     assert_eq!(
         (request.port, request.attempts, request.first_seen),
         (443, 1, T0)

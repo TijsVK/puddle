@@ -434,6 +434,73 @@ async fn audit_records_are_typed_including_the_upstream_hop() {
 }
 
 #[tokio::test]
+async fn local_destinations_name_the_toggle_that_blocks_their_approval() {
+    let api = start().await;
+    let private = api.request("box", "10.0.0.5");
+    let loopback = api.request("box", "localhost");
+    let public = api.request("box", "www.example.com");
+    let blocked = |list: &Value| -> Vec<(i64, Value)> {
+        let mut rows: Vec<_> = list["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["id"].as_i64().unwrap(), r["blocked_by"].clone()))
+            .collect();
+        rows.sort_by_key(|(id, _)| *id);
+        rows
+    };
+    let list = api.get("/api/pending").await.json();
+    assert_eq!(
+        blocked(&list),
+        [
+            (private, json!("private")),
+            (loopback, json!("loopback")),
+            (public, json!(null))
+        ]
+    );
+    let one = api.get(&format!("/api/pending/{private}")).await.json();
+    assert_eq!(one["blocked_by"], "private");
+    let inbox = api.get("/api/inbox").await.json();
+    let in_inbox: usize = inbox["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|g| g["requests"].as_array().unwrap())
+        .filter(|r| !r["blocked_by"].is_null())
+        .count();
+    assert_eq!(in_inbox, 2);
+
+    // Switching the toggle on (here for every workspace) frees only that category.
+    let put = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"sandbox_defaults": {"local_toggles": {"private": true}}})),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    let list = api.get("/api/pending").await.json();
+    assert_eq!(
+        blocked(&list),
+        [
+            (private, json!(null)),
+            (loopback, json!("loopback")),
+            (public, json!(null))
+        ]
+    );
+    // A decided request is never blocked.
+    let denied = api
+        .send(
+            "POST",
+            &format!("/api/pending/{loopback}/deny"),
+            Some(&json!({})),
+        )
+        .await;
+    assert_eq!(denied.json()["request"]["blocked_by"], json!(null));
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn rule_input_is_normalised_not_refused() {
     let api = start().await;
     let reply = api

@@ -164,6 +164,9 @@ pub struct PendingSummary {
     pub sandbox: SandboxName,
     /// The requested host, normalised.
     pub host: String,
+    /// The host's registrable domain (`example.co.uk` for `api.example.co.uk`; the IP literal
+    /// itself), the key the inbox groups rows by.
+    pub registrable_domain: String,
     /// The requested port.
     pub port: u16,
     /// Epoch ms of the first request.
@@ -445,7 +448,8 @@ mod tests {
         let request = PendingSummary {
             id: 7,
             sandbox: name(),
-            host: "example.com".into(),
+            host: "www.example.com".into(),
+            registrable_domain: "example.com".into(),
             port: 443,
             first_seen: 1,
             last_seen: 2,
@@ -454,7 +458,7 @@ mod tests {
         for (event, json, sandbox) in [
             (
                 Event::PendingOpened { request },
-                r#"{"type":"pending_opened","request":{"id":7,"sandbox":"box","host":"example.com","port":443,"first_seen":1,"last_seen":2,"attempts":3}}"#,
+                r#"{"type":"pending_opened","request":{"id":7,"sandbox":"box","host":"www.example.com","registrable_domain":"example.com","port":443,"first_seen":1,"last_seen":2,"attempts":3}}"#,
                 Some(name()),
             ),
             (

@@ -21,6 +21,7 @@ use crate::ValidationError;
 /// Non-exhaustive: a "company network" category may follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[non_exhaustive]
 pub enum LocalCategory {
     /// The host itself: `127.0.0.0/8`, `::1`, the unspecified addresses `0.0.0.0` and `::`

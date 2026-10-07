@@ -414,6 +414,7 @@ impl Store {
                 id: id.0,
                 sandbox: row.sandbox.clone(),
                 host: row.host.to_string(),
+                registrable_domain: registrable_domain(&row.host),
                 port: row.port,
                 first_seen: row.first_seen,
                 last_seen: row.last_seen,

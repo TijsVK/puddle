@@ -23,7 +23,7 @@ fn empty() -> Value {
     json!({})
 }
 
-fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettings>, ApiError> {
+pub(crate) fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettings>, ApiError> {
     let loaded = GlobalSettings::from_document(repo.load_global()?.unwrap_or_else(empty))?;
     if !loaded.unknown_fields.is_empty() {
         tracing::warn!(fields = ?loaded.unknown_fields, "global settings have fields this puddle doesn't know; kept");
@@ -35,7 +35,7 @@ fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettings>, ApiErr
     Ok(loaded)
 }
 
-fn load_sandbox(
+pub(crate) fn load_sandbox(
     repo: &dyn SettingsRepo,
     sandbox: &SandboxName,
 ) -> Result<Loaded<SandboxSettings>, ApiError> {

@@ -157,6 +157,12 @@ pub struct PendingRequest {
     /// The rule that decided it.
     #[schema(required = true)]
     pub rule_id: Option<i64>,
+    /// For an open request to a local destination (host loopback, private network, link-local,
+    /// metadata, special) whose toggle is off in this workspace: the toggle that blocks approval.
+    /// An allow rule would not let the connection through until the toggle is on. `null`
+    /// otherwise, and always for a closed request.
+    #[schema(required = true)]
+    pub blocked_by: Option<puddle_types::LocalCategory>,
 }
 
 impl PendingRequest {
@@ -186,6 +192,7 @@ impl PendingRequest {
             decided_at,
             decided_by: decided_by.map(Actor::from_store).transpose()?,
             rule_id: rule_id.map(|r| r.0),
+            blocked_by: None,
         })
     }
 }

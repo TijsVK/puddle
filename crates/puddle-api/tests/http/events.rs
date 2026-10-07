@@ -178,6 +178,7 @@ async fn a_request_that_arrives_shows_up_live_and_a_decision_closes_it() {
     assert_eq!(data[0]["request"]["id"], id);
     assert_eq!(data[0]["request"]["sandbox"], "box");
     assert_eq!(data[0]["request"]["host"], "www.example.com");
+    assert_eq!(data[0]["request"]["registrable_domain"], "example.com");
     assert_eq!(data[0]["request"]["port"], 443);
     assert_eq!(data[0]["request"]["attempts"], 1);
 
