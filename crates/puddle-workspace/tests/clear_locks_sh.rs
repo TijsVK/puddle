@@ -58,6 +58,14 @@ fn git(dir: &Path, args: &[&str]) -> std::process::Output {
         .env("GIT_AUTHOR_EMAIL", "t@example.org")
         .env("GIT_COMMITTER_NAME", "T")
         .env("GIT_COMMITTER_EMAIL", "t@example.org")
+        // `git commit` otherwise starts a detached `git maintenance run --auto`, which creates and
+        // deletes `objects/maintenance.lock` on its own schedule; a test that lists the locks
+        // can catch it between the two.
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_0", "maintenance.auto")
+        .env("GIT_CONFIG_VALUE_0", "false")
+        .env("GIT_CONFIG_KEY_1", "gc.auto")
+        .env("GIT_CONFIG_VALUE_1", "0")
         .output()
         .unwrap()
 }
