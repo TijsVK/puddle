@@ -298,6 +298,20 @@
 
       <section class="card" id="s-net" aria-labelledby="h-net">
         <h2 id="h-net">Network</h2>
+        <h3>Network health</h3>
+        <div class="setting">
+          <div class="grow">
+            <p class="desc">
+              The proxy puddle found, how it signs in, and the company
+              certificates workspaces get.
+            </p>
+          </div>
+          <a class="btn" href="/settings/network-health"
+            >Details<span class="visually-hidden">
+              about network health</span
+            ></a
+          >
+        </div>
         <h3>Local destinations</h3>
         <p class="desc">
           Off by default. Turning one on makes those destinations

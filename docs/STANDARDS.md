@@ -322,7 +322,7 @@ and in `ci.yml` (Linux); `windows.yml` runs `ui` and `ui-e2e`:
   (the activity screen's long-log test).
 - **Coverage** (`ui/vite.config.ts`): lines ≥ 85 %, branches ≥ 80 % overall; `src/lib/api/**` (client,
   event stream), `src/lib/decision/**` (the four-outcome model), `src/lib/rules/**` (filter, sort, expiry),
-  `src/lib/audit/**` (filters, the address, how a record reads, the drawn window) and `src/lib/workspaces/**` (what each state allows, form checks, settings choices) and `src/lib/settings/**` (consent wording, global settings choices) ≥ 95 % lines, ≥ 90 % branches.
+  `src/lib/audit/**` (filters, the address, how a record reads, the drawn window) and `src/lib/workspaces/**` (what each state allows, form checks, settings choices) and `src/lib/settings/**` (consent wording, global settings choices) and `src/lib/network/**` (the network report in words, with a fix per problem) and `src/lib/notify/**` (notice list, event watcher) ≥ 95 % lines, ≥ 90 % branches.
   Thresholds only go up.
 - **The API client is generated:** `cargo xtask openapi` writes `ui/src/lib/api/schema.d.ts` (and
   checks it in the `openapi` gate); never hand-write a request.

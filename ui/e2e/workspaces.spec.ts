@@ -699,7 +699,7 @@ test.describe("the detail page", () => {
     await expect(page).toHaveURL(/\/workspaces\/web-shop\/settings$/);
     await page.getByRole("link", { name: "Overview" }).click();
     await expect(page.getByRole("alert")).toContainText("Out of memory");
-    await page.getByRole("button", { name: "Dismiss" }).click();
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect(page.getByRole("alert")).toHaveCount(0);
   });
 

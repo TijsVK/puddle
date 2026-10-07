@@ -78,6 +78,14 @@ describe("the screen", () => {
     expect(screen.getByText(/Open VSX/)).toBeInTheDocument();
   });
 
+  it("links to the network health details", async () => {
+    await open();
+    expect(screen.getByRole("link", { name: /Details/ })).toHaveAttribute(
+      "href",
+      "/settings/network-health",
+    );
+  });
+
   it("states that puddle sends nothing", async () => {
     await open();
     expect(

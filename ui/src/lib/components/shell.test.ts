@@ -17,8 +17,17 @@ const live = vi.hoisted(() => ({
   pending: 0,
   problem: null as null | "unauthorized" | "unreachable",
   start: vi.fn(() => () => undefined),
+  subscribe: vi.fn(() => () => undefined),
 }));
 vi.mock("#lib/stores/live.svelte.ts", () => ({ live }));
+
+const health = vi.hoisted(() => ({
+  report: null,
+  start: vi.fn(() => () => undefined),
+}));
+vi.mock("#lib/stores/network-health.svelte.ts", () => ({
+  networkHealth: health,
+}));
 
 import Layout from "../../routes/+layout.svelte";
 import ErrorPage from "../../routes/+error.svelte";
@@ -32,6 +41,8 @@ beforeEach(() => {
   live.pending = 0;
   live.problem = null;
   live.start.mockClear();
+  live.subscribe.mockClear();
+  health.start.mockClear();
   localStorage.clear();
   delete document.documentElement.dataset["theme"];
 });
@@ -99,6 +110,9 @@ describe("root layout", () => {
     expect(document.documentElement.dataset["theme"]).toBe("light");
     expect(theme.choice).toBe("light");
     expect(live.start).toHaveBeenCalledTimes(1);
+    expect(health.start).toHaveBeenCalledTimes(1);
+    expect(live.subscribe).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("region", { name: "Notices" })).toBeInTheDocument();
     expect(document.title).toBe("Inbox - puddle");
     unmount();
   });

@@ -4,17 +4,28 @@
   import "#lib/theme/base.css";
   import { onMount } from "svelte";
   import { page } from "$app/state";
+  import Notices from "#lib/components/Notices.svelte";
   import Sidebar from "#lib/components/Sidebar.svelte";
   import { documentTitle } from "#lib/nav.ts";
+  import { NoticeWatcher } from "#lib/notify/watcher.ts";
   import { live } from "#lib/stores/live.svelte.ts";
+  import { networkHealth } from "#lib/stores/network-health.svelte.ts";
   import { theme } from "#lib/theme/theme.svelte.ts";
 
   let { children } = $props();
 
+  const watcher = new NoticeWatcher({ source: live });
+
   onMount(() => {
     theme.init();
     void theme.sync();
-    return live.start();
+    const stops = [live.start(), networkHealth.start(), watcher.start()];
+    return () => stops.forEach((stop) => stop());
+  });
+
+  // A new report (the first read, or after `network_changed`) raises or withdraws the notice.
+  $effect(() => {
+    watcher.network(networkHealth.report);
   });
 </script>
 
@@ -36,6 +47,7 @@
         puddle's service isn't answering. Retrying.
       </p>
     {/if}
+    <Notices />
     <main id="main" tabindex="-1">
       {@render children()}
     </main>
