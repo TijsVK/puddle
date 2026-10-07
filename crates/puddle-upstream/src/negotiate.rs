@@ -91,7 +91,16 @@ pub trait TokenSource: Send + Sync + fmt::Debug {
 pub struct NegotiateAuth {
     source: Arc<dyn TokenSource>,
     /// The scheme each proxy last challenged with, so the next connection starts on it.
-    learned: Arc<Mutex<HashMap<ProxyAddr, Package>>>,
+    learned: Arc<Mutex<HashMap<ProxyAddr, Learned>>>,
+}
+
+/// What a proxy's last `407` taught us.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Learned {
+    /// It asks for this scheme.
+    Scheme(Package),
+    /// It names no scheme we speak (Basic only): no preemptive token on it again.
+    Neither,
 }
 
 impl NegotiateAuth {
@@ -113,7 +122,11 @@ impl ProxyAuth for NegotiateAuth {
     ) -> Result<Option<Box<dyn AuthSession>>, AuthError> {
         let package = if offered.is_empty() {
             let learned = self.learned.lock().unwrap_or_else(PoisonError::into_inner);
-            learned.get(proxy).copied().unwrap_or(Package::Negotiate)
+            match learned.get(proxy) {
+                Some(Learned::Neither) => return Ok(None),
+                Some(Learned::Scheme(package)) => *package,
+                None => Package::Negotiate,
+            }
         } else {
             let known: Vec<Package> = offered
                 .iter()
@@ -152,7 +165,7 @@ fn prefer(known: &[Package]) -> Option<Package> {
 
 struct Session {
     source: Arc<dyn TokenSource>,
-    learned: Arc<Mutex<HashMap<ProxyAddr, Package>>>,
+    learned: Arc<Mutex<HashMap<ProxyAddr, Learned>>>,
     proxy: ProxyAddr,
     spn: String,
     package: Package,
@@ -213,6 +226,11 @@ impl Session {
         Ok(())
     }
 
+    fn learn(&self, what: Learned) {
+        let mut learned = self.learned.lock().unwrap_or_else(PoisonError::into_inner);
+        learned.insert(self.proxy.clone(), what);
+    }
+
     fn refused(&self) -> AuthError {
         AuthError::Failed(format!(
             "the proxy refused the {} sign-in",
@@ -265,6 +283,7 @@ impl AuthSession for Session {
             Some(value) => {
                 let offers = parse_challenge(value)?;
                 if offers.is_empty() {
+                    self.learn(Learned::Neither);
                     return Err(AuthError::Failed(
                         "no supported sign-in scheme offered".into(),
                     ));
@@ -272,11 +291,9 @@ impl AuthSession for Session {
                 if self.complete {
                     return Err(self.refused());
                 }
-                let mut learned = self.learned.lock().unwrap_or_else(PoisonError::into_inner);
                 if let Some(first) = prefer(&offers.iter().map(|o| o.package).collect::<Vec<_>>()) {
-                    learned.insert(self.proxy.clone(), first);
+                    self.learn(Learned::Scheme(first));
                 }
-                drop(learned);
                 self.input_from(&offers)?
             }
         };
@@ -528,6 +545,17 @@ mod tests {
         let (auth, _) = auth(Source::default());
         let mut session = auth.begin(&proxy(), &[]).unwrap().unwrap();
         assert!(session.step(Some("Basic realm=\"corp\"")).is_err());
+    }
+
+    #[test]
+    fn a_basic_only_proxy_is_not_sent_a_preemptive_token_again() {
+        let (auth, source) = auth(Source::default());
+        let mut first = auth.begin(&proxy(), &[]).unwrap().unwrap();
+        assert!(first.step(Some("Basic realm=\"corp\"")).is_err());
+        assert!(auth.begin(&proxy(), &[]).unwrap().is_none());
+        // A 407 that does offer NTLM works again.
+        assert!(auth.begin(&proxy(), &["NTLM"]).unwrap().is_some());
+        assert_eq!(source.opened.load(Ordering::SeqCst), 2);
     }
 
     #[test]
