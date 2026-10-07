@@ -306,6 +306,13 @@ pub enum Step {
         /// How many requests.
         count: u64,
     },
+    /// `count` connection records over the last 7 days, oldest first, across workspaces
+    /// `bulk-0`..`bulk-9`, hosts `h<n>.d<m>.example.org` and the four decisions (the activity
+    /// screen's speed bar).
+    History {
+        /// How many records.
+        count: u64,
+    },
     /// Holds every workspace operation before its next step, so the busy state stays put.
     HoldWorkspaces,
     /// Lets held workspace operations go on.

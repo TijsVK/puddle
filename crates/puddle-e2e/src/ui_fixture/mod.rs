@@ -488,6 +488,31 @@ impl State {
                     )?;
                 }
             }
+            Step::History { count } => {
+                const WEEK_MS: u64 = 7 * 24 * 3_600_000;
+                let count = *count;
+                for i in 0..count {
+                    let decision = match i % 4 {
+                        0 => DecisionSeed::Allow,
+                        1 => DecisionSeed::Deny,
+                        2 => DecisionSeed::Pending,
+                        _ => DecisionSeed::Blocked,
+                    };
+                    self.connection(
+                        &ConnectionSeed {
+                            sandbox: format!("bulk-{}", i % 10),
+                            host: format!("h{}.d{}.example.org", i % 200, i % 50),
+                            port: 443,
+                            decision,
+                            reason: None,
+                            bytes_up: i % 5000,
+                            bytes_down: (i % 700) * 1024,
+                            ago_ms: (count - 1 - i) * WEEK_MS / count,
+                        },
+                        now,
+                    )?;
+                }
+            }
             Step::Rule(rule) => self.add_rule(rule, now)?,
             Step::Connection(connection) => self.connection(connection, now)?,
             Step::HoldWorkspaces => self.workspaces.hold(),

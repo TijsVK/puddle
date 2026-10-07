@@ -617,3 +617,40 @@ async fn a_scenario_with_a_bad_workspace_fails_to_start() {
         .is_err()
     );
 }
+
+#[tokio::test]
+async fn a_history_step_writes_connection_records_across_a_week() {
+    let run = start("empty").await;
+    let step = run
+        .control(
+            "POST",
+            "/control/step",
+            Some(&json!({"do": "history", "count": 600})),
+        )
+        .await;
+    assert_eq!(step.status, 204, "{}", step.body);
+    let now = run.state().await["now_ms"].as_u64().unwrap();
+    let page = run.get("/api/audit?limit=500").await.json();
+    let entries = page["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 500);
+    // Newest first, and the newest is just before now; ids and times fall together.
+    let ts = |i: usize| entries[i]["record"]["ts"].as_u64().unwrap();
+    assert!(ts(0) <= now && now - ts(0) < 7 * 24 * 3_600_000 / 600 + 1);
+    assert!(ts(0) > ts(499));
+    let oldest = run
+        .get(&format!(
+            "/api/audit?before={}&limit=500",
+            page["next_before"]
+        ))
+        .await
+        .json();
+    assert_eq!(oldest["entries"].as_array().unwrap().len(), 100);
+    assert_eq!(oldest["next_before"], Value::Null);
+    let mut decisions: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| e["record"]["decision"].as_str())
+        .collect();
+    decisions.sort_unstable();
+    decisions.dedup();
+    assert_eq!(decisions, ["allow", "blocked", "deny", "pending"]);
+}
