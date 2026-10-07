@@ -19,13 +19,23 @@
         "tags": [
           "audit"
         ],
-        "summary": "A page of the audit log, oldest first.",
+        "summary": "A page of the audit log, filtered on the server. Without `after` the newest matching records\ncome first and `before` pages back; with `after` the records come oldest first, for following\nthe tail.",
         "operationId": "audit",
         "parameters": [
           {
             "name": "after",
             "in": "query",
-            "description": "records after this id (default 0: from the start)",
+            "description": "records after this id, oldest first (to follow the tail)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "records before this id, newest first (to page back); can't be combined with `after`",
             "required": false,
             "schema": {
               "type": "integer",
@@ -40,8 +50,66 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "maximum": 1000,
+              "maximum": 500,
               "minimum": 1
+            }
+          },
+          {
+            "name": "sandbox",
+            "in": "query",
+            "description": "records about this sandbox",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "records of this type",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AuditType"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "description": "records with this outcome; types that have none never match",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AuditOutcome"
+            }
+          },
+          {
+            "name": "host_contains",
+            "in": "query",
+            "description": "records whose host (a rule's pattern) contains this text, case-insensitive",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "records at or after this epoch ms",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "records before this epoch ms",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
             }
           }
         ],
@@ -97,7 +165,7 @@
             }
           },
           "422": {
-            "description": "limit out of range",
+            "description": "a filter or the limit out of range",
             "content": {
               "application/json": {
                 "schema": {
@@ -2563,7 +2631,7 @@
       },
       "AuditEntry": {
         "type": "object",
-        "description": "One audit record.",
+        "description": "One audit record with its position in the log.",
         "required": [
           "id",
           "record"
@@ -2572,19 +2640,32 @@
           "id": {
             "type": "integer",
             "format": "int64",
-            "description": "Position in the log; pass the last one as `after` to read on."
+            "description": "Position in the log: pass the newest one as `after` to read on, or the oldest as `before`\nto read back."
           },
           "record": {
-            "description": "The record, as written to the JSONL audit log (`type`, `ts`, ...; see the rules spec §5)."
+            "$ref": "#/components/schemas/AuditRecord",
+            "description": "The record."
           }
         }
       },
+      "AuditOutcome": {
+        "type": "string",
+        "description": "What an audit record says happened, for the `outcome` filter.",
+        "enum": [
+          "allow",
+          "deny",
+          "pending",
+          "blocked",
+          "expired"
+        ]
+      },
       "AuditPage": {
         "type": "object",
-        "description": "A page of the audit log, oldest first.",
+        "description": "A page of the audit log: newest first for a read without `after`, oldest first with it.",
         "required": [
           "entries",
-          "next_after"
+          "next_after",
+          "next_before"
         ],
         "properties": {
           "entries": {
@@ -2597,9 +2678,636 @@
           "next_after": {
             "type": "integer",
             "format": "int64",
-            "description": "The `after` for the next page (the last id here, or the request's `after` if empty)."
+            "description": "The `after` for reading what comes after this page, and the one to tail the log with: the\nnewest id here, or the request's `after` (0 without one) if the page is empty."
+          },
+          "next_before": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The `before` for the next older page: the oldest id here; `null` when this page is the\noldest matching one (it holds fewer records than `limit`) or the read ran oldest first."
           }
         }
+      },
+      "AuditPending": {
+        "type": "object",
+        "description": "A pending request as an audit record shows it. `host` comes from the guest: escape it.",
+        "required": [
+          "id",
+          "sandbox_id",
+          "host",
+          "port",
+          "first_seen",
+          "last_seen",
+          "attempts",
+          "state",
+          "decided_at",
+          "decided_by",
+          "rule_id"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests the row stands for.",
+            "minimum": 0
+          },
+          "decided_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms.",
+            "minimum": 0
+          },
+          "decided_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`cli`, `ui`, `api` or `system`."
+          },
+          "first_seen": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms.",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string",
+            "description": "The requested host."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row id."
+          },
+          "last_seen": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms.",
+            "minimum": 0
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The requested port.",
+            "minimum": 0
+          },
+          "rule_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The deciding rule."
+          },
+          "sandbox_id": {
+            "type": "string",
+            "description": "The sandbox."
+          },
+          "state": {
+            "type": "string",
+            "description": "`requested`, `allowed`, `denied` or `expired`."
+          }
+        }
+      },
+      "AuditRecord": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A connection the proxy handled. `host`, `port` and `decision` are `null` on a\n`suppressed` summary, which carries `count`.",
+            "required": [
+              "ts",
+              "sandbox_id",
+              "host",
+              "port",
+              "resolved_ip",
+              "upstream",
+              "decision",
+              "reason",
+              "rule_id",
+              "pending_id",
+              "binding_id",
+              "injected",
+              "method",
+              "path",
+              "path_truncated",
+              "bytes_up",
+              "bytes_down",
+              "count",
+              "type"
+            ],
+            "properties": {
+              "binding_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The credential binding, by id."
+              },
+              "bytes_down": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Bytes to the guest.",
+                "minimum": 0
+              },
+              "bytes_up": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Bytes from the guest.",
+                "minimum": 0
+              },
+              "count": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Records summarised, on a `suppressed` summary.",
+                "minimum": 0
+              },
+              "decision": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ConnectionDecision",
+                    "description": "What happened."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "host": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The requested host."
+              },
+              "injected": {
+                "type": "boolean",
+                "description": "Whether a credential was injected."
+              },
+              "method": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "HTTP method, where the proxy saw the request in clear."
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "HTTP path without query string, where `method` is set."
+              },
+              "path_truncated": {
+                "type": "boolean",
+                "description": "Whether `path` was cut to fit."
+              },
+              "pending_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "The pending request."
+              },
+              "port": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "The requested port.",
+                "minimum": 0
+              },
+              "reason": {
+                "type": "string",
+                "description": "Why: `rule`, `no_rule`, or a block reason."
+              },
+              "resolved_ip": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The address connected to."
+              },
+              "rule_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "The deciding rule."
+              },
+              "sandbox_id": {
+                "type": "string",
+                "description": "The sandbox."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "connection"
+                ]
+              },
+              "upstream": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The company-proxy hop that carried it: `DIRECT` or `PROXY host:port`; `null` when no\nupstream route is configured."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A new pending request.",
+            "required": [
+              "ts",
+              "pending",
+              "type"
+            ],
+            "properties": {
+              "pending": {
+                "$ref": "#/components/schemas/AuditPending",
+                "description": "The request."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pending_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A pending request approved or denied.",
+            "required": [
+              "ts",
+              "pending",
+              "type"
+            ],
+            "properties": {
+              "pending": {
+                "$ref": "#/components/schemas/AuditPending",
+                "description": "The request as decided."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pending_decided"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A pending request expired.",
+            "required": [
+              "ts",
+              "pending",
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "pending": {
+                "$ref": "#/components/schemas/AuditPending",
+                "description": "The request as expired."
+              },
+              "reason": {
+                "$ref": "#/components/schemas/PendingExpiryReason",
+                "description": "Why."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pending_expired"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Requests over a sandbox's limit, not written as rows.",
+            "required": [
+              "ts",
+              "sandbox_id",
+              "count",
+              "type"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Requests suppressed since the previous record.",
+                "minimum": 0
+              },
+              "sandbox_id": {
+                "type": "string",
+                "description": "The sandbox."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pending_suppressed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A rule created.",
+            "required": [
+              "ts",
+              "rule",
+              "type"
+            ],
+            "properties": {
+              "rule": {
+                "$ref": "#/components/schemas/AuditRule",
+                "description": "The rule."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rule_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A rule changed.",
+            "required": [
+              "ts",
+              "before",
+              "rule",
+              "actor",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string",
+                "description": "Who changed it."
+              },
+              "before": {
+                "$ref": "#/components/schemas/AuditRule",
+                "description": "The rule before."
+              },
+              "rule": {
+                "$ref": "#/components/schemas/AuditRule",
+                "description": "The rule after."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rule_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A rule deleted.",
+            "required": [
+              "ts",
+              "rule",
+              "reason",
+              "actor",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string",
+                "description": "Who deleted it."
+              },
+              "reason": {
+                "$ref": "#/components/schemas/RuleDeleteReason",
+                "description": "Why."
+              },
+              "rule": {
+                "$ref": "#/components/schemas/AuditRule",
+                "description": "The rule as it was."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rule_deleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A rule removed after it expired.",
+            "required": [
+              "ts",
+              "rule",
+              "type"
+            ],
+            "properties": {
+              "rule": {
+                "$ref": "#/components/schemas/AuditRule",
+                "description": "The rule."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rule_expired"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The oldest records were deleted to keep the audit under its size cap.",
+            "required": [
+              "ts",
+              "deleted_records",
+              "oldest_ts_kept",
+              "type"
+            ],
+            "properties": {
+              "deleted_records": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Records deleted.",
+                "minimum": 0
+              },
+              "oldest_ts_kept": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "`ts` of the oldest record left; `null` if none.",
+                "minimum": 0
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "audit_trimmed"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come\nfrom the guest, so escape them when rendering. Records written by an older puddle lack the\nfields added since, which read as `null`."
+      },
+      "AuditRule": {
+        "type": "object",
+        "description": "A rule as an audit record shows it.",
+        "required": [
+          "id",
+          "scope",
+          "sandbox_id",
+          "pattern_kind",
+          "pattern",
+          "effect",
+          "expires_at",
+          "created_at",
+          "created_by",
+          "source_pending_id"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms.",
+            "minimum": 0
+          },
+          "created_by": {
+            "type": "string",
+            "description": "`cli`, `ui` or `api`."
+          },
+          "effect": {
+            "type": "string",
+            "description": "`allow` or `deny`."
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms, or `null` for permanent.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row id."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "`example.com` or `.example.com`."
+          },
+          "pattern_kind": {
+            "type": "string",
+            "description": "`exact` or `suffix`."
+          },
+          "sandbox_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The sandbox, for a sandbox rule."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`global` or `sandbox`."
+          },
+          "source_pending_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The pending request it came from."
+          }
+        }
+      },
+      "AuditType": {
+        "type": "string",
+        "description": "The record types, for the `type` filter.",
+        "enum": [
+          "connection",
+          "pending_created",
+          "pending_decided",
+          "pending_expired",
+          "pending_suppressed",
+          "rule_created",
+          "rule_updated",
+          "rule_deleted",
+          "rule_expired",
+          "audit_trimmed"
+        ]
       },
       "ClipboardRead": {
         "type": "string",
@@ -2608,6 +3316,16 @@
           "ask",
           "allow",
           "deny"
+        ]
+      },
+      "ConnectionDecision": {
+        "type": "string",
+        "description": "How the proxy handled a connection.",
+        "enum": [
+          "allow",
+          "deny",
+          "pending",
+          "blocked"
         ]
       },
       "Consent": {
@@ -3064,6 +3782,174 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A new open pending request (a sandbox asked for a host:port no rule decides).",
+            "required": [
+              "request",
+              "type"
+            ],
+            "properties": {
+              "request": {
+                "$ref": "#/components/schemas/PendingSummary",
+                "description": "The request, as `GET /api/pending` shows it."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pending_opened"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "An open pending request was seen again.",
+            "required": [
+              "sandbox",
+              "id",
+              "attempts",
+              "last_seen",
+              "type"
+            ],
+            "properties": {
+              "attempts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Requests the row stands for now.",
+                "minimum": 0
+              },
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "description": "The pending request's id."
+              },
+              "last_seen": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms of the latest one.",
+                "minimum": 0
+              },
+              "sandbox": {
+                "$ref": "#/components/schemas/SandboxName",
+                "description": "The sandbox."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pending_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A pending request is no longer open: decided by a user or by a rule, or expired.",
+            "required": [
+              "sandbox",
+              "id",
+              "state",
+              "rule_id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "description": "The pending request's id."
+              },
+              "rule_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "The rule that decided it; `null` for an expiry."
+              },
+              "sandbox": {
+                "$ref": "#/components/schemas/SandboxName",
+                "description": "The sandbox."
+              },
+              "state": {
+                "$ref": "#/components/schemas/PendingEnd",
+                "description": "How it ended."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "pending_closed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A sandbox's \"requests held back\" state (R-13) changed. Sent when suppression starts or\nends, and at most twice a second while its count grows.",
+            "required": [
+              "sandbox",
+              "active",
+              "count",
+              "type"
+            ],
+            "properties": {
+              "active": {
+                "type": "boolean",
+                "description": "Whether suppression is on."
+              },
+              "count": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Requests held back in this episode so far.",
+                "minimum": 0
+              },
+              "sandbox": {
+                "$ref": "#/components/schemas/SandboxName",
+                "description": "The sandbox."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "suppression_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Rules were created, changed, deleted or expired. Global: every subscriber gets it.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rules_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "New audit records were committed. `id` is the newest record's id, so a client that holds\neverything up to `after` reads on with `GET /api/audit?after=`. One event per commit,\nnot per record. Global: every subscriber gets it.",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "description": "The newest audit record's id."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "audit_appended"
+                ]
+              }
+            }
           }
         ],
         "description": "Something the user should hear about. Serialised as one internally tagged enum\n(`{\"type\":\"oom_kill\",...}`, ADR 0002).\n\nMost events are about one sandbox and carry a `sandbox` field; global ones (crash report\nwaiting, consent needed, network change, ...) carry none, and [`Event::sandbox`] returns\n`None` for them."
@@ -3207,6 +4093,17 @@
           }
         }
       },
+      "LocalCategory": {
+        "type": "string",
+        "description": "A class of local destination with its own toggle. Everything outside these is public.\n\nA toggle only *permits* its category; each destination still needs an allow rule or an\napproval. puddle's own endpoints are not a category: no toggle reaches them.\n\nNon-exhaustive: a \"company network\" category may follow.",
+        "enum": [
+          "loopback",
+          "private",
+          "link_local",
+          "metadata",
+          "special"
+        ]
+      },
       "LocalToggles": {
         "type": "object",
         "description": "Local destination categories a sandbox may approve (D-1, D-37). `null` inherits.",
@@ -3333,6 +4230,23 @@
           "suffix"
         ]
       },
+      "PendingEnd": {
+        "type": "string",
+        "description": "How a pending request ended.",
+        "enum": [
+          "allowed",
+          "denied",
+          "expired"
+        ]
+      },
+      "PendingExpiryReason": {
+        "type": "string",
+        "description": "Why a pending request expired.",
+        "enum": [
+          "stale",
+          "sandbox_deleted"
+        ]
+      },
       "PendingList": {
         "type": "object",
         "description": "Pending requests, most recent first.",
@@ -3363,7 +4277,8 @@
           "state",
           "decided_at",
           "decided_by",
-          "rule_id"
+          "rule_id",
+          "blocked_by"
         ],
         "properties": {
           "attempts": {
@@ -3371,6 +4286,17 @@
             "format": "int64",
             "description": "How many requests the row stands for.",
             "minimum": 0
+          },
+          "blocked_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LocalCategory",
+                "description": "For an open request to a local destination (host loopback, private network, link-local,\nmetadata, special) whose toggle is off in this workspace: the toggle that blocks approval.\nAn allow rule would not let the connection through until the toggle is on. `null`\notherwise, and always for a closed request."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "decided_at": {
             "type": [
@@ -3446,6 +4372,63 @@
           "denied",
           "expired"
         ]
+      },
+      "PendingSummary": {
+        "type": "object",
+        "description": "An open pending request as [`Event::PendingOpened`] carries it. `host` comes from the guest\n(already normalised by the proxy): escape it when rendering.",
+        "required": [
+          "id",
+          "sandbox",
+          "host",
+          "registrable_domain",
+          "port",
+          "first_seen",
+          "last_seen",
+          "attempts"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests the row stands for.",
+            "minimum": 0
+          },
+          "first_seen": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms of the first request.",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string",
+            "description": "The requested host, normalised."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The pending request's id."
+          },
+          "last_seen": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms of the latest one.",
+            "minimum": 0
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The requested port.",
+            "minimum": 0
+          },
+          "registrable_domain": {
+            "type": "string",
+            "description": "The host's registrable domain (`example.co.uk` for `api.example.co.uk`; the IP literal\nitself), the key the inbox groups rows by."
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/SandboxName",
+            "description": "The sandbox that asked."
+          }
+        }
       },
       "RepoFindings": {
         "type": "object",
@@ -3600,6 +4583,14 @@
             "description": "The pending request it was decided from."
           }
         }
+      },
+      "RuleDeleteReason": {
+        "type": "string",
+        "description": "Why a rule was deleted.",
+        "enum": [
+          "user",
+          "sandbox_deleted"
+        ]
       },
       "RuleExpiryRequest": {
         "type": "object",

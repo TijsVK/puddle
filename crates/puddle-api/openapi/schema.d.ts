@@ -13,7 +13,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** A page of the audit log, oldest first. */
+        /**
+         * A page of the audit log, filtered on the server. Without `after` the newest matching records
+         *     come first and `before` pages back; with `after` the records come oldest first, for following
+         *     the tail.
+         */
         get: operations["audit"];
         put?: never;
         post?: never;
@@ -476,31 +480,316 @@ export interface components {
             /** @description Where the browser editor is, in browser mode; the caller opens it. */
             url: string | null;
         };
-        /** @description One audit record. */
+        /** @description One audit record with its position in the log. */
         AuditEntry: {
             /**
              * Format: int64
-             * @description Position in the log; pass the last one as `after` to read on.
+             * @description Position in the log: pass the newest one as `after` to read on, or the oldest as `before`
+             *     to read back.
              */
             id: number;
-            /** @description The record, as written to the JSONL audit log (`type`, `ts`, ...; see the rules spec §5). */
-            record: unknown;
+            /** @description The record. */
+            record: components["schemas"]["AuditRecord"];
         };
-        /** @description A page of the audit log, oldest first. */
+        /**
+         * @description What an audit record says happened, for the `outcome` filter.
+         * @enum {string}
+         */
+        AuditOutcome: "allow" | "deny" | "pending" | "blocked" | "expired";
+        /** @description A page of the audit log: newest first for a read without `after`, oldest first with it. */
         AuditPage: {
             /** @description The records. */
             entries: components["schemas"]["AuditEntry"][];
             /**
              * Format: int64
-             * @description The `after` for the next page (the last id here, or the request's `after` if empty).
+             * @description The `after` for reading what comes after this page, and the one to tail the log with: the
+             *     newest id here, or the request's `after` (0 without one) if the page is empty.
              */
             next_after: number;
+            /**
+             * Format: int64
+             * @description The `before` for the next older page: the oldest id here; `null` when this page is the
+             *     oldest matching one (it holds fewer records than `limit`) or the read ran oldest first.
+             */
+            next_before: number | null;
         };
+        /** @description A pending request as an audit record shows it. `host` comes from the guest: escape it. */
+        AuditPending: {
+            /**
+             * Format: int64
+             * @description Requests the row stands for.
+             */
+            attempts: number;
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            decided_at: number | null;
+            /** @description `cli`, `ui`, `api` or `system`. */
+            decided_by: string | null;
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            first_seen: number;
+            /** @description The requested host. */
+            host: string;
+            /**
+             * Format: int64
+             * @description Row id.
+             */
+            id: number;
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            last_seen: number;
+            /**
+             * Format: int32
+             * @description The requested port.
+             */
+            port: number;
+            /**
+             * Format: int64
+             * @description The deciding rule.
+             */
+            rule_id: number | null;
+            /** @description The sandbox. */
+            sandbox_id: string;
+            /** @description `requested`, `allowed`, `denied` or `expired`. */
+            state: string;
+        };
+        /**
+         * @description One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
+         *     from the guest, so escape them when rendering. Records written by an older puddle lack the
+         *     fields added since, which read as `null`.
+         */
+        AuditRecord: {
+            /** @description The credential binding, by id. */
+            binding_id: string | null;
+            /**
+             * Format: int64
+             * @description Bytes to the guest.
+             */
+            bytes_down: number;
+            /**
+             * Format: int64
+             * @description Bytes from the guest.
+             */
+            bytes_up: number;
+            /**
+             * Format: int64
+             * @description Records summarised, on a `suppressed` summary.
+             */
+            count: number | null;
+            decision: components["schemas"]["ConnectionDecision"] | null;
+            /** @description The requested host. */
+            host: string | null;
+            /** @description Whether a credential was injected. */
+            injected: boolean;
+            /** @description HTTP method, where the proxy saw the request in clear. */
+            method: string | null;
+            /** @description HTTP path without query string, where `method` is set. */
+            path: string | null;
+            /** @description Whether `path` was cut to fit. */
+            path_truncated: boolean;
+            /**
+             * Format: int64
+             * @description The pending request.
+             */
+            pending_id: number | null;
+            /**
+             * Format: int32
+             * @description The requested port.
+             */
+            port: number | null;
+            /** @description Why: `rule`, `no_rule`, or a block reason. */
+            reason: string;
+            /** @description The address connected to. */
+            resolved_ip: string | null;
+            /**
+             * Format: int64
+             * @description The deciding rule.
+             */
+            rule_id: number | null;
+            /** @description The sandbox. */
+            sandbox_id: string;
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "connection";
+            /**
+             * @description The company-proxy hop that carried it: `DIRECT` or `PROXY host:port`; `null` when no
+             *     upstream route is configured.
+             */
+            upstream: string | null;
+        } | {
+            /** @description The request. */
+            pending: components["schemas"]["AuditPending"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "pending_created";
+        } | {
+            /** @description The request as decided. */
+            pending: components["schemas"]["AuditPending"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "pending_decided";
+        } | {
+            /** @description The request as expired. */
+            pending: components["schemas"]["AuditPending"];
+            /** @description Why. */
+            reason: components["schemas"]["PendingExpiryReason"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "pending_expired";
+        } | {
+            /**
+             * Format: int64
+             * @description Requests suppressed since the previous record.
+             */
+            count: number;
+            /** @description The sandbox. */
+            sandbox_id: string;
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "pending_suppressed";
+        } | {
+            /** @description The rule. */
+            rule: components["schemas"]["AuditRule"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "rule_created";
+        } | {
+            /** @description Who changed it. */
+            actor: string;
+            /** @description The rule before. */
+            before: components["schemas"]["AuditRule"];
+            /** @description The rule after. */
+            rule: components["schemas"]["AuditRule"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "rule_updated";
+        } | {
+            /** @description Who deleted it. */
+            actor: string;
+            /** @description Why. */
+            reason: components["schemas"]["RuleDeleteReason"];
+            /** @description The rule as it was. */
+            rule: components["schemas"]["AuditRule"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "rule_deleted";
+        } | {
+            /** @description The rule. */
+            rule: components["schemas"]["AuditRule"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "rule_expired";
+        } | {
+            /**
+             * Format: int64
+             * @description Records deleted.
+             */
+            deleted_records: number;
+            /**
+             * Format: int64
+             * @description `ts` of the oldest record left; `null` if none.
+             */
+            oldest_ts_kept: number | null;
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "audit_trimmed";
+        };
+        /** @description A rule as an audit record shows it. */
+        AuditRule: {
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            created_at: number;
+            /** @description `cli`, `ui` or `api`. */
+            created_by: string;
+            /** @description `allow` or `deny`. */
+            effect: string;
+            /**
+             * Format: int64
+             * @description Epoch ms, or `null` for permanent.
+             */
+            expires_at: number | null;
+            /**
+             * Format: int64
+             * @description Row id.
+             */
+            id: number;
+            /** @description `example.com` or `.example.com`. */
+            pattern: string;
+            /** @description `exact` or `suffix`. */
+            pattern_kind: string;
+            /** @description The sandbox, for a sandbox rule. */
+            sandbox_id: string | null;
+            /** @description `global` or `sandbox`. */
+            scope: string;
+            /**
+             * Format: int64
+             * @description The pending request it came from.
+             */
+            source_pending_id: number | null;
+        };
+        /**
+         * @description The record types, for the `type` filter.
+         * @enum {string}
+         */
+        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "audit_trimmed";
         /**
          * @description What a programmatic clipboard read in the browser window does (D-46).
          * @enum {string}
          */
         ClipboardRead: "ask" | "allow" | "deny";
+        /**
+         * @description How the proxy handled a connection.
+         * @enum {string}
+         */
+        ConnectionDecision: "allow" | "deny" | "pending" | "blocked";
         /** @description What the user agreed to or declined. */
         Consent: {
             /** @enum {string} */
@@ -691,6 +980,71 @@ export interface components {
             step: components["schemas"]["WorkspaceStep"];
             /** @enum {string} */
             type: "workspace_progress";
+        } | {
+            /** @description The request, as `GET /api/pending` shows it. */
+            request: components["schemas"]["PendingSummary"];
+            /** @enum {string} */
+            type: "pending_opened";
+        } | {
+            /**
+             * Format: int64
+             * @description Requests the row stands for now.
+             */
+            attempts: number;
+            /**
+             * Format: int64
+             * @description The pending request's id.
+             */
+            id: number;
+            /**
+             * Format: int64
+             * @description Epoch ms of the latest one.
+             */
+            last_seen: number;
+            /** @description The sandbox. */
+            sandbox: components["schemas"]["SandboxName"];
+            /** @enum {string} */
+            type: "pending_updated";
+        } | {
+            /**
+             * Format: int64
+             * @description The pending request's id.
+             */
+            id: number;
+            /**
+             * Format: int64
+             * @description The rule that decided it; `null` for an expiry.
+             */
+            rule_id: number | null;
+            /** @description The sandbox. */
+            sandbox: components["schemas"]["SandboxName"];
+            /** @description How it ended. */
+            state: components["schemas"]["PendingEnd"];
+            /** @enum {string} */
+            type: "pending_closed";
+        } | {
+            /** @description Whether suppression is on. */
+            active: boolean;
+            /**
+             * Format: int64
+             * @description Requests held back in this episode so far.
+             */
+            count: number;
+            /** @description The sandbox. */
+            sandbox: components["schemas"]["SandboxName"];
+            /** @enum {string} */
+            type: "suppression_changed";
+        } | {
+            /** @enum {string} */
+            type: "rules_changed";
+        } | {
+            /**
+             * Format: int64
+             * @description The newest audit record's id.
+             */
+            id: number;
+            /** @enum {string} */
+            type: "audit_appended";
         };
         /** @description A bounded list of lines from the unsaved-work check. */
         FindingList: {
@@ -753,6 +1107,16 @@ export interface components {
              */
             missed: number;
         };
+        /**
+         * @description A class of local destination with its own toggle. Everything outside these is public.
+         *
+         *     A toggle only *permits* its category; each destination still needs an allow rule or an
+         *     approval. puddle's own endpoints are not a category: no toggle reaches them.
+         *
+         *     Non-exhaustive: a "company network" category may follow.
+         * @enum {string}
+         */
+        LocalCategory: "loopback" | "private" | "link_local" | "metadata" | "special";
         /** @description Local destination categories a sandbox may approve (D-1, D-37). `null` inherits. */
         LocalToggles: {
             /** @description Link-local addresses. */
@@ -805,6 +1169,16 @@ export interface components {
          * @enum {string}
          */
         PatternKind: "exact" | "suffix";
+        /**
+         * @description How a pending request ended.
+         * @enum {string}
+         */
+        PendingEnd: "allowed" | "denied" | "expired";
+        /**
+         * @description Why a pending request expired.
+         * @enum {string}
+         */
+        PendingExpiryReason: "stale" | "sandbox_deleted";
         /** @description Pending requests, most recent first. */
         PendingList: {
             /** @description The requests. */
@@ -817,6 +1191,7 @@ export interface components {
              * @description How many requests the row stands for.
              */
             attempts: number;
+            blocked_by: components["schemas"]["LocalCategory"] | null;
             /**
              * Format: int64
              * @description Epoch ms it was decided or expired.
@@ -863,6 +1238,46 @@ export interface components {
          * @enum {string}
          */
         PendingState: "requested" | "allowed" | "denied" | "expired";
+        /**
+         * @description An open pending request as [`Event::PendingOpened`] carries it. `host` comes from the guest
+         *     (already normalised by the proxy): escape it when rendering.
+         */
+        PendingSummary: {
+            /**
+             * Format: int64
+             * @description Requests the row stands for.
+             */
+            attempts: number;
+            /**
+             * Format: int64
+             * @description Epoch ms of the first request.
+             */
+            first_seen: number;
+            /** @description The requested host, normalised. */
+            host: string;
+            /**
+             * Format: int64
+             * @description The pending request's id.
+             */
+            id: number;
+            /**
+             * Format: int64
+             * @description Epoch ms of the latest one.
+             */
+            last_seen: number;
+            /**
+             * Format: int32
+             * @description The requested port.
+             */
+            port: number;
+            /**
+             * @description The host's registrable domain (`example.co.uk` for `api.example.co.uk`; the IP literal
+             *     itself), the key the inbox groups rows by.
+             */
+            registrable_domain: string;
+            /** @description The sandbox that asked. */
+            sandbox: components["schemas"]["SandboxName"];
+        };
         /** @description What one checkout holds that is not on a remote. */
         RepoFindings: {
             /** @description Whether nothing in it would be lost. */
@@ -933,6 +1348,11 @@ export interface components {
              */
             source_pending_id: number | null;
         };
+        /**
+         * @description Why a rule was deleted.
+         * @enum {string}
+         */
+        RuleDeleteReason: "user" | "sandbox_deleted";
         /** @description A rule's new expiry. */
         RuleExpiryRequest: {
             /**
@@ -1102,10 +1522,24 @@ export interface operations {
     audit: {
         parameters: {
             query?: {
-                /** @description records after this id (default 0: from the start) */
+                /** @description records after this id, oldest first (to follow the tail) */
                 after?: number;
+                /** @description records before this id, newest first (to page back); can't be combined with `after` */
+                before?: number;
                 /** @description records per page (default 100) */
                 limit?: number;
+                /** @description records about this sandbox */
+                sandbox?: string;
+                /** @description records of this type */
+                type?: components["schemas"]["AuditType"];
+                /** @description records with this outcome; types that have none never match */
+                outcome?: components["schemas"]["AuditOutcome"];
+                /** @description records whose host (a rule's pattern) contains this text, case-insensitive */
+                host_contains?: string;
+                /** @description records at or after this epoch ms */
+                from?: number;
+                /** @description records before this epoch ms */
+                to?: number;
             };
             header?: never;
             path?: never;
@@ -1158,7 +1592,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description limit out of range */
+            /** @description a filter or the limit out of range */
             422: {
                 headers: {
                     [name: string]: unknown;
