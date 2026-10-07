@@ -23,14 +23,14 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, ConnectionInfo, EventHub, FakeLauncher, FakeWorkspaces,
-    Launcher, Listing, MemorySettings, Operation, RepoFindings, RepoUrl, RunningApi, Services,
-    SettingsRepo, Unsaved, WorkspaceRecord,
+    ApiConfig, ApiServer, ApiToken, ConnectionInfo, EventHub, FakeLauncher, FakeNetworkHealth,
+    FakeWorkspaces, Launcher, Listing, MemorySettings, NetworkHealthService, Operation,
+    RepoFindings, RepoUrl, RunningApi, Services, SettingsRepo, Unsaved, WorkspaceRecord,
 };
 use puddle_store::{Actor, Clock, Limits, ManualClock, NewRule, Pattern, Scope, Store};
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, EventSink,
-    Host, ImageRef, MemoryMib, SandboxName, SandboxStatus, SuffixAllows, WorkspaceId,
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, Event,
+    EventSink, Host, ImageRef, MemoryMib, SandboxName, SandboxStatus, SuffixAllows, WorkspaceId,
 };
 use tokio::sync::Mutex;
 
@@ -44,7 +44,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 3] = [
+const BUILT_IN: [(&str, &str); 5] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -56,6 +56,14 @@ const BUILT_IN: [(&str, &str); 3] = [
     (
         "lived-in",
         include_str!("../../../../ui/e2e/fixtures/lived-in.json"),
+    ),
+    (
+        "corporate-network",
+        include_str!("../../../../ui/e2e/fixtures/corporate-network.json"),
+    ),
+    (
+        "network-trouble",
+        include_str!("../../../../ui/e2e/fixtures/network-trouble.json"),
     ),
 ];
 
@@ -110,6 +118,7 @@ struct State {
     events: Arc<EventHub>,
     settings: Arc<MemorySettings>,
     workspaces: FakeWorkspaces,
+    network: Arc<FakeNetworkHealth>,
     api: Option<RunningApi>,
 }
 
@@ -162,12 +171,14 @@ impl Fixture {
             Arc::new(FakeLauncher::new()) as Arc<dyn Launcher>,
             Duration::from_millis(scenario.workspace_step_delay_ms),
         );
+        let network = Arc::new(FakeNetworkHealth::new(clock.clone() as Arc<dyn Clock>));
         let state = State {
             store,
             clock,
             events,
             settings,
             workspaces,
+            network,
             api: None,
         };
         state.seed(scenario)?;
@@ -186,7 +197,8 @@ impl Fixture {
                 state.events.clone(),
                 state.clock.clone() as Arc<dyn Clock>,
             )
-            .with_workspaces(Arc::new(state.workspaces.clone()));
+            .with_workspaces(Arc::new(state.workspaces.clone()))
+            .with_network_health(state.network.clone() as Arc<dyn NetworkHealthService>);
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
                 self.token.clone(),
@@ -440,6 +452,9 @@ impl State {
                 .save_sandbox(&sandbox(name)?, document.clone())
                 .map_err(|err| err.to_string())?;
         }
+        if let Some(report) = &scenario.network_health {
+            self.network.set(report.clone());
+        }
         self.clock.set(start);
         Ok(())
     }
@@ -512,6 +527,11 @@ impl State {
                         now,
                     )?;
                 }
+            }
+            Step::NetworkHealth(report) => {
+                let epoch = report.proxy.epoch;
+                self.network.set((**report).clone());
+                self.events.emit(Event::NetworkChanged { epoch });
             }
             Step::Rule(rule) => self.add_rule(rule, now)?,
             Step::Connection(connection) => self.connection(connection, now)?,

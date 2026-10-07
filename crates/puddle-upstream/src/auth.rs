@@ -55,6 +55,12 @@ pub trait ProxyAuth: Send + Sync + std::fmt::Debug {
         proxy: &ProxyAddr,
         offered: &[&str],
     ) -> Result<Option<Box<dyn AuthSession>>, AuthError>;
+
+    /// The scheme words this implementation can answer with (lower case: `negotiate`, `ntlm`,
+    /// `basic`), for the network-health report. Empty when it signs in with nothing.
+    fn methods(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
 }
 
 /// No authentication: every proxy is used as it is. The Unix implementation of [`system_auth`].

@@ -197,7 +197,9 @@ readable as JSONL (one record per line).
   and at most twice a second while the count grows), `rules_changed` (any rule created, changed,
   deleted or expired) and `audit_appended` (once per commit that wrote audit records, with the
   newest id). Events carry ids and counts, not decisions: a client that missed some refetches.
-  A failed change emits nothing.
+  A failed change emits nothing. `network_changed` (with the new network epoch) is not a store
+  event: puddle sends it when the network or the system's proxy settings change, and a client
+  refetches `GET /api/network-health`.
 
 ## 6. Out of scope here
 

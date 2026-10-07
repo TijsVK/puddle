@@ -1,0 +1,75 @@
+{
+  "name": "network-trouble",
+  "network_health": {
+    "generated_at": 0,
+    "proxy": {
+      "mode": "system",
+      "detected": "pac",
+      "auto_detect": true,
+      "pac_url": "http://wpad.corp.example/proxy.pac",
+      "pac_state": "unreachable",
+      "http_proxy": "fallback.corp.example:3128",
+      "https_proxy": "fallback.corp.example:3128",
+      "bypass_entries": 2,
+      "settings_error": null,
+      "epoch": 7,
+      "last_change_at": 1791374100000,
+      "dead_proxies": [
+        {
+          "proxy": "fallback.corp.example:3128",
+          "retry_in_secs": 180
+        }
+      ]
+    },
+    "sign_in": {
+      "methods": [
+        "negotiate",
+        "ntlm"
+      ],
+      "attempts": [
+        {
+          "proxy": "fallback.corp.example:3128",
+          "scheme": "Negotiate",
+          "result": "failed",
+          "detail": "proxy authentication failed: no credentials for the logged-on user",
+          "at": 1791374340000
+        }
+      ]
+    },
+    "roots": {
+      "synced": false,
+      "synced_at": null,
+      "roots": 0,
+      "intermediates": 0,
+      "certificates": [],
+      "skipped": [],
+      "unreadable_stores": [
+        "LocalMachine\\Root\\.GroupPolicy: access denied"
+      ]
+    },
+    "pull_proxy": {
+      "active": true,
+      "via_upstream": true
+    },
+    "routes": [
+      {
+        "scheme": "https",
+        "host": "github.com",
+        "port": 443,
+        "hops": [
+          "PROXY fallback.corp.example:3128"
+        ],
+        "source": "system"
+      },
+      {
+        "scheme": "https",
+        "host": "wiki.corp.example",
+        "port": 443,
+        "hops": [
+          "DIRECT"
+        ],
+        "source": "bypass"
+      }
+    ]
+  }
+}

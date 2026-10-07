@@ -13,6 +13,7 @@ mod common;
 
 pub(crate) mod events;
 mod guard;
+mod network_health;
 mod routes;
 mod settings;
 mod ui;

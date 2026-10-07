@@ -583,6 +583,77 @@
         }
       }
     },
+    "/api/network-health": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "The proxy setup puddle sees (PAC, WPAD, fixed proxy or environment), how it signs in to the\ncompany proxy, the company roots copied into workspaces, the route chosen per destination\nand whether image pulls go through the pull proxy. Safe to show: it holds no password, token,\nproxy credential or PAC script. A client refetches on the `network_changed` event.",
+        "operationId": "network_health",
+        "responses": {
+          "200": {
+            "description": "the report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkHealth"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the report is not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/pending": {
       "get": {
         "tags": [
@@ -3496,6 +3567,27 @@
           }
         }
       },
+      "DeadProxy": {
+        "type": "object",
+        "description": "A proxy that did not answer and is tried last for a while.",
+        "required": [
+          "proxy",
+          "retry_in_secs"
+        ],
+        "properties": {
+          "proxy": {
+            "type": "string",
+            "description": "`host:port`."
+          },
+          "retry_in_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds until it is tried in its normal order again, if the network does not change first.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "DecisionOutcome": {
         "type": "object",
         "description": "What an approve or deny did (R-16, R-17).",
@@ -3983,6 +4075,28 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The network or the system's proxy settings changed (after a quiet period), so what\n`GET /api/network-health` showed may be out of date. Global: every subscriber gets it.",
+            "required": [
+              "epoch",
+              "type"
+            ],
+            "properties": {
+              "epoch": {
+                "type": "integer",
+                "format": "int64",
+                "description": "The network epoch that began; it only grows while puddle runs.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "network_changed"
+                ]
+              }
+            }
           }
         ],
         "description": "Something the user should hear about. Serialised as one internally tagged enum\n(`{\"type\":\"oom_kill\",...}`, ADR 0002).\n\nMost events are about one sandbox and carry a `sandbox` field; global ones (crash report\nwaiting, consent needed, network change, ...) carry none, and [`Event::sandbox`] returns\n`None` for them."
@@ -4195,6 +4309,50 @@
         },
         "additionalProperties": false
       },
+      "NetworkHealth": {
+        "type": "object",
+        "description": "`GET /api/network-health`: everything puddle knows about how it reaches the internet.",
+        "required": [
+          "generated_at",
+          "proxy",
+          "sign_in",
+          "roots",
+          "pull_proxy",
+          "routes"
+        ],
+        "properties": {
+          "generated_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms the report was made.",
+            "minimum": 0
+          },
+          "proxy": {
+            "$ref": "#/components/schemas/ProxyReport",
+            "description": "The proxy setup."
+          },
+          "pull_proxy": {
+            "$ref": "#/components/schemas/PullProxyReport",
+            "description": "Image pulls."
+          },
+          "roots": {
+            "$ref": "#/components/schemas/RootsReport",
+            "description": "Company roots copied into workspaces."
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RouteDecision"
+            },
+            "description": "Routes chosen so far in this network epoch, sorted by host (at most 100)."
+          },
+          "sign_in": {
+            "$ref": "#/components/schemas/SignInReport",
+            "description": "Signing in to the proxy."
+          }
+        },
+        "additionalProperties": false
+      },
       "NewRuleRequest": {
         "type": "object",
         "description": "A rule to create directly (not from a pending request).",
@@ -4263,6 +4421,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "PacState": {
+        "type": "string",
+        "description": "Whether the PAC script or WPAD answered.",
+        "enum": [
+          "not_used",
+          "not_asked",
+          "answering",
+          "unreachable"
+        ]
       },
       "PatternKind": {
         "type": "string",
@@ -4472,6 +4640,138 @@
           }
         }
       },
+      "ProxyDetected": {
+        "type": "string",
+        "description": "What puddle found out about the proxy setup.",
+        "enum": [
+          "pac",
+          "wpad",
+          "static",
+          "env",
+          "direct"
+        ]
+      },
+      "ProxyMode": {
+        "type": "string",
+        "description": "Where puddle gets its proxy setting from.",
+        "enum": [
+          "system",
+          "direct",
+          "manual"
+        ]
+      },
+      "ProxyReport": {
+        "type": "object",
+        "description": "The proxy setup puddle sees.",
+        "required": [
+          "mode",
+          "detected",
+          "auto_detect",
+          "pac_url",
+          "pac_state",
+          "http_proxy",
+          "https_proxy",
+          "bypass_entries",
+          "settings_error",
+          "epoch",
+          "last_change_at",
+          "dead_proxies"
+        ],
+        "properties": {
+          "auto_detect": {
+            "type": "boolean",
+            "description": "Automatic detection (WPAD) is on."
+          },
+          "bypass_entries": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many destinations the fixed settings exempt (the bypass list's length).",
+            "minimum": 0
+          },
+          "dead_proxies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeadProxy"
+            },
+            "description": "Proxies marked unreachable."
+          },
+          "detected": {
+            "$ref": "#/components/schemas/ProxyDetected",
+            "description": "What was found."
+          },
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The network epoch; it grows each time a network or settings change is noticed.",
+            "minimum": 0
+          },
+          "http_proxy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The fixed proxy for plain HTTP (`host:port`), or `null`."
+          },
+          "https_proxy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The fixed proxy for HTTPS (`host:port`), or `null`."
+          },
+          "last_change_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms when the last change was noticed; `null` when none since puddle started.",
+            "minimum": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ProxyMode",
+            "description": "Where the setting comes from."
+          },
+          "pac_state": {
+            "$ref": "#/components/schemas/PacState",
+            "description": "Whether the PAC or WPAD answered."
+          },
+          "pac_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The PAC script's address, without user info, query or fragment; `null` when none."
+          },
+          "settings_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the system settings could not be read; `null` when they could."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PullProxyReport": {
+        "type": "object",
+        "description": "Image pulls and the pull proxy.",
+        "required": [
+          "active",
+          "via_upstream"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "Image pulls go through puddle's pull proxy (where the rules and the guard apply)."
+          },
+          "via_upstream": {
+            "type": "boolean",
+            "description": "The pull proxy reaches the internet through the company proxy setup above."
+          }
+        },
+        "additionalProperties": false
+      },
       "RepoFindings": {
         "type": "object",
         "description": "What one checkout holds that is not on a remote.",
@@ -4560,6 +4860,130 @@
             "minimum": 0
           }
         }
+      },
+      "RootKind": {
+        "type": "string",
+        "description": "A certificate kind.",
+        "enum": [
+          "root",
+          "intermediate"
+        ]
+      },
+      "RootsReport": {
+        "type": "object",
+        "description": "The company roots puddle copied into workspaces.",
+        "required": [
+          "synced",
+          "synced_at",
+          "roots",
+          "intermediates",
+          "certificates",
+          "skipped",
+          "unreadable_stores"
+        ],
+        "properties": {
+          "certificates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SyncedRoot"
+            },
+            "description": "What workspaces get."
+          },
+          "intermediates": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many intermediates workspaces get.",
+            "minimum": 0
+          },
+          "roots": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many trust anchors workspaces get.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedRoot"
+            },
+            "description": "What was left out."
+          },
+          "synced": {
+            "type": "boolean",
+            "description": "Whether the host's certificate stores have been read (false until the first sync, and\non systems where puddle has no store to read)."
+          },
+          "synced_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms of the last read; `null` when none.",
+            "minimum": 0
+          },
+          "unreadable_stores": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Stores that could not be read, with the system's reason."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RouteDecision": {
+        "type": "object",
+        "description": "The route puddle chose for one destination in this network epoch.",
+        "required": [
+          "scheme",
+          "host",
+          "port",
+          "hops",
+          "source"
+        ],
+        "properties": {
+          "hops": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The hops in order: `PROXY host:port` or `DIRECT`."
+          },
+          "host": {
+            "type": "string",
+            "description": "The host, from a guest request: escape it."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The port.",
+            "minimum": 0
+          },
+          "scheme": {
+            "type": "string",
+            "description": "`http` or `https`."
+          },
+          "source": {
+            "$ref": "#/components/schemas/RouteSource",
+            "description": "How it was chosen."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RouteSource": {
+        "type": "string",
+        "description": "How a route was chosen.",
+        "enum": [
+          "loopback",
+          "disabled",
+          "manual",
+          "pac",
+          "pac_unsupported",
+          "system",
+          "env",
+          "bypass",
+          "no_proxy"
+        ]
       },
       "Rule": {
         "type": "object",
@@ -4861,6 +5285,110 @@
         },
         "additionalProperties": false
       },
+      "SignInAttempt": {
+        "type": "object",
+        "description": "The latest sign-in attempt to one proxy.",
+        "required": [
+          "proxy",
+          "scheme",
+          "result",
+          "detail",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms.",
+            "minimum": 0
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "More, in words; `null` when there is nothing to add."
+          },
+          "proxy": {
+            "type": "string",
+            "description": "`host:port`."
+          },
+          "result": {
+            "$ref": "#/components/schemas/SignInResult",
+            "description": "How it ended."
+          },
+          "scheme": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The scheme sent (`Negotiate`, `NTLM`, `Basic`); `null` when none was."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SignInReport": {
+        "type": "object",
+        "description": "How puddle signs in to the company proxy.",
+        "required": [
+          "methods",
+          "attempts"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SignInAttempt"
+            },
+            "description": "The latest attempt per proxy, newest first."
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The schemes puddle can answer a proxy with, lower case (`negotiate`, `ntlm`, `basic`).\nEmpty: puddle can not sign in to a proxy on this system."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SignInResult": {
+        "type": "string",
+        "description": "How a sign-in to a proxy ended.",
+        "enum": [
+          "signed_in",
+          "not_required",
+          "failed",
+          "unsupported"
+        ]
+      },
+      "SkippedRoot": {
+        "type": "object",
+        "description": "A certificate in the host's stores that workspaces do not get.",
+        "required": [
+          "subject",
+          "fingerprint",
+          "reason"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "description": "SHA-256 of the certificate, lower-case hex."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why, in words."
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The subject's common name, when readable."
+          }
+        },
+        "additionalProperties": false
+      },
       "Suppression": {
         "type": "object",
         "description": "Whether a sandbox's new pending requests are being suppressed (R-13).",
@@ -4885,6 +5413,47 @@
             "description": "The sandbox."
           }
         }
+      },
+      "SyncedRoot": {
+        "type": "object",
+        "description": "A certificate copied into workspaces.",
+        "required": [
+          "subject",
+          "fingerprint",
+          "kind",
+          "not_after",
+          "sources"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "description": "SHA-256 of the certificate, lower-case hex."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RootKind",
+            "description": "Root or intermediate."
+          },
+          "not_after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Expiry, epoch ms."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The stores it was found in (`LocalMachine\\Root\\.GroupPolicy`)."
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The subject's common name, when it has one. Comes from a certificate: escape it."
+          }
+        },
+        "additionalProperties": false
       },
       "ThemeChoice": {
         "type": "string",
@@ -5147,6 +5716,10 @@
     {
       "name": "consents",
       "description": "What the user agreed to"
+    },
+    {
+      "name": "network",
+      "description": "How puddle reaches the internet: proxy, sign-in, company roots"
     },
     {
       "name": "workspaces",

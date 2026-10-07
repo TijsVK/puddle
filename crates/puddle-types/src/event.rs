@@ -151,6 +151,12 @@ pub enum Event {
         /// The newest audit record's id.
         id: i64,
     },
+    /// The network or the system's proxy settings changed (after a quiet period), so what
+    /// `GET /api/network-health` showed may be out of date. Global: every subscriber gets it.
+    NetworkChanged {
+        /// The network epoch that began; it only grows while puddle runs.
+        epoch: u64,
+    },
 }
 
 /// An open pending request as [`Event::PendingOpened`] carries it. `host` comes from the guest
@@ -259,7 +265,9 @@ impl Event {
             | Self::PendingClosed { sandbox, .. }
             | Self::SuppressionChanged { sandbox, .. } => Some(sandbox),
             Self::PendingOpened { request } => Some(&request.sandbox),
-            Self::RulesChanged {} | Self::AuditAppended { .. } => None,
+            Self::RulesChanged {} | Self::AuditAppended { .. } | Self::NetworkChanged { .. } => {
+                None
+            }
         }
     }
 }
@@ -504,6 +512,11 @@ mod tests {
             (
                 Event::AuditAppended { id: 99 },
                 r#"{"type":"audit_appended","id":99}"#,
+                None,
+            ),
+            (
+                Event::NetworkChanged { epoch: 4 },
+                r#"{"type":"network_changed","epoch":4}"#,
                 None,
             ),
         ] {

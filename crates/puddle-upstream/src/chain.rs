@@ -33,6 +33,7 @@ use tokio::net::TcpStream;
 use crate::auth::{AuthSession, AuthStep, ProxyAuth};
 use crate::discovery::Discovery;
 use crate::hop::{Destination, Hop, ProxyAddr};
+use crate::signin::{SignIn, SignInLog, SignInOutcome};
 use crate::wire::{self, MAX_DRAIN, ResponseHead};
 
 /// The host the authentication probe asks the proxy for. `.invalid` never resolves (RFC 6761), so
@@ -242,6 +243,7 @@ pub struct Chain {
     auth: Arc<dyn ProxyAuth>,
     config: ChainConfig,
     memo: Mutex<HashMap<ProxyAddr, Memo>>,
+    sign_in_log: SignInLog,
 }
 
 impl Chain {
@@ -263,7 +265,21 @@ impl Chain {
             auth,
             config,
             memo: Mutex::default(),
+            sign_in_log: SignInLog::default(),
         })
+    }
+
+    /// What the last sign-in to each proxy came to, for the network-health report. Never holds a
+    /// token or a password.
+    #[must_use]
+    pub fn sign_ins(&self) -> Vec<SignIn> {
+        self.sign_in_log.all()
+    }
+
+    /// The sign-in schemes this chain can answer a proxy with (lower case), for the report.
+    #[must_use]
+    pub fn auth_methods(&self) -> Vec<&'static str> {
+        self.auth.methods()
     }
 
     /// The discovery in use.
@@ -406,12 +422,46 @@ impl Chain {
         Ok(stream)
     }
 
-    /// One request to `proxy`, with as many `407` rounds as it takes.
+    /// One request to `proxy`, with as many `407` rounds as it takes; the outcome is kept for
+    /// the network-health report.
     async fn exchange(
         &self,
         proxy: &ProxyAddr,
         form: Form,
         authority: &str,
+    ) -> Result<Connected, HopError> {
+        let mut scheme = None;
+        let result = self
+            .exchange_rounds(proxy, form, authority, &mut scheme)
+            .await;
+        let outcome = match &result {
+            Ok(_) if scheme.is_some() => Some((SignInOutcome::SignedIn, None)),
+            Ok(_) => Some((SignInOutcome::NotRequired, None)),
+            // The proxy answered the request after signing in: the sign-in itself worked.
+            Err(HopError::Final(ChainError::Refused { .. })) if scheme.is_some() => {
+                Some((SignInOutcome::SignedIn, None))
+            }
+            Err(HopError::Final(ChainError::AuthFailed { why, .. })) => {
+                Some((SignInOutcome::Failed, Some(why.clone())))
+            }
+            Err(HopError::Final(ChainError::AuthRequired { schemes, .. })) => Some((
+                SignInOutcome::Unsupported,
+                Some(format!("the proxy offers {}", schemes.join(", "))),
+            )),
+            Err(_) => None,
+        };
+        if let Some((outcome, detail)) = outcome {
+            self.sign_in_log.record(proxy, scheme, outcome, detail);
+        }
+        result
+    }
+
+    async fn exchange_rounds(
+        &self,
+        proxy: &ProxyAddr,
+        form: Form,
+        authority: &str,
+        used: &mut Option<String>,
     ) -> Result<Connected, HopError> {
         let failed = |why: String| {
             HopError::Final(ChainError::AuthFailed {
@@ -421,6 +471,7 @@ impl Chain {
         };
         let memo = self.memo(proxy);
         let mut header = memo.as_ref().and_then(|m| m.basic.clone());
+        *used = header.as_deref().and_then(scheme_word);
         let mut session: Option<Box<dyn AuthSession>> = None;
         let mut preemptive = false;
         if header.is_none()
@@ -433,7 +484,7 @@ impl Chain {
             if let AuthStep::Authorization(value) =
                 started.step(None).map_err(|e| failed(e.to_string()))?
             {
-                header = Some(value);
+                adopt(used, &mut header, value);
             }
             session = Some(started);
             preemptive = true;
@@ -489,7 +540,7 @@ impl Chain {
                 None => return Err(failed("no session".into())),
             };
             match step {
-                Ok(AuthStep::Authorization(value)) => header = Some(value),
+                Ok(AuthStep::Authorization(value)) => adopt(used, &mut header, value),
                 Ok(_) => {
                     return Err(failed(
                         "the proxy asked again after authentication was complete".into(),
@@ -592,6 +643,19 @@ fn connected(
         authority: Some(authority.to_owned()),
         authorization: authorization.map(Secret),
     }
+}
+
+/// Sends `value` from now on, and remembers which scheme it was for the sign-in report.
+fn adopt(used: &mut Option<String>, header: &mut Option<String>, value: String) {
+    *used = scheme_word(&value);
+    *header = Some(value);
+}
+
+/// The scheme word of a `Proxy-Authorization` value (`Negotiate`, `NTLM`, `Basic`), nothing else.
+fn scheme_word(header: &str) -> Option<String> {
+    let word = header.split_once(' ').map_or(header, |(word, _)| word);
+    (!word.is_empty() && word.len() <= 16 && word.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| word.to_owned())
 }
 
 fn is_basic(header: &str) -> bool {

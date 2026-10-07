@@ -151,7 +151,13 @@ async fn read_until(tcp: &mut TcpStream, done: impl Fn(&str) -> bool) -> String 
 
 #[tokio::test]
 async fn every_built_in_scenario_starts_with_its_seeded_data() {
-    let counts = [("default", 1, 0), ("empty", 0, 0), ("lived-in", 8, 6)];
+    let counts = [
+        ("default", 1, 0),
+        ("empty", 0, 0),
+        ("lived-in", 8, 6),
+        ("corporate-network", 0, 0),
+        ("network-trouble", 0, 0),
+    ];
     for (name, pending, rules_min) in counts {
         let run = start(name).await;
         let state = run.state().await;
@@ -166,7 +172,16 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         assert_eq!(run.get("/api/audit").await.status, 200);
         run.fixture.shutdown().await;
     }
-    assert_eq!(built_in_names(), ["default", "empty", "lived-in"]);
+    assert_eq!(
+        built_in_names(),
+        [
+            "default",
+            "empty",
+            "lived-in",
+            "corporate-network",
+            "network-trouble"
+        ]
+    );
 }
 
 #[tokio::test]
@@ -653,4 +668,71 @@ async fn a_history_step_writes_connection_records_across_a_week() {
     decisions.sort_unstable();
     decisions.dedup();
     assert_eq!(decisions, ["allow", "blocked", "deny", "pending"]);
+}
+
+#[tokio::test]
+async fn the_network_health_report_is_seeded_stamped_and_replaced_by_a_step() {
+    let run = start("corporate-network").await;
+    let report = run.get("/api/network-health").await;
+    assert_eq!(report.status, 200, "{}", report.body);
+    let body = report.json();
+    assert_eq!(body["generated_at"], run.fixture.now_ms().await);
+    assert_eq!(body["proxy"]["detected"], "pac");
+    assert_eq!(
+        body["proxy"]["pac_url"],
+        "http://wpad.corp.example/proxy.pac"
+    );
+    assert_eq!(body["sign_in"]["attempts"][0]["result"], "signed_in");
+    assert_eq!(body["roots"]["roots"], 2);
+    assert_eq!(body["pull_proxy"]["via_upstream"], true);
+    assert_eq!(body["routes"].as_array().unwrap().len(), 3);
+
+    let mut stream = run.events().await;
+    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
+    let ran = run
+        .control("POST", "/control/script/network-change", None)
+        .await;
+    assert_eq!(ran.status, 204, "{}", ran.body);
+    let seen = read_until(&mut stream, |s| s.contains("network_changed")).await;
+    assert!(seen.contains("\"epoch\":4"), "{seen}");
+    let body = run.get("/api/network-health").await.json();
+    assert_eq!(body["proxy"]["epoch"], 4);
+    assert_eq!(body["proxy"]["dead_proxies"], json!([]));
+    assert_eq!(body["routes"], json!([]));
+
+    // A reset starts over from the scenario; the empty one is a machine with no proxy.
+    run.fixture
+        .reset(Some(load_scenario("empty").unwrap()))
+        .await
+        .unwrap();
+    let body = run.get("/api/network-health").await.json();
+    assert_eq!(body["proxy"]["detected"], "direct");
+    assert_eq!(body["roots"]["synced"], false);
+}
+
+#[tokio::test]
+async fn the_trouble_scenario_shows_what_a_broken_setup_reports() {
+    let run = start("network-trouble").await;
+    let body = run.get("/api/network-health").await.json();
+    assert_eq!(body["proxy"]["pac_state"], "unreachable");
+    assert_eq!(body["sign_in"]["attempts"][0]["result"], "failed");
+    assert_eq!(body["roots"]["synced"], false);
+    assert!(
+        body["roots"]["unreadable_stores"][0]
+            .as_str()
+            .unwrap()
+            .contains("access denied")
+    );
+}
+
+#[tokio::test]
+async fn a_network_health_report_with_a_typo_fails_to_start() {
+    let mut scenario = load_scenario("corporate-network").unwrap();
+    let mut report = serde_json::to_value(scenario.network_health.take().unwrap()).unwrap();
+    report["proxy"]["pac_ur"] = json!("http://x/");
+    let text = json!({"name": "typo", "network_health": report}).to_string();
+    let err = serde_json::from_str::<Scenario>(&text)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("pac_ur"), "{err}");
 }

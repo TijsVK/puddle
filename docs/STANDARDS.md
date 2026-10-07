@@ -28,9 +28,9 @@ different crates and rarely collides.
 | `crates/puddle-guest-env` | lib | Boot-time proxy config: a pure function from proxy settings and the image env to the proxy `GuestEnv` and tool config `GuestFile`s (apt, sudo, Maven, Gradle, Docker CLI) the boot hook applies. No I/O |
 | `crates/puddle-certs` | lib | Corporate root sync: reads the host's admin- and user-added `Root`/`CA` stores minus `Disallowed` (Windows; its `unsafe` CryptoAPI calls are in `platform/windows.rs`), selects (expired and distrusted out, each certificate once) and turns them plus puddle's CAs into guest files, env and the bundle step `guest/ca-bundle.sh` (append to the image's bundle, never replace) |
 | `crates/puddle-proxy` | lib | Egress proxy: CONNECT/HTTP, pending requests, toggles, credential injection, upstream chaining, transparent capture; the image-pull proxy for puddle's own registry traffic (loopback, per-run token, guard without rules) |
-| `crates/puddle-upstream` | lib | The company proxy in front of puddle: discovery (WinINet, WinHTTP PAC/WPAD, policy, env, per-epoch cache, change notification) in `discovery`; the chained connect (route hops, `CONNECT`/absolute form, `407` loop, Basic, host-side `host::connect`) in `chain`; proxy sign-in: the portable Negotiate/NTLM protocol over a `TokenSource` in `negotiate`, Windows SSPI as the logged-on user in `windows/sspi.rs`, the `ProxyAuth` seam (`NoAuth` on Unix) in `auth`; feature `testing` has `FakeOs` and a scripted `FakeProxy` |
+| `crates/puddle-upstream` | lib | The company proxy in front of puddle: discovery (WinINet, WinHTTP PAC/WPAD, policy, env, per-epoch cache, change notification) in `discovery`; the chained connect (route hops, `CONNECT`/absolute form, `407` loop, Basic, host-side `host::connect`) in `chain`; proxy sign-in: the portable Negotiate/NTLM protocol over a `TokenSource` in `negotiate`, Windows SSPI as the logged-on user in `windows/sspi.rs`, the `ProxyAuth` seam (`NoAuth` on Unix) in `auth`; a snapshot for the network-health report (`Discovery::health`, `Chain::sign_ins`) in `health` and `signin`, with `redact` for text that comes from outside; feature `testing` has `FakeOs` and a scripted `FakeProxy` |
 | `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper |
-| `crates/puddle-api` | lib | axum API on 127.0.0.1, SSE, bearer token and Host/Origin guard, the OpenAPI contract and its generated TypeScript (`openapi/`, ADR 0004); serves the built UI from the same origin (feature `embedded-ui`) |
+| `crates/puddle-api` | lib | axum API on 127.0.0.1, SSE, bearer token and Host/Origin guard, the OpenAPI contract and its generated TypeScript (`openapi/`, ADR 0004); serves the built UI from the same origin (feature `embedded-ui`); the network-health report (`GET /api/network-health`) is built from `puddle-upstream` and `puddle-certs` in `network_health` |
 | `crates/puddle-agent` | bin | Guest agent (static musl binary, ADR 0005): vsock to the host proxy |
 | `crates/puddle-agent-proto` | lib | Agent ↔ host wire protocol: yamux settings, stream kinds, control messages, host session, reset-preserving splice |
 | `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI, daemon, wiring of the crates above |
@@ -310,7 +310,7 @@ and in `ci.yml` (Linux); `windows.yml` runs `ui` and `ui-e2e`:
 
 - **The fixture backend** (`puddle-ui-fixture`, `crates/puddle-e2e/src/ui_fixture/`) is the real
   `puddle-api` router on an in-memory store, a manual clock and in-memory settings, seeded from a JSON
-  scenario (`ui/e2e/fixtures/*.json`: built-ins `default`, `empty`, `lived-in`, or any file) and driven by
+  scenario (`ui/e2e/fixtures/*.json`: built-ins `default`, `empty`, `lived-in`, `corporate-network`, `network-trouble`, or any file) and driven by
   scripts and a loopback control server (emit an event, advance the clock, restart, reset). Screens are
   developed with `cd ui && npm run dev:fixture`; e2e tests that only read use the shared server of
   `playwright.config.ts`, tests that change state use `e2e/fixture.ts` (a backend per worker, reset per

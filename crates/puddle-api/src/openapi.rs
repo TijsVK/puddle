@@ -45,6 +45,7 @@ const BEARER: &str = "bearer";
         (name = "audit", description = "The audit log"),
         (name = "settings", description = "Global and per-sandbox settings"),
         (name = "consents", description = "What the user agreed to"),
+        (name = "network", description = "How puddle reaches the internet: proxy, sign-in, company roots"),
         (name = "workspaces", description = "Workspaces: repository checkouts with their own disk and sandbox")
     )
 )]
