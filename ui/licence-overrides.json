@@ -1,0 +1,9 @@
+{
+  "comment": "Packages whose package.json declares no licence, with the licence their LICENSE file shows. Keyed by exact name@version, so a version bump asks for a new review.",
+  "overrides": {
+    "svelte-toolbelt@0.10.6": {
+      "licence": "MIT",
+      "reason": "package.json has no licence field; its LICENSE file is the MIT text (reviewed 2026-10-07)"
+    }
+  }
+}

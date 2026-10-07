@@ -18,3 +18,19 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /ui
+    target-branch: develop
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /crates/puddle-api/openapi
+    target-branch: develop
+    schedule:
+      interval: weekly
+    groups:
+      openapi-codegen:
+        patterns: ["*"]

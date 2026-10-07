@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [files]
-extend-exclude = ["LICENSE", "CLA.md", "*.lock"]
+extend-exclude = ["LICENSE", "CLA.md", "*.lock", "ui/package-lock.json", "ui/THIRD-PARTY-NOTICES.txt", "ui/src/lib/api/schema.d.ts"]
 
 [default.extend-words]
 # Real words in this project that typos flags. Add with a comment.

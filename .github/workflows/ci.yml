@@ -50,12 +50,19 @@ jobs:
       - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
           tool: cargo-nextest@0.9.146,cargo-llvm-cov@0.9.1,cargo-deny@0.20.2,typos@1.50.3,cargo-xwin@0.23.1,shellcheck@0.11.0,cargo-about@0.9.2
-      - name: Node for the API contract's TypeScript types (openapi gate, ADR 0004)
+      - name: Node for the API contract's TypeScript types (openapi gate, ADR 0004) and the UI
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: crates/puddle-api/openapi/package-lock.json
+          cache-dependency-path: |
+            crates/puddle-api/openapi/package-lock.json
+            ui/package-lock.json
+      - name: Playwright browsers (Chromium and WebKit, with their system libraries)
+        run: |
+          cd ui
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps chromium webkit
       - name: clang for the msvc cross-check (preinstalled on the runner)
         run: clang --version
       - name: Cache the MSVC CRT and Windows SDK that cargo-xwin downloads
@@ -90,6 +97,18 @@ jobs:
       - name: API contract (openapi.json and schema.d.ts are current)
         if: ${{ !cancelled() }}
         run: scripts/check.sh openapi
+      - name: UI (format, lint, types, unit and component tests with coverage, build)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh ui
+      - name: UI licences (npm packages in the bundle)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh ui-licences
+      - name: UI audit (npm advisories in production dependencies)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh ui-audit
+      - name: UI end-to-end (Playwright, Chromium and WebKit, axe)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh ui-e2e
       - name: doc tests and rustdoc
         if: ${{ !cancelled() }}
         run: scripts/check.sh doc
@@ -113,5 +132,16 @@ jobs:
           path: |
             target/nextest/ci/junit.xml
             target/lcov.info
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: upload UI test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-ui-test-results
+          path: |
+            ui/playwright-report
+            ui/test-results
+            ui/coverage/lcov.info
           retention-days: 14
           if-no-files-found: ignore

@@ -58,6 +58,13 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
+      - name: Node for the UI
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
       - name: clippy
         if: steps.changed.outputs.run == 'true'
         shell: bash
@@ -78,6 +85,14 @@ jobs:
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash
         run: cargo test --doc --workspace --all-features --locked --no-fail-fast
+      - name: UI (format, lint, types, unit and component tests with coverage, build)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: bash
+        run: scripts/check.sh ui
+      - name: UI end-to-end (Playwright on the installed Edge, axe)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: bash
+        run: scripts/check.sh ui-e2e
       # Nightly, PRs to main and develop dispatches only (it compiles everything a second time, and
       # a develop cache save should hold it so the nightly isn't cold).
       - name: release build
@@ -90,5 +105,15 @@ jobs:
         with:
           name: windows-test-results
           path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: upload UI test results
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-ui-test-results
+          path: |
+            ui/playwright-report
+            ui/test-results
           retention-days: 14
           if-no-files-found: ignore

@@ -7,7 +7,7 @@ tested at the right tiers, `scripts/check.sh` passes, and Linux CI is green on `
 Contents: [layout](#1-workspace-layout) · [toolchain](#2-toolchain) · [workflow](#3-workflow-for-agents-and-humans)
 · [commits](#4-commits-and-pull-requests) · [code](#5-code) · [errors](#6-error-handling) ·
 [logging](#7-logging) · [testing](#8-testing) · [coverage](#9-coverage) · [CI](#10-ci) ·
-[licence headers](#11-licence-headers) · [dependencies](#12-dependencies)
+[licence headers](#11-licence-headers) · [dependencies](#12-dependencies) · [the UI](#13-the-ui-ui)
 
 ## 1. Workspace layout
 
@@ -30,7 +30,7 @@ different crates and rarely collides.
 | `crates/puddle-proxy` | lib | Egress proxy: CONNECT/HTTP, pending requests, toggles, credential injection, upstream chaining, transparent capture; the image-pull proxy for puddle's own registry traffic (loopback, per-run token, guard without rules, T-116) | W1/W2 |
 | `crates/puddle-upstream` | lib | The company proxy in front of puddle: discovery (WinINet, WinHTTP PAC/WPAD, policy, env, per-epoch cache, change notification) in `discovery`; SSPI authentication (T-135) later in `sspi` | W2 |
 | `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper | W3 |
-| `crates/puddle-api` | lib | axum API on 127.0.0.1, SSE, bearer token and Host/Origin guard, the OpenAPI contract and its generated TypeScript (`openapi/`, ADR 0004) | W4 |
+| `crates/puddle-api` | lib | axum API on 127.0.0.1, SSE, bearer token and Host/Origin guard, the OpenAPI contract and its generated TypeScript (`openapi/`, ADR 0004); serves the built UI from the same origin (feature `embedded-ui`, T-170) | W4 |
 | `crates/puddle-agent` | bin | Guest agent (static musl binary, ADR 0005): vsock to the host proxy | W1/W2 |
 | `crates/puddle-agent-proto` | lib | Agent ↔ host wire protocol: yamux settings, stream kinds, control messages, host session, reset-preserving splice | W1/W2 |
 | `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI, daemon, wiring of the crates above | W7 |
@@ -42,8 +42,8 @@ different crates and rarely collides.
 | `crates/puddle-e2e` | lib (tests) | Harness for end-to-end and hostile-guest tests; never a dependency of product crates | W7, T-035 |
 | `crates/puddle-vm-tests` | lib (tests) | VM test harness on the msb SDK: per-run prefix, private msb home, runtime pair, scoped backend; the `vm_*` tests of tiers K/W/L. Never a dependency of product crates | W1, T-102 |
 
-Later, not yet created: the Svelte UI (`ui/`, W5) and the Tauri shell (`crates/puddle-app` or
-`src-tauri/`, W8).
+`ui/` is the Svelte single-page app (W5, section 13), not a crate. Later, not yet created: the Tauri
+shell (`crates/puddle-app`, W8).
 
 **Dependency direction.** `puddle-types` ← `compute`, `proxy`, `store`, `settings` ← `api` ← `puddle`.
 `netpolicy` depends on `types` and `settings`; `proxy` depends on `netpolicy` for its destination checks.
@@ -78,6 +78,10 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   `schema.d.ts`. Without Node the gate checks `openapi.json` only and says so; CI (`CI` set)
   fails instead. After changing a route or a wire type, run `cargo xtask openapi` and commit
   both files.
+- **Node 24** also runs the UI gates (`ui/`, section 13): `scripts/check.sh ui ui-licences ui-audit
+  ui-e2e`. Every npm package is pinned to an exact version in `ui/package.json` and
+  `ui/package-lock.json`. `ui-e2e` needs Playwright's browsers (`cd ui && npx playwright install
+  --with-deps chromium webkit`); where WebKit can't start locally it runs Chromium only and says so.
 - **Shared build cache** (optional, local only): `scripts/check.sh` runs Cargo as `$CARGO`
   (default `cargo`). With [mbx](https://mr-boxington.jdx.dev/) installed, run
   `CARGO=mbx MBX_CACHE_DIR=<one shared dir> scripts/check.sh` (and `mbx build|test|...` instead of
@@ -284,3 +288,25 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
 - Prefer well-maintained crates already in the tree; a new dependency is justified in its commit.
 - Never copy code from Huddle (D-54); code from elsewhere follows CONTRIBUTING's "Work you did not
   write".
+
+## 13. The UI (`ui/`)
+
+A SvelteKit single-page app (Svelte 5, TypeScript `strict`, `adapter-static`), served by
+`puddle-api` on its own origin (feature `embedded-ui`; ADR 0003). Gates, all in `scripts/check.sh all`
+and in `ci.yml` (Linux); `windows.yml` runs `ui` and `ui-e2e`:
+
+| Gate | What |
+|---|---|
+| `ui` | `prettier --check`, `eslint` (with `eslint-plugin-svelte`), `svelte-check --fail-on-warnings` (Svelte's accessibility warnings fail), `vitest run --coverage`, `vite build` |
+| `ui-e2e` | Playwright against the real API serving the built app: Chromium and WebKit on Linux, the installed Edge on Windows; axe (WCAG 2.0 to 2.2, A and AA) on every route in both themes; no CSP violations |
+| `ui-licences` | every npm package in the bundle is MIT, ISC, Apache-2.0, BSD-2/3-Clause, 0BSD or OFL-1.1, and is in `ui/THIRD-PARTY-NOTICES.txt` (`cd ui && npm run build && npm run licences` rewrites it) |
+| `ui-audit` | `npm audit --omit=dev --audit-level=moderate`, minus `ui/audit-exceptions.json` (id, reason, review-by date) |
+
+- **Coverage** (`ui/vite.config.ts`): lines ≥ 85 %, branches ≥ 80 % overall; `src/lib/api/**` (client,
+  event stream) ≥ 95 % lines, ≥ 90 % branches. Thresholds only go up.
+- **The API client is generated:** `cargo xtask openapi` writes `ui/src/lib/api/schema.d.ts` (and
+  checks it in the `openapi` gate); never hand-write a request.
+- **Tokens only:** components use the custom properties in `ui/src/lib/theme/tokens.css`, never a
+  literal colour. Each section is one entry in `ui/src/lib/nav.ts`.
+- **No secrets in the page:** the API token comes from `window.__PUDDLE__` (set by the shell) and
+  is never read from or written to a URL, cookie or storage.

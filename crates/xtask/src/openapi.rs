@@ -19,6 +19,8 @@ pub const CONTRACT_DIR: &str = "crates/puddle-api/openapi";
 pub const SPEC_FILE: &str = "openapi.json";
 /// The generated types' file name.
 pub const TYPES_FILE: &str = "schema.d.ts";
+/// The UI's copy of the generated types, relative to the workspace root (the SPA imports it).
+pub const UI_TYPES_PATH: &str = "ui/src/lib/api/schema.d.ts";
 
 /// Prepended to the generator's output (the SPDX gate covers `.ts` files).
 pub const TYPES_HEADER: &str = "// SPDX-License-Identifier: GPL-3.0-or-later\n\
@@ -116,7 +118,8 @@ pub fn with_header(generated: &str) -> String {
     format!("{TYPES_HEADER}{generated}")
 }
 
-/// Writes (or with `check`, compares) the spec `spec` and its types in `dir`.
+/// Writes (or with `check`, compares) the spec `spec` and its types in `dir`, and the same types
+/// at each path in `copies` (the UI's import, [`UI_TYPES_PATH`]).
 ///
 /// # Errors
 ///
@@ -128,6 +131,7 @@ pub fn openapi(
     check: bool,
     types: Types,
     generator: &dyn TypeGenerator,
+    copies: &[PathBuf],
 ) -> Result<Report> {
     let spec_path = dir.join(SPEC_FILE);
     let types_path = dir.join(TYPES_FILE);
@@ -154,12 +158,20 @@ pub fn openapi(
     }
     let generated = with_header(&generator.generate(spec)?);
     let types_state = if check {
-        if read(&types_path).ok() != Some(generated) {
-            return Err(XtaskError::Stale(types_path));
+        for path in std::iter::once(&types_path).chain(copies) {
+            if read(path).ok().as_deref() != Some(generated.as_str()) {
+                return Err(XtaskError::Stale(path.clone()));
+            }
         }
         "is current"
     } else {
-        write(&types_path, &generated)?;
+        for path in std::iter::once(&types_path).chain(copies) {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| XtaskError::io(format!("create {}", parent.display()), e))?;
+            }
+            write(path, &generated)?;
+        }
         "written"
     };
     Ok(Report {
@@ -201,15 +213,15 @@ mod tests {
     fn write_then_check_passes_and_drift_fails() {
         let dir = tempfile::tempdir().unwrap();
         let g = fake(true);
-        let r = openapi(dir.path(), "{}\n", false, Types::Required, &g).unwrap();
+        let r = openapi(dir.path(), "{}\n", false, Types::Required, &g, &[]).unwrap();
         assert_eq!(r.line(), "openapi.json written; schema.d.ts written");
         let types = std::fs::read_to_string(dir.path().join(TYPES_FILE)).unwrap();
         assert!(types.starts_with("// SPDX-License-Identifier: GPL-3.0-or-later\n"));
-        let r = openapi(dir.path(), "{}\n", true, Types::Required, &g).unwrap();
+        let r = openapi(dir.path(), "{}\n", true, Types::Required, &g, &[]).unwrap();
         assert_eq!(r.line(), "openapi.json is current; schema.d.ts is current");
         assert_eq!(g.calls.get(), 2);
 
-        let err = openapi(dir.path(), "{ }\n", true, Types::Required, &g).unwrap_err();
+        let err = openapi(dir.path(), "{ }\n", true, Types::Required, &g, &[]).unwrap_err();
         assert!(
             matches!(err, XtaskError::Stale(ref p) if p.ends_with(SPEC_FILE)),
             "{err}"
@@ -217,9 +229,30 @@ mod tests {
         assert!(err.to_string().contains("cargo xtask openapi"), "{err}");
 
         std::fs::write(dir.path().join(TYPES_FILE), "edited by hand").unwrap();
-        let err = openapi(dir.path(), "{}\n", true, Types::Required, &g).unwrap_err();
+        let err = openapi(dir.path(), "{}\n", true, Types::Required, &g, &[]).unwrap_err();
         assert!(
             matches!(err, XtaskError::Stale(ref p) if p.ends_with(TYPES_FILE)),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn extra_copies_are_written_and_checked_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let copy = dir.path().join("ui/src/lib/api/schema.d.ts");
+        let copies = [copy.clone()];
+        let g = fake(true);
+        openapi(dir.path(), "{}\n", false, Types::Required, &g, &copies).unwrap();
+        // The copy's folder is created, and the copy equals the main file.
+        assert_eq!(
+            std::fs::read_to_string(&copy).unwrap(),
+            std::fs::read_to_string(dir.path().join(TYPES_FILE)).unwrap()
+        );
+        openapi(dir.path(), "{}\n", true, Types::Required, &g, &copies).unwrap();
+        std::fs::write(&copy, "edited by hand").unwrap();
+        let err = openapi(dir.path(), "{}\n", true, Types::Required, &g, &copies).unwrap_err();
+        assert!(
+            matches!(err, XtaskError::Stale(ref p) if p == &copy),
             "{err}"
         );
     }
@@ -228,12 +261,28 @@ mod tests {
     fn missing_node_skips_locally_and_fails_when_required() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(SPEC_FILE), "{}\n").unwrap();
-        let r = openapi(dir.path(), "{}\n", true, Types::IfNodePresent, &fake(false)).unwrap();
+        let r = openapi(
+            dir.path(),
+            "{}\n",
+            true,
+            Types::IfNodePresent,
+            &fake(false),
+            &[],
+        )
+        .unwrap();
         assert!(r.types.starts_with("not checked"), "{}", r.line());
-        let err = openapi(dir.path(), "{}\n", true, Types::Required, &fake(false)).unwrap_err();
+        let err =
+            openapi(dir.path(), "{}\n", true, Types::Required, &fake(false), &[]).unwrap_err();
         assert!(err.to_string().contains("Node is needed"), "{err}");
         // A stale spec is reported even without Node.
-        let err = openapi(dir.path(), "[]\n", true, Types::IfNodePresent, &fake(false));
+        let err = openapi(
+            dir.path(),
+            "[]\n",
+            true,
+            Types::IfNodePresent,
+            &fake(false),
+            &[],
+        );
         assert!(matches!(err, Err(XtaskError::Stale(_))));
     }
 

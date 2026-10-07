@@ -17,6 +17,11 @@
 //!    file ([`ConnectionInfo`]), compared in constant time (401 otherwise). The token never goes
 //!    into a guest, a mount or a URL.
 //!
+//! With [`ApiConfig::ui`] set (the default under feature `embedded-ui`) the same origin also
+//! serves the single-page app: files outside `/api` need no token, because the page has to load
+//! before it can present one, but they keep the `Host` and `Origin` checks and carry a strict
+//! `Content-Security-Policy` and no framing.
+//!
 //! The listener binds `127.0.0.1` only; there is no setting for another address. State changes
 //! are `POST`/`PUT`/`DELETE` and the ones with a body accept only `application/json`, so no
 //! "simple" cross-site request can reach them.
@@ -48,6 +53,7 @@ mod routes;
 mod server;
 mod settings;
 mod token;
+mod ui;
 pub mod wire;
 
 pub use error::{ApiErrorBody, ErrorCode};
@@ -56,3 +62,6 @@ pub use openapi::{API_VERSION, openapi, openapi_json};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
 pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};
+#[cfg(feature = "embedded-ui")]
+pub use ui::EmbeddedUi;
+pub use ui::{UiAssets, UiFile};

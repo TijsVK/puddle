@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode, Uri};
+use axum::response::IntoResponse;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::server::graceful::GracefulShutdown;
@@ -26,6 +27,7 @@ use crate::events::EventHub;
 use crate::routes::{AppState, api_router};
 use crate::settings::SettingsRepo;
 use crate::token::{ApiToken, ConnectionInfo};
+use crate::ui::{UiAssets, UiService};
 
 /// Largest request body (the biggest real one, a settings document, is well under 4 KiB).
 const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -53,15 +55,23 @@ pub struct ApiConfig {
     pub request_timeout: Duration,
     /// Most connections served at once; further ones are closed at accept.
     pub max_connections: usize,
+    /// The single-page app to serve outside `/api`, from the same origin. The default is the
+    /// embedded build under feature `embedded-ui` and nothing without it.
+    pub ui: Option<Arc<dyn UiAssets>>,
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
+        #[cfg(feature = "embedded-ui")]
+        let ui: Option<Arc<dyn UiAssets>> = Some(Arc::new(crate::ui::EmbeddedUi));
+        #[cfg(not(feature = "embedded-ui"))]
+        let ui: Option<Arc<dyn UiAssets>> = None;
         Self {
             port: 0,
             extra_origins: Vec::new(),
             request_timeout: Duration::from_secs(30),
             max_connections: 256,
+            ui,
         }
     }
 }
@@ -161,8 +171,10 @@ impl ApiServer {
             clock: services.clock,
             shutdown,
         };
-        let guard_state = Guard::new(token.clone(), addr.port(), &config.extra_origins);
-        let router = build_router(state, guard_state, config.request_timeout);
+        let ui = config.ui.clone().map(UiService::new);
+        let guard_state =
+            Guard::new(token.clone(), addr.port(), &config.extra_origins).serving_ui(ui.is_some());
+        let router = build_router(state, guard_state, config.request_timeout, ui);
         tracing::info!(%addr, "api listening");
         Ok(Self {
             listener,
@@ -237,7 +249,12 @@ impl Drop for RunningApi {
     }
 }
 
-fn build_router(state: AppState, guard_state: Guard, request_timeout: Duration) -> Router {
+fn build_router(
+    state: AppState,
+    guard_state: Guard,
+    request_timeout: Duration,
+    ui: Option<UiService>,
+) -> Router {
     let (router, _spec) = api_router().split_for_parts();
     router
         .route(
@@ -249,7 +266,17 @@ fn build_router(state: AppState, guard_state: Guard, request_timeout: Duration) 
                 )
             }),
         )
-        .fallback(|| async { ApiError::not_found("no such route") })
+        .fallback(move |method: Method, uri: Uri| {
+            let ui = ui.clone();
+            async move {
+                match ui {
+                    Some(ui) if !crate::auth::is_api_path(uri.path()) => {
+                        ui.respond(&method, uri.path())
+                    }
+                    _ => ApiError::not_found("no such route").into_response(),
+                }
+            }
+        })
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             request_timeout,

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
@@ -22,6 +22,8 @@ struct Inner {
     token: ApiToken,
     /// `127.0.0.1:<port>` and `localhost:<port>`, lower case.
     hosts: [String; 2],
+    /// Whether the app's files are served, so reads outside `/api` need no token.
+    serves_ui: bool,
     /// The API's own origins plus the configured extra ones, lower case.
     origins: Vec<String>,
 }
@@ -75,9 +77,19 @@ impl Guard {
             inner: Arc::new(Inner {
                 token,
                 hosts,
+                serves_ui: false,
                 origins,
             }),
         }
+    }
+
+    /// Lets `GET`/`HEAD` outside `/api` through without a token (the app's own files). The
+    /// `Host` and `Origin` checks still apply.
+    pub(crate) fn serving_ui(mut self, serves_ui: bool) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.serves_ui = serves_ui;
+        }
+        self
     }
 
     /// Checks one request's head.
@@ -85,6 +97,22 @@ impl Guard {
         self.check_host(uri, headers)?;
         self.check_origin(headers)?;
         self.check_token(headers)
+    }
+
+    /// Like [`Guard::check`], but a read of the app's own files needs no token.
+    fn check_request(
+        &self,
+        method: &Method,
+        uri: &Uri,
+        headers: &HeaderMap,
+    ) -> Result<(), Refusal> {
+        let is_read = method == Method::GET || method == Method::HEAD;
+        if self.inner.serves_ui && is_read && !is_api_path(uri.path()) {
+            self.check_host(uri, headers)?;
+            self.check_origin(headers)
+        } else {
+            self.check(uri, headers)
+        }
     }
 
     fn check_host(&self, uri: &Uri, headers: &HeaderMap) -> Result<(), Refusal> {
@@ -155,9 +183,14 @@ fn single<'a>(
     values.next().is_none().then_some(first)
 }
 
-/// axum middleware running [`Guard::check`] before the route.
+/// Whether `path` is the API (`/api` or below), whose every route needs the token.
+pub(crate) fn is_api_path(path: &str) -> bool {
+    path == "/api" || path.starts_with("/api/")
+}
+
+/// axum middleware running [`Guard::check_request`] before the route.
 pub(crate) async fn guard(State(guard): State<Guard>, request: Request, next: Next) -> Response {
-    match guard.check(request.uri(), request.headers()) {
+    match guard.check_request(request.method(), request.uri(), request.headers()) {
         Ok(()) => next.run(request).await,
         Err(refusal) => {
             tracing::warn!(

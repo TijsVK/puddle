@@ -1,0 +1,4 @@
+{
+  "comment": "Reviewed npm advisories we accept, each with a reason and a review-by date (YYYY-MM-DD); an expired one fails the gate again. Empty today.",
+  "exceptions": []
+}

@@ -1,0 +1,59 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * Design tokens: neutral, restyled by changing this file only (D-69 picks the final look in
+ * T-182). Components use these custom properties and never a literal colour.
+ *
+ * Light and dark come from one declaration each via light-dark(); `color-scheme` follows the OS
+ * unless the user overrides it (data-theme="light" | "dark" on <html>, see theme.ts).
+ */
+:root {
+  color-scheme: light dark;
+
+  --color-bg: light-dark(#f6f6f8, #131417);
+  --color-surface: light-dark(#ffffff, #1c1d21);
+  --color-surface-raised: light-dark(#eef0f3, #26282d);
+  --color-border: light-dark(#8a8f99, #6b707a);
+  --color-border-subtle: light-dark(#d5d8de, #34363d);
+  --color-text: light-dark(#1a1b1f, #ececf0);
+  --color-text-muted: light-dark(#52565e, #a9adb6);
+  --color-accent: light-dark(#1b5bc9, #7ba7ff);
+  --color-accent-contrast: light-dark(#ffffff, #0c1424);
+  --color-accent-subtle: light-dark(#e3ecfb, #1f2a42);
+  --color-danger: light-dark(#b3261e, #ff8f85);
+  --color-success: light-dark(#18703a, #6fd391);
+  --color-warning: light-dark(#8a5a00, #f0b84f);
+  --color-focus: light-dark(#1b5bc9, #9bbcff);
+
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono:
+    ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+
+  --sidebar-width: 15rem;
+  --focus-ring: 2px solid var(--color-focus);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}

@@ -51,7 +51,8 @@ commands:
             --check                only check that every dependency has a licence entry
             --out <file>           output file (default: <target>/THIRD-PARTY-puddle.txt)
             --offline              no network for cargo
-  openapi   write crates/puddle-api/openapi/{openapi.json,schema.d.ts} (needs Node for the types)
+  openapi   write crates/puddle-api/openapi/{openapi.json,schema.d.ts} and ui/src/lib/api/schema.d.ts
+            (needs Node for the types)
             --check                only check that both are current (types skipped without Node
                                    unless CI is set)";
 
@@ -174,6 +175,7 @@ fn openapi_command(opts: &Options) -> Result<String> {
         opts.has("--check"),
         types,
         &generator,
+        &[workspace_root().join(openapi::UI_TYPES_PATH)],
     )?;
     Ok(report.line())
 }
