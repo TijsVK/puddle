@@ -315,10 +315,11 @@ and in `ci.yml` (Linux); `windows.yml` runs `ui` and `ui-e2e`:
   developed with `cd ui && npm run dev:fixture`; e2e tests that only read use the shared server of
   `playwright.config.ts`, tests that change state use `e2e/fixture.ts` (a backend per worker, reset per
   test). A new API service gets its fake and a scenario field in `Fixture::build_state`; a new event needs
-  nothing (an `Event` in JSON is a step).
+  nothing (an `Event` in JSON is a step). The `history` step writes N connection records over a week
+  (the activity screen's long-log test).
 - **Coverage** (`ui/vite.config.ts`): lines ≥ 85 %, branches ≥ 80 % overall; `src/lib/api/**` (client,
-  event stream), `src/lib/decision/**` (the four-outcome model), `src/lib/rules/**` (filter, sort, expiry)
-  and `src/lib/workspaces/**` (what each state allows, form checks, settings choices) ≥ 95 % lines, ≥ 90 % branches.
+  event stream), `src/lib/decision/**` (the four-outcome model), `src/lib/rules/**` (filter, sort, expiry),
+  `src/lib/audit/**` (filters, the address, how a record reads, the drawn window) and `src/lib/workspaces/**` (what each state allows, form checks, settings choices) ≥ 95 % lines, ≥ 90 % branches.
   Thresholds only go up.
 - **The API client is generated:** `cargo xtask openapi` writes `ui/src/lib/api/schema.d.ts` (and
   checks it in the `openapi` gate); never hand-write a request.
