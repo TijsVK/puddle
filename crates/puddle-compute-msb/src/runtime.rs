@@ -231,8 +231,8 @@ impl MsbRuntime {
         }
     }
 
-    /// Logs a lost boot race with the tail of msb's logs for the sandbox. Both known causes are fixed
-    /// in the fork (`-puddle.6` and `-puddle.8`), so seeing this means a regression or
+    /// Logs a lost boot race with the tail of msb's logs for the sandbox. Every known cause is fixed
+    /// in the fork (`-puddle.6`, `-puddle.8` and `-puddle.9`), so seeing this means a regression or
     /// a new cause: the logs are the evidence.
     fn log_boot_race(&self, op: &str, name: &SandboxName, error: &MicrosandboxError) {
         self.keep_logs(name.as_str());
@@ -241,7 +241,7 @@ impl MsbRuntime {
             LOG_TAIL_BYTES,
         );
         tracing::error!(sandbox = %name, op, error = %error, logs = %logs,
-            "msb's VM exited before its agent relay was up (known causes fixed in the fork by -puddle.8)");
+            "msb's VM exited before its agent relay was up (known causes fixed in the fork by -puddle.9)");
     }
 
     async fn handle_for(
@@ -268,8 +268,9 @@ const LOG_TAIL_BYTES: usize = 4096;
 
 /// msb on Windows used to lose the race between the guest's bootstrap and the host's agent
 /// relay: the VM exited 0 before the relay was up, and the SDK reported a synthetic boot error.
-/// Two causes, both fixed in the fork: the guest's timer check (`-puddle.6`) and PID 1 started
-/// without a console (`-puddle.8`). This only recognises it for the diagnostic.
+/// Three causes, all fixed in the fork: the guest's timer check (`-puddle.6`), and PID 1 started
+/// without a console on a root without `/dev`: an image's bootstrap root (`-puddle.8`) and a
+/// host-directory root (`-puddle.9`). This only recognises it for the diagnostic.
 pub(crate) fn is_boot_race(error: &MicrosandboxError) -> bool {
     matches!(error, MicrosandboxError::BootStart { err, .. }
         if err.message.contains("before agent relay became available"))
