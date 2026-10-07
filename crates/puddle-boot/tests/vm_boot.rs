@@ -217,11 +217,13 @@ async fn vm_image_without_sh_gives_a_clear_error() {
     let image = ImageRef::new("gcr.io/distroless/static-debian12").unwrap();
     let config = rt.pull_image(&image).await.unwrap();
     let plan = BootPlan::builder(&config).no_agent().build().unwrap();
-    let assets = write_assets(&assets_dir(&rt, "nosh")).unwrap();
+    let dir = assets_dir(&rt, "nosh");
+    let assets = write_assets(&dir).unwrap();
+    // The agent binary is the merge tool for the Machine settings, so it is always mounted.
     let spec = with_boot_mounts(
         SandboxSpec::new(sandbox_name(&settings, "nosh"), image),
         assets,
-        None,
+        Some(&agent_binary(&dir)),
     );
     let err = BootHook::new()
         .create(&rt, spec, &plan, &Gate::new())
