@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The UI fixture backend (T-171): the real `puddle-api` router on an in-memory store, a manual
+//! The UI fixture backend: the real `puddle-api` router on an in-memory store, a manual
 //! clock and in-memory settings, seeded from a [`Scenario`] and driven by scripted [`Step`]s.
 //!
 //! A UI test therefore exercises the real Host/Origin/token guard, error bodies, SSE framing and
 //! wire types; only what sits behind the API is fake. When a later task puts a new service behind
-//! the API (workspaces, T-173), its fake is built in `Fixture::build_state`, and a field in
+//! the API (workspaces, say), its fake is built in `Fixture::build_state`, and a field in
 //! [`Scenario`] seeds it; new events need nothing here (an [`Event`](puddle_types::Event) in JSON
 //! is a step).
 //!
@@ -140,7 +140,7 @@ impl Fixture {
         Ok(fixture)
     }
 
-    /// The fakes behind the API, seeded. T-172 and T-173 add their services here.
+    /// The fakes behind the API, seeded. A new service behind the API gets its fake here.
     fn build_state(scenario: &Scenario) -> Result<State, String> {
         let start = scenario.start_ms();
         let clock = Arc::new(ManualClock::new(start));
@@ -332,7 +332,7 @@ impl Fixture {
 
 /// Reads control files dropped into `dir` (one JSON object or an array per file; each is taken
 /// once and deleted). An object without `do` is read as a `request` (it has `host`) or a `bulk`
-/// (it has `count`): the format T-174's tests used with the `serve_ui` example.
+/// (it has `count`): the format the earlier `serve_ui` example took.
 pub fn watch_drop_dir(fixture: Arc<Fixture>, dir: PathBuf) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let _ = tokio::fs::create_dir_all(&dir).await;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// End-to-end tests against the UI fixture backend (T-171): the real puddle-api serving the built
+// End-to-end tests against the UI fixture backend: the real puddle-api serving the built
 // app on 127.0.0.1 (the same origin the desktop shell loads), on fake services with seeded data.
 // This config starts one shared, read-only server (scenario `default`: one pending request).
 // A test that changes state uses e2e/fixture.ts instead, which gives each worker its own.

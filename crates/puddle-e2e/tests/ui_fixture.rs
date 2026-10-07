@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The UI fixture backend (T-171) over real HTTP: seeded data, the guard of the real API, the
+//! The UI fixture backend over real HTTP: seeded data, the guard of the real API, the
 //! control server, scripted events, restart and reset.
 #![expect(
     clippy::unwrap_used,
