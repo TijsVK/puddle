@@ -70,7 +70,9 @@ test.describe("the list", () => {
     await expect(suffix).toContainText("web-shop");
     await expect(suffix).toContainText("and subdomains");
     const expiring = rowFor(page, "api.example.com");
-    await expect(expiring).toContainText("in 3 hours");
+    // The page clock starts at the fixture's now but keeps running, and the formatter truncates, so a
+    // slow start reads "in 2 hours" for a rule that has 3 hours less a moment left.
+    await expect(expiring).toContainText(/in [23] hours/);
     await expect(expiring.locator("time").first()).toHaveAttribute(
       "title",
       /2026/,
@@ -84,7 +86,9 @@ test.describe("the list", () => {
   }) => {
     await openRules(page, backend);
     const row = rowFor(page, "api.example.com");
-    await expect(row).toContainText("in 3 hours");
+    // The page clock starts at the fixture's now but keeps running, and the formatter truncates, so a
+    // slow start reads "in 2 hours" for a rule that has 3 hours less a moment left.
+    await expect(row).toContainText(/in [23] hours/);
     await backend.control.advance(5 * 3_600_000);
     await page.clock.fastForward(5 * 3_600_000);
     await expect(row).toHaveCount(0); // the sweeper removed it, and the next poll sees that
@@ -500,8 +504,12 @@ test.describe("keyboard only", () => {
     await page.keyboard.press("Tab"); // the checked radio of the group (Allow)
     await page.keyboard.press("ArrowRight"); // Deny
     await expect(dialog.getByRole("radio", { name: "Deny" })).toBeChecked();
+    // The workspace field offers the known workspaces as a datalist. When the typed name matches
+    // a suggestion, WebKit's Enter accepts that suggestion instead of submitting, so submit from the
+    // button, which is the same keyboard path and does not depend on the suggestion popup.
     await dialog.getByLabel("Workspace name").fill("web-shop");
-    await dialog.getByLabel("Workspace name").press("Enter");
+    await dialog.getByRole("button", { name: "Add rule" }).focus();
+    await page.keyboard.press("Enter");
     await expect(dialog).toHaveCount(0);
     const row = rowFor(page, "keys.example.org");
     await expect(row).toContainText("Deny");
