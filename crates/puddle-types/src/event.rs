@@ -580,7 +580,8 @@ mod tests {
                 "pending_closed",
                 "suppression_changed",
                 "rules_changed",
-                "audit_appended"
+                "audit_appended",
+                "network_changed"
             ]
         );
         for v in variants {
