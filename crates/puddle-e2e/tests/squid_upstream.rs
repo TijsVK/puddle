@@ -165,7 +165,8 @@ impl Squid {
             let bin = bin.unwrap();
             assert!(
                 std::path::Path::new(&bin).is_file(),
-                "PUDDLE_SQUID_BIN={bin:?} is not a file: install Squid or fix the path"
+                "PUDDLE_SQUID_BIN={} is not a file: install Squid or fix the path",
+                bin.to_string_lossy()
             );
             let log = fs::File::create(dir.path().join("squid.stderr")).unwrap();
             let child = Command::new(bin)
