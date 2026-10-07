@@ -11,40 +11,40 @@ Contents: [layout](#1-workspace-layout) · [toolchain](#2-toolchain) · [workflo
 
 ## 1. Workspace layout
 
-One Cargo workspace, one crate per component of the MWE plan, so parallel work lands in
+One Cargo workspace, one crate per component, so parallel work lands in
 different crates and rarely collides.
 
-| Crate | Kind | Owns | Plan |
-|---|---|---|---|
-| `crates/puddle-types` | lib | Shared IDs, wire types, errors that cross crate boundaries (validated names, guest files/env, memory size, events). No I/O. | all |
-| `crates/puddle-settings` | lib | The settings model (T-088): global settings, per-sandbox overrides and their resolution, the consent store; versioned documents with migrations and kept unknown fields. No storage, no I/O | W3/W4 |
-| `crates/puddle-compute` | lib | The compute-plane contract: `Runtime`/`Sandbox` traits, `FakeRuntime` (feature `fake`), the contract suite every runtime passes (feature `contract`). W1 rows build on it in their own crates (msb adapter, boot hook, workspace, lifecycle, ...) | W1 |
-| `crates/puddle-compute-msb` | lib | The compute-plane traits over the msb SDK (the only crate that calls it): sandboxes, volumes, image pull (with puddle's registry roots, T-116), exec, SSH, the memory setting; `SDK_OPTIONS` lists every SDK option set or defaulted (D-27 review). VM tests: the contract suite, HG-01/HG-02 | W1, T-106 |
-| `crates/puddle-runtime` | lib | The bundled msb runtime (D-19): runtime folder + private `MSB_HOME`, `MSB_*` environment pinning, the per-OS runtime file-name table and `GuestArch` (`check.sh platform-literals` keeps the names out of other crates, T-150), exact `<release>-puddle.N` version check from msb's embedded `.msbver` (T-107); the proxy environment that sends msb's image pulls through puddle's pull proxy (T-116) | W1 |
-| `crates/puddle-boot` | lib | Boot hook (`guest/boot.sh`, `guest/agent-supervise.sh`, POSIX sh) and the readiness gate: no SSH or exec before the hook returns 0; applies provider `GuestFile`s/env as a list (T-108) | W1 |
-| `crates/puddle-netpolicy` | lib | The destination guard (T-132): strict host-name normalisation (IDNA, LDH, canonical IPs), address classes, the local-destination toggles and wildcard rule (D-1, D-37, D-44), the registry of puddle's own endpoints (D-26), block messages. Pure policy, no network I/O | W2 |
-| `crates/puddle-ca` | lib | The per-sandbox CA for credential injection (T-133, D-11): name constraints as a builder input, a key that is never exported or serialised, a bounded leaf cache per sandbox (HO-4), the guest trust bundle as a list of CAs. In memory only, no I/O | W2 |
-| `crates/puddle-workspace` | lib | Workspace volume lifecycle (T-112, ADR 0006): one named disk volume `ws-<id>` per workspace at `/workspaces/<id>` (checkouts in subdirectories, `.puddle/` beside them), puddle's own holder tracking (one writer, refusal names the holder), cleanup after failed creates, `fstrim` on stop and "reclaim space", delete only after the unsaved-work check (`guest/delete-check.sh`) and an explicit confirmation; short-lived maintenance sandboxes `m--<id>` for stopped workspaces | W1 |
-| `crates/puddle-guest-env` | lib | Boot-time proxy config (T-109, T-030 §4): a pure function from proxy settings and the image env to the proxy `GuestEnv` and tool config `GuestFile`s (apt, sudo, Maven, Gradle, Docker CLI) the boot hook applies. No I/O | W1 |
-| `crates/puddle-certs` | lib | Corporate root sync (T-110, D-24): reads the host's admin- and user-added `Root`/`CA` stores minus `Disallowed` (Windows; its `unsafe` CryptoAPI calls are in `platform/windows.rs`), selects (expired and distrusted out, each certificate once) and turns them plus puddle's CAs into guest files, env and the bundle step `guest/ca-bundle.sh` (append to the image's bundle, never replace) | W1 |
-| `crates/puddle-proxy` | lib | Egress proxy: CONNECT/HTTP, pending requests, toggles, credential injection, upstream chaining, transparent capture; the image-pull proxy for puddle's own registry traffic (loopback, per-run token, guard without rules, T-116) | W1/W2 |
-| `crates/puddle-upstream` | lib | The company proxy in front of puddle: discovery (WinINet, WinHTTP PAC/WPAD, policy, env, per-epoch cache, change notification) in `discovery`; the chained connect (T-165: route hops, `CONNECT`/absolute form, `407` loop, Basic, host-side `host::connect`) in `chain`; proxy sign-in (T-135): the portable Negotiate/NTLM protocol over a `TokenSource` in `negotiate`, Windows SSPI as the logged-on user in `windows/sspi.rs`, the `ProxyAuth` seam (`NoAuth` on Unix) in `auth`; feature `testing` has `FakeOs` and a scripted `FakeProxy` | W2 |
-| `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper | W3 |
-| `crates/puddle-api` | lib | axum API on 127.0.0.1, SSE, bearer token and Host/Origin guard, the OpenAPI contract and its generated TypeScript (`openapi/`, ADR 0004); serves the built UI from the same origin (feature `embedded-ui`, T-170) | W4 |
-| `crates/puddle-agent` | bin | Guest agent (static musl binary, ADR 0005): vsock to the host proxy | W1/W2 |
-| `crates/puddle-agent-proto` | lib | Agent ↔ host wire protocol: yamux settings, stream kinds, control messages, host session, reset-preserving splice | W1/W2 |
-| `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI, daemon, wiring of the crates above | W7 |
-| `crates/xtask` | bin (dev) | `cargo xtask runtime` (runtime folder from the fork release, checksums, `licenses/`), `cargo xtask notices` (third-party notices; `--check` is a gate); never shipped | W1, W7 |
-| `crates/puddle-fs` | lib | Per-OS file-system seams (T-150, D-66): `data_dir()` (the `dirs` crate: `%LOCALAPPDATA%\puddle`, `$XDG_DATA_HOME/puddle`, `~/Library/Application Support/puddle`) and `private` (owner-only files and folders: `0600`/`0700` on Unix; T-093 adds the Windows ACL there). Own crate because both the API and the runtime layout need it and neither may depend on the other | W1, W4 |
-| `crates/puddle-ipc` | lib | Per-sandbox host endpoints (named pipe / Unix socket) only the current user can open: owner-only DACL, first-instance check, random names, `0600` sockets in a `0700` dir (T-029 HO-1, HO-2). Its `unsafe` (Win32 security calls) is in one module, `windows/security.rs` | W1 |
-| `crates/puddle-ssh` | lib | A sandbox's SSH endpoint (one runtime SSH connection per client, served only through the readiness gate, refusal line) and the `puddle ssh-bridge` relay (T-114) | W1 |
-| `crates/puddle-doctor` | lib | `puddle doctor` (T-115, D-23, D-24): host prerequisites (firmware virtualization, WHP/KVM, code integrity, job object), the bundled runtime (present, permitted, exact version), msb starting, a test boot of a 132-byte probe in a tiny root file system, Global Secure Access; each finding with its exact fix, text and JSON (`schema_version`). Checks are pure over a `Probe` (faked in tests); the Win32 calls (its only `unsafe`) are in `sys/windows.rs` | W1 |
-| `crates/puddle-lifecycle` | lib | Shutdown and reconcile (D-20): trim + stop of every sandbox when puddle exits, shutdown triggers (Ctrl-C, console close, signals), the front/worker split that keeps console events away from the VMs, the one kill-on-close job puddle and every msb child run in (D-27 limits go there), reconcile at start that touches only puddle-owned names. Its `unsafe` (Win32 job and console calls) is in `windows/sys.rs` (T-113) | W1 |
-| `crates/puddle-e2e` | lib (tests) + bin `puddle-ui-fixture` | Harness for end-to-end and hostile-guest tests, and the UI fixture backend (section 13); never a dependency of product crates | W7, T-035 |
-| `crates/puddle-vm-tests` | lib (tests) | VM test harness on the msb SDK: per-run prefix, private msb home, runtime pair, scoped backend; the `vm_*` tests of tiers K/W/L. Never a dependency of product crates | W1, T-102 |
+| Crate | Kind | Owns |
+|---|---|---|
+| `crates/puddle-types` | lib | Shared IDs, wire types, errors that cross crate boundaries (validated names, guest files/env, memory size, events). No I/O. |
+| `crates/puddle-settings` | lib | The settings model: global settings, per-sandbox overrides and their resolution, the consent store; versioned documents with migrations and kept unknown fields. No storage, no I/O |
+| `crates/puddle-compute` | lib | The compute-plane contract: `Runtime`/`Sandbox` traits, `FakeRuntime` (feature `fake`), the contract suite every runtime passes (feature `contract`). Other crates build on it (msb adapter, boot hook, workspace, lifecycle, ...) |
+| `crates/puddle-compute-msb` | lib | The compute-plane traits over the msb SDK (the only crate that calls it): sandboxes, volumes, image pull (with puddle's registry roots), exec, SSH, the memory setting; `SDK_OPTIONS` lists every SDK option set or defaulted (input to a sandbox-escape review). VM tests: the contract suite and the hostile-guest cases |
+| `crates/puddle-runtime` | lib | The bundled msb runtime: runtime folder + private `MSB_HOME`, `MSB_*` environment pinning, the per-OS runtime file-name table and `GuestArch` (`check.sh platform-literals` keeps the names out of other crates), exact `<release>-puddle.N` version check from msb's embedded `.msbver`; the proxy environment that sends msb's image pulls through puddle's pull proxy |
+| `crates/puddle-boot` | lib | Boot hook (`guest/boot.sh`, `guest/agent-supervise.sh`, POSIX sh) and the readiness gate: no SSH or exec before the hook returns 0; applies provider `GuestFile`s/env as a list |
+| `crates/puddle-netpolicy` | lib | The destination guard: strict host-name normalisation (IDNA, LDH, canonical IPs), address classes, the local-destination toggles and wildcard rule, the registry of puddle's own endpoints, block messages. Pure policy, no network I/O |
+| `crates/puddle-ca` | lib | The per-sandbox CA for credential injection: name constraints as a builder input, a key that is never exported or serialised, a bounded leaf cache per sandbox, the guest trust bundle as a list of CAs. In memory only, no I/O |
+| `crates/puddle-workspace` | lib | Workspace volume lifecycle (ADR 0006): one named disk volume `ws-<id>` per workspace at `/workspaces/<id>` (checkouts in subdirectories, `.puddle/` beside them), puddle's own holder tracking (one writer, refusal names the holder), cleanup after failed creates, `fstrim` on stop and "reclaim space", delete only after the unsaved-work check (`guest/delete-check.sh`) and an explicit confirmation; short-lived maintenance sandboxes `m--<id>` for stopped workspaces |
+| `crates/puddle-guest-env` | lib | Boot-time proxy config: a pure function from proxy settings and the image env to the proxy `GuestEnv` and tool config `GuestFile`s (apt, sudo, Maven, Gradle, Docker CLI) the boot hook applies. No I/O |
+| `crates/puddle-certs` | lib | Corporate root sync: reads the host's admin- and user-added `Root`/`CA` stores minus `Disallowed` (Windows; its `unsafe` CryptoAPI calls are in `platform/windows.rs`), selects (expired and distrusted out, each certificate once) and turns them plus puddle's CAs into guest files, env and the bundle step `guest/ca-bundle.sh` (append to the image's bundle, never replace) |
+| `crates/puddle-proxy` | lib | Egress proxy: CONNECT/HTTP, pending requests, toggles, credential injection, upstream chaining, transparent capture; the image-pull proxy for puddle's own registry traffic (loopback, per-run token, guard without rules) |
+| `crates/puddle-upstream` | lib | The company proxy in front of puddle: discovery (WinINet, WinHTTP PAC/WPAD, policy, env, per-epoch cache, change notification) in `discovery`; the chained connect (route hops, `CONNECT`/absolute form, `407` loop, Basic, host-side `host::connect`) in `chain`; proxy sign-in: the portable Negotiate/NTLM protocol over a `TokenSource` in `negotiate`, Windows SSPI as the logged-on user in `windows/sspi.rs`, the `ProxyAuth` seam (`NoAuth` on Unix) in `auth`; feature `testing` has `FakeOs` and a scripted `FakeProxy` |
+| `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper |
+| `crates/puddle-api` | lib | axum API on 127.0.0.1, SSE, bearer token and Host/Origin guard, the OpenAPI contract and its generated TypeScript (`openapi/`, ADR 0004); serves the built UI from the same origin (feature `embedded-ui`) |
+| `crates/puddle-agent` | bin | Guest agent (static musl binary, ADR 0005): vsock to the host proxy |
+| `crates/puddle-agent-proto` | lib | Agent ↔ host wire protocol: yamux settings, stream kinds, control messages, host session, reset-preserving splice |
+| `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI, daemon, wiring of the crates above |
+| `crates/xtask` | bin (dev) | `cargo xtask runtime` (runtime folder from the fork release, checksums, `licenses/`), `cargo xtask notices` (third-party notices; `--check` is a gate); never shipped |
+| `crates/puddle-fs` | lib | Per-OS file-system seams: `data_dir()` (the `dirs` crate: `%LOCALAPPDATA%\puddle`, `$XDG_DATA_HOME/puddle`, `~/Library/Application Support/puddle`) and `private` (owner-only files and folders: `0600`/`0700` on Unix; an explicit Windows ACL is still to come). Own crate because both the API and the runtime layout need it and neither may depend on the other |
+| `crates/puddle-ipc` | lib | Per-sandbox host endpoints (named pipe / Unix socket) only the current user can open: owner-only DACL, first-instance check, random names, `0600` sockets in a `0700` dir. Its `unsafe` (Win32 security calls) is in one module, `windows/security.rs` |
+| `crates/puddle-ssh` | lib | A sandbox's SSH endpoint (one runtime SSH connection per client, served only through the readiness gate, refusal line) and the `puddle ssh-bridge` relay |
+| `crates/puddle-doctor` | lib | `puddle doctor`: host prerequisites (firmware virtualization, WHP/KVM, code integrity, job object), the bundled runtime (present, permitted, exact version), msb starting, a test boot of a 132-byte probe in a tiny root file system, Global Secure Access; each finding with its exact fix, text and JSON (`schema_version`). Checks are pure over a `Probe` (faked in tests); the Win32 calls (its only `unsafe`) are in `sys/windows.rs` |
+| `crates/puddle-lifecycle` | lib | Shutdown and reconcile: trim + stop of every sandbox when puddle exits, shutdown triggers (Ctrl-C, console close, signals), the front/worker split that keeps console events away from the VMs, the one kill-on-close job puddle and every msb child run in (resource limits for sandbox escapes go there), reconcile at start that touches only puddle-owned names. Its `unsafe` (Win32 job and console calls) is in `windows/sys.rs` |
+| `crates/puddle-e2e` | lib (tests) + bin `puddle-ui-fixture` | Harness for end-to-end and hostile-guest tests, and the UI fixture backend (section 13); never a dependency of product crates |
+| `crates/puddle-vm-tests` | lib (tests) | VM test harness on the msb SDK: per-run prefix, private msb home, runtime pair, scoped backend; the `vm_*` tests of tiers K/W/R. Never a dependency of product crates |
 
-`ui/` is the Svelte single-page app (W5, section 13), not a crate. Later, not yet created: the Tauri
-shell (`crates/puddle-app`, W8).
+`ui/` is the Svelte single-page app (section 13), not a crate. Later, not yet created: the Tauri
+shell (`crates/puddle-app`).
 
 **Dependency direction.** `puddle-types` ← `compute`, `proxy`, `store`, `settings` ← `api` ← `puddle`.
 `netpolicy` depends on `types` and `settings`; `proxy` depends on `netpolicy` for its destination checks.
@@ -66,8 +66,8 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
 - Rust **1.99.0**, pinned in `rust-toolchain.toml`, edition **2024**, `rust-version = "1.99"`.
   Bumping it is its own commit (`build: bump toolchain to 1.x`), with every gate green on Linux
   and Windows.
-- Windows releases are built with native MSVC in CI (D-35). Locally, `cargo-xwin` cross-builds the
-  MSVC target from WSL; `scripts/check.sh clippy-windows` cross-checks without linking, through
+- Windows releases are built with native MSVC in CI. Locally, `cargo-xwin` cross-builds the
+  MSVC target from Linux; `scripts/check.sh clippy-windows` cross-checks without linking, through
   `cargo xwin clippy` so C dependencies (bundled SQLite) compile too. It needs `clang` on `PATH`
   (a distro `clang` package, or a conda-forge `clang` environment); cargo-xwin links it as
   `clang-cl` and uses the toolchain's `llvm-tools` as `llvm-lib`.
@@ -106,7 +106,7 @@ Work lands on `develop` as a **fast-forward**, never as a merge commit or a forc
 3. **Stay in your crate.** Touch other crates only where the task needs it; changes to shared files
    (`Cargo.toml`, `Cargo.lock`, `puddle-types`, this file, CI) are kept small and land early, in
    their own commit, because they are where parallel tasks collide.
-4. **Test first where it pays** (D-22: risk tests first): write the test that pins the risky
+4. **Test first where it pays** (risk tests first): write the test that pins the risky
    behaviour, see it fail, then make it pass.
 5. **Land:** `scripts/check.sh` green → `git fetch origin` → `git rebase origin/develop` →
    `scripts/check.sh` again if the rebase pulled in changes → `git push origin HEAD:develop`.
@@ -125,7 +125,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
   `feat`, `fix`, `test`, `refactor`, `perf`, `docs`, `build` (Cargo, toolchain, dependencies),
   `ci`, `chore`. Scope = the crate without the `puddle-` prefix (`proxy`, `store`, `compute`,
   `api`, `agent`, `types`, `cli`, `e2e`), or `ws` for workspace-wide changes.
-- The body says **why**, and names the task or decision (`T-123`, `D-47`) when there is one.
+- The body says **why**; cite an ADR or spec section when one applies. Never refer to private planning
+  notes: no task or decision IDs (the `commit-msg` hook rejects `T-NNN`/`D-NN`).
 - One logical change per commit; code and its tests in the same commit. Every commit on `develop`
   builds and passes the gates (so `git bisect` works).
 - Author: the project identity (`Tijs van Kampen <puddle@tijsvankampen.be>`). Agent-written
@@ -155,7 +156,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
   `#[cfg(windows)]` / `#[cfg(unix)]` in its own module with the same interface on both, so the
   logic above it is tested on both. Use `std::path`, never string-joined paths. Per-OS code is for
   genuine OS integration only; a workaround for a dependency's bug goes in our fork or an upstream
-  draft, with a task to remove any stopgap (D-66). Prefer a maintained crate (licence- and
+  draft, with a task to remove any stopgap. Prefer a maintained crate (licence- and
   `cargo deny`-clean, light tree) over our own per-OS code. Linux and macOS are separate cases:
   `cfg(unix)` is not "Linux".
 - **Security-sensitive code** (proxy decisions, credential injection, address classification, API
@@ -185,48 +186,48 @@ the owner, then tagged `vX.Y.Z` on `main`.
   lifecycle and decisions (one line per approve/deny); `debug` = per-request detail; `trace` =
   bytes and protocol frames (never on by default).
 - **Never log** header values, credentials, tokens, cookies, request bodies, or full URLs with
-  query strings (T-002). Hostnames and ports are fine. Tests assert this (§8, redaction).
-- The **audit log** (store, W3) is a product feature with its own schema and tests, not a
+  query strings. Hostnames and ports are fine. Tests assert this (§8, redaction).
+- The **audit log** (store) is a product feature with its own schema and tests, not a
   `tracing` target.
 
 ## 8. Testing
 
-### Tiers (T-032)
+### Tiers
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
 | L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
-| L3 Linux KVM e2e (**K**) | a real msb microVM; MWE behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: by hand on any branch, nightly on `develop` |
+| L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: by hand on any branch, nightly on `develop` |
 | L4 Windows e2e (**W**) | the L3 scenarios on WHP plus Windows-only paths; hostile-guest **tier W** | same crate, same names | `vm-windows.yml` on the hosted `windows-2025` runner: by hand on any branch, nightly on `develop` |
-| L4 laptop (**L**) | what hosted runners can't show: real client OS, mains power, sleep/resume, Defender, corporate network | same crate, named `vm_laptop_*` | `ci/windows-e2e.ps1` on the laptop, posts the `puddle/windows-e2e` status; before a release (D-28) |
+| L4 real machine (**R**) | what hosted runners can't show: real client OS, mains power, sleep/resume, Defender, corporate network | same crate, named `vm_machine_*` | `ci/windows-e2e.ps1` on a real Windows machine, posts the `puddle/windows-e2e` status; before a release |
 | L5 manual | VS Code attach, sleep/resume, network drop | release checklist | each release candidate |
 
 ### Rules
 
 - **New behaviour is tested at the lowest tier that can catch its bug, plus the tier that proves it
   works end to end.** A bug fix starts with a test that reproduces it.
-- **Hostile-guest cases** (T-029 §6, suite T-035): every case is a named test (`hostile_<id>_…`)
+- **Hostile-guest cases** (the hostile-guest suite): every case is a named test (`hostile_<id>_…`)
   asserting on the audit log, the API and the fake upstream's record. Write the tier P version
   with the feature; V and W follow as VM tests on the `puddle-vm-tests` harness, named
   `vm_hostile_<id>_…` so the VM profile picks them up.
 - **Property tests** (`proptest`) for every parser and classifier that sees guest or network input;
   fuzz targets for the same once `cargo-fuzz` is set up.
 - **Deterministic:** no `sleep` to wait for something (wait on the event, with a timeout); no real
-  internet in gated tests (local fixtures with fixed responses, D-31); bind port 0; temp dirs per
+  internet in gated tests (local fixtures with fixed responses); bind port 0; temp dirs per
   test; per-test `MSB_HOME` and unique sandbox/pipe names; no dependence on test order.
 - **VM tests** are named `vm_*` (function or test file). The default and `ci` nextest profiles leave
   them out, so the gates never need KVM; `cargo nextest run -p puddle-vm-tests --profile vm` runs
   only them, one at a time, never retried (`.config/nextest.toml`). They need
   `PUDDLE_VM_RUNTIME_DIR` (msb + libkrunfw, from `ci/fetch-msb.sh`), and take `PUDDLE_VM_PREFIX`
   and `PUDDLE_VM_ROOT`; every sandbox name and the private msb home carry the prefix, so up to three
-  runs share a host. Laptop-only tests are named `vm_laptop_*`.
+  runs share a host. Real-machine tests are named `vm_machine_*`.
 - **Redaction:** tests that handle a credential use a canary value and assert it never appears in
   logs, errors, audit entries or the guest's view.
 - **Flaky tests:** nextest never retries (`retries = 0`); only the Windows nightly retries once, to list flakes. A test that fails without a code change
   is fixed or quarantined within a day (still runs, doesn't gate, linked issue, max 14 days).
-  Proxy, transparency and security tests can't be quarantined: a flaky one is the bug (D-2).
+  Proxy, transparency and security tests can't be quarantined: a flaky one is the bug.
 - Test names say the behaviour: `denied_request_is_held_until_approved`, not `test_pending_2`.
 
 ## 9. Coverage
@@ -280,14 +281,14 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
   Turn off default features you don't need.
 - `cargo deny check` gates licences (only GPL-3.0-or-later-compatible ones, list in `deny.toml`),
   advisories (any RustSec advisory or yanked crate fails), bans (no wildcards) and sources
-  (crates.io only; puddle's own forks on GitHub once added, D-53). An exception names the advisory
+  (crates.io only; puddle's own forks on GitHub once added). An exception names the advisory
   or crate, the reason and a review date.
 - **Third-party notices:** `cargo xtask notices --check` (gate `notices`) fails when a shipped
   dependency has no licence entry in cargo-about's report (`about.toml`, whose `accepted` list
   mirrors `deny.toml`). Release notices for puddle and the bundled msb come from
-  `cargo xtask runtime` (D-35).
+  `cargo xtask runtime`.
 - Prefer well-maintained crates already in the tree; a new dependency is justified in its commit.
-- Never copy code from Huddle (D-54); code from elsewhere follows CONTRIBUTING's "Work you did not
+- Never copy code from Huddle; code from elsewhere follows CONTRIBUTING's "Work you did not
   write".
 
 ## 13. The UI (`ui/`)
