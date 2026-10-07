@@ -540,6 +540,7 @@ pub(crate) struct RigBuilder {
     pub(crate) tls: Option<TlsClient>,
     pub(crate) names: Vec<(&'static str, SocketAddr)>,
     pub(crate) allow: Vec<&'static str>,
+    pub(crate) upstream: Option<puddle_proxy::Upstream>,
 }
 
 impl RigBuilder {
@@ -551,6 +552,7 @@ impl RigBuilder {
             tls: Some(pki.tls_client()),
             names: Vec::new(),
             allow: vec!["bound.test"],
+            upstream: None,
         }
     }
 
@@ -581,6 +583,12 @@ impl RigBuilder {
 
     pub(crate) fn allow(mut self, allow: Vec<&'static str>) -> Self {
         self.allow = allow;
+        self
+    }
+
+    /// Sends the upstream legs through the company proxy `upstream` chains to.
+    pub(crate) fn via(mut self, upstream: puddle_proxy::Upstream) -> Self {
+        self.upstream = Some(upstream);
         self
     }
 
@@ -617,12 +625,15 @@ impl RigBuilder {
             )
             .unwrap(),
         );
-        let proxy = Proxy::new(policy.clone(), Arc::new(NullSink))
+        let mut proxy = Proxy::new(policy.clone(), Arc::new(NullSink))
             .with_connection_log(log.clone())
             .with_resolver(Arc::new(resolver))
             .with_address_check(Arc::new(AnyAddress))
             .with_config(self.config)
             .with_termination(terminations, self.tls.unwrap());
+        if let Some(upstream) = self.upstream {
+            proxy = proxy.with_upstream(upstream);
+        }
         let proxy = Arc::new(proxy);
         let root = IpcRoot::new().unwrap();
         let route = proxy.serve_route(root.listen().unwrap(), sandbox("box"));

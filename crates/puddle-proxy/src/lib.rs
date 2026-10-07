@@ -26,6 +26,10 @@
 //!    A tunnel that carries plain HTTP (Node `fetch` and Yarn Berry send `http://` as
 //!    `CONNECT host:80`) is decided and relayed like any tunnel; only its first request line is
 //!    read, for the audit.
+//!    A `CONNECT` to a name a sandbox has a [`Termination`] for, on port 443, is different: the
+//!    proxy answers the guest's TLS handshake itself with a leaf from the sandbox's CA, parses
+//!    each request, asks the [`Injector`] what to do, and sends it over its own verified TLS
+//!    connection to the real server ([`Proxy::with_termination`], [`terminate`]).
 //! 6. **Audit**: every request that got as far as a destination ends as one
 //!    [`puddle_types::ConnectionEvent`] (decision, reason, rule or pending row, address connected
 //!    to, method and path of a plain-HTTP request or of a tunnel's first HTTP request, bytes each
