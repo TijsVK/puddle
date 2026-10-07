@@ -3,7 +3,8 @@
 // must stay at or above the floor (lines 92 %, regions 90 %) and at or above the committed baseline
 // in scripts/coverage-baseline.json. The baseline only goes up: when coverage rises a local run
 // writes the new value (rounded down to 0.1) for you to commit, and a change that lowers the
-// committed baseline fails unless COVERAGE_BASELINE_LOWER_OK=1 (the owner's OK, say so in the commit).
+// committed baseline fails unless COVERAGE_BASELINE_LOWER_OK=1, which scripts/check.sh sets only
+// when a commit of the change carries the trailer `Owner-OK: coverage-baseline`.
 //
 // Usage: node scripts/coverage-ratchet.ts --summary <llvm-cov json> --baseline <file>
 //          --floor-lines 92 --floor-regions 90 [--previous <baseline json of the base commit>] [--write]

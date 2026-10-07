@@ -244,8 +244,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
 - **Gate: lines ≥ 92 %, regions ≥ 90 %** (workspace totals, floors in `scripts/check.sh`), and a
   **ratchet**: coverage may not fall below `scripts/coverage-baseline.json`, the best value reached so far
   (rounded down to 0.1). The floors and the baseline only go up; lowering either needs the owner's OK, and
-  a change that lowers the committed baseline fails the gate unless `COVERAGE_BASELINE_LOWER_OK=1` is set
-  (put the owner's OK in the commit message).
+  a change that lowers the committed baseline fails the gate unless one of its commits carries the trailer
+  `Owner-OK: coverage-baseline` (the owner's OK; the environment can't grant it).
 - **Raising the baseline is automatic.** A local `scripts/check.sh coverage` (the pre-push hook runs it)
   rewrites the baseline when coverage rose; commit the changed file with your change. CI never writes it,
   it only compares and tells you when the baseline is behind. If two branches raise it, take the higher

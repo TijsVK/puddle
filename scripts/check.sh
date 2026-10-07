@@ -48,18 +48,14 @@ diff_base() {
 }
 
 # Runs the diff-coverage script for one language: $1 label, $2 lcov file, $3 extensions, then
-# extra arguments. Needs a base; without one it skips locally and fails in CI (CI set).
+# extra arguments. Needs a base; without one it fails.
 diff_coverage() {
     label=$1 lcov=$2 exts=$3
     shift 3
     base=$(diff_base)
     if [ -z "$base" ]; then
-        if [ -n "${CI:-}" ]; then
-            echo "$label: no base commit to measure the diff from (fetch-depth, DIFF_BASE)" >&2
-            return 1
-        fi
-        echo "note: no origin/develop to measure from; skipping $label" >&2
-        return 0
+        echo "$label: no base commit to measure the diff from; run \`git fetch origin develop\` (CI: fetch-depth, DIFF_BASE)" >&2
+        return 1
     fi
     node ui/scripts/diff-coverage.ts --base "$base" --lcov "$lcov" --exts "$exts" \
         --exclusions scripts/diff-coverage-exclusions.txt --label "$label" "$@"
@@ -210,6 +206,13 @@ run_gate() {
         ratchet="$ratchet --floor-lines $COV_LINES --floor-regions $COV_REGIONS"
         [ -n "${CI:-}" ] || ratchet="$ratchet --write"
         base=$(diff_base)
+        # Lowering the committed baseline needs the owner's OK, recorded as this trailer in a commit
+        # message of the change; the environment can't grant it.
+        COVERAGE_BASELINE_LOWER_OK=0
+        if [ -n "$base" ] && git log "$base..HEAD" --format=%B | grep -q '^Owner-OK: coverage-baseline$'; then
+            COVERAGE_BASELINE_LOWER_OK=1
+        fi
+        export COVERAGE_BASELINE_LOWER_OK
         if [ -n "$base" ] && git cat-file -e "$base:scripts/coverage-baseline.json" 2>/dev/null; then
             git show "$base:scripts/coverage-baseline.json" >"$target/coverage-baseline.previous.json"
             ratchet="$ratchet --previous $target/coverage-baseline.previous.json"
