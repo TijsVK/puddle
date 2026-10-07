@@ -302,8 +302,10 @@ mod tests {
         let expired = server("host.test", (-3, -2)).await;
         let client = TlsClient::new([expired.root.clone()]).unwrap();
         let err = dial(&expired, &client, "host.test").await.unwrap_err();
+        // The platform verifier words it per OS: "certificate expired: ..." through webpki,
+        // "Expired" from the Windows chain engine.
         assert!(
-            matches!(&err, TlsConnectError::Certificate(r) if r.contains("expired")),
+            matches!(&err, TlsConnectError::Certificate(r) if r.to_lowercase().contains("expired")),
             "{err}"
         );
     }
