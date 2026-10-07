@@ -23,6 +23,16 @@ unset CARGO
 
 cd "$(dirname "$0")/.."
 
+# The desktop shell (puddle-app) links the system WebKitGTK on Linux. Where its dev package is
+# missing and this is not CI, the Linux gates skip that one crate and say so (clippy-windows still
+# checks it for the msvc target). In CI (CI set) a missing package fails the build instead.
+skip_app=
+if [ "$(uname -s)" = Linux ] && [ -z "${CI:-}" ] && ! pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
+    skip_app="--exclude puddle-app"
+    echo "note: libwebkit2gtk-4.1-dev is not installed; skipping puddle-app in the Linux gates" \
+        "(sudo apt install libwebkit2gtk-4.1-dev). CI builds and tests it." >&2
+fi
+
 # Installs the UI's npm packages from the lock file, once per run.
 ui_installed=
 ui_install() {
@@ -69,13 +79,16 @@ run_gate() {
         fi
         ;;
     standalone) scripts/check-standalone.sh ;;
-    clippy) "$cargo" clippy --workspace --all-targets --all-features --locked -- -D warnings ;;
+    clippy)
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
+        "$cargo" clippy --workspace $skip_app --all-targets --all-features --locked -- -D warnings
+        ;;
     clippy-windows)
         # cargo-xwin supplies the MSVC headers and libraries, so C dependencies (bundled SQLite)
         # build for the msvc target. It drives clang as clang-cl and the toolchain's llvm-ar as
-        # llvm-lib, so it needs `clang` on PATH. Run through plain cargo: the cross-check doesn't
+        # llvm-lib, so it needs `clang` on PATH; the shell's Windows resources need `llvm-rc`. Run through plain cargo: the cross-check doesn't
         # share the native build's cache anyway.
-        for tool in cargo-xwin clang; do
+        for tool in cargo-xwin clang llvm-rc; do
             command -v "$tool" >/dev/null 2>&1 || {
                 echo "clippy-windows needs $tool on PATH (docs/STANDARDS.md, \"Toolchain\")" >&2
                 exit 1
@@ -129,13 +142,19 @@ run_gate() {
         esac
         (cd ui && PUDDLE_CARGO="$cargo" npx playwright test)
         ;;
-    test) "$cargo" nextest run --workspace --all-features --locked ;;
+    test)
+        # shellcheck disable=SC2086
+        "$cargo" nextest run --workspace $skip_app --all-features --locked
+        ;;
     doc)
-        "$cargo" test --doc --workspace --all-features --locked --no-fail-fast
-        RUSTDOCFLAGS="-D warnings" "$cargo" doc --workspace --no-deps --all-features --locked
+        # shellcheck disable=SC2086
+        "$cargo" test --doc --workspace $skip_app --all-features --locked --no-fail-fast
+        # shellcheck disable=SC2086
+        RUSTDOCFLAGS="-D warnings" "$cargo" doc --workspace $skip_app --no-deps --all-features --locked
         ;;
     coverage)
-        "$cargo" llvm-cov nextest --workspace --all-features --locked \
+        # shellcheck disable=SC2086
+        "$cargo" llvm-cov nextest --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}" \
             --fail-under-lines "$COV_LINES" --fail-under-regions "$COV_REGIONS" \
             --lcov --output-path "${CARGO_TARGET_DIR:-target}/lcov.info"

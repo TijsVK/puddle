@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-app"
+description = "The desktop shell a Tauri 2 window around the SPA that puddle-api serves, with the backend in-process"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[features]
+# The backend is the in-memory fixture (one seeded pending request) until the real host wiring
+# lands (it will be replaced by the shared fixture backend). Without the feature the
+# shell refuses to start (there is nothing to show).
+default = ["fixture"]
+fixture = ["dep:puddle-store", "dep:puddle-types"]
+
+[lib]
+name = "puddle_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "puddle-app"
+path = "src/main.rs"
+
+[dependencies]
+# `embedded-ui`: the SPA is part of the binary (build `ui/` first, `scripts/check.sh ui`).
+puddle-api = { workspace = true, features = ["embedded-ui"] }
+puddle-store = { workspace = true, optional = true }
+puddle-types = { workspace = true, optional = true }
+serde_json = { workspace = true }
+tauri = { workspace = true }
+tauri-plugin-opener = { workspace = true }
+tauri-plugin-single-instance = { workspace = true }
+tauri-plugin-window-state = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dev-dependencies]
+tauri = { workspace = true, features = ["test"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

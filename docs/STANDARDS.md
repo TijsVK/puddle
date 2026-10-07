@@ -40,11 +40,11 @@ different crates and rarely collides.
 | `crates/puddle-ssh` | lib | A sandbox's SSH endpoint (one runtime SSH connection per client, served only through the readiness gate, refusal line) and the `puddle ssh-bridge` relay |
 | `crates/puddle-doctor` | lib | `puddle doctor`: host prerequisites (firmware virtualization, WHP/KVM, code integrity, job object), the bundled runtime (present, permitted, exact version), msb starting, a test boot of a 132-byte probe in a tiny root file system, Global Secure Access; each finding with its exact fix, text and JSON (`schema_version`). Checks are pure over a `Probe` (faked in tests); the Win32 calls (its only `unsafe`) are in `sys/windows.rs` |
 | `crates/puddle-lifecycle` | lib | Shutdown and reconcile: trim + stop of every sandbox when puddle exits, shutdown triggers (Ctrl-C, console close, signals), the front/worker split that keeps console events away from the VMs, the one kill-on-close job puddle and every msb child run in (resource limits for sandbox escapes go there), reconcile at start that touches only puddle-owned names. Its `unsafe` (Win32 job and console calls) is in `windows/sys.rs` |
+| `crates/puddle-app` | bin + lib | The desktop shell: Tauri 2 around the SPA that `puddle-api` serves from its own origin; the backend runs in-process (the in-memory fixture for now). The main window has no Tauri permissions (an empty capability for the label `main`, an app ACL manifest in `build.rs`, tests in `tests/acl.rs`), stays on the API origin (`navigation.rs`) and gets the token from a start-up script. Linux builds need `libwebkit2gtk-4.1-dev`; a smoke test (`e2e/smoke.mjs`, over WebView2's DevTools Protocol) runs in the `windows` workflow |
 | `crates/puddle-e2e` | lib (tests) + bin `puddle-ui-fixture` | Harness for end-to-end and hostile-guest tests, and the UI fixture backend (section 13); never a dependency of product crates |
 | `crates/puddle-vm-tests` | lib (tests) | VM test harness on the msb SDK: per-run prefix, private msb home, runtime pair, scoped backend; the `vm_*` tests of tiers K/W/R. Never a dependency of product crates |
 
-`ui/` is the Svelte single-page app (section 13), not a crate. Later, not yet created: the Tauri
-shell (`crates/puddle-app`).
+`ui/` is the Svelte single-page app (section 13), not a crate.
 
 **Dependency direction.** `puddle-types` ← `compute`, `proxy`, `store`, `settings` ← `api` ← `puddle`.
 `netpolicy` depends on `types` and `settings`; `proxy` depends on `netpolicy` for its destination checks.
@@ -69,7 +69,7 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
 - Windows releases are built with native MSVC in CI. Locally, `cargo-xwin` cross-builds the
   MSVC target from Linux; `scripts/check.sh clippy-windows` cross-checks without linking, through
   `cargo xwin clippy` so C dependencies (bundled SQLite) compile too. It needs `clang` on `PATH`
-  (a distro `clang` package, or a conda-forge `clang` environment); cargo-xwin links it as
+  (a distro `clang` package, or a conda-forge `clang` environment) and `llvm-rc` (the shell's Windows resources, `tauri-winres`); cargo-xwin links it as
   `clang-cl` and uses the toolchain's `llvm-tools` as `llvm-lib`.
 - Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli`, `cargo-xwin`, `shellcheck`, `cargo-about` (with `--features cli`) (versions pinned in
   `.github/workflows/ci.yml`; use the same or newer locally).
@@ -83,6 +83,10 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   ui-e2e`. Every npm package is pinned to an exact version in `ui/package.json` and
   `ui/package-lock.json`. `ui-e2e` needs Playwright's browsers (`cd ui && npx playwright install
   --with-deps chromium webkit`); where WebKit can't start locally it runs Chromium only and says so.
+- **WebKitGTK** (Linux only) for `crates/puddle-app`: `sudo apt install libwebkit2gtk-4.1-dev`. CI installs it.
+  Without it and outside CI, `scripts/check.sh` skips that one crate in its Linux gates (clippy, tests, docs,
+  coverage) and says so; `clippy-windows` still checks it for the msvc target. Windows needs WebView2, which
+  current Windows has.
 - **Shared build cache** (optional, local only): `scripts/check.sh` runs Cargo as `$CARGO`
   (default `cargo`). With [mbx](https://mr-boxington.jdx.dev/) installed, run
   `CARGO=mbx MBX_CACHE_DIR=<one shared dir> scripts/check.sh` (and `mbx build|test|...` instead of

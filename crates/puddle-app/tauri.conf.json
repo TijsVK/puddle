@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "puddle",
+  "version": "0.0.0",
+  "identifier": "be.tijsvankampen.puddle",
+  "build": {
+    "frontendDist": "assets",
+    "beforeDevCommand": "npm --prefix ../../ui ci --ignore-scripts && npm --prefix ../../ui run build",
+    "windows": { "staticVCRuntime": false }
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "capabilities": ["main"],
+      "freezePrototype": true
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.png", "icons/icon.ico"]
+  }
+}

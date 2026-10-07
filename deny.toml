@@ -19,6 +19,10 @@ ignore = [
     # with an ed25519 host key; the attack needs remote timing observation; review when the SSH endpoint
     # changes and at each SDK/fork bump, by 2027-01-06.
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack; transitive via the msb SDK's russh, local-only SSH" },
+    # Unmaintained proc macro (build time only, Linux only): glib-macros 0.18 -> gtk 0.18 -> tauri's
+    # wry/tao on Linux. tauri 2 stays on gtk-rs 0.18 until tauri 3 (alpha); nothing of it
+    # runs at runtime. Review at each tauri bump, by 2027-01-06.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; build-time dependency of tauri's gtk-rs 0.18 on Linux" },
 ]
 
 [licenses]

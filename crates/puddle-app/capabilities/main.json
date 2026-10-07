@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The main window is granted nothing: it loads the SPA from the API's own origin and calls no Tauri API. Never add `remote`, `windows: [\"*\"]` or a permission here; the ACL tests fail if you do.",
+  "windows": ["main"],
+  "permissions": []
+}

@@ -65,6 +65,16 @@ jobs:
           cd ui
           npm ci --ignore-scripts --no-audit --no-fund
           npx playwright install --with-deps chromium webkit
+      - name: WebKitGTK for the desktop shell (puddle-app links it on Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev
+      - name: llvm-rc for the msvc cross-check (tauri-winres compiles the shell's Windows resources)
+        run: |
+          rc=$(ls /usr/lib/llvm-*/bin/llvm-rc 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -z "$rc" ]; then sudo apt-get install -y --no-install-recommends llvm; rc=$(ls /usr/lib/llvm-*/bin/llvm-rc | sort -V | tail -n 1); fi
+          mkdir -p "$HOME/llvm-rc-bin" && ln -sf "$rc" "$HOME/llvm-rc-bin/llvm-rc"
+          echo "$HOME/llvm-rc-bin" >> "$GITHUB_PATH"
       - name: clang for the msvc cross-check (preinstalled on the runner)
         run: clang --version
       - name: Cache the MSVC CRT and Windows SDK that cargo-xwin downloads

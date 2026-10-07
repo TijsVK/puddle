@@ -104,6 +104,17 @@ base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 # aws-lc-rs (see rcgen).
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tar = { version = "0.4", default-features = false }
+# Desktop shell. Tauri 2.12 (3.0 is alpha). `wry` is the webview; `x11` is the Linux
+# display backend. No `common-controls-v6` (the unit-test executables have no manifest, so they
+# fail to load with 0xc0000139; nothing here shows a dialog) and no `compression`
+# (nothing is served through Tauri's asset protocol: the SPA comes from puddle-api), no tray or
+# devtools features yet.
+tauri = { version = "2.12.1", default-features = false, features = ["wry", "x11"] }
+tauri-build = { version = "2.7.1", default-features = false }
+tauri-plugin-single-instance = "2.5.2"
+tauri-plugin-window-state = "2.5.0"
+tauri-plugin-opener = { version = "2.7.0", default-features = false }
+url = "2"
 
 [workspace.lints.rust]
 unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless it needs FFI

@@ -93,6 +93,15 @@ jobs:
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash
         run: scripts/check.sh ui-e2e
+      # The desktop shell starts on the installed WebView2 and its main window shows the SPA from
+      # the in-process backend; driven over WebView2's DevTools Protocol, no extra tools.
+      - name: desktop shell smoke test (WebView2)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: pwsh
+        run: |
+          cargo build -p puddle-app --all-features --locked
+          $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
+          node crates/puddle-app/e2e/smoke.mjs
       # Nightly, PRs to main and develop dispatches only (it compiles everything a second time, and
       # a develop cache save should hold it so the nightly isn't cold).
       - name: release build
