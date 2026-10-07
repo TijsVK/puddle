@@ -73,6 +73,44 @@ describe("asInboxEvent", () => {
     });
   });
 
+  it("widens the API's short form of a request to an open one, with its domain", () => {
+    const summary = {
+      id: 7,
+      sandbox: "demo",
+      host: "a.example.com",
+      port: 443,
+      first_seen: 1,
+      last_seen: 2,
+      attempts: 1,
+      registrable_domain: "example.com",
+    };
+    expect(asInboxEvent({ type: "pending_opened", request: summary })).toEqual({
+      type: "pending_opened",
+      request: {
+        id: 7,
+        sandbox: "demo",
+        host: "a.example.com",
+        port: 443,
+        first_seen: 1,
+        last_seen: 2,
+        attempts: 1,
+        state: "requested",
+        decided_at: null,
+        decided_by: null,
+        rule_id: null,
+        blocked_by: null,
+      },
+      registrable_domain: "example.com",
+    });
+    // An empty domain is no domain: the list is refetched instead.
+    expect(
+      asInboxEvent({
+        type: "pending_opened",
+        request: { ...summary, registrable_domain: "" },
+      }),
+    ).toMatchObject({ registrable_domain: null });
+  });
+
   it("drops other events and anything malformed", () => {
     for (const bad of [
       null,

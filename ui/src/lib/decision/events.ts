@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The live events the inbox applies. The API will add them to its `Event` union (and so to the
-// generated schema); until then they are described here and read defensively, so a field that
-// is missing or has the wrong type drops the event instead of corrupting the list. When the API
-// has them, replace these types by `components["schemas"]` ones and keep the guards.
+// The live events the inbox applies, read defensively: a field that is missing or has the wrong
+// type drops the event instead of corrupting the list. `pending_opened` carries the API's short
+// form of a request (`PendingSummary`, with its registrable domain); it is widened here to the
+// full `PendingRequest` the list holds, as an open request.
 import type { components } from "#lib/api/schema.d.ts";
 
 export type PendingRequest = components["schemas"]["PendingRequest"];
@@ -11,7 +11,7 @@ export type PendingState = components["schemas"]["PendingState"];
 export interface PendingOpened {
   type: "pending_opened";
   request: PendingRequest;
-  /** Proposed: the group the row belongs to. Without it the list is refetched. */
+  /** The group the row belongs to. Without it the list is refetched. */
   registrable_domain?: string | null;
 }
 export interface PendingUpdated {
@@ -40,19 +40,46 @@ const isNum = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v);
 const isStr = (v: unknown): v is string => typeof v === "string";
 
-function isRequest(v: unknown): v is PendingRequest {
-  if (typeof v !== "object" || v === null) return false;
+/** The request in an event: a full one, or the API's short form widened to an open request. */
+function asRequest(v: unknown): PendingRequest | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
   const r = v as Record<string, unknown>;
-  return (
-    isNum(r["id"]) &&
-    isStr(r["sandbox"]) &&
-    isStr(r["host"]) &&
-    isNum(r["port"]) &&
-    isNum(r["first_seen"]) &&
-    isNum(r["last_seen"]) &&
-    isNum(r["attempts"]) &&
-    isStr(r["state"])
-  );
+  if (
+    !isNum(r["id"]) ||
+    !isStr(r["sandbox"]) ||
+    !isStr(r["host"]) ||
+    !isNum(r["port"]) ||
+    !isNum(r["first_seen"]) ||
+    !isNum(r["last_seen"]) ||
+    !isNum(r["attempts"])
+  ) {
+    return undefined;
+  }
+  if (isStr(r["state"])) return v as PendingRequest;
+  return {
+    id: r["id"],
+    sandbox: r["sandbox"] as PendingRequest["sandbox"],
+    host: r["host"],
+    port: r["port"],
+    first_seen: r["first_seen"],
+    last_seen: r["last_seen"],
+    attempts: r["attempts"],
+    state: "requested",
+    decided_at: null,
+    decided_by: null,
+    rule_id: null,
+    blocked_by: null,
+  };
+}
+
+/** The group of an opened request: on the event, or on the request itself. */
+function domainOf(e: Record<string, unknown>): string | null {
+  const inner = e["request"] as Record<string, unknown>;
+  for (const holder of [e, inner]) {
+    const domain = holder["registrable_domain"];
+    if (isStr(domain) && domain !== "") return domain;
+  }
+  return null;
 }
 
 /** The event as an inbox event, or `undefined` for any other or malformed event. */
@@ -60,15 +87,15 @@ export function asInboxEvent(value: unknown): InboxEvent | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const e = value as Record<string, unknown>;
   switch (e["type"]) {
-    case "pending_opened":
-      if (!isRequest(e["request"])) return undefined;
+    case "pending_opened": {
+      const request = asRequest(e["request"]);
+      if (!request) return undefined;
       return {
         type: "pending_opened",
-        request: e["request"],
-        registrable_domain: isStr(e["registrable_domain"])
-          ? e["registrable_domain"]
-          : null,
+        request,
+        registrable_domain: domainOf(e),
       };
+    }
     case "pending_updated":
       if (!isNum(e["id"]) || !isNum(e["attempts"]) || !isNum(e["last_seen"])) {
         return undefined;
