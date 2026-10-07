@@ -22,10 +22,7 @@
       ]
     },
     "sign_in": {
-      "methods": [
-        "negotiate",
-        "ntlm"
-      ],
+      "methods": ["negotiate", "ntlm"],
       "attempts": [
         {
           "proxy": "proxy-a.corp.example:8080",
@@ -47,9 +44,7 @@
           "fingerprint": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
           "kind": "root",
           "not_after": 4102444800000,
-          "sources": [
-            "LocalMachine\\Root\\.GroupPolicy"
-          ]
+          "sources": ["LocalMachine\\Root\\.GroupPolicy"]
         },
         {
           "subject": "Corp Inspection CA",
@@ -66,9 +61,7 @@
           "fingerprint": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
           "kind": "intermediate",
           "not_after": 4102444800000,
-          "sources": [
-            "LocalMachine\\CA\\.Default"
-          ]
+          "sources": ["LocalMachine\\CA\\.Default"]
         }
       ],
       "skipped": [
@@ -100,18 +93,14 @@
         "scheme": "https",
         "host": "registry.npmjs.org",
         "port": 443,
-        "hops": [
-          "PROXY proxy-a.corp.example:8080"
-        ],
+        "hops": ["PROXY proxy-a.corp.example:8080"],
         "source": "pac"
       },
       {
         "scheme": "https",
         "host": "wiki.corp.example",
         "port": 443,
-        "hops": [
-          "DIRECT"
-        ],
+        "hops": ["DIRECT"],
         "source": "pac"
       }
     ]
@@ -136,10 +125,7 @@
           "dead_proxies": []
         },
         "sign_in": {
-          "methods": [
-            "negotiate",
-            "ntlm"
-          ],
+          "methods": ["negotiate", "ntlm"],
           "attempts": [
             {
               "proxy": "proxy-a.corp.example:8080",
@@ -161,9 +147,7 @@
               "fingerprint": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
               "kind": "root",
               "not_after": 4102444800000,
-              "sources": [
-                "LocalMachine\\Root\\.GroupPolicy"
-              ]
+              "sources": ["LocalMachine\\Root\\.GroupPolicy"]
             },
             {
               "subject": "Corp Inspection CA",
@@ -180,9 +164,7 @@
               "fingerprint": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
               "kind": "intermediate",
               "not_after": 4102444800000,
-              "sources": [
-                "LocalMachine\\CA\\.Default"
-              ]
+              "sources": ["LocalMachine\\CA\\.Default"]
             }
           ],
           "skipped": [
@@ -225,10 +207,7 @@
           ]
         },
         "sign_in": {
-          "methods": [
-            "negotiate",
-            "ntlm"
-          ],
+          "methods": ["negotiate", "ntlm"],
           "attempts": [
             {
               "proxy": "fallback.corp.example:3128",
@@ -259,18 +238,14 @@
             "scheme": "https",
             "host": "github.com",
             "port": 443,
-            "hops": [
-              "PROXY fallback.corp.example:3128"
-            ],
+            "hops": ["PROXY fallback.corp.example:3128"],
             "source": "system"
           },
           {
             "scheme": "https",
             "host": "wiki.corp.example",
             "port": 443,
-            "hops": [
-              "DIRECT"
-            ],
+            "hops": ["DIRECT"],
             "source": "bypass"
           }
         ]

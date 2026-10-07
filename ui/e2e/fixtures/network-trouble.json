@@ -22,10 +22,7 @@
       ]
     },
     "sign_in": {
-      "methods": [
-        "negotiate",
-        "ntlm"
-      ],
+      "methods": ["negotiate", "ntlm"],
       "attempts": [
         {
           "proxy": "fallback.corp.example:3128",
@@ -43,9 +40,7 @@
       "intermediates": 0,
       "certificates": [],
       "skipped": [],
-      "unreadable_stores": [
-        "LocalMachine\\Root\\.GroupPolicy: access denied"
-      ]
+      "unreadable_stores": ["LocalMachine\\Root\\.GroupPolicy: access denied"]
     },
     "pull_proxy": {
       "active": true,
@@ -56,18 +51,14 @@
         "scheme": "https",
         "host": "github.com",
         "port": 443,
-        "hops": [
-          "PROXY fallback.corp.example:3128"
-        ],
+        "hops": ["PROXY fallback.corp.example:3128"],
         "source": "system"
       },
       {
         "scheme": "https",
         "host": "wiki.corp.example",
         "port": 443,
-        "hops": [
-          "DIRECT"
-        ],
+        "hops": ["DIRECT"],
         "source": "bypass"
       }
     ]
