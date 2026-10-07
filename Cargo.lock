@@ -5832,6 +5832,7 @@ dependencies = [
  "getrandom 0.4.3",
  "tempfile",
  "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5886,6 +5887,7 @@ name = "puddle-ipc"
 version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
+ "puddle-fs",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

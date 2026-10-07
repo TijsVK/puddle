@@ -86,11 +86,9 @@ fn hex(bytes: &[u8]) -> String {
 /// Where the API listens and the token it wants: what a client needs to connect.
 ///
 /// The server writes it with [`ConnectionInfo::write`] after binding; the CLI and UI read it
-/// with [`ConnectionInfo::read`]. On Unix the file is created `0600` (its directory `0700` when
-/// puddle creates it) and a file readable by others is refused when read back. On Windows it
-/// inherits the ACL of its directory, so it belongs in the user's profile (`%LOCALAPPDATA%`),
-/// which only the user, administrators and `SYSTEM` can read (`puddle_fs::private` owns both
-/// halves; an explicit Windows ACL is still to come).
+/// with [`ConnectionInfo::read`]. The file is owner-only (`puddle_fs::private` owns this): mode
+/// `0600` in a `0700` directory on Unix, and on Windows a protected ACL with one entry, for the
+/// current user. A file that others can read is refused when read back.
 #[derive(Clone)]
 pub struct ConnectionInfo {
     /// `http://127.0.0.1:<port>`.
@@ -152,10 +150,12 @@ impl ConnectionInfo {
             source,
         };
         let file = fs::File::open(path).map_err(io_err)?;
-        let meta = file.metadata().map_err(io_err)?;
-        puddle_fs::private::check(&meta).map_err(|mode| ConnectionFileError::Permissions {
-            path: path.to_owned(),
-            mode,
+        puddle_fs::private::check(&file).map_err(|err| match err {
+            puddle_fs::private::CheckError::Io(source) => io_err(source),
+            puddle_fs::private::CheckError::Exposed(exposed) => ConnectionFileError::Permissions {
+                path: path.to_owned(),
+                exposed,
+            },
         })?;
         let mut text = String::new();
         file.take(MAX_FILE_BYTES + 1)
@@ -206,14 +206,14 @@ pub enum ConnectionFileError {
     },
     /// The file may be read by other users.
     #[error(
-        "connection file {} is readable by other users (mode {mode:o}); it must be 0600",
+        "connection file {} is readable by other users ({exposed})",
         path.display()
     )]
     Permissions {
         /// The connection file.
         path: PathBuf,
-        /// Its permission bits.
-        mode: u32,
+        /// How it is open to others.
+        exposed: puddle_fs::private::Exposed,
     },
     /// The file isn't a connection file this puddle understands.
     #[error("connection file {}: {reason}", path.display())]
@@ -326,7 +326,43 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
         let err = ConnectionInfo::read(&path).unwrap_err();
         assert!(
-            matches!(err, ConnectionFileError::Permissions { mode: 0o644, .. }),
+            matches!(
+                err,
+                ConnectionFileError::Permissions {
+                    exposed: puddle_fs::private::Exposed::Mode(0o644),
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        assert!(!err.to_string().contains(token.expose()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_with_an_inherited_acl_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("api.json");
+        let token = ApiToken::generate().unwrap();
+        ConnectionInfo {
+            url: "http://127.0.0.1:1".into(),
+            token: token.clone(),
+        }
+        .write(&path)
+        .unwrap();
+        // The same content under the folder's inherited ACL (user, administrators, SYSTEM).
+        let copy = dir.path().join("copy.json");
+        fs::write(&copy, fs::read(&path).unwrap()).unwrap();
+        ConnectionInfo::read(&path).unwrap();
+        let err = ConnectionInfo::read(&copy).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConnectionFileError::Permissions {
+                    exposed: puddle_fs::private::Exposed::Acl(_),
+                    ..
+                }
+            ),
             "{err}"
         );
         assert!(!err.to_string().contains(token.expose()));

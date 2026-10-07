@@ -15,6 +15,7 @@ use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::server::graceful::GracefulShutdown;
 use hyper_util::service::TowerToHyperService;
+use puddle_netpolicy::{EndpointKind, PuddleEndpoints, Registration};
 use puddle_store::{Clock, Store};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, watch};
@@ -109,6 +110,11 @@ pub struct Services {
     /// The network-health report. [`Services::new`] starts with [`NoNetworkHealth`], which
     /// answers 503; set the real one with [`Services::with_network_health`].
     pub network_health: Arc<dyn NetworkHealthService>,
+    /// The registry of puddle's own listeners that the sandbox proxy's guard consults. The API
+    /// registers its address here when it binds, so a sandbox can't reach it even with the
+    /// loopback toggle on. [`Services::new`] starts with an empty registry of its own; give the
+    /// one the proxy uses with [`Services::with_endpoints`].
+    pub endpoints: PuddleEndpoints,
 }
 
 impl Services {
@@ -127,6 +133,7 @@ impl Services {
             clock,
             workspaces: Arc::new(NoWorkspaces),
             network_health: Arc::new(NoNetworkHealth),
+            endpoints: PuddleEndpoints::new(),
         }
     }
 
@@ -134,6 +141,14 @@ impl Services {
     #[must_use]
     pub fn with_network_health(mut self, network_health: Arc<dyn NetworkHealthService>) -> Self {
         self.network_health = network_health;
+        self
+    }
+
+    /// These services registering the API in `endpoints`, the registry the sandbox proxy's guard
+    /// uses.
+    #[must_use]
+    pub fn with_endpoints(mut self, endpoints: PuddleEndpoints) -> Self {
+        self.endpoints = endpoints;
         self
     }
 
@@ -167,6 +182,7 @@ pub struct ApiServer {
     token: ApiToken,
     max_connections: usize,
     stop: watch::Sender<bool>,
+    registration: Registration,
 }
 
 impl ApiServer {
@@ -188,6 +204,8 @@ impl ApiServer {
             .await
             .map_err(bind_err)?;
         let addr = listener.local_addr().map_err(bind_err)?;
+        // Registered before anything can serve, so there is no moment a guest could reach it.
+        let registration = services.endpoints.register(addr, EndpointKind::Api);
         let (stop, shutdown) = watch::channel(false);
         let state = AppState {
             store: services.store,
@@ -211,6 +229,7 @@ impl ApiServer {
             token,
             max_connections: config.max_connections.max(1),
             stop,
+            registration,
         })
     }
 
@@ -238,11 +257,17 @@ impl ApiServer {
             router,
             max_connections,
             stop,
+            registration,
             ..
         } = self;
         let shutdown = stop.subscribe();
         let task = tokio::spawn(serve(listener, router, max_connections, shutdown));
-        RunningApi { addr, stop, task }
+        RunningApi {
+            addr,
+            stop,
+            task,
+            _registration: registration,
+        }
     }
 }
 
@@ -251,6 +276,8 @@ pub struct RunningApi {
     addr: SocketAddr,
     stop: watch::Sender<bool>,
     task: JoinHandle<()>,
+    /// Keeps the API in the endpoint registry for as long as it serves.
+    _registration: Registration,
 }
 
 impl RunningApi {

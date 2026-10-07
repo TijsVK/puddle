@@ -4,13 +4,13 @@
 //! | OS | Folder | File | [`check`] |
 //! |---|---|---|---|
 //! | Unix | new folders `0700` | `0600`, created exclusively | refuses a file with any group or other bit |
-//! | Windows | inherits the parent's ACL (the user's profile: user, administrators, `SYSTEM`) | same | accepts (an explicit ACL, and the check with it, belongs in `windows.rs`) |
+//! | Windows | new folders get a protected ACL with one entry, full control for the current user, which their children inherit | the same ACL, set when the file is created | refuses any ACL that is missing or has an entry for another account or a non-allow entry |
 //!
-//! The Windows half is deliberately a stub with the Unix behaviour's shape, so adding the ACL
-//! changes one file and every caller (the API's connection file today; settings, consent and CA
-//! key files later) gets the ACL.
+//! Every caller (the API's connection file today; settings, consent and CA key files later) gets
+//! the same behaviour through this one module.
 
-use std::fs::{self, File, Metadata};
+use std::fmt;
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -46,13 +46,43 @@ pub fn create_file(path: &Path) -> io::Result<File> {
     platform::create_file(path)
 }
 
-/// Whether `meta` (of a file the caller just opened) is owner-only.
+/// How a file is open to others, as [`check`] reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Exposed {
+    /// Unix permission bits with a group or other bit set.
+    Mode(u32),
+    /// A Windows access list that isn't the current user's alone, and why.
+    Acl(String),
+}
+
+impl fmt::Display for Exposed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Mode(mode) => write!(f, "mode {mode:o}; it must be 0600"),
+            Self::Acl(why) => write!(f, "{why}; it must be accessible to its owner only"),
+        }
+    }
+}
+
+/// Why [`check`] failed.
+#[derive(Debug, thiserror::Error)]
+pub enum CheckError {
+    /// The file's permissions couldn't be read.
+    #[error("can't read the file's permissions: {0}")]
+    Io(#[from] io::Error),
+    /// Others may read it.
+    #[error("readable by other users ({0})")]
+    Exposed(Exposed),
+}
+
+/// Whether the open file `file` is owner-only.
 ///
 /// # Errors
 ///
-/// `Err(mode)` with the permission bits (`0` where the OS has none) if others may read it.
-pub fn check(meta: &Metadata) -> Result<(), u32> {
-    platform::check(meta)
+/// [`CheckError::Exposed`] if others may read it, [`CheckError::Io`] if its permissions can't be
+/// read.
+pub fn check(file: &File) -> Result<(), CheckError> {
+    platform::check(file)
 }
 
 /// Writes `body` to `path` owner-only and atomically: a temporary owner-only file in the same
@@ -112,7 +142,7 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, ["secret.json"]);
-        check(&fs::metadata(&path).unwrap()).unwrap();
+        check(&File::open(&path).unwrap()).unwrap();
     }
 
     #[test]

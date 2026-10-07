@@ -17,6 +17,7 @@ tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
 tracing = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
+puddle-fs = { workspace = true }
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
@@ -26,6 +27,7 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [target.'cfg(windows)'.dev-dependencies]
+puddle-fs = { workspace = true, features = ["testing"] }
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",

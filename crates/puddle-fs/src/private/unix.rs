@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Unix: modes `0700` for folders puddle creates, `0600` for files.
 
-use std::fs::{DirBuilder, File, Metadata, OpenOptions};
+use std::fs::{DirBuilder, File, OpenOptions};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
+
+use super::{CheckError, Exposed};
 
 pub(super) fn create_dir(dir: &Path) -> io::Result<()> {
     if dir.is_dir() {
@@ -21,13 +23,13 @@ pub(super) fn create_file(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-pub(super) fn check(meta: &Metadata) -> Result<(), u32> {
-    let mode = meta.permissions().mode() & 0o777;
+pub(super) fn check(file: &File) -> Result<(), CheckError> {
+    let mode = file.metadata()?.permissions().mode() & 0o777;
     // No group or other bit: the low six bits are clear.
     if mode.trailing_zeros() >= 6 {
         Ok(())
     } else {
-        Err(mode)
+        Err(CheckError::Exposed(Exposed::Mode(mode)))
     }
 }
 
@@ -67,10 +69,13 @@ mod tests {
         fs::write(&file, b"x").unwrap();
         for (bits, ok) in [(0o600, true), (0o400, true), (0o640, false), (0o604, false)] {
             fs::set_permissions(&file, fs::Permissions::from_mode(bits)).unwrap();
-            let got = check(&fs::metadata(&file).unwrap());
+            let got = check(&File::open(&file).unwrap());
             assert_eq!(got.is_ok(), ok, "{bits:o}");
             if !ok {
-                assert_eq!(got, Err(bits));
+                assert!(
+                    matches!(got, Err(CheckError::Exposed(Exposed::Mode(m))) if m == bits),
+                    "{got:?}"
+                );
             }
         }
     }

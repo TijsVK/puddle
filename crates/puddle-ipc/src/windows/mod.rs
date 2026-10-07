@@ -42,12 +42,12 @@ pub(crate) struct Root {
 
 impl Root {
     pub(crate) fn new() -> Result<Self, IpcError> {
-        let sid = security::current_user_sid().map_err(|source| IpcError::Root {
+        let sid = puddle_fs::win::current_user_sid().map_err(|source| IpcError::Root {
             path: PathBuf::from("the current user's SID"),
             source,
         })?;
         Ok(Self {
-            sddl: owner_only_sddl(&sid).into(),
+            sddl: puddle_fs::win::owner_only_sddl(&sid, "GA", false).into(),
         })
     }
 
@@ -112,12 +112,6 @@ impl Root {
             .out_buffer_size(PIPE_BUFFER);
         security::create_pipe(&options, path.as_os_str(), &self.sddl)
     }
-}
-
-/// A DACL that grants the user `sid` full access and nobody else anything; `P` blocks
-/// inheritance, so no default ACEs (Everyone and anonymous read) come back.
-fn owner_only_sddl(sid: &str) -> String {
-    format!("D:P(A;;GA;;;{sid})")
 }
 
 /// `CreateNamedPipe` with `FILE_FLAG_FIRST_PIPE_INSTANCE` fails with access denied when the name
@@ -317,14 +311,6 @@ impl AsyncWrite for Stream {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sddl_grants_only_the_given_sid_and_blocks_inheritance() {
-        assert_eq!(
-            owner_only_sddl("S-1-5-21-1-2-3-1001"),
-            "D:P(A;;GA;;;S-1-5-21-1-2-3-1001)"
-        );
-    }
 
     #[test]
     fn first_instance_failures_mean_the_name_is_taken() {
