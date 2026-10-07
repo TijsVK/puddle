@@ -72,7 +72,7 @@ impl ProxyAuth for NoAuth {
 }
 
 /// The authentication of the current platform: Windows SSPI Negotiate and NTLM as the logged-on
-/// user (T-135). [`NoAuth`] elsewhere (T-148 L-2); a GSSAPI [`TokenSource`] for
+/// user (T-135). [`NoAuth`] elsewhere (T-148 L-2); a GSSAPI [`TokenSource`](crate::TokenSource) for
 /// [`NegotiateAuth`](crate::NegotiateAuth) is the Linux follow-up.
 #[must_use]
 pub fn system_auth() -> Arc<dyn ProxyAuth> {
