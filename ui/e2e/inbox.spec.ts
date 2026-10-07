@@ -281,11 +281,32 @@ test.describe("deciding", () => {
       .toBe(false);
   });
 
-  test("a request decided elsewhere is refused politely and leaves the list", async ({
+  test("a request decided elsewhere leaves the list at once, as the events say", async ({
     page,
     request,
     backend,
   }) => {
+    await ask(backend, "shop", "gone.example.com");
+    await openInbox(page, backend);
+    const row = rowFor(page, "gone.example.com");
+    await expect(row).toHaveCount(1);
+    const pending = (await (
+      await request.get("/api/pending", { headers: auth(backend) })
+    ).json()) as { requests: { id: number; host: string }[] };
+    const id = pending.requests.find((r) => r.host === "gone.example.com")?.id;
+    await request.post(`/api/pending/${id}/deny`, {
+      headers: auth(backend),
+      data: {},
+    });
+    await expect(row).toHaveCount(0, { timeout: 20_000 });
+  });
+
+  test("a request decided elsewhere, with the stream down, is refused politely and leaves the list", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await page.route("**/api/events", (route) => route.abort());
     await ask(backend, "shop", "stale.example.com");
     await openInbox(page, backend);
     const row = rowFor(page, "stale.example.com");
