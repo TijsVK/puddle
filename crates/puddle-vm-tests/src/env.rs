@@ -280,6 +280,8 @@ fn metrics_segment_names(home: &Path) -> Vec<String> {
 /// Unlinks the metrics segments msb left for the private `home`, so a test run leaves nothing in
 /// `/dev/shm`. Best effort. Only Linux shows these as files; Windows frees the mapping with its
 /// last handle, and macOS names live outside the file system.
+///
+/// A stopgap for msb never unlinking the segment: remove it once msb does (upstream report pending).
 fn remove_metrics_segments(home: &Path) {
     if cfg!(target_os = "linux") {
         for name in metrics_segment_names(home) {
