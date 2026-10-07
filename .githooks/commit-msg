@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Commit messages must read to an outside contributor: no task or decision IDs from a private
+# planning workspace. Enable: git config core.hooksPath .githooks
+if grep -qE '\b(T-[0-9]{3}|D-[0-9]{2,3})\b' "$1"; then
+    echo "commit-msg: remove task/decision IDs (T-NNN, D-NN) from the message; say the reason in words" >&2
+    exit 1
+fi

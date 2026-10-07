@@ -196,7 +196,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
-| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
+| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, standalone (no planning-note references), rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: by hand on any branch, nightly on `develop` |

@@ -1,0 +1,2 @@
+# path<TAB>fixed substring: hits on a line containing it are ignored (scripts/check-standalone.sh).
+# Currently empty: nothing in the repo is a false positive.
