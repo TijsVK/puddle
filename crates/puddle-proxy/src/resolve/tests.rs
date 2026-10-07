@@ -147,7 +147,7 @@ async fn with_resolving_at_the_proxy_off_an_unresolvable_name_is_nxdomain_even_b
 async fn a_name_nothing_allows_gets_a_stand_in_with_no_lookup_and_no_pending_row() {
     let r = rig(StaticResolver::new().with("secret.example", &[ip("93.184.215.14")]));
     r.policy.deny_host(&host("denied.example"));
-    for name in ["secret.example", "denied.example", "t238-x7f3q.example.net"] {
+    for name in ["secret.example", "denied.example", "leak-x7f3q.example.net"] {
         assert_eq!(
             r.handler.resolve_name(a(name)).await,
             stand_in(StandInReason::NotAllowed),

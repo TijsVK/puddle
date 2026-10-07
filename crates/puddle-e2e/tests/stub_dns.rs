@@ -363,7 +363,7 @@ async fn a_hundred_thousand_random_denied_names_cause_no_host_lookup_and_no_rows
             let mut buf = vec![0u8; 2048];
             for i in 0..6_250u32 {
                 let name = format!(
-                    "t238-{worker:x}-{i:x}-{:x}.attacker.example",
+                    "leak-{worker:x}-{i:x}-{:x}.attacker.example",
                     i.wrapping_mul(2_654_435_761)
                 );
                 let qtype = [TYPE_A, TYPE_AAAA, TYPE_TXT][usize::try_from(i % 3).unwrap()];
