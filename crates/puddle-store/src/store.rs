@@ -935,42 +935,7 @@ impl Store {
         cursor: AuditCursor,
         limit: u32,
     ) -> Result<Vec<(i64, String)>, StoreError> {
-        use rusqlite::types::Value;
-        let mut sql = String::from("SELECT id, line FROM audit WHERE 1");
-        let mut args: Vec<Value> = Vec::new();
-        let mut clause = |text: &str, value: Value| {
-            sql.push_str(" AND ");
-            sql.push_str(text);
-            args.push(value);
-        };
-        match cursor {
-            AuditCursor::After(id) => clause("id > ?", Value::Integer(id)),
-            AuditCursor::Before(Some(id)) => clause("id < ?", Value::Integer(id)),
-            AuditCursor::Before(None) => {}
-        }
-        if let Some(sandbox) = &filter.sandbox {
-            clause("sandbox_id = ?", Value::Text(sandbox.to_string()));
-        }
-        if let Some(kind) = filter.kind {
-            clause("type = ?", Value::Text(kind.to_owned()));
-        }
-        if let Some(outcome) = filter.outcome {
-            clause("outcome = ?", Value::Text(outcome.as_str().to_owned()));
-        }
-        if let Some(from) = filter.from {
-            clause("ts >= ?", Value::Integer(sql_ts(from)));
-        }
-        if let Some(to) = filter.to {
-            clause("ts < ?", Value::Integer(sql_ts(to)));
-        }
-        if let Some(needle) = &filter.host_contains {
-            clause("instr(host, ?) > 0", Value::Text(needle.to_lowercase()));
-        }
-        sql.push_str(match cursor {
-            AuditCursor::After(_) => " ORDER BY id LIMIT ?",
-            AuditCursor::Before(_) => " ORDER BY id DESC LIMIT ?",
-        });
-        args.push(Value::Integer(i64::from(limit)));
+        let (sql, args) = audit_query_sql(filter, cursor, limit);
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| {
@@ -978,6 +943,70 @@ impl Store {
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+
+    /// SQLite's query plan for [`Store::audit_query`] with these arguments, one line per step.
+    /// Lets a test check that a filter combination uses an index instead of timing it.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the database can't be read.
+    pub fn audit_query_plan(
+        &self,
+        filter: &AuditFilter,
+        cursor: AuditCursor,
+        limit: u32,
+    ) -> Result<Vec<String>, StoreError> {
+        let (sql, args) = audit_query_sql(filter, cursor, limit);
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| row.get(3))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+/// The SQL and bound values for one audit page; every value is bound, never spliced in.
+fn audit_query_sql(
+    filter: &AuditFilter,
+    cursor: AuditCursor,
+    limit: u32,
+) -> (String, Vec<rusqlite::types::Value>) {
+    use rusqlite::types::Value;
+    let mut sql = String::from("SELECT id, line FROM audit WHERE 1");
+    let mut args: Vec<Value> = Vec::new();
+    let mut clause = |text: &str, value: Value| {
+        sql.push_str(" AND ");
+        sql.push_str(text);
+        args.push(value);
+    };
+    match cursor {
+        AuditCursor::After(id) => clause("id > ?", Value::Integer(id)),
+        AuditCursor::Before(Some(id)) => clause("id < ?", Value::Integer(id)),
+        AuditCursor::Before(None) => {}
+    }
+    if let Some(sandbox) = &filter.sandbox {
+        clause("sandbox_id = ?", Value::Text(sandbox.to_string()));
+    }
+    if let Some(kind) = filter.kind {
+        clause("type = ?", Value::Text(kind.to_owned()));
+    }
+    if let Some(outcome) = filter.outcome {
+        clause("outcome = ?", Value::Text(outcome.as_str().to_owned()));
+    }
+    if let Some(from) = filter.from {
+        clause("ts >= ?", Value::Integer(sql_ts(from)));
+    }
+    if let Some(to) = filter.to {
+        clause("ts < ?", Value::Integer(sql_ts(to)));
+    }
+    if let Some(needle) = &filter.host_contains {
+        clause("instr(host, ?) > 0", Value::Text(needle.to_lowercase()));
+    }
+    sql.push_str(match cursor {
+        AuditCursor::After(_) => " ORDER BY id LIMIT ?",
+        AuditCursor::Before(_) => " ORDER BY id DESC LIMIT ?",
+    });
+    args.push(Value::Integer(i64::from(limit)));
+    (sql, args)
 }
 
 impl Policy for Store {

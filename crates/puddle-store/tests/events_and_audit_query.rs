@@ -779,16 +779,21 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
         .collect();
     let (_dir, store) = seeded(&records);
     let last = T0 + ROWS * 10;
-    let cases: Vec<(&str, AuditFilter, AuditCursor)> = vec![
+    // Each case names the plan step it must use. The wall clock below is only a backstop: the
+    // plan is what proves a filter doesn't fall back to scanning the whole table, and it
+    // doesn't depend on how busy the machine is.
+    let cases: Vec<(&str, AuditFilter, AuditCursor, &str)> = vec![
         (
             "newest page",
             AuditFilter::default(),
             AuditCursor::Before(None),
+            "SCAN audit",
         ),
         (
             "older page",
             AuditFilter::default(),
             AuditCursor::Before(Some(50_000)),
+            "USING INTEGER PRIMARY KEY (rowid<?)",
         ),
         (
             "sandbox",
@@ -797,6 +802,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
+            "USING INDEX audit_sandbox (sandbox_id=?)",
         ),
         (
             "type",
@@ -805,6 +811,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
+            "USING INDEX audit_type (type=?)",
         ),
         (
             "outcome",
@@ -813,6 +820,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
+            "USING INDEX audit_outcome (outcome=?)",
         ),
         (
             "last hour (all of it)",
@@ -821,6 +829,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
+            "SCAN audit",
         ),
         (
             "narrow time range",
@@ -830,6 +839,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
+            "USING INDEX audit_ts (ts>? AND ts<?)",
         ),
         (
             "host, common",
@@ -838,6 +848,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
+            "SCAN audit",
         ),
         (
             "host, rare (scans everything)",
@@ -846,6 +857,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
+            "SCAN audit",
         ),
         (
             "host, absent (scans everything)",
@@ -854,6 +866,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
+            "SCAN audit",
         ),
         (
             "everything at once",
@@ -866,11 +879,22 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 to: Some(last),
             },
             AuditCursor::Before(None),
+            "USING INDEX audit_outcome (outcome=?)",
         ),
-        ("tail", AuditFilter::default(), AuditCursor::After(99_900)),
+        (
+            "tail",
+            AuditFilter::default(),
+            AuditCursor::After(99_900),
+            "USING INTEGER PRIMARY KEY (rowid>?)",
+        ),
     ];
-    for (name, filter, cursor) in cases {
-        // The best of three, so a scheduler hiccup on a busy runner doesn't fail the bar.
+    for (name, filter, cursor, step) in cases {
+        let plan = store.audit_query_plan(&filter, cursor, 100).unwrap();
+        assert!(
+            plan.iter().any(|line| line.contains(step)),
+            "{name}: expected `{step}` in the plan, got {plan:?}"
+        );
+        // The best of three, so one scheduler hiccup doesn't trip the backstop.
         let best = (0..3)
             .map(|_| {
                 let start = Instant::now();
@@ -882,7 +906,8 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
             .min()
             .unwrap();
         eprintln!("audit query {name}: {best:?}");
-        assert!(best < Duration::from_millis(50), "{name} took {best:?}");
+        // About 50 times the slowest local scan: it catches a query that went quadratic, not noise.
+        assert!(best < Duration::from_secs(1), "{name} took {best:?}");
     }
     // The filtered results are right, not just fast.
     let one = store
