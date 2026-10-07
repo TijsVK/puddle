@@ -11,7 +11,9 @@ use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{BlockReason, Decision, EgressRequest, Host, PendingId, RuleId, SandboxName};
+use crate::{
+    BlockReason, Decision, EgressRequest, Host, PendingId, RuleId, RuleSetId, SandboxName,
+};
 
 /// How the proxy handled a connection (R-24).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +181,8 @@ pub struct ConnectionEvent {
     pub reason: ConnectionReason,
     /// The deciding rule.
     pub rule_id: Option<RuleId>,
+    /// The rule set whose entry decided, if one did (R-24).
+    pub rule_set: Option<RuleSetId>,
     /// The pending row, when pending.
     pub pending_id: Option<PendingId>,
     /// The credential binding used, by id only. Never the credential.
@@ -211,6 +215,7 @@ impl ConnectionEvent {
             decision,
             reason,
             rule_id: None,
+            rule_set: None,
             pending_id: None,
             binding_id: None,
             injected: false,
@@ -239,6 +244,7 @@ impl ConnectionEvent {
             decision,
             reason,
             rule_id: None,
+            rule_set: None,
             pending_id: None,
             binding_id: None,
             injected: false,
@@ -269,13 +275,20 @@ impl ConnectionEvent {
     #[must_use]
     pub fn decided(request: &EgressRequest, decision: &Decision) -> Self {
         let (kind, reason, rule_id, pending_id) = match *decision {
+            Decision::SetAllow { rule_id, .. } => (
+                ConnectionDecision::Allow,
+                ConnectionReason::Rule,
+                rule_id,
+                None,
+            ),
+
             Decision::Allow { rule_id, .. } => (
                 ConnectionDecision::Allow,
                 ConnectionReason::Rule,
                 Some(rule_id),
                 None,
             ),
-            Decision::Deny { rule_id, .. } => (
+            Decision::Deny { rule_id, .. } | Decision::SetDeny { rule_id, .. } => (
                 ConnectionDecision::Deny,
                 ConnectionReason::Rule,
                 Some(rule_id),
@@ -296,6 +309,7 @@ impl ConnectionEvent {
         };
         let mut event = Self::new(request, kind, reason);
         event.rule_id = rule_id;
+        event.rule_set = decision.rule_set();
         event.pending_id = pending_id;
         event
     }
@@ -416,6 +430,41 @@ mod tests {
         assert_eq!(
             (deny.decision, deny.rule_id),
             (ConnectionDecision::Deny, Some(RuleId(4)))
+        );
+        assert_eq!(deny.rule_set, None);
+        let by_system = ConnectionEvent::decided(
+            &r,
+            &Decision::SetAllow {
+                set: RuleSetId::System,
+                rule_id: None,
+                pattern: PatternKind::Exact,
+            },
+        );
+        assert_eq!(
+            (by_system.decision, by_system.rule_id, by_system.rule_set),
+            (ConnectionDecision::Allow, None, Some(RuleSetId::System))
+        );
+        let by_user_set = ConnectionEvent::decided(
+            &r,
+            &Decision::SetDeny {
+                set: RuleSetId::User(2),
+                rule_id: RuleId(8),
+                pattern: PatternKind::Suffix,
+            },
+        );
+        assert_eq!(
+            (
+                by_user_set.decision,
+                by_user_set.reason,
+                by_user_set.rule_id,
+                by_user_set.rule_set
+            ),
+            (
+                ConnectionDecision::Deny,
+                ConnectionReason::Rule,
+                Some(RuleId(8)),
+                Some(RuleSetId::User(2))
+            )
         );
         let suppressed =
             ConnectionEvent::decided(&r, &Decision::Pending(PendingOutcome::Suppressed));

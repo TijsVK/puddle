@@ -75,6 +75,9 @@ pub struct PendingRow {
     pub decided_by: Option<Actor>,
     /// The rule that decided it.
     pub rule_id: Option<RuleId>,
+    /// The rule set whose entry decided it (`system`, `builtin:<slug>`, `user:<id>`), when a
+    /// set's entry did (R-37, R-41).
+    pub rule_set: Option<String>,
 }
 
 /// Rule scope for a decision (R-15). Defaults to the row's sandbox.
@@ -85,6 +88,8 @@ pub enum ScopeChoice {
     Sandbox,
     /// Every sandbox.
     Global,
+    /// An entry of the rule set the user made with this id: wherever the set is on (R-38).
+    Set(i64),
 }
 
 /// Rule pattern for a decision (R-15). Defaults to the row's exact host.

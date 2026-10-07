@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::pattern::Pattern;
 use crate::pending::PendingRow;
-use crate::rule::{Actor, Rule, Scope};
+use crate::rule::{Actor, Rule};
 
 /// Longest audit line, in bytes (R-26).
 pub const MAX_LINE_BYTES: usize = 4096;
@@ -63,6 +63,10 @@ pub struct ConnectionRecord {
     pub reason: String,
     /// The deciding rule.
     pub rule_id: Option<i64>,
+    /// The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`). Absent in
+    /// records written before rule sets existed.
+    #[serde(default)]
+    pub rule_set: Option<String>,
     /// The pending row.
     pub pending_id: Option<i64>,
     /// The credential binding, by id.
@@ -99,6 +103,7 @@ impl ConnectionRecord {
             decision: Some(event.decision),
             reason: event.reason.to_string(),
             rule_id: event.rule_id.map(|id| id.0),
+            rule_set: event.rule_set.map(|set| set.to_string()),
             pending_id: event.pending_id.map(|id| id.0),
             binding_id: event.binding_id.clone(),
             injected: event.injected,
@@ -129,6 +134,7 @@ impl ConnectionRecord {
             decision: None,
             reason: ConnectionReason::Suppressed.to_string(),
             rule_id: None,
+            rule_set: None,
             pending_id: None,
             binding_id: None,
             injected: false,
@@ -147,10 +153,14 @@ impl ConnectionRecord {
 pub struct RuleWire {
     /// Row id.
     pub id: i64,
-    /// `global` or `sandbox`.
+    /// `global`, `sandbox` or `set`.
     pub scope: String,
     /// The sandbox, for a sandbox rule.
     pub sandbox_id: Option<String>,
+    /// The rule set the user made, for a set's entry. Absent in records written before rule
+    /// sets existed.
+    #[serde(default)]
+    pub set_id: Option<i64>,
     /// `exact` or `suffix`.
     pub pattern_kind: String,
     /// `example.com` or `.example.com`.
@@ -171,12 +181,9 @@ impl From<&Rule> for RuleWire {
     fn from(rule: &Rule) -> Self {
         Self {
             id: rule.id.0,
-            scope: match rule.scope {
-                Scope::Global => "global",
-                Scope::Sandbox(_) => "sandbox",
-            }
-            .to_owned(),
+            scope: rule.scope.as_str().to_owned(),
             sandbox_id: rule.scope.sandbox().map(ToString::to_string),
+            set_id: rule.scope.set(),
             pattern_kind: match rule.pattern {
                 Pattern::Exact(_) => "exact",
                 Pattern::Suffix(_) => "suffix",
@@ -217,6 +224,9 @@ pub struct PendingWire {
     pub decided_by: Option<String>,
     /// The deciding rule.
     pub rule_id: Option<i64>,
+    /// The rule set whose entry decided it. Absent in records written before rule sets existed.
+    #[serde(default)]
+    pub rule_set: Option<String>,
 }
 
 impl From<&PendingRow> for PendingWire {
@@ -233,6 +243,7 @@ impl From<&PendingRow> for PendingWire {
             decided_at: row.decided_at,
             decided_by: row.decided_by.map(|a| a.as_str().to_owned()),
             rule_id: row.rule_id.map(|id| id.0),
+            rule_set: row.rule_set.clone(),
         }
     }
 }
@@ -255,6 +266,23 @@ pub enum RuleDeleteReason {
     User,
     /// Its sandbox was deleted (R-21).
     SandboxDeleted,
+    /// It was an entry of a rule set the user deleted (R-38).
+    SetDeleted,
+}
+
+/// A rule set the user made, as it appears in the audit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleSetWire {
+    /// Row id; the set's wire id is `user:<id>`.
+    pub id: i64,
+    /// Display name.
+    pub name: String,
+    /// What it is for.
+    pub description: String,
+    /// Epoch ms.
+    pub created_at: u64,
+    /// `cli`, `ui` or `api`.
+    pub created_by: String,
 }
 
 /// One audit record (R-24). Internally tagged: `{"type": "rule_created", ...}`.
@@ -331,6 +359,71 @@ pub enum AuditRecord {
         /// The whole rule.
         rule: RuleWire,
     },
+    /// A rule set made by the user (R-43).
+    RuleSetCreated {
+        /// Epoch ms.
+        ts: u64,
+        /// The set.
+        rule_set: RuleSetWire,
+        /// Who made it.
+        actor: String,
+    },
+    /// A rule set renamed or described anew.
+    RuleSetUpdated {
+        /// Epoch ms.
+        ts: u64,
+        /// The set before.
+        before: RuleSetWire,
+        /// The set after.
+        rule_set: RuleSetWire,
+        /// Who changed it.
+        actor: String,
+    },
+    /// A rule set deleted, with its entries (each also gets a `rule_deleted`).
+    RuleSetDeleted {
+        /// Epoch ms.
+        ts: u64,
+        /// The set as it was.
+        rule_set: RuleSetWire,
+        /// Who deleted it.
+        actor: String,
+    },
+    /// A rule set switched on or off, or back to following the next level (R-37).
+    RuleSetSwitched {
+        /// Epoch ms.
+        ts: u64,
+        /// `builtin:<slug>` or `user:<id>`.
+        set_id: String,
+        /// The sandbox whose override changed, or `null` for every sandbox.
+        sandbox_id: Option<String>,
+        /// On, off, or `null` to follow the next level.
+        enabled: Option<bool>,
+        /// Who switched it.
+        actor: String,
+    },
+    /// A puddle update changed a built-in set's entries (R-36).
+    RuleSetChanged {
+        /// Epoch ms.
+        ts: u64,
+        /// `builtin:<slug>`.
+        set_id: String,
+        /// Patterns the update added.
+        added: Vec<String>,
+        /// Patterns the update removed.
+        removed: Vec<String>,
+    },
+    /// The reasons puddle allows System managed hosts changed, because the user's setup did
+    /// (R-41).
+    SystemManagedChanged {
+        /// Epoch ms.
+        ts: u64,
+        /// The sandbox, or `null` for every sandbox.
+        sandbox_id: Option<String>,
+        /// Reasons that now apply (`microsoft_server`, `code_server`, `direct_ssh`).
+        added: Vec<String>,
+        /// Reasons that no longer apply.
+        removed: Vec<String>,
+    },
     /// Oldest records deleted to keep the audit under its cap (R-26).
     AuditTrimmed {
         /// Epoch ms.
@@ -384,7 +477,7 @@ impl AuditOutcome {
 
 impl AuditRecord {
     /// Every `type` tag, in declaration order.
-    pub const KINDS: [&'static str; 10] = [
+    pub const KINDS: [&'static str; 16] = [
         "connection",
         "pending_created",
         "pending_decided",
@@ -394,6 +487,12 @@ impl AuditRecord {
         "rule_updated",
         "rule_deleted",
         "rule_expired",
+        "rule_set_created",
+        "rule_set_updated",
+        "rule_set_deleted",
+        "rule_set_switched",
+        "rule_set_changed",
+        "system_managed_changed",
         "audit_trimmed",
     ];
 
@@ -412,7 +511,14 @@ impl AuditRecord {
             | Self::RuleUpdated { rule, .. }
             | Self::RuleDeleted { rule, .. }
             | Self::RuleExpired { rule, .. } => &rule.pattern,
-            Self::PendingSuppressed { .. } | Self::AuditTrimmed { .. } => return None,
+            Self::PendingSuppressed { .. }
+            | Self::RuleSetCreated { .. }
+            | Self::RuleSetUpdated { .. }
+            | Self::RuleSetDeleted { .. }
+            | Self::RuleSetSwitched { .. }
+            | Self::RuleSetChanged { .. }
+            | Self::SystemManagedChanged { .. }
+            | Self::AuditTrimmed { .. } => return None,
         };
         Some(host.to_ascii_lowercase())
     }
@@ -452,6 +558,12 @@ impl AuditRecord {
             | Self::RuleUpdated { .. }
             | Self::RuleDeleted { .. }
             | Self::RuleExpired { .. }
+            | Self::RuleSetCreated { .. }
+            | Self::RuleSetUpdated { .. }
+            | Self::RuleSetDeleted { .. }
+            | Self::RuleSetSwitched { .. }
+            | Self::RuleSetChanged { .. }
+            | Self::SystemManagedChanged { .. }
             | Self::AuditTrimmed { .. } => None,
         }
     }
@@ -469,6 +581,12 @@ impl AuditRecord {
             Self::RuleUpdated { .. } => "rule_updated",
             Self::RuleDeleted { .. } => "rule_deleted",
             Self::RuleExpired { .. } => "rule_expired",
+            Self::RuleSetCreated { .. } => "rule_set_created",
+            Self::RuleSetUpdated { .. } => "rule_set_updated",
+            Self::RuleSetDeleted { .. } => "rule_set_deleted",
+            Self::RuleSetSwitched { .. } => "rule_set_switched",
+            Self::RuleSetChanged { .. } => "rule_set_changed",
+            Self::SystemManagedChanged { .. } => "system_managed_changed",
             Self::AuditTrimmed { .. } => "audit_trimmed",
         }
     }
@@ -486,6 +604,12 @@ impl AuditRecord {
             | Self::RuleUpdated { ts, .. }
             | Self::RuleDeleted { ts, .. }
             | Self::RuleExpired { ts, .. }
+            | Self::RuleSetCreated { ts, .. }
+            | Self::RuleSetUpdated { ts, .. }
+            | Self::RuleSetDeleted { ts, .. }
+            | Self::RuleSetSwitched { ts, .. }
+            | Self::RuleSetChanged { ts, .. }
+            | Self::SystemManagedChanged { ts, .. }
             | Self::AuditTrimmed { ts, .. } => *ts,
         }
     }
@@ -503,7 +627,13 @@ impl AuditRecord {
             | Self::RuleUpdated { rule, .. }
             | Self::RuleDeleted { rule, .. }
             | Self::RuleExpired { rule, .. } => rule.sandbox_id.as_deref(),
-            Self::AuditTrimmed { .. } => None,
+            Self::RuleSetSwitched { sandbox_id, .. }
+            | Self::SystemManagedChanged { sandbox_id, .. } => sandbox_id.as_deref(),
+            Self::RuleSetCreated { .. }
+            | Self::RuleSetUpdated { .. }
+            | Self::RuleSetDeleted { .. }
+            | Self::RuleSetChanged { .. }
+            | Self::AuditTrimmed { .. } => None,
         }
     }
 
@@ -715,6 +845,7 @@ mod tests {
             created_at: 5,
             created_by: "cli".into(),
             source_pending_id: Some(2),
+            set_id: None,
         }
     }
 
@@ -731,6 +862,7 @@ mod tests {
             decided_at: None,
             decided_by: None,
             rule_id: None,
+            rule_set: None,
         }
     }
 

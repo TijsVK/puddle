@@ -448,6 +448,7 @@ fn pending_wire(sandbox: &str, host: &str, state: &str) -> PendingWire {
         decided_at: None,
         decided_by: None,
         rule_id: None,
+        rule_set: None,
     }
 }
 
@@ -463,6 +464,7 @@ fn rule_wire(sandbox: Option<&str>, pattern: &str) -> RuleWire {
         created_at: 1,
         created_by: "cli".into(),
         source_pending_id: None,
+        set_id: None,
     }
 }
 
@@ -483,6 +485,7 @@ fn connection(ts: u64, sandbox: &str, host: &str, decision: ConnectionDecision) 
         decision: Some(decision),
         reason: "rule".into(),
         rule_id: None,
+        rule_set: None,
         pending_id: None,
         binding_id: None,
         injected: false,

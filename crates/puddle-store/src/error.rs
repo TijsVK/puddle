@@ -54,6 +54,25 @@ pub enum StoreError {
     /// Rules are made by a user (`cli`, `ui`, `api`), never by `system`.
     #[error("rules can only be created or changed by cli, ui or api")]
     SystemActor,
+    /// No rule set has this id (`builtin:<slug>`, `user:<id>`).
+    #[error("no rule set {0}")]
+    UnknownRuleSet(String),
+    /// System managed has no switch: it follows the user's setup (R-40).
+    #[error(
+        "System managed can't be switched; it follows your setup (add a deny rule to block one of its hosts)"
+    )]
+    NotSwitchable,
+    /// A rule set's name is empty, too long, or already used by another set.
+    #[error("rule set name: {0}")]
+    RuleSetName(String),
+    /// Approving into a set that is off for the request's sandbox would not allow it (R-38).
+    #[error("rule set {set} is off for {sandbox}; switch it on there first")]
+    RuleSetOff {
+        /// The set.
+        set: String,
+        /// The sandbox.
+        sandbox: String,
+    },
     /// An audit record couldn't be written.
     #[error(transparent)]
     Audit(#[from] AuditError),

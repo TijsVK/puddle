@@ -28,6 +28,38 @@ impl fmt::Display for PendingId {
     }
 }
 
+/// A rule set: a named bundle of entries switched on or off as one (`docs/spec/rules.md` §7).
+///
+/// Written `system`, `builtin:<slug>` or `user:<id>` on the wire and in the audit.
+///
+/// ```
+/// use puddle_types::RuleSetId;
+/// assert_eq!(RuleSetId::System.to_string(), "system");
+/// assert_eq!(RuleSetId::BuiltIn("github").to_string(), "builtin:github");
+/// assert_eq!(RuleSetId::User(3).to_string(), "user:3");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum RuleSetId {
+    /// "System managed": the hosts puddle allows because of the user's own setup choices
+    /// (the browser editor server, direct SSH). Never switched by hand, only derived.
+    System,
+    /// A set that ships with puddle, by its stable slug.
+    BuiltIn(&'static str),
+    /// A set the user made, by its row id.
+    User(i64),
+}
+
+impl fmt::Display for RuleSetId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::System => f.write_str("system"),
+            Self::BuiltIn(slug) => write!(f, "builtin:{slug}"),
+            Self::User(id) => write!(f, "user:{id}"),
+        }
+    }
+}
+
 /// How a rule's pattern matched the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PatternKind {
@@ -63,8 +95,8 @@ impl PendingOutcome {
 ///
 /// `Pending` means the connection is refused now (R-10) and the request waits in the inbox.
 ///
-/// Non-exhaustive: a match from a user rule set, which has no rule row, will be an
-/// additive variant rather than a nullable `rule_id` here.
+/// `Allow` and `Deny` are the user's own rules; `SetAllow` and `SetDeny` are entries of a rule
+/// set (R-36 to R-43).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Decision {
@@ -78,6 +110,26 @@ pub enum Decision {
     /// A deny rule decided.
     Deny {
         /// The deciding rule.
+        rule_id: RuleId,
+        /// How it matched.
+        pattern: PatternKind,
+    },
+    /// A rule set's allow decided: none of the user's own rules matched (R-39). For local
+    /// destinations it counts like a wildcard allow, whatever its pattern (R-42).
+    SetAllow {
+        /// The set.
+        set: RuleSetId,
+        /// The entry's rule row, for a set the user made; built-in and system entries have none.
+        rule_id: Option<RuleId>,
+        /// How it matched.
+        pattern: PatternKind,
+    },
+    /// A rule set's deny decided (R-39). Only sets the user made can deny, so there is always
+    /// a rule row: puddle ships no deny list.
+    SetDeny {
+        /// The set.
+        set: RuleSetId,
+        /// The entry's rule row.
         rule_id: RuleId,
         /// How it matched.
         pattern: PatternKind,
@@ -96,7 +148,16 @@ impl Decision {
     /// Whether the connection may go ahead.
     #[must_use]
     pub fn is_allow(&self) -> bool {
-        matches!(self, Self::Allow { .. })
+        matches!(self, Self::Allow { .. } | Self::SetAllow { .. })
+    }
+
+    /// The rule set that decided, if a set's entry did.
+    #[must_use]
+    pub fn rule_set(&self) -> Option<RuleSetId> {
+        match self {
+            Self::SetAllow { set, .. } | Self::SetDeny { set, .. } => Some(*set),
+            _ => None,
+        }
     }
 }
 
@@ -271,6 +332,31 @@ mod tests {
             BlockReason::LocalToggle(LocalCategory::LinkLocal).to_string(),
             "toggle:link_local"
         );
+    }
+
+    #[test]
+    fn set_decisions_name_their_set_and_only_set_allows_let_through() {
+        let allow = Decision::SetAllow {
+            set: RuleSetId::System,
+            rule_id: None,
+            pattern: PatternKind::Exact,
+        };
+        let deny = Decision::SetDeny {
+            set: RuleSetId::User(4),
+            rule_id: RuleId(9),
+            pattern: PatternKind::Suffix,
+        };
+        assert!(allow.is_allow());
+        assert!(!deny.is_allow());
+        assert_eq!(allow.rule_set(), Some(RuleSetId::System));
+        assert_eq!(deny.rule_set(), Some(RuleSetId::User(4)));
+        let own = Decision::Allow {
+            rule_id: RuleId(1),
+            pattern: PatternKind::Exact,
+        };
+        assert_eq!(own.rule_set(), None);
+        assert!(RuleSetId::System < RuleSetId::BuiltIn("a"));
+        assert!(RuleSetId::BuiltIn("z") < RuleSetId::User(0));
     }
 
     #[test]

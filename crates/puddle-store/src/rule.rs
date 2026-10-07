@@ -5,8 +5,7 @@ use puddle_types::{RuleId, SandboxName};
 
 use crate::pattern::Pattern;
 
-/// Which requests a rule applies to (R-5). Non-exhaustive: user rule sets will be a third
-/// scope, ranked below `Global`.
+/// Which requests a rule applies to (R-5, R-38).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Scope {
@@ -14,14 +13,18 @@ pub enum Scope {
     Global,
     /// One sandbox.
     Sandbox(SandboxName),
+    /// An entry of a rule set the user made, by the set's id: it applies wherever the set is
+    /// switched on, and ranks below the user's own rules (R-39).
+    Set(i64),
 }
 
 impl Scope {
-    /// Precedence at equal pattern specificity (R-6 step 2): higher wins. `Sandbox` 2, `Global` 1;
-    /// rank 0 is kept for rule sets.
+    /// Precedence at equal pattern specificity (R-6 step 2): higher wins. `Sandbox` 2,
+    /// `Global` 1, `Set` 0.
     #[must_use]
     pub fn rank(&self) -> u8 {
         match self {
+            Self::Set(_) => 0,
             Self::Global => 1,
             Self::Sandbox(_) => 2,
         }
@@ -31,8 +34,27 @@ impl Scope {
     #[must_use]
     pub fn sandbox(&self) -> Option<&SandboxName> {
         match self {
-            Self::Global => None,
+            Self::Global | Self::Set(_) => None,
             Self::Sandbox(id) => Some(id),
+        }
+    }
+
+    /// The set, for a rule set's entry.
+    #[must_use]
+    pub fn set(&self) -> Option<i64> {
+        match self {
+            Self::Set(id) => Some(*id),
+            Self::Global | Self::Sandbox(_) => None,
+        }
+    }
+
+    /// `global`, `sandbox` or `set`, as stored.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::Sandbox(_) => "sandbox",
+            Self::Set(_) => "set",
         }
     }
 }

@@ -52,7 +52,7 @@ pub use name::{
 
 pub use policy::{
     BlockReason, Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy,
-    PolicyError, ProtocolHint, RuleId, SuffixAllows,
+    PolicyError, ProtocolHint, RuleId, RuleSetId, SuffixAllows,
 };
 
 /// puddle's version, from the workspace manifest.

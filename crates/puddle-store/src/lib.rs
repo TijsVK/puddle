@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod audit;
+mod catalogue;
 mod clock;
 mod engine;
 mod error;
@@ -20,10 +21,10 @@ mod sweeper;
 
 pub use audit::{
     AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
-    PendingExpiryReason, PendingWire, RuleDeleteReason, RuleWire,
+    PendingExpiryReason, PendingWire, RuleDeleteReason, RuleSetWire, RuleWire,
 };
+pub use catalogue::{BUILT_IN_SETS, BuiltInSet, CatalogueEntry, SystemReason, built_in};
 pub use clock::{Clock, ManualClock, SystemClock};
-pub use engine::RuleSet;
 pub use error::StoreError;
 pub use pattern::{Pattern, PatternError, SuffixPattern, registrable_domain};
 pub use pending::{
@@ -32,5 +33,8 @@ pub use pending::{
 };
 pub use rule::{Actor, Effect, NewRule, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
-pub use store::{AuditCursor, AuditFilter, Limits, SandboxDeletion, Store, SweepReport};
+pub use store::{
+    AuditCursor, AuditFilter, Limits, RuleSetEntryInfo, RuleSetInfo, SandboxDeletion, Store,
+    SweepReport, SystemHost, SystemPlan, parse_rule_set,
+};
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, Sweeper};

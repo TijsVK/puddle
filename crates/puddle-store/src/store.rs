@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The SQLite-backed store: rules, pending requests, audit, sweeper work.
 //!
-//! Decisions read an in-memory [`RuleSet`] snapshot without touching SQLite unless no rule
-//! matches. Every change commits to SQLite first and then swaps in a new snapshot built inside
+//! Decisions read an in-memory rule index snapshot (rules, rule set entries and switches)
+//! without touching SQLite unless nothing matches. Every change commits to SQLite first and then swaps in a new snapshot built inside
 //! the same transaction (R-8). Lock order, where two are held: `conn`, then `sandboxes`.
 
 use std::collections::HashMap;
@@ -22,7 +22,7 @@ use crate::audit::{
     PendingWire, RuleDeleteReason, RuleWire, actor_str,
 };
 use crate::clock::Clock;
-use crate::engine::RuleSet;
+use crate::engine::{Hit, RuleIndex};
 use crate::error::StoreError;
 use crate::pattern::{Pattern, SuffixPattern, registrable_domain};
 use crate::pending::{
@@ -32,6 +32,10 @@ use crate::pending::{
 use crate::ratelimit::TokenBucket;
 use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
 use crate::schema;
+
+mod sets;
+
+pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
 
 /// Tunable limits. The defaults are the spec's *(default)* values.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,7 +190,7 @@ impl SandboxState {
 /// puddle's rules, pending requests and audit log, in one SQLite database.
 pub struct Store {
     conn: Mutex<Connection>,
-    rules: RwLock<Arc<RuleSet>>,
+    rules: RwLock<Arc<RuleIndex>>,
     sandboxes: Mutex<HashMap<SandboxName, SandboxState>>,
     /// The connection limit of puddle's own connections, which have no sandbox.
     puddle_connections: Mutex<ConnectionWindow>,
@@ -246,7 +250,8 @@ impl Store {
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.pragma_update(None, "foreign_keys", true)?;
         schema::migrate(&mut conn)?;
-        let rules = RuleSet::new(load_rules(&conn)?);
+        sets::note_built_in_changes(&mut conn, clock.now_ms())?;
+        let rules = sets::load_index(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
             rules: RwLock::new(Arc::new(rules)),
@@ -268,11 +273,12 @@ impl Store {
         self
     }
 
-    fn snapshot(&self) -> Arc<RuleSet> {
+    fn snapshot(&self) -> Arc<RuleIndex> {
         Arc::clone(&self.rules.read().unwrap_or_else(PoisonError::into_inner))
     }
 
-    /// Every rule, including expired ones the sweeper hasn't removed yet.
+    /// Every rule, including expired ones the sweeper hasn't removed yet, and the entries of
+    /// the rule sets the user made (scope [`Scope::Set`]).
     #[must_use]
     pub fn rules(&self) -> Vec<Rule> {
         self.snapshot().rules().to_vec()
@@ -311,13 +317,10 @@ impl Store {
         now: u64,
         suffix_allows: SuffixAllows,
     ) -> Option<Decision> {
-        let set = self.snapshot();
-        let rule = set.decide(&request.sandbox, &request.host, now, suffix_allows)?;
-        let (rule_id, pattern) = (rule.id, rule.pattern.kind());
-        Some(match rule.effect {
-            Effect::Allow => Decision::Allow { rule_id, pattern },
-            Effect::Deny => Decision::Deny { rule_id, pattern },
-        })
+        let index = self.snapshot();
+        index
+            .decide(&request.sandbox, &request.host, now, suffix_allows)
+            .map(Hit::decision)
     }
 
     fn record_pending(
@@ -460,7 +463,7 @@ impl Store {
         let head = audit_head(&tx)?;
         let mut fx = Vec::new();
         let out = change(&tx, now, &mut fx)?;
-        let set = RuleSet::new(load_rules(&tx)?);
+        let set = sets::load_index(&tx)?;
         let newest = audit_head(&tx)?;
         tx.commit()?;
         *self.rules.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(set);
@@ -585,6 +588,10 @@ impl Store {
             let scope = match resolution.scope {
                 ScopeChoice::Sandbox => Scope::Sandbox(row.sandbox.clone()),
                 ScopeChoice::Global => Scope::Global,
+                ScopeChoice::Set(set) => {
+                    sets::require_on(tx, set, &row.sandbox)?;
+                    Scope::Set(set)
+                }
             };
             let new = NewRule {
                 scope,
@@ -734,6 +741,13 @@ impl Store {
                     },
                 )?;
             }
+            let switched = tx.execute(
+                "DELETE FROM rule_set_switches WHERE sandbox_id = ?1",
+                [sandbox.as_str()],
+            )? + tx.execute(
+                "DELETE FROM system_reasons WHERE sandbox_id = ?1",
+                [sandbox.as_str()],
+            )?;
             let expired = expire_rows(
                 tx,
                 "sandbox_id = ?2",
@@ -742,7 +756,7 @@ impl Store {
                 PendingExpiryReason::SandboxDeleted,
                 fx,
             )?;
-            if !rules.is_empty() {
+            if !rules.is_empty() || switched > 0 {
                 fx.push(Event::RulesChanged {});
             }
             Ok(SandboxDeletion {
@@ -1106,20 +1120,20 @@ fn insert_rule(
     now: u64,
     source: Option<PendingId>,
 ) -> Result<Rule, StoreError> {
-    let (scope, sandbox) = match &new.scope {
-        Scope::Global => ("global", None),
-        Scope::Sandbox(id) => ("sandbox", Some(id.as_str())),
-    };
+    if let Some(set) = new.scope.set() {
+        sets::require_user_set(tx, set)?;
+    }
+    let sandbox = new.scope.sandbox().map(SandboxName::as_str);
     let kind = match new.pattern {
         Pattern::Exact(_) => "exact",
         Pattern::Suffix(_) => "suffix",
     };
     tx.execute(
-        "INSERT INTO rules (scope, sandbox_id, pattern_kind, pattern, effect, expires_at,
+        "INSERT INTO rules (scope, sandbox_id, set_id, pattern_kind, pattern, effect, expires_at,
                             created_at, created_by, source_pending_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         VALUES (?1, ?2, ?10, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
-            scope,
+            new.scope.as_str(),
             sandbox,
             kind,
             new.pattern.to_string(),
@@ -1128,6 +1142,7 @@ fn insert_rule(
             sql_ts(now),
             new.created_by.as_str(),
             source.map(|id| id.0),
+            new.scope.set(),
         ],
     )?;
     let rule = load_rule(tx, RuleId(tx.last_insert_rowid()))?;
@@ -1150,15 +1165,30 @@ fn decide_row(
     now: u64,
     fx: &mut Vec<Event>,
 ) -> Result<(), StoreError> {
+    decide_row_by(tx, row, Hit::Rule(rule), actor, now, fx)
+}
+
+/// Sets an open row to the state `hit` gives it and records that.
+fn decide_row_by(
+    tx: &Transaction<'_>,
+    row: &PendingRow,
+    hit: Hit<'_>,
+    actor: Actor,
+    now: u64,
+    fx: &mut Vec<Event>,
+) -> Result<(), StoreError> {
+    let effect = hit.effect();
     tx.execute(
-        "UPDATE pending SET state = ?1, decided_at = ?2, decided_by = ?3, rule_id = ?4
+        "UPDATE pending SET state = ?1, decided_at = ?2, decided_by = ?3, rule_id = ?4,
+                            rule_set = ?6
          WHERE id = ?5 AND state = 'requested'",
         params![
-            PendingState::decided_by(rule.effect).as_str(),
+            PendingState::decided_by(effect).as_str(),
             sql_ts(now),
             actor.as_str(),
-            rule.id.0,
-            row.id.0
+            hit.rule_id().map(|id| id.0),
+            row.id.0,
+            hit.rule_set().map(|set| set.to_string()),
         ],
     )?;
     append(
@@ -1171,11 +1201,11 @@ fn decide_row(
     fx.push(Event::PendingClosed {
         sandbox: row.sandbox.clone(),
         id: row.id.0,
-        state: match rule.effect {
+        state: match effect {
             Effect::Allow => PendingEnd::Allowed,
             Effect::Deny => PendingEnd::Denied,
         },
-        rule_id: Some(rule.id.0),
+        rule_id: hit.rule_id().map(|id| id.0),
     });
     Ok(())
 }
@@ -1190,7 +1220,7 @@ fn close_decided_rows(
     now: u64,
     fx: &mut Vec<Event>,
 ) -> Result<Vec<PendingId>, StoreError> {
-    let set = RuleSet::new(load_rules(tx)?);
+    let set = sets::load_index(tx)?;
     let mut stmt = tx.prepare(&format!(
         "SELECT {PENDING_COLUMNS} FROM pending
          WHERE state = 'requested' AND (?1 IS NULL OR sandbox_id = ?1) ORDER BY id"
@@ -1206,7 +1236,7 @@ fn close_decided_rows(
             continue;
         }
         let winner = set.decide(&row.sandbox, &row.host, now, SuffixAllows::Count);
-        if winner.is_some_and(|w| w.id == rule.id) {
+        if winner.is_some_and(|w| w.rule_id() == Some(rule.id)) {
             decide_row(tx, &row, rule, actor, now, fx)?;
             closed.push(row.id);
         }
@@ -1253,7 +1283,7 @@ fn expire_rows(
 }
 
 const RULE_COLUMNS: &str = "id, scope, sandbox_id, pattern_kind, pattern, effect, expires_at, \
-                            created_at, created_by, source_pending_id";
+                            created_at, created_by, source_pending_id, set_id";
 
 /// A `rules` row as SQLite holds it, before validation.
 struct RawRule {
@@ -1267,6 +1297,7 @@ struct RawRule {
     created_at: i64,
     created_by: String,
     source_pending_id: Option<i64>,
+    set_id: Option<i64>,
 }
 
 fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
@@ -1281,6 +1312,7 @@ fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
         created_at: row.get(7)?,
         created_by: row.get(8)?,
         source_pending_id: row.get(9)?,
+        set_id: row.get(10)?,
     })
 }
 
@@ -1298,11 +1330,12 @@ fn stored_ts(table: &'static str, id: i64, value: i64) -> Result<u64, StoreError
 
 fn rule_from_raw(raw: &RawRule) -> Result<Rule, StoreError> {
     let bad = |reason: &str| corrupt("rules", raw.id, reason);
-    let scope = match (raw.scope.as_str(), raw.sandbox_id.as_deref()) {
-        ("global", None) => Scope::Global,
-        ("sandbox", Some(id)) => {
+    let scope = match (raw.scope.as_str(), raw.sandbox_id.as_deref(), raw.set_id) {
+        ("global", None, None) => Scope::Global,
+        ("sandbox", Some(id), None) => {
             Scope::Sandbox(SandboxName::new(id).map_err(|e| bad(&e.to_string()))?)
         }
+        ("set", None, Some(set)) => Scope::Set(set),
         _ => return Err(bad("scope")),
     };
     let host = |text: &str| Host::parse_normalised(text).map_err(|e| bad(&e.to_string()));
@@ -1355,7 +1388,7 @@ fn load_rule(conn: &Connection, id: RuleId) -> Result<Rule, StoreError> {
 }
 
 const PENDING_COLUMNS: &str = "id, sandbox_id, host, port, first_seen, last_seen, attempts, \
-                               state, decided_at, decided_by, rule_id";
+                               state, decided_at, decided_by, rule_id, rule_set";
 
 /// A `pending` row as SQLite holds it, before validation.
 struct RawPending {
@@ -1370,6 +1403,7 @@ struct RawPending {
     decided_at: Option<i64>,
     decided_by: Option<String>,
     rule_id: Option<i64>,
+    rule_set: Option<String>,
 }
 
 fn raw_pending(row: &Row<'_>) -> rusqlite::Result<RawPending> {
@@ -1385,6 +1419,7 @@ fn raw_pending(row: &Row<'_>) -> rusqlite::Result<RawPending> {
         decided_at: row.get(8)?,
         decided_by: row.get(9)?,
         rule_id: row.get(10)?,
+        rule_set: row.get(11)?,
     })
 }
 
@@ -1407,6 +1442,7 @@ fn pending_from_raw(raw: &RawPending) -> Result<PendingRow, StoreError> {
             .map(|a| Actor::parse(a).ok_or_else(|| bad("decided_by")))
             .transpose()?,
         rule_id: raw.rule_id.map(RuleId),
+        rule_set: raw.rule_set.clone(),
     })
 }
 
@@ -1476,6 +1512,7 @@ mod tests {
             created_at: 0,
             created_by: "cli".into(),
             source_pending_id: None,
+            set_id: None,
         };
         assert!(rule_from_raw(&base()).is_ok());
         let cases: Vec<fn(&mut RawRule)> = vec![
@@ -1519,6 +1556,7 @@ mod tests {
             decided_at: None,
             decided_by: None,
             rule_id: None,
+            rule_set: None,
         };
         assert!(pending_from_raw(&base()).is_ok());
         let cases: Vec<fn(&mut RawPending)> = vec![
