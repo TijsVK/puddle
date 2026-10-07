@@ -10,6 +10,9 @@
 //!   ([`oom`], [`control`]), which the host turns into
 //!   [`puddle_types::Event::OomKill`].
 //!
+//! - answers DNS for tools that ignore the proxy settings, when switched on: a stub on one
+//!   address hands out stand-in addresses and asks the host about each name ([`capture`]).
+//!
 //! It also applies merged guest files for the boot hook ([`merge_file`]).
 //!
 //! The wire protocol is in `puddle-agent-proto`. Settings come from environment variables
@@ -17,6 +20,7 @@
 //! [`Agent`].
 
 pub mod bridge;
+pub mod capture;
 pub mod cli;
 pub mod config;
 pub mod control;
@@ -48,6 +52,8 @@ const REPORT_QUEUE: usize = 64;
 pub struct Agent {
     local_addr: SocketAddr,
     bridge: watch::Receiver<bridge::BridgeState>,
+    stand_ins: Option<capture::table::StandIns>,
+    dns: Option<(SocketAddr, SocketAddr)>,
     tasks: JoinSet<()>,
     /// Keeps the control stream open when the OOM watch is off.
     _reports: Option<mpsc::Sender<AgentMessage>>,
@@ -90,6 +96,13 @@ impl Agent {
             }
             None => {}
         }
+        let (stand_ins, dns) = match &config.dns {
+            Some(dns_config) => {
+                let (table, bound) = start_dns(dns_config, &upstream, &mut tasks).await;
+                (Some(table), bound)
+            }
+            None => (None, None),
+        };
         let (tx, rx) = mpsc::channel(REPORT_QUEUE);
         tasks.spawn(control::run(upstream, rx));
         let reports = match config.oom {
@@ -103,6 +116,8 @@ impl Agent {
         Ok(Self {
             local_addr,
             bridge,
+            stand_ins,
+            dns,
             tasks,
             _reports: reports,
         })
@@ -121,6 +136,20 @@ impl Agent {
         self.bridge.borrow().addr
     }
 
+    /// The stand-in table, `None` while the stub DNS is off. The transparent listener finds the
+    /// name behind a redirected connection's original address in it.
+    #[must_use]
+    pub fn stand_ins(&self) -> Option<capture::table::StandIns> {
+        self.stand_ins.clone()
+    }
+
+    /// The UDP and TCP addresses the stub DNS bound at start, `None` when it is off or its address
+    /// didn't exist yet (it keeps trying).
+    #[must_use]
+    pub fn dns_addrs(&self) -> Option<(SocketAddr, SocketAddr)> {
+        self.dns
+    }
+
     /// Follows the Docker bridge listener: every bind and every close is a new state.
     #[must_use]
     pub fn bridge_state(&self) -> watch::Receiver<bridge::BridgeState> {
@@ -130,6 +159,39 @@ impl Agent {
     /// Runs until the listener stops (it doesn't on its own).
     pub async fn run(mut self) {
         while self.tasks.join_next().await.is_some() {}
+    }
+}
+
+/// Starts the stub DNS. If its address isn't there yet (the interface is made after the agent
+/// starts), a task keeps trying; the table is usable at once.
+async fn start_dns(
+    config: &config::DnsConfig,
+    upstream: &Arc<upstream::Upstream>,
+    tasks: &mut JoinSet<()>,
+) -> (capture::table::StandIns, Option<(SocketAddr, SocketAddr)>) {
+    let table = match &config.table {
+        Some(path) => capture::table::StandIns::open(path),
+        None => capture::table::StandIns::in_memory(),
+    };
+    let limits = capture::dns::Limits::default();
+    let stub = capture::dns::Stub::new(
+        capture::dns::HostAsk::new(Arc::clone(upstream), limits.ask_timeout),
+        table.clone(),
+        limits,
+    );
+    let listen = SocketAddr::V4(config.listen);
+    match capture::dns::DnsServer::bind(stub.clone(), listen).await {
+        Ok(server) => {
+            let addrs = (server.udp_addr(), server.tcp_addr());
+            tracing::info!(%listen, "stub DNS listening");
+            tasks.spawn(server.run());
+            (table, Some(addrs))
+        }
+        Err(err) => {
+            tracing::warn!(%listen, error = %err, "stub DNS not bound yet; trying again until it is");
+            tasks.spawn(capture::dns::bind_when_ready(stub, listen));
+            (table, None)
+        }
     }
 }
 

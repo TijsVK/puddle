@@ -36,6 +36,10 @@
 //!    way) handed to the
 //!    [`puddle_types::ConnectionLog`] set with [`Proxy::with_connection_log`] (the store, R-24).
 //!
+//! The same route also carries the `resolve` lookups of the guest's stub DNS (tools that ignore
+//! the proxy settings): the rules decide the name, a name nothing allows is never looked up
+//! anywhere, and nothing is recorded (`docs/spec/rules.md` §6).
+//!
 //! The sandbox is the route's, never anything the guest says. Each sandbox has a cap on
 //! open connections and each route on agent sessions ([`ProxyConfig`]), far above what real tools
 //! open.
@@ -55,6 +59,8 @@ mod destination;
 mod http;
 mod proxy;
 mod pull;
+mod records;
+mod resolve;
 mod route;
 mod tap;
 mod target;
@@ -66,6 +72,7 @@ mod upstream;
 pub use destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver, SystemResolver};
 pub use proxy::{Proxy, ProxyConfig, SandboxHandler};
 pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
+pub use records::{RecordError, RecordResolver, Records, SystemRecords};
 pub use route::Route;
 pub use terminate::{
     DEFAULT_TERMINATED_HOSTS, HeaderError, InjectContext, InjectDecision, InjectRefusal,

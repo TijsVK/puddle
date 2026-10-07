@@ -14,6 +14,7 @@ publish.workspace = true
 base64 = { workspace = true }
 bytes = { workspace = true }
 getrandom = { workspace = true }
+hickory-resolver = { workspace = true }
 http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
@@ -38,6 +39,7 @@ testing = []
 
 [dev-dependencies]
 base64 = { workspace = true }
+hickory-resolver = { workspace = true }
 futures-util = { workspace = true }
 proptest = { workspace = true }
 puddle-proxy = { path = ".", features = ["testing"] }

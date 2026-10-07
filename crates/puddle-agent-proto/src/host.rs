@@ -31,13 +31,15 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use puddle_types::{Event, EventSink, SandboxName};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, BufReader, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
+use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_yamux::{Session, StreamHandle};
 
 use crate::control::{self, AgentMessage, MAX_LINE};
 use crate::kind::{MAX_PREAMBLE, StreamKind, parse_preamble};
+use crate::resolve::{self, ResolveAnswer, ResolveQuery};
 use crate::yamux::{VERSION_BYTE, server_config};
 
 /// Name used in [`Event::OomKill`] when the agent couldn't tell which process was killed (its pid
@@ -58,6 +60,11 @@ pub struct HostConfig {
     /// Control messages per second a stream may send after its burst. Messages over the limit are
     /// dropped and counted in a warning.
     pub control_per_second: u32,
+    /// Name lookups (`resolve` streams) one session may have open at once. Over it, a lookup is
+    /// answered [`ResolveAnswer::Unavailable`] without asking the handler.
+    pub max_resolves: usize,
+    /// How long the handler may take to answer one lookup. Over it: [`ResolveAnswer::Unavailable`].
+    pub resolve_timeout: Duration,
 }
 
 impl Default for HostConfig {
@@ -66,6 +73,8 @@ impl Default for HostConfig {
             first_byte_timeout: Duration::from_secs(30),
             control_burst: 32,
             control_per_second: 10,
+            max_resolves: 64,
+            resolve_timeout: Duration::from_secs(15),
         }
     }
 }
@@ -91,6 +100,14 @@ pub trait StreamHandler: Send + Sync + 'static {
     /// Serves one connection. Errors are the handler's to log; to pass an abort on, drop the
     /// stream without shutting it down (see [`crate::relay`]).
     fn handle(&self, stream: GuestStream) -> impl Future<Output = ()> + Send;
+
+    /// Answers one name lookup from the guest's stub DNS. The default says
+    /// [`ResolveAnswer::Unavailable`]: a handler without a name policy never invents an answer.
+    /// The query is untrusted; the handler normalises and checks it.
+    fn resolve(&self, query: ResolveQuery) -> impl Future<Output = ResolveAnswer> + Send {
+        let _ = query;
+        async { ResolveAnswer::Unavailable }
+    }
 }
 
 /// One proxied guest connection: a yamux stream with its first byte (already read by the host to
@@ -171,6 +188,8 @@ struct Shared<H> {
     config: HostConfig,
     /// Set while a control stream is open: a session has at most one.
     control_open: AtomicBool,
+    /// Lookups in flight on this session.
+    resolves: Semaphore,
 }
 
 /// Serves one connection from a sandbox's agent until it closes. `sandbox` is the sandbox the
@@ -204,6 +223,7 @@ where
         sandbox,
         sink,
         handler,
+        resolves: Semaphore::new(config.max_resolves),
         config,
         control_open: AtomicBool::new(false),
     });
@@ -289,12 +309,57 @@ async fn serve_stream<H: StreamHandler>(mut stream: StreamHandle, shared: Arc<Sh
             serve_control(reader, &shared).await;
             shared.control_open.store(false, Ordering::Release);
         }
+        Ok((StreamKind::Resolve, 1)) => serve_resolve(reader, &shared).await,
         Ok((kind, version)) => {
             tracing::warn!(sandbox = %shared.sandbox, kind = kind.name(), version, "stream kind not served by this host, closed");
         }
         Err(err) => {
             tracing::warn!(sandbox = %shared.sandbox, error = %err, "stream closed");
         }
+    }
+}
+
+/// Answers one lookup: reads the query line, asks the handler (bounded in number and time), writes
+/// the answer line and closes the stream cleanly. The preamble is already read.
+async fn serve_resolve<H: StreamHandler>(
+    mut reader: BufReader<Prefixed<StreamHandle>>,
+    shared: &Shared<H>,
+) {
+    let sandbox = &shared.sandbox;
+    let query = match tokio::time::timeout(
+        shared.config.first_byte_timeout,
+        resolve::read_query(&mut reader),
+    )
+    .await
+    {
+        Ok(Ok(query)) => query,
+        Ok(Err(err)) => {
+            tracing::debug!(%sandbox, error = %err, "resolve stream with an unreadable query closed");
+            return;
+        }
+        Err(_) => {
+            tracing::debug!(%sandbox, "resolve stream closed: no query in time");
+            return;
+        }
+    };
+    let answer = if let Ok(_permit) = shared.resolves.try_acquire() {
+        tokio::time::timeout(shared.config.resolve_timeout, shared.handler.resolve(query))
+            .await
+            .unwrap_or(ResolveAnswer::Unavailable)
+    } else {
+        tracing::warn!(%sandbox, limit = shared.config.max_resolves, "too many lookups open on one session; answered unavailable");
+        ResolveAnswer::Unavailable
+    };
+    let line = match answer.to_line() {
+        Ok(line) => line,
+        Err(err) => {
+            tracing::warn!(%sandbox, error = %err, "resolve answer not sent");
+            return;
+        }
+    };
+    let stream = reader.get_mut();
+    if stream.write_all(&line).await.is_ok() {
+        let _ = stream.shutdown().await;
     }
 }
 

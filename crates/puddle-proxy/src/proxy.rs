@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler};
 use puddle_agent_proto::relay::splice;
+use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
     EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, PatternKind,
@@ -30,6 +31,7 @@ use puddle_netpolicy::{LocalAccess, LocalCategory, NetPolicy, block_message, nor
 use crate::counted::Counted;
 use crate::destination::{AddressCheck, AddressVerdict, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
+use crate::records::{RecordResolver, SystemRecords};
 use crate::tap::RequestTap;
 use crate::target::Target;
 use crate::terminate::{self, TerminationSource};
@@ -62,6 +64,12 @@ pub struct ProxyConfig {
     /// How long either side of a terminated request may stall in the middle of a body before
     /// the connection is dropped.
     pub body_idle_timeout: Duration,
+    /// How long one name lookup for the guest's stub DNS may take. Over it, the stub gets
+    /// `SERVFAIL` (or, with a company proxy in the route, a stand-in address).
+    pub lookup_timeout: Duration,
+    /// Name lookups (of allowed names) one sandbox may run at once. Over it, the stub gets
+    /// `SERVFAIL` and its client retries.
+    pub max_lookups_per_sandbox: usize,
 }
 
 impl Default for ProxyConfig {
@@ -77,11 +85,21 @@ impl Default for ProxyConfig {
             keepalive_timeout: Duration::from_secs(60),
             upstream_head_timeout: Duration::from_secs(300),
             body_idle_timeout: Duration::from_secs(120),
+            lookup_timeout: Duration::from_secs(3),
+            max_lookups_per_sandbox: 32,
         }
     }
 }
 
 impl ProxyConfig {
+    /// The default limits with another name-lookup timeout and per-sandbox lookup cap.
+    #[must_use]
+    pub fn with_lookup_limits(mut self, timeout: Duration, max_per_sandbox: usize) -> Self {
+        self.lookup_timeout = timeout;
+        self.max_lookups_per_sandbox = max_per_sandbox;
+        self
+    }
+
     /// The default limits with another head timeout.
     #[must_use]
     pub fn with_head_timeout(mut self, timeout: Duration) -> Self {
@@ -154,6 +172,7 @@ impl ProxyConfig {
 pub struct Proxy {
     policy: Arc<dyn Policy>,
     resolver: Arc<dyn Resolver>,
+    records: Arc<dyn RecordResolver>,
     addresses: Arc<dyn AddressCheck>,
     log: Arc<dyn ConnectionLog>,
     upstream: Option<Upstream>,
@@ -182,6 +201,7 @@ impl Proxy {
         Self {
             policy,
             resolver: Arc::new(SystemResolver),
+            records: Arc::new(SystemRecords),
             addresses: Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE))),
             log: Arc::new(NullConnectionLog),
             upstream: None,
@@ -195,6 +215,13 @@ impl Proxy {
     #[must_use]
     pub fn with_resolver(mut self, resolver: Arc<dyn Resolver>) -> Self {
         self.resolver = resolver;
+        self
+    }
+
+    /// Uses `records` for the `SRV`, `TXT` and `MX` lookups of the guest's stub DNS.
+    #[must_use]
+    pub fn with_record_resolver(mut self, records: Arc<dyn RecordResolver>) -> Self {
+        self.records = records;
         self
     }
 
@@ -256,6 +283,7 @@ impl Proxy {
         SandboxHandler {
             proxy: Arc::clone(self),
             streams: Arc::new(Semaphore::new(self.config.max_streams_per_sandbox)),
+            lookups: Arc::new(Semaphore::new(self.config.max_lookups_per_sandbox)),
             sandbox,
         }
     }
@@ -279,6 +307,42 @@ impl Proxy {
             .set()
             .contains(&request.host)
             .then_some((termination, &terminations.tls))
+    }
+
+    pub(crate) fn addresses(&self) -> &dyn AddressCheck {
+        self.addresses.as_ref()
+    }
+
+    pub(crate) fn resolver(&self) -> &dyn Resolver {
+        self.resolver.as_ref()
+    }
+
+    pub(crate) fn record_resolver(&self) -> &dyn RecordResolver {
+        self.records.as_ref()
+    }
+
+    /// Whether a name this host can't resolve may be left to the company proxy.
+    pub(crate) fn company_proxy_may_resolve(&self) -> bool {
+        self.upstream
+            .as_ref()
+            .is_some_and(Upstream::resolves_unknown_names)
+    }
+
+    /// The rule that decides `request`, without recording anything (on a blocking thread: the
+    /// policy may read SQLite).
+    pub(crate) async fn look_up_rule(
+        &self,
+        request: EgressRequest,
+        suffix_allows: SuffixAllows,
+    ) -> Result<Option<Decision>, PolicyError> {
+        let policy = Arc::clone(&self.policy);
+        tokio::task::spawn_blocking(move || policy.lookup(&request, suffix_allows))
+            .await
+            .unwrap_or_else(|_| {
+                Err(PolicyError {
+                    reason: "policy task failed".into(),
+                })
+            })
     }
 
     async fn decide(
@@ -330,9 +394,10 @@ impl std::fmt::Debug for TerminationConfig {
 /// Serves the proxied connections of one sandbox. Made by [`Proxy::handler`].
 #[derive(Debug, Clone)]
 pub struct SandboxHandler {
-    proxy: Arc<Proxy>,
+    pub(crate) proxy: Arc<Proxy>,
     streams: Arc<Semaphore>,
-    sandbox: SandboxName,
+    pub(crate) lookups: Arc<Semaphore>,
+    pub(crate) sandbox: SandboxName,
 }
 
 impl SandboxHandler {
@@ -347,6 +412,11 @@ impl StreamHandler for SandboxHandler {
     async fn handle(&self, stream: GuestStream) {
         let span = tracing::debug_span!("conn", sandbox = %self.sandbox);
         serve(self, stream).instrument(span).await;
+    }
+
+    async fn resolve(&self, query: ResolveQuery) -> ResolveAnswer {
+        let span = tracing::debug_span!("resolve", sandbox = %self.sandbox);
+        self.resolve_name(query).instrument(span).await
     }
 }
 

@@ -9,6 +9,7 @@
 //! | Kind | Opened by | State |
 //! |---|---|---|
 //! | `control` v1 | agent | served: [`crate::AgentMessage`] lines, guest → host |
+//! | `resolve` v1 | agent | served: one name lookup per stream ([`crate::resolve`]), for the guest's stub DNS |
 //! | `connect` | agent | reserved: `puddle-agent connect` (ssh `ProxyCommand`) |
 //! | `ssh-agent` | agent | reserved: filtered SSH agent / signing |
 //! | `host-control` | host | reserved: [`crate::control::HostMessage`] lines, host → guest |
@@ -31,6 +32,8 @@ pub const MAX_PREAMBLE: usize = 64;
 pub enum StreamKind {
     /// The agent's reports to the host.
     Control,
+    /// One name lookup for the guest's stub DNS: a query line, an answer line.
+    Resolve,
     /// Reserved: a raw connection for `puddle-agent connect` (ssh `ProxyCommand`).
     Connect,
     /// Reserved: the guest side of a filtered SSH agent.
@@ -41,8 +44,9 @@ pub enum StreamKind {
 
 impl StreamKind {
     /// Every registered kind.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Control,
+        Self::Resolve,
         Self::Connect,
         Self::SshAgent,
         Self::HostControl,
@@ -53,6 +57,7 @@ impl StreamKind {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Control => "control",
+            Self::Resolve => "resolve",
             Self::Connect => "connect",
             Self::SshAgent => "ssh-agent",
             Self::HostControl => "host-control",
@@ -70,6 +75,7 @@ impl StreamKind {
     pub const fn preamble(self) -> &'static [u8] {
         match self {
             Self::Control => b"\0puddle-control/1\n",
+            Self::Resolve => b"\0puddle-resolve/1\n",
             Self::Connect => b"\0puddle-connect/1\n",
             Self::SshAgent => b"\0puddle-ssh-agent/1\n",
             Self::HostControl => b"\0puddle-host-control/1\n",

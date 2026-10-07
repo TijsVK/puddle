@@ -201,7 +201,53 @@ readable as JSONL (one record per line).
   event: puddle sends it when the network or the system's proxy settings change, and a client
   refetches `GET /api/network-health`.
 
-## 6. Out of scope here
+## 6. Name lookups from a guest that ignores the proxy settings
+
+Some tools ignore `HTTPS_PROXY`: they resolve a name and connect to the answer. The guest agent
+runs a stub DNS server for them; it answers each address query with a *stand-in address* from
+`198.18.0.0/15` and asks the host about the name first, over the agent's `resolve` stream. The
+connection to the stand-in is redirected to the agent, which sends `CONNECT name:port` like any
+other client, so R-1 to R-14 apply to it unchanged. These rules say what the host answers to the
+lookup. They are tested in `puddle-proxy` (`resolve`) and `puddle-e2e` (`stub_dns`), not in the
+store.
+
+- **R-30 A lookup never writes anything.** It asks the rules engine without recording: no pending
+  row, no audit record, no counter. The pending row and the deny come from the connection that
+  follows (R-10), by name.
+- **R-31 A name that no rule allows is not looked up.** An unmatched name, a denied name and a name
+  blocked by itself (R-14: a toggle that is off, one of puddle's endpoints) all get a stand-in
+  and cause **no** lookup on any resolver, so DNS is not a way out and a guest asking for many
+  random names causes no resolver traffic. The connection that follows is refused with the
+  usual reason. Record types other than `A` (`TXT`, `SRV`, `MX`) of such a name are answered
+  with no data.
+- **R-32 An allowed name is resolved once, on the host.** If it resolves, the guest gets a
+  stand-in. If the host's resolver says there is no such name, the guest gets `NXDOMAIN`, except
+  under R-33. If every address it resolves to is refused by R-14, the guest still gets a stand-in:
+  the connection says which toggle would allow it. The addresses never reach the guest, and the
+  lookup does not constrain the connection, which resolves and checks again (R-14, R-27).
+- **R-33 A name the host can't resolve goes to the company proxy by name, when one is in the
+  route.** If an upstream proxy is in the route and sending unresolvable names to it is on (the
+  default), an allowed name the host can't resolve, or whose lookup times out, gets a stand-in
+  too: on some networks only the proxy resolves internet names, and the proxy decides when the
+  connection arrives. With no upstream proxy, or with that setting off, it is `NXDOMAIN`
+  (or `SERVFAIL` for a timeout).
+- **R-34 `SRV`, `TXT` and `MX` are looked up for allowed names only.** The rules decide the name
+  without its leading service labels (`_mongodb._tcp.db.example.net` is decided as
+  `db.example.net`), since a service label is not part of a host the user approves. The targets of
+  `SRV` and `MX` records get stand-ins of their own in the answer. At most 16 records and 8 KiB of
+  text are passed on.
+- **R-35 A lookup is bounded.** The name must be a plain host name (labels of letters, digits, `-`
+  and `_`, at most 253 characters) or the answer is "no such name" without a lookup. A sandbox runs
+  at most 32 host lookups at once and one agent session has at most 64 lookups open; over the cap
+  the answer is "unavailable" (`SERVFAIL` in the guest). Each lookup has a timeout. An unreadable
+  rules engine is "unavailable", never "not allowed".
+
+The stub answers names that never leave the sandbox itself (single labels, `localhost`, `.local`,
+`.internal`, `.home.arpa`, `.svc`, `.cluster.local`, reverse zones, names that end in a number)
+with `NXDOMAIN`, and every other record type (`AAAA`, `HTTPS`, ...) with no data, so dual-stack
+clients use the stand-in at once.
+
+## 7. Out of scope here
 
 The AI judge (no field or placeholder until its flow is designed), rule sets the user can
 enable (v1; they will be a third scope), path rules (after v1), port rules, and the

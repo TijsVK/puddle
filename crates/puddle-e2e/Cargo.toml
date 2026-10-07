@@ -29,12 +29,14 @@ tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "rt-multi-t
 
 [dev-dependencies]
 puddle-agent = { workspace = true }
+puddle-agent-proto = { workspace = true }
 puddle-compute = { workspace = true }
 puddle-compute-msb = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
 puddle-upstream = { workspace = true, features = ["testing"] }
+futures-util = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true }
 sha2 = { workspace = true }

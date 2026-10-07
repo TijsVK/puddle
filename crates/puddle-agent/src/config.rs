@@ -15,6 +15,8 @@
 //! | `PUDDLE_AGENT_KMSG` | `/dev/kmsg` | where `Killed process` lines are read |
 //! | `PUDDLE_AGENT_OOM_POLL_MS` | `250` | how often the counter is read |
 //! | `PUDDLE_AGENT_OOM_GRACE_MS` | `1000` | how long a counter increase waits for its kernel log line before it is reported unnamed |
+//! | `PUDDLE_AGENT_DNS` | `off` | the stub DNS server for tools that ignore the proxy settings: `on` (`198.18.0.1:53`), `off`, or `<ipv4>:<port>`. Binds exactly that address, retrying until an interface has it |
+//! | `PUDDLE_AGENT_DNS_TABLE` | `/run/puddle/dns-table` | where the stub keeps its name ⇄ address table across restarts; `off` keeps none |
 //! | `PUDDLE_AGENT_LOG` | `info` | `error`, `warn`, `info`, `debug` or `trace` (to stderr) |
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -112,6 +114,25 @@ impl Default for BridgeConfig {
     }
 }
 
+/// The stub DNS server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DnsConfig {
+    /// The one address the stub binds (UDP and TCP). Never a wildcard: the stub must not answer
+    /// on an interface the guest's own services use.
+    pub listen: SocketAddrV4,
+    /// The file the stand-in table is kept in, `None` for none.
+    pub table: Option<PathBuf>,
+}
+
+impl Default for DnsConfig {
+    fn default() -> Self {
+        Self {
+            listen: SocketAddrV4::new(Ipv4Addr::new(198, 18, 0, 1), 53),
+            table: Some(PathBuf::from("/run/puddle/dns-table")),
+        }
+    }
+}
+
 /// Everything the agent needs to run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -129,6 +150,8 @@ pub struct Config {
     pub window: u32,
     /// OOM watch sources, `None` when the watch is off.
     pub oom: Option<OomSources>,
+    /// The stub DNS server, `None` when it is off.
+    pub dns: Option<DnsConfig>,
     /// Log level.
     pub log: tracing::Level,
 }
@@ -143,6 +166,7 @@ impl Default for Config {
             vsock_buffer: DEFAULT_VSOCK_BUFFER,
             window: STREAM_WINDOW,
             oom: Some(OomSources::default()),
+            dns: None,
             log: tracing::Level::INFO,
         }
     }
@@ -222,6 +246,23 @@ impl Config {
             Some((v, _)) if v == "0" => None,
             Some((v, var)) => return Err(bad(var, &v, "expected 0 or 1")),
         };
+        let mut dns = DnsConfig::default();
+        if let Some((v, var)) = lookup("PUDDLE_AGENT_DNS_TABLE") {
+            dns.table = if v == "off" {
+                None
+            } else {
+                Some(path(var, &v)?)
+            };
+        }
+        config.dns = match lookup("PUDDLE_AGENT_DNS") {
+            None => None,
+            Some((v, _)) if v == "off" => None,
+            Some((v, _)) if v == "on" => Some(dns),
+            Some((v, var)) => {
+                dns.listen = dns_addr(var, &v)?;
+                Some(dns)
+            }
+        };
         if let Some((v, var)) = lookup("PUDDLE_AGENT_LOG") {
             config.log = v
                 .parse()
@@ -255,6 +296,21 @@ fn bridge_addr(var: &'static str, value: &str) -> Result<SocketAddrV4, ConfigErr
     }
     if addr.port() == 0 {
         return Err(bad(var, value, "expected a fixed port"));
+    }
+    Ok(addr)
+}
+
+/// The stub binds one specific IPv4 address (a wildcard would answer on every interface).
+fn dns_addr(var: &'static str, value: &str) -> Result<SocketAddrV4, ConfigError> {
+    let addr: SocketAddrV4 = value
+        .parse()
+        .map_err(|_| bad(var, value, "expected <ipv4>:<port>, on or off"))?;
+    if addr.ip().is_unspecified() || addr.ip().is_multicast() || addr.ip().is_broadcast() {
+        return Err(bad(
+            var,
+            value,
+            "expected a specific address, not a wildcard",
+        ));
     }
     Ok(addr)
 }
@@ -358,6 +414,12 @@ mod tests {
             ("PUDDLE_AGENT_OOM_POLL_MS", "0"),
             ("PUDDLE_AGENT_OOM_GRACE_MS", "60001"),
             ("PUDDLE_AGENT_OOM", "yes"),
+            ("PUDDLE_AGENT_DNS", "yes"),
+            ("PUDDLE_AGENT_DNS", "0.0.0.0:53"),
+            ("PUDDLE_AGENT_DNS", "224.0.0.1:53"),
+            ("PUDDLE_AGENT_DNS", "198.18.0.1"),
+            ("PUDDLE_AGENT_DNS", "[::1]:53"),
+            ("PUDDLE_AGENT_DNS_TABLE", ""),
             ("PUDDLE_AGENT_LOG", "loud"),
         ];
         for (var, value) in cases {
@@ -385,6 +447,32 @@ mod tests {
             from(&[("PUDDLE_AGENT_BRIDGE", "off")]).unwrap().bridge,
             None
         );
+    }
+
+    #[test]
+    fn the_stub_dns_is_off_until_asked_for_and_binds_one_specific_address() {
+        assert_eq!(from(&[]).unwrap().dns, None);
+        assert_eq!(from(&[("PUDDLE_AGENT_DNS", "off")]).unwrap().dns, None);
+        let on = from(&[("PUDDLE_AGENT_DNS", "on")]).unwrap().dns.unwrap();
+        assert_eq!(on.listen.to_string(), "198.18.0.1:53");
+        assert_eq!(on.table, Some(PathBuf::from("/run/puddle/dns-table")));
+        let custom = from(&[
+            ("PUDDLE_AGENT_DNS", "127.0.0.1:5353"),
+            ("PUDDLE_AGENT_DNS_TABLE", "/x/table"),
+        ])
+        .unwrap()
+        .dns
+        .unwrap();
+        assert_eq!(custom.listen.to_string(), "127.0.0.1:5353");
+        assert_eq!(custom.table, Some(PathBuf::from("/x/table")));
+        let no_file = from(&[
+            ("PUDDLE_AGENT_DNS", "on"),
+            ("PUDDLE_AGENT_DNS_TABLE", "off"),
+        ])
+        .unwrap()
+        .dns
+        .unwrap();
+        assert_eq!(no_file.table, None);
     }
 
     #[test]
