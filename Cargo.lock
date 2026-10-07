@@ -5656,7 +5656,7 @@ name = "puddle-api"
 version = "0.0.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "futures-util",
  "getrandom 0.4.3",
  "hyper",
@@ -5880,7 +5880,7 @@ dependencies = [
 name = "puddle-proxy"
 version = "0.0.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "futures-util",
  "getrandom 0.4.3",
  "proptest",
@@ -5962,7 +5962,7 @@ dependencies = [
 name = "puddle-upstream"
 version = "0.0.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "proptest",
  "puddle-upstream",
  "thiserror 2.0.21",

@@ -26,6 +26,10 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+    ignore:
+      # CI and engines pin Node 24; @types/node majors above it describe APIs the runtime lacks.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: npm
     directory: /crates/puddle-api/openapi
     target-branch: develop
