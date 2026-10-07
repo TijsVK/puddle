@@ -246,7 +246,7 @@ mod tests {
             "ui": { "theme": "dark", "notifications": false, "sound": true, "close_behaviour": "quit" },
         });
         let loaded = GlobalSettings::from_document(doc.clone()).unwrap();
-        assert!(loaded.unknown_fields.is_empty());
+        assert_eq!(loaded.unknown_fields, Vec::<String>::new());
         assert_eq!(
             loaded.settings.vscode_server.server(),
             ServerChoice::Microsoft
