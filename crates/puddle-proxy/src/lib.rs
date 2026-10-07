@@ -54,6 +54,7 @@ mod pull;
 mod route;
 mod tap;
 mod target;
+pub mod terminate;
 #[cfg(feature = "testing")]
 pub mod testing;
 mod upstream;
@@ -62,4 +63,9 @@ pub use destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver, SystemR
 pub use proxy::{Proxy, ProxyConfig, SandboxHandler};
 pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
 pub use route::Route;
+pub use terminate::{
+    DEFAULT_TERMINATED_HOSTS, HeaderError, InjectContext, InjectDecision, InjectRefusal,
+    InjectedHeader, Injection, Injector, NoInjection, PatternError, RequestView, SecretValue,
+    Termination, TerminationError, TerminationSet, TerminationSource, Terminations,
+};
 pub use upstream::Upstream;

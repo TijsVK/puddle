@@ -12,7 +12,10 @@ publish.workspace = true
 
 [dependencies]
 base64 = { workspace = true }
+rustls = { workspace = true }
+rustls-platform-verifier = { workspace = true }
 thiserror = { workspace = true }
+tokio-rustls = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing = { workspace = true }
 
@@ -35,6 +38,7 @@ testing = []
 [dev-dependencies]
 proptest = { workspace = true }
 puddle-upstream = { path = ".", features = ["testing"] }
+rcgen = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints]

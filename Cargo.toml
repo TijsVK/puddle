@@ -84,7 +84,8 @@ windows-sys = "0.61"
 # Per-sandbox CA and leaf certificates. ring, not aws-lc-rs: aws-lc-sys carries the
 # OpenSSL licence, which deny.toml does not allow; ring is Apache-2.0 AND ISC.
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# tls12: real upstream servers still negotiate TLS 1.2, and nothing may fail because of the sandbox.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 time = { version = "0.3", default-features = false, features = ["std"] }
 # PEM for the guest CA bundle; already in the tree through rcgen.
@@ -94,16 +95,19 @@ utoipa = { version = "6.0.0", default-features = false, features = ["macros"] }
 # Local HTTP API: axum on loopback; utoipa-axum registers routes and spec together.
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "macros", "query", "tokio", "tracing"] }
 # Served through hyper directly (not `axum::serve`) for a header-read timeout and owned connection tasks.
-hyper = { version = "1.11", default-features = false, features = ["http1", "server"] }
+hyper = { version = "1.11", default-features = false, features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1.21", default-features = false, features = ["http1", "server", "server-graceful", "service", "tokio"] }
 utoipa-axum = "0.3.0"
 tower-http = { version = "0.7.1", default-features = false, features = ["timeout"] }
 subtle = { version = "2.6.1", default-features = false, features = ["std"] }
 # Basic credentials of the image-pull proxy; already in the tree through reqwest.
 base64 = { version = "0.23", default-features = false, features = ["alloc"] }
-# Test-only: the lab registry of the image-pull test. Both already in the tree; ring, not
-# aws-lc-rs (see rcgen).
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+# TLS over tokio streams: the sandbox proxy's terminated connections and the host-side client;
+# also the lab registry of the image-pull test. ring, not aws-lc-rs (see rcgen).
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+# The host's own TLS verifier: the platform's on Windows (so the corporate roots the company
+# added there count), the system roots and extra roots elsewhere.
+rustls-platform-verifier = "0.7"
 tar = { version = "0.4", default-features = false }
 # Desktop shell. Tauri 2.12 (3.0 is alpha). `wry` is the webview; `x11` is the Linux
 # display backend. No `common-controls-v6` (the unit-test executables have no manifest, so they
@@ -116,6 +120,11 @@ tauri-plugin-single-instance = "2.5.2"
 tauri-plugin-window-state = "2.5.0"
 tauri-plugin-opener = { version = "2.7.0", default-features = false }
 url = "2"
+# Terminated TLS connections: the upstream leg is a hyper HTTP/1 client connection.
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+bytes = "1"
 
 [workspace.lints.rust]
 unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless it needs FFI

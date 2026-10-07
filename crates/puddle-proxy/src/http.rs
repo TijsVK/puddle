@@ -18,10 +18,10 @@ pub(crate) const MAX_HEAD: usize = 64 * 1024;
 pub(crate) const MAX_HEADERS: usize = 200;
 
 /// Longest chunk-size line in a chunked body.
-const MAX_CHUNK_LINE: usize = 1024;
+pub(crate) const MAX_CHUNK_LINE: usize = 1024;
 
 /// Longest trailer line in a chunked body.
-const MAX_TRAILER_LINE: usize = 8 * 1024;
+pub(crate) const MAX_TRAILER_LINE: usize = 8 * 1024;
 
 /// A request head as received.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,7 +198,7 @@ pub(crate) fn parse_target(method: &str, uri: &str) -> Result<RawTarget, &'stati
 
 /// `host`, `host:port`, `[v6]` or `[v6]:port`. Userinfo is refused, not stripped: it has no
 /// business in a proxy request and hides the real host from anyone reading the line.
-fn split_host_port(authority: &str) -> Result<(String, Option<u16>), &'static str> {
+pub(crate) fn split_host_port(authority: &str) -> Result<(String, Option<u16>), &'static str> {
     if authority.contains('@') {
         return Err("userinfo (user@host) is not allowed");
     }
@@ -331,7 +331,7 @@ where
 }
 
 /// The size in a chunk-size line (`1a;ext=1\r\n`).
-fn chunk_size(line: &[u8]) -> io::Result<u64> {
+pub(crate) fn chunk_size(line: &[u8]) -> io::Result<u64> {
     let text = std::str::from_utf8(line).map_err(|_| invalid("bad chunk size"))?;
     let hex = text.trim_end().split(';').next().unwrap_or("").trim();
     if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -340,11 +340,11 @@ fn chunk_size(line: &[u8]) -> io::Result<u64> {
     u64::from_str_radix(hex, 16).map_err(|_| invalid("bad chunk size"))
 }
 
-fn invalid(what: &'static str) -> io::Error {
+pub(crate) fn invalid(what: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, what)
 }
 
-async fn read_line_limited<R: AsyncBufRead + Unpin>(
+pub(crate) async fn read_line_limited<R: AsyncBufRead + Unpin>(
     r: &mut R,
     limit: usize,
 ) -> io::Result<Vec<u8>> {

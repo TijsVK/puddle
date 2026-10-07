@@ -1250,3 +1250,70 @@ mod guard {
         }
     }
 }
+
+mod termination {
+    use puddle_ca::CaBuilder;
+
+    use super::*;
+    use crate::terminate::{NoInjection, Termination, TerminationSet, Terminations};
+
+    fn terminating_proxy() -> Proxy {
+        let set = TerminationSet::parse(["github.com", "*.visualstudio.com"]).unwrap();
+        let ca = Arc::new(
+            CaBuilder::new("test", set.name_constraints().unwrap())
+                .build()
+                .unwrap(),
+        );
+        let terminations = Arc::new(Terminations::new());
+        terminations.insert(
+            sandbox(),
+            Termination::new(set, ca, Arc::new(NoInjection)).unwrap(),
+        );
+        proxy(Arc::new(StaticPolicy::new()), StaticResolver::new())
+            .with_termination(terminations, puddle_upstream::TlsClient::new([]).unwrap())
+    }
+
+    fn at(h: &str, port: u16, sandbox: SandboxName) -> EgressRequest {
+        EgressRequest::new(sandbox, host(h), port)
+    }
+
+    #[test]
+    fn only_a_bound_name_on_443_for_a_sandbox_with_a_termination_is_terminated() {
+        let proxy = terminating_proxy();
+        let terminated = |h: &str, port: u16| proxy.terminating(&at(h, port, sandbox())).is_some();
+        for (h, port) in [
+            ("github.com", 443),
+            ("dev.visualstudio.com", 443),
+            ("a.b.visualstudio.com", 443),
+        ] {
+            assert!(terminated(h, port), "{h}:{port}");
+        }
+        for (h, port) in [
+            // Another port, plain HTTP and SSH are never decrypted.
+            ("github.com", 80),
+            ("github.com", 8443),
+            ("github.com", 22),
+            ("github.com", 444),
+            // Names that merely look like bound ones.
+            ("api.github.com", 443),
+            ("visualstudio.com", 443),
+            ("evilgithub.com", 443),
+            ("github.com.evil.example", 443),
+            ("example.com", 443),
+            // An address is never decrypted, even a GitHub one.
+            ("140.82.112.3", 443),
+            ("::1", 443),
+            ("127.0.0.1", 443),
+        ] {
+            assert!(!terminated(h, port), "{h}:{port}");
+        }
+        let other = SandboxName::new("other").unwrap();
+        assert!(proxy.terminating(&at("github.com", 443, other)).is_none());
+    }
+
+    #[test]
+    fn a_proxy_without_a_termination_never_terminates() {
+        let plain = proxy(Arc::new(StaticPolicy::new()), StaticResolver::new());
+        assert!(plain.terminating(&request("github.com")).is_none());
+    }
+}

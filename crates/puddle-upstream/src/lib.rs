@@ -21,6 +21,8 @@
 //!   unreachable, and the `407` loop on one connection with [`ProxyAuth`] ([`BasicAuth`] from
 //!   configured credentials; SSPI is [`NegotiateAuth`]). [`host::connect`] is the same for
 //!   puddle's own requests.
+//! - [`TlsClient`]: TLS on top of such a connection, verified by the platform's verifier plus
+//!   the corporate roots ([`tls_connect`]).
 //!
 //! [`Discovery`] never fails: when it cannot learn a route it answers "direct", and says why in
 //! [`Decision::source`]. The caller connects hop by hop and calls [`Discovery::report_failure`]
@@ -50,6 +52,7 @@ mod os;
 mod parse;
 mod redact;
 mod signin;
+mod tls;
 #[cfg(windows)]
 mod windows;
 mod wire;
@@ -73,5 +76,6 @@ pub use os::{
 pub use parse::{BypassList, PacAnswer, ProxyRules, parse_pac_answer};
 pub use redact::{redact_text, redact_url};
 pub use signin::{SignIn, SignInOutcome};
+pub use tls::{TlsClient, TlsConnectError, TlsSetupError, tls_connect};
 #[cfg(windows)]
 pub use windows::WinOs;

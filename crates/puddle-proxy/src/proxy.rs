@@ -32,6 +32,7 @@ use crate::destination::{AddressCheck, AddressVerdict, Resolver, SystemResolver}
 use crate::http::{self, Body, Head, HeadError, RawTarget};
 use crate::tap::RequestTap;
 use crate::target::Target;
+use crate::terminate::{self, TerminationSource};
 use crate::upstream::{Admitted, ProxyForm, Upstream, connect_out};
 
 /// Limits and timeouts. The defaults suit a real guest; tests shorten them.
@@ -52,6 +53,15 @@ pub struct ProxyConfig {
     pub max_sessions_per_route: usize,
     /// Per-session limits of the agent protocol.
     pub session: HostConfig,
+    /// How long a TLS handshake may take, on either side of a terminated connection.
+    pub tls_handshake_timeout: Duration,
+    /// How long a terminated connection may sit idle between two requests before it is closed.
+    pub keepalive_timeout: Duration,
+    /// How long a bound host may take to answer once the whole request is sent. Over it: `504`.
+    pub upstream_head_timeout: Duration,
+    /// How long either side of a terminated request may stall in the middle of a body before
+    /// the connection is dropped.
+    pub body_idle_timeout: Duration,
 }
 
 impl Default for ProxyConfig {
@@ -63,6 +73,10 @@ impl Default for ProxyConfig {
             max_streams_per_sandbox: 4096,
             max_sessions_per_route: 128,
             session: HostConfig::default(),
+            tls_handshake_timeout: Duration::from_secs(10),
+            keepalive_timeout: Duration::from_secs(60),
+            upstream_head_timeout: Duration::from_secs(300),
+            body_idle_timeout: Duration::from_secs(120),
         }
     }
 }
@@ -97,6 +111,23 @@ impl ProxyConfig {
         self
     }
 
+    /// The default limits with other timeouts for terminated connections: TLS handshake, idle
+    /// between requests, wait for an upstream answer, stall inside a body.
+    #[must_use]
+    pub fn with_terminate_timeouts(
+        mut self,
+        handshake: Duration,
+        keepalive: Duration,
+        upstream_head: Duration,
+        body_idle: Duration,
+    ) -> Self {
+        self.tls_handshake_timeout = handshake;
+        self.keepalive_timeout = keepalive;
+        self.upstream_head_timeout = upstream_head;
+        self.body_idle_timeout = body_idle;
+        self
+    }
+
     /// The default limits with other agent-session limits.
     #[must_use]
     pub fn with_session(mut self, session: HostConfig) -> Self {
@@ -126,6 +157,7 @@ pub struct Proxy {
     addresses: Arc<dyn AddressCheck>,
     log: Arc<dyn ConnectionLog>,
     upstream: Option<Upstream>,
+    terminations: Option<TerminationConfig>,
     pub(crate) sink: Arc<dyn EventSink>,
     pub(crate) config: ProxyConfig,
 }
@@ -153,6 +185,7 @@ impl Proxy {
             addresses: Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE))),
             log: Arc::new(NullConnectionLog),
             upstream: None,
+            terminations: None,
             sink,
             config: ProxyConfig::default(),
         }
@@ -190,6 +223,19 @@ impl Proxy {
         self
     }
 
+    /// Terminates the TLS of the hosts each sandbox has a credential for (`source` says which
+    /// sandbox terminates what) and verifies the real servers with `tls`. Everything else is
+    /// spliced as before. See [`crate::terminate`] for what a terminated connection does.
+    #[must_use]
+    pub fn with_termination(
+        mut self,
+        source: Arc<dyn TerminationSource>,
+        tls: puddle_upstream::TlsClient,
+    ) -> Self {
+        self.terminations = Some(TerminationConfig { source, tls });
+        self
+    }
+
     /// Uses `config` for limits and timeouts.
     #[must_use]
     pub fn with_config(mut self, config: ProxyConfig) -> Self {
@@ -212,6 +258,27 @@ impl Proxy {
             streams: Arc::new(Semaphore::new(self.config.max_streams_per_sandbox)),
             sandbox,
         }
+    }
+
+    pub(crate) fn upstream(&self) -> Option<&Upstream> {
+        self.upstream.as_ref()
+    }
+
+    /// The termination of `request`'s sandbox, if this connection is to be terminated: a
+    /// `CONNECT` to a name of the sandbox's termination set on port 443.
+    fn terminating(
+        &self,
+        request: &EgressRequest,
+    ) -> Option<(Arc<terminate::Termination>, &puddle_upstream::TlsClient)> {
+        let terminations = self.terminations.as_ref()?;
+        if request.port != terminate::request::HTTPS_PORT {
+            return None;
+        }
+        let termination = terminations.source.termination(&request.sandbox)?;
+        termination
+            .set()
+            .contains(&request.host)
+            .then_some((termination, &terminations.tls))
     }
 
     async fn decide(
@@ -248,6 +315,18 @@ impl Proxy {
     }
 }
 
+/// What terminated connections need, set with [`Proxy::with_termination`].
+struct TerminationConfig {
+    source: Arc<dyn TerminationSource>,
+    tls: puddle_upstream::TlsClient,
+}
+
+impl std::fmt::Debug for TerminationConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminationConfig").finish_non_exhaustive()
+    }
+}
+
 /// Serves the proxied connections of one sandbox. Made by [`Proxy::handler`].
 #[derive(Debug, Clone)]
 pub struct SandboxHandler {
@@ -274,15 +353,18 @@ impl StreamHandler for SandboxHandler {
 /// An error response: status, extra headers, a one-line explanation for the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Refusal {
-    pub(crate) status: &'static str,
+    pub(crate) status: std::borrow::Cow<'static, str>,
     pub(crate) headers: Vec<(&'static str, String)>,
     pub(crate) message: String,
 }
 
 impl Refusal {
-    pub(crate) fn new(status: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        status: impl Into<std::borrow::Cow<'static, str>>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
-            status,
+            status: status.into(),
             headers: Vec::new(),
             message: message.into(),
         }
@@ -388,6 +470,31 @@ async fn relay(
             return event;
         }
     };
+    // A bound host is terminated: the guest's TLS handshake comes first, so a client that asks
+    // for the wrong name never causes a connection to the real server.
+    if path.is_none()
+        && let Some((termination, tls)) = proxy.terminating(request)
+    {
+        let cx = terminate::Context {
+            proxy,
+            termination: &termination,
+            tls,
+            sandbox: &request.sandbox,
+            target,
+            admitted: &admitted,
+        };
+        let done = terminate::run(&cx, reader).await;
+        event.http = done.http;
+        event.resolved_ip = done.resolved_ip;
+        event.upstream = done.hop;
+        event.injected = done.injected;
+        event.binding_id = done.binding_id;
+        if done.sni_mismatch {
+            event.decision = ConnectionDecision::Blocked;
+            event.reason = ConnectionReason::SniMismatch;
+        }
+        return event;
+    }
     let out = match connect_out(
         proxy.upstream.as_ref(),
         target,

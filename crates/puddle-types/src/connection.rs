@@ -62,7 +62,7 @@ impl fmt::Display for ConnectionOrigin {
 
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`,
-/// `local_address`), `policy_unavailable`, `puddle_request` or `suppressed`.
+/// `local_address`), `policy_unavailable`, `puddle_request`, `sni_mismatch` or `suppressed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectionReason {
@@ -76,6 +76,9 @@ pub enum ConnectionReason {
     PolicyUnavailable,
     /// puddle's own request, which no rule decides (an image pull that passed the address guard).
     PuddleRequest,
+    /// A terminated TLS connection's client asked for a name other than the one it
+    /// `CONNECT`ed to (or none): the handshake was refused and nothing went upstream.
+    SniMismatch,
     /// Summary of connection records over the per-sandbox limit (R-26).
     Suppressed,
 }
@@ -88,6 +91,7 @@ impl fmt::Display for ConnectionReason {
             Self::Blocked(reason) => f.write_str(reason.code()),
             Self::PolicyUnavailable => f.write_str("policy_unavailable"),
             Self::PuddleRequest => f.write_str("puddle_request"),
+            Self::SniMismatch => f.write_str("sni_mismatch"),
             Self::Suppressed => f.write_str("suppressed"),
         }
     }
@@ -358,6 +362,7 @@ mod tests {
                 "local_address",
             ),
             (ConnectionReason::PolicyUnavailable, "policy_unavailable"),
+            (ConnectionReason::SniMismatch, "sni_mismatch"),
             (ConnectionReason::Suppressed, "suppressed"),
         ];
         for (reason, text) in reasons {
