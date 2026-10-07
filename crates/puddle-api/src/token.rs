@@ -4,7 +4,7 @@
 
 use std::fmt;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -89,7 +89,8 @@ fn hex(bytes: &[u8]) -> String {
 /// with [`ConnectionInfo::read`]. On Unix the file is created `0600` (its directory `0700` when
 /// puddle creates it) and a file readable by others is refused when read back. On Windows it
 /// inherits the ACL of its directory, so it belongs in the user's profile (`%LOCALAPPDATA%`),
-/// which only the user, administrators and `SYSTEM` can read.
+/// which only the user, administrators and `SYSTEM` can read (`puddle_fs::private` owns both
+/// halves; T-093 adds the explicit Windows ACL there).
 #[derive(Clone)]
 pub struct ConnectionInfo {
     /// `http://127.0.0.1:<port>`.
@@ -128,35 +129,13 @@ impl ConnectionInfo {
             path: path.to_owned(),
             source,
         };
-        let dir = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        platform::create_private_dir(dir).map_err(io_err)?;
         let body = serde_json::to_vec(&FileFormat {
             version: FILE_VERSION,
             url: self.url.clone(),
             token: self.token.expose().to_owned(),
         })
         .map_err(|err| io_err(io::Error::other(err)))?;
-        let mut suffix = [0u8; 8];
-        getrandom::fill(&mut suffix).map_err(|err| ConnectionFileError::Random(err.to_string()))?;
-        let file_name = path
-            .file_name()
-            .map_or_else(|| "api.json".into(), |n| n.to_string_lossy().into_owned());
-        let tmp = dir.join(format!(".{file_name}.{}.tmp", hex(&suffix)));
-        let result = (|| {
-            let mut file = platform::create_private_file(&tmp)?;
-            file.write_all(&body)?;
-            file.sync_all()?;
-            drop(file);
-            fs::rename(&tmp, path)
-        })();
-        if let Err(err) = result {
-            // Best effort: the temporary file holds the token, so don't leave it behind.
-            let _ = fs::remove_file(&tmp);
-            return Err(io_err(err));
-        }
+        puddle_fs::private::write_atomic(path, &body).map_err(io_err)?;
         Ok(())
     }
 
@@ -174,7 +153,7 @@ impl ConnectionInfo {
         };
         let file = fs::File::open(path).map_err(io_err)?;
         let meta = file.metadata().map_err(io_err)?;
-        platform::check_private(&meta).map_err(|mode| ConnectionFileError::Permissions {
+        puddle_fs::private::check(&meta).map_err(|mode| ConnectionFileError::Permissions {
             path: path.to_owned(),
             mode,
         })?;
@@ -244,62 +223,6 @@ pub enum ConnectionFileError {
         /// What is wrong with it.
         reason: String,
     },
-}
-
-#[cfg(unix)]
-mod platform {
-    use std::fs::{self, DirBuilder, File, OpenOptions};
-    use std::io;
-    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
-    use std::path::Path;
-
-    pub(super) fn create_private_dir(dir: &Path) -> io::Result<()> {
-        if dir.is_dir() {
-            return Ok(());
-        }
-        DirBuilder::new().recursive(true).mode(0o700).create(dir)
-    }
-
-    pub(super) fn create_private_file(path: &Path) -> io::Result<File> {
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-    }
-
-    pub(super) fn check_private(meta: &fs::Metadata) -> Result<(), u32> {
-        let mode = meta.permissions().mode() & 0o777;
-        let group_or_other = mode & 0o077;
-        if group_or_other == 0 {
-            Ok(())
-        } else {
-            Err(mode)
-        }
-    }
-}
-
-#[cfg(windows)]
-mod platform {
-    use std::fs::{self, File, OpenOptions};
-    use std::io;
-    use std::path::Path;
-
-    pub(super) fn create_private_dir(dir: &Path) -> io::Result<()> {
-        fs::create_dir_all(dir)
-    }
-
-    pub(super) fn create_private_file(path: &Path) -> io::Result<File> {
-        OpenOptions::new().write(true).create_new(true).open(path)
-    }
-
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "same signature as the Unix check; the ACL comes from the directory (see ConnectionInfo)"
-    )]
-    pub(super) fn check_private(_meta: &fs::Metadata) -> Result<(), u32> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]

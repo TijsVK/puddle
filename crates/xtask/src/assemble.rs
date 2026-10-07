@@ -11,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
+use puddle_runtime::HostOs;
 use serde::Serialize;
 
 use crate::checksums::Checksums;
@@ -161,8 +162,11 @@ fn build(
         std::fs::rename(from, &to)
             .map_err(|e| XtaskError::io(format!("moving {}", from.display()), e))
     };
-    rename(&msb, "msb.exe")?;
-    rename(&fw, puddle_runtime::LIBKRUNFW_FILE_NAME)?;
+    // The assets are the Windows release's, whatever OS runs xtask; a Linux runtime folder is a
+    // v1 task (T-148 L-5..L-12) and picks its row of the table here.
+    let files = HostOs::Windows.runtime_files();
+    rename(&msb, files.msb)?;
+    rename(&fw, files.libkrunfw)?;
     std::fs::remove_dir_all(&downloads)
         .map_err(|e| XtaskError::io(format!("removing {}", downloads.display()), e))?;
 

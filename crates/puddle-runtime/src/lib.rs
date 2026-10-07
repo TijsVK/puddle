@@ -24,6 +24,7 @@
 //! | [`read_embedded_version`] | the version msb embeds in its binary (`.msbver`), read without running it |
 //! | [`check_version`], [`VersionStatus`], [`DevOverride`] | the exact-match rule and the dev-only escape hatch |
 //! | [`RuntimeLayout`], [`RuntimeEnv`], [`BundledRuntime`] | paths, environment, the opened runtime |
+//! | [`HostOs`], [`RuntimeFiles`], [`GuestArch`] | the per-OS file-name table and the guest architecture (agent target): the only place `msb.exe`, `libkrunfw.dll` and friends are spelled |
 //! | [`RuntimeError`] | every way the runtime can be unusable |
 //!
 //! # Features
@@ -35,6 +36,7 @@ mod env;
 mod error;
 mod layout;
 mod msbver;
+mod platform;
 mod runtime;
 mod version;
 
@@ -42,6 +44,7 @@ pub use env::{RuntimeEnv, is_msb_variable};
 pub use error::RuntimeError;
 pub use layout::{LIBKRUNFW_FILE_NAME, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeLayout};
 pub use msbver::{MAX_VERSION_BYTES, VERSION_SECTION, read_embedded_version};
+pub use platform::{GuestArch, HostOs, RuntimeFiles};
 pub use runtime::BundledRuntime;
 pub use version::{
     BUILT_FOR, DEV_OVERRIDE_COMPILED, DEV_OVERRIDE_VAR, DevOverride, ParseVersionError,

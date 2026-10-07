@@ -11,6 +11,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+puddle-fs = { workspace = true }
 object = { workspace = true, features = ["std", "read_core", "elf", "pe", "coff"] }
 thiserror = { workspace = true }
 

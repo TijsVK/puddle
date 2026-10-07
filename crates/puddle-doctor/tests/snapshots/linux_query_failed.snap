@@ -4,7 +4,7 @@ info  CPU virtualization  unknown
 FAIL  Hypervisor          the hypervisor query failed
       fix:  Run puddle doctor again. If this stays, include the line below when you report it.
       from: /dev/kvm: Is a directory (os error 21)
-ok    Bundled runtime     msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 FAIL  Runtime starts      msb was killed by a signal instead of answering
       fix:  If endpoint security (EDR or antivirus) runs on this PC, check its log for msb: it
             may have stopped the process. Otherwise reinstall puddle and include the lines below
@@ -37,7 +37,7 @@ skip  Test boot           not checked: no usable hypervisor
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
     },
     {
       "id": "launch",

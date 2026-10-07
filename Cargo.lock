@@ -4064,6 +4064,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "proptest",
+ "puddle-fs",
  "puddle-settings",
  "puddle-store",
  "puddle-types",
@@ -4194,6 +4195,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-fs"
+version = "0.0.0"
+dependencies = [
+ "dirs",
+ "getrandom 0.4.3",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "puddle-guest-env"
 version = "0.0.0"
 dependencies = [
@@ -4267,6 +4278,7 @@ name = "puddle-runtime"
 version = "0.0.0"
 dependencies = [
  "object",
+ "puddle-fs",
  "serde_json",
  "thiserror",
 ]

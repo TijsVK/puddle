@@ -10,8 +10,11 @@ use std::time::Duration;
 pub enum Os {
     /// Windows: WHP, AppLocker/WDAC, Global Secure Access.
     Windows,
-    /// Linux: KVM (developers and CI; puddle ships for Windows).
+    /// Linux: KVM (a supported second host, D-66).
     Linux,
+    /// macOS: the probes exist so the report names it, but puddle doesn't run there yet (T-148
+    /// §5): the hypervisor check says "not supported yet".
+    MacOs,
     /// Anything else: only the portable checks.
     Other,
 }
@@ -24,17 +27,20 @@ impl Os {
             Self::Windows
         } else if cfg!(target_os = "linux") {
             Self::Linux
+        } else if cfg!(target_os = "macos") {
+            Self::MacOs
         } else {
             Self::Other
         }
     }
 
-    /// Lower-case name for reports (`windows`, `linux`, `other`).
+    /// Lower-case name for reports (`windows`, `linux`, `macos`, `other`).
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::Windows => "windows",
             Self::Linux => "linux",
+            Self::MacOs => "macos",
             Self::Other => "other",
         }
     }

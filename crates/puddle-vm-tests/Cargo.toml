@@ -12,6 +12,7 @@ publish.workspace = true
 
 [dependencies]
 microsandbox = { workspace = true }
+puddle-runtime = { workspace = true }
 puddle-types = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -22,7 +23,6 @@ puddle-ca = { workspace = true }
 puddle-certs = { workspace = true }
 puddle-doctor = { workspace = true }
 puddle-guest-env = { workspace = true }
-puddle-runtime = { workspace = true }
 rcgen = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

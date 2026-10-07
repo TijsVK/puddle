@@ -1,14 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The platform probes behind [`crate::SystemProbe`]: the same functions on every OS, the OS
-//! calls in `windows.rs` (the crate's only `unsafe`) and `unix.rs`.
+//! calls in `windows.rs` (the crate's only `unsafe`), `linux.rs` and `macos.rs`; `unix.rs` holds
+//! what the Unixes share.
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
 mod windows;
 
+#[cfg(target_os = "linux")]
+pub(crate) use linux::hypervisor;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::hypervisor;
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+pub(crate) use unix::hypervisor;
 #[cfg(unix)]
-pub(crate) use unix::{code_integrity, file_access, global_secure_access, hypervisor, job};
+pub(crate) use unix::{code_integrity, file_access, global_secure_access, job};
 #[cfg(windows)]
 pub(crate) use windows::{code_integrity, file_access, global_secure_access, hypervisor, job};
 

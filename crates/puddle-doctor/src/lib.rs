@@ -9,7 +9,7 @@
 //! | Hypervisor | `WHvGetCapability(HypervisorPresent)` from System32's `WinHvPlatform.dll`; `/dev/kvm`; CPUID vendor | WHP feature off, not running yet, VM without nested virtualization |
 //! | Code integrity | `NtQuerySystemInformation(SystemCodeIntegrityInformation)` | HVCI / App Control state (info) |
 //! | Job object | `IsProcessInJob`, `QueryInformationJobObject` | job without breakaway (CI runners; info) |
-//! | Bundled runtime | [`puddle_runtime::BundledRuntime::open`], plus opening `msb.exe` for read + execute | missing, wrong version, permissions |
+//! | Bundled runtime | [`puddle_runtime::BundledRuntime::open`], plus opening `msb` for read + execute | missing, wrong version, permissions |
 //! | Runtime starts | `msb --version` with a time limit | `AppLocker`, App Control / Smart App Control, antivirus, EDR, missing DLL, timeout |
 //! | Test boot | `msb run` of a 132-byte probe program in a tiny root file system ([`boot`]) | can't boot a VM, timeout |
 //! | Global Secure Access | its client's services | installed: explains the VM limitation (D-24 3) |

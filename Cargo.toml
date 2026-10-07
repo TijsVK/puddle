@@ -37,6 +37,7 @@ puddle-workspace = { path = "crates/puddle-workspace" }
 puddle-doctor = { path = "crates/puddle-doctor" }
 puddle-lifecycle = { path = "crates/puddle-lifecycle" }
 puddle-upstream = { path = "crates/puddle-upstream" }
+puddle-fs = { path = "crates/puddle-fs" }
 
 # External
 # msb SDK from puddle's fork (D-53), tag `v<release>-puddle.N`. The SDK and the bundled runtime
@@ -76,6 +77,8 @@ futures-util = { version = "0.3.31", default-features = false, features = ["std"
 libc = "0.2.172"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 getrandom = "0.4"
+# The per-user data folder per OS (T-150); no own per-OS code for it.
+dirs = "7"
 windows-sys = "0.61"
 # Per-sandbox CA and leaf certificates (T-133). ring, not aws-lc-rs: aws-lc-sys carries the
 # OpenSSL licence, which deny.toml does not allow; ring is Apache-2.0 AND ISC.

@@ -10,10 +10,14 @@ use std::path::{Path, PathBuf};
 
 use object::write::{Object, StandardSection};
 use object::{Architecture, BinaryFormat, Endianness, SectionKind};
+use puddle_runtime::{HostOs, RuntimeFiles};
 use xtask::checksums::sha256_file;
 use xtask::source::{CHECKSUMS_ASSET, Commit, Firmware, ForkFacts, LIBKRUNFW_ASSET, MSB_ASSET};
 
 const VERSION: &str = "0.7.7-puddle.3";
+
+/// The assembled folder is the Windows runtime, whatever OS runs the test.
+const WIN: RuntimeFiles = HostOs::Windows.runtime_files();
 
 struct TempDir(PathBuf);
 
@@ -150,10 +154,7 @@ fn builds_the_runtime_folder_with_licences() {
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
-    assert_eq!(
-        names,
-        ["libkrunfw.dll", "licenses", "msb.exe", "runtime.json"]
-    );
+    assert_eq!(names, [WIN.libkrunfw, "licenses", WIN.msb, "runtime.json"]);
     let mut licences: Vec<String> = std::fs::read_dir(out.join("licenses"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -171,12 +172,9 @@ fn builds_the_runtime_folder_with_licences() {
         ]
     );
 
+    assert_eq!(std::fs::read(out.join(WIN.msb)).unwrap(), fake_msb(VERSION));
     assert_eq!(
-        std::fs::read(out.join("msb.exe")).unwrap(),
-        fake_msb(VERSION)
-    );
-    assert_eq!(
-        puddle_runtime::read_embedded_version(&out.join("msb.exe"))
+        puddle_runtime::read_embedded_version(&out.join(WIN.msb))
             .unwrap()
             .as_deref(),
         Some(VERSION)
@@ -188,11 +186,11 @@ fn builds_the_runtime_folder_with_licences() {
     assert_eq!(manifest["upstream_tag"], "v0.7.7");
     assert_eq!(
         manifest["msb_sha256"],
-        sha256_file(&out.join("msb.exe")).unwrap()
+        sha256_file(&out.join(WIN.msb)).unwrap()
     );
     assert_eq!(
         manifest["libkrunfw_sha256"],
-        sha256_file(&out.join("libkrunfw.dll")).unwrap()
+        sha256_file(&out.join(WIN.libkrunfw)).unwrap()
     );
 
     let notice = read(&out.join("licenses/NOTICE.txt"));
@@ -311,7 +309,7 @@ fn an_empty_output_folder_is_fine_and_a_stale_staging_folder_is_replaced() {
     std::fs::create_dir_all(&out).unwrap();
     std::fs::create_dir_all(dir.0.join("runtime.partial/old")).unwrap();
     run(&src, &out).unwrap();
-    assert!(out.join("msb.exe").is_file());
+    assert!(out.join(WIN.msb).is_file());
     assert!(!out.join("old").exists());
 }
 

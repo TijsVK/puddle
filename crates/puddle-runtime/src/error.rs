@@ -19,6 +19,12 @@ pub enum RuntimeError {
         /// The executable path.
         path: PathBuf,
     },
+    /// The OS has no per-user data folder to put puddle's msb home in.
+    #[error("cannot place puddle's msb home: {reason}")]
+    NoDataDir {
+        /// Why ([`puddle_fs::DataDirError`]).
+        reason: String,
+    },
     /// The `msb` binary isn't where the install put it.
     #[error("bundled runtime is missing: {path} does not exist; reinstall puddle")]
     Missing {

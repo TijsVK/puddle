@@ -6,10 +6,10 @@ FAIL  Hypervisor          /dev/kvm exists but you can't open it
               sudo usermod -aG kvm "$USER"
             then log out and in again.
       from: /dev/kvm: Permission denied (os error 13)
-ok    Bundled runtime     msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 FAIL  Runtime starts      the file's permissions don't let you run msb
       fix:  Make it readable and executable again:
-              chmod a+rx "C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe"
+              chmod a+rx "/opt/puddle/runtime/msb"
             or reinstall puddle.
       from: Permission denied (os error 13)
 skip  Test boot           not checked: no usable hypervisor
@@ -40,14 +40,14 @@ skip  Test boot           not checked: no usable hypervisor
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
     },
     {
       "id": "launch",
       "status": "fail",
       "summary": "the file's permissions don't let you run msb",
       "finding": "runtime_permissions",
-      "fix": "Make it readable and executable again:\n  chmod a+rx \"C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe\"\nor reinstall puddle.",
+      "fix": "Make it readable and executable again:\n  chmod a+rx \"/opt/puddle/runtime/msb\"\nor reinstall puddle.",
       "detail": "Permission denied (os error 13)"
     },
     {

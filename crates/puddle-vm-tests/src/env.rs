@@ -269,6 +269,8 @@ pub(crate) mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    use puddle_runtime::HostOs;
+
     use super::*;
 
     /// A temp dir removed on drop (no tempfile dependency for a few tests).
@@ -375,18 +377,9 @@ pub(crate) mod tests {
     #[test]
     fn prepare_writes_the_private_home_config() {
         let runtime = TempDir::new("prep-rt");
-        std::fs::write(
-            runtime
-                .path()
-                .join(if cfg!(windows) { "msb.exe" } else { "msb" }),
-            b"x",
-        )
-        .unwrap();
-        let library = if cfg!(windows) {
-            "libkrunfw.dll"
-        } else {
-            "libkrunfw.so.5"
-        };
+        let files = HostOs::current().runtime_files();
+        std::fs::write(runtime.path().join(files.msb), b"x").unwrap();
+        let library = files.libkrunfw;
         std::fs::write(runtime.path().join(library), b"x").unwrap();
         let root = TempDir::new("prep-root");
         let settings = Settings {
@@ -417,18 +410,9 @@ pub(crate) mod tests {
     #[test]
     fn prepare_reports_an_unwritable_home() {
         let runtime = TempDir::new("prep-file");
-        std::fs::write(
-            runtime
-                .path()
-                .join(if cfg!(windows) { "msb.exe" } else { "msb" }),
-            b"x",
-        )
-        .unwrap();
-        let library = if cfg!(windows) {
-            "libkrunfw.dll"
-        } else {
-            "libkrunfw.so"
-        };
+        let files = HostOs::current().runtime_files();
+        std::fs::write(runtime.path().join(files.msb), b"x").unwrap();
+        let library = files.libkrunfw;
         std::fs::write(runtime.path().join(library), b"x").unwrap();
         // The root is a file, so the home under it can't be created.
         let root = runtime.path().join(library);
@@ -450,12 +434,8 @@ pub(crate) mod tests {
     /// database in the private home, lists nothing and builds sandbox specs.
     fn fake_settings(tag: &str) -> (TempDir, Settings) {
         let dir = TempDir::new(tag);
-        let msb = if cfg!(windows) { "msb.exe" } else { "msb" };
-        let library = if cfg!(windows) {
-            "libkrunfw.dll"
-        } else {
-            "libkrunfw.so"
-        };
+        let files = HostOs::current().runtime_files();
+        let (msb, library) = (files.msb, files.libkrunfw);
         std::fs::write(dir.path().join(msb), b"x").unwrap();
         std::fs::write(dir.path().join(library), b"x").unwrap();
         let settings = Settings {

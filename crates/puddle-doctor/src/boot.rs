@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use puddle_runtime::{RuntimeEnv, RuntimeLayout};
+use puddle_runtime::{GuestArch, RuntimeEnv, RuntimeLayout};
 
 use crate::diagnose::PROBE_EXIT_CODE;
 use crate::facts::BootFacts;
@@ -61,15 +61,26 @@ pub fn probe_x86_64() -> Vec<u8> {
     elf
 }
 
-/// Writes the guest's root file system into `dir`: the probe, plus the `/etc/passwd` and
+/// The probe program for guests of `arch`, or `None` while none is written for it. Only
+/// [`GuestArch::X86_64`] has one (it is the only guest puddle builds, [`GuestArch::is_built`]); an
+/// `aarch64` probe goes here when that guest does.
+#[must_use]
+pub fn probe_for(arch: GuestArch) -> Option<Vec<u8>> {
+    match arch {
+        GuestArch::X86_64 => Some(probe_x86_64()),
+        GuestArch::Aarch64 => None,
+    }
+}
+
+/// Writes the guest's root file system into `dir`: the `probe` program, plus the `/etc/passwd` and
 /// `/etc/group` msb's agent reads to resolve the user it runs a command as.
 ///
 /// # Errors
 ///
 /// Any file system error.
-pub fn write_rootfs(dir: &Path) -> std::io::Result<()> {
+pub fn write_rootfs(dir: &Path, probe_program: &[u8]) -> std::io::Result<()> {
     let probe = dir.join(PROBE_GUEST_PATH.trim_start_matches('/'));
-    std::fs::write(&probe, probe_x86_64())?;
+    std::fs::write(&probe, probe_program)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -89,11 +100,11 @@ pub fn write_rootfs(dir: &Path) -> std::io::Result<()> {
 /// home and root file system in the temp dir;.
 #[must_use]
 pub fn test_boot(runtime_dir: &Path, arch: &str, limit: Duration) -> BootFacts {
-    if arch != "x86_64" {
+    let Some(probe) = GuestArch::parse(arch).and_then(probe_for) else {
         return BootFacts::UnsupportedArch {
             arch: arch.to_owned(),
         };
-    }
+    };
     let start = Instant::now();
     let work = match tempfile::Builder::new().prefix("puddle-doctor-").tempdir() {
         Ok(dir) => dir,
@@ -104,7 +115,7 @@ pub fn test_boot(runtime_dir: &Path, arch: &str, limit: Duration) -> BootFacts {
         }
     };
     let rootfs = work.path().join("rootfs");
-    let prepared = std::fs::create_dir_all(&rootfs).and_then(|()| write_rootfs(&rootfs));
+    let prepared = std::fs::create_dir_all(&rootfs).and_then(|()| write_rootfs(&rootfs, &probe));
     if let Err(e) = prepared {
         return BootFacts::SetupFailed {
             detail: format!("{}: {e}", rootfs.display()),
@@ -157,7 +168,7 @@ mod tests {
     #[test]
     fn rootfs_holds_the_probe_and_the_root_user() {
         let dir = tempfile::tempdir().unwrap();
-        write_rootfs(dir.path()).unwrap();
+        write_rootfs(dir.path(), &probe_x86_64()).unwrap();
         assert_eq!(
             std::fs::read(dir.path().join("probe")).unwrap(),
             probe_x86_64()
@@ -173,6 +184,26 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o755);
         }
+    }
+
+    #[test]
+    fn the_probe_is_chosen_by_guest_architecture() {
+        assert_eq!(probe_for(GuestArch::X86_64), Some(probe_x86_64()));
+        assert_eq!(probe_for(GuestArch::Aarch64), None);
+        // Every architecture puddle builds guests for has a probe.
+        for arch in [GuestArch::X86_64, GuestArch::Aarch64] {
+            assert_eq!(probe_for(arch).is_some(), arch.is_built(), "{arch}");
+        }
+    }
+
+    #[test]
+    fn unknown_architectures_are_not_booted() {
+        assert_eq!(
+            test_boot(Path::new("/nonexistent"), "riscv64", Duration::from_secs(1)),
+            BootFacts::UnsupportedArch {
+                arch: "riscv64".into()
+            }
+        );
     }
 
     #[test]

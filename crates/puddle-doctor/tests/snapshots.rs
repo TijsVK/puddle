@@ -22,6 +22,9 @@ use puddle_runtime::RuntimeError;
 
 const DIR: &str = r"C:\Users\dev\AppData\Local\Programs\puddle\runtime";
 const MSB: &str = r"C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe";
+/// The runtime folder of the non-Windows machines (a Linux package puts it next to the program).
+const UNIX_DIR: &str = "/opt/puddle/runtime";
+const UNIX_MSB: &str = "/opt/puddle/runtime/msb";
 const EXPECTED: &str = "0.7.7-puddle.2";
 
 /// A machine described by its facts; counts the calls that cost time.
@@ -114,9 +117,14 @@ impl Probe for Fake {
         self.ci
     }
     fn runtime(&self) -> RuntimeFacts {
+        let (dir, msb) = if self.os == Os::Windows {
+            (DIR, MSB)
+        } else {
+            (UNIX_DIR, UNIX_MSB)
+        };
         RuntimeFacts {
-            dir: PathBuf::from(DIR),
-            msb: PathBuf::from(MSB),
+            dir: PathBuf::from(dir),
+            msb: PathBuf::from(msb),
             expected: EXPECTED.into(),
             state: self.runtime.clone(),
         }
@@ -898,6 +906,29 @@ fn other_os_has_no_hypervisor_support() {
         CheckId::Hypervisor,
         Some(Finding::UnsupportedOs),
     );
+}
+
+#[test]
+fn macos_is_not_supported_yet() {
+    let fake = Fake {
+        os: Os::MacOs,
+        hv: HypervisorFacts {
+            api: HypervisorApi::Unsupported,
+            firmware_virtualization: None,
+            hypervisor_vendor: None,
+        },
+        ..linux()
+    };
+    let r = check(
+        "macos_unsupported",
+        &fake,
+        CheckId::Hypervisor,
+        Some(Finding::UnsupportedOs),
+    );
+    let hypervisor = r.check(CheckId::Hypervisor).unwrap();
+    assert!(hypervisor.summary.contains("macOS yet"), "{hypervisor:?}");
+    assert_eq!(r.os, "macos");
+    assert!(!r.ok);
 }
 
 #[test]

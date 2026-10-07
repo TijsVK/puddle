@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, platform-literals, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
 #   ui, ui-licences, ui-audit, ui-e2e
-#   fast  = fmt typos spdx shellcheck            (pre-commit hook)
+#   fast  = fmt typos spdx shellcheck platform-literals   (pre-commit hook)
 #   all   = fast clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #           (pre-push hook, CI; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 # The ui gates need Node 24 (the UI's package-lock.json pins every npm package). ui-e2e also needs
@@ -56,6 +56,17 @@ run_gate() {
             exit 1
         }
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
+        ;;
+    platform-literals)
+        # The per-OS runtime file names live in puddle-runtime's table (platform.rs) and nowhere
+        # else in the Rust code: a string literal naming msb or its firmware is a hard-coded OS.
+        # Versioned names (libkrunfw.so.5.6.1) are msb-release facts, not table entries.
+        hits=$(git grep -nE '"(msb\.exe|libkrunfw\.(dll|so(\.5)?|dylib|5\.dylib))"' -- 'crates/*.rs' ':!crates/puddle-runtime/src/platform.rs' || true)
+        if [ -n "$hits" ]; then
+            echo "$hits" >&2
+            echo "platform-literals: use puddle_runtime::HostOs::runtime_files() instead of these literals" >&2
+            exit 1
+        fi
         ;;
     clippy) "$cargo" clippy --workspace --all-targets --all-features --locked -- -D warnings ;;
     clippy-windows)
@@ -139,8 +150,8 @@ run_gate() {
 [ "$#" -gt 0 ] || set -- all
 for arg in "$@"; do
     case "$arg" in
-    fast) for g in fmt typos spdx shellcheck; do run_gate "$g"; done ;;
-    all) for g in fmt typos spdx shellcheck clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage; do run_gate "$g"; done ;;
+    fast) for g in fmt typos spdx shellcheck platform-literals; do run_gate "$g"; done ;;
+    all) for g in fmt typos spdx shellcheck platform-literals clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage; do run_gate "$g"; done ;;
     *) run_gate "$arg" ;;
     esac
 done

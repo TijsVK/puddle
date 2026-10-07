@@ -160,6 +160,7 @@ fn os_word(os: Os) -> &'static str {
     match os {
         Os::Windows => "Windows",
         Os::Linux => "Linux",
+        Os::MacOs => "Mac",
         Os::Other => "system",
     }
 }
@@ -254,6 +255,13 @@ report it."
                 })
                 .detail(detail.clone())
         }
+        HypervisorApi::Unsupported if os == Os::MacOs => Check::new(
+            id,
+            Status::Fail,
+            "puddle doesn't support macOS yet",
+        )
+        .finding(Finding::UnsupportedOs)
+        .fix("Run puddle on Windows 10/11 or Linux with KVM for now. macOS on Apple Silicon is being explored."),
         HypervisorApi::Unsupported => Check::new(
             id,
             Status::Fail,
@@ -769,7 +777,7 @@ mod tests {
 
     #[test]
     fn every_system_integrity_code_is_app_control() {
-        let msb = Path::new("msb.exe");
+        let msb = Path::new("msb");
         for code in (4550..=4562).chain(4580..=4582).chain([577]) {
             let b = spawn_failure(Os::Windows, msb, Some(code)).unwrap();
             assert_eq!(b.finding, Finding::BlockedByAppControl, "{code}");
@@ -792,7 +800,7 @@ mod tests {
 
     #[test]
     fn load_failures_by_status() {
-        let msb = Path::new("msb.exe");
+        let msb = Path::new("msb");
         let f = |status: u32| {
             #[expect(
                 clippy::cast_possible_wrap,

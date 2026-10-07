@@ -2,12 +2,11 @@ puddle doctor (puddle 0.1.0, linux x86_64)
 
 ok    CPU virtualization  on (the hypervisor uses it)
 ok    Hypervisor          /dev/kvm is usable
-ok    Bundled runtime     msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
 FAIL  Test boot           msb can't find its firmware library (libkrunfw) beside it
-      fix:  Reinstall puddle: its runtime folder
-            C:\Users\dev\AppData\Local\Programs\puddle\runtime is incomplete. msb needs the
-            libkrunfw it was released with in the same folder.
+      fix:  Reinstall puddle: its runtime folder /opt/puddle/runtime is incomplete. msb needs
+            the libkrunfw it was released with in the same folder.
       from: error: microsandbox runtime installation is incomplete: /opt/puddle/runtime/msb
             has no matching libkrunfw
 
@@ -34,7 +33,7 @@ FAIL  Test boot           msb can't find its firmware library (libkrunfw) beside
     {
       "id": "runtime",
       "status": "ok",
-      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
     },
     {
       "id": "launch",
@@ -46,7 +45,7 @@ FAIL  Test boot           msb can't find its firmware library (libkrunfw) beside
       "status": "fail",
       "summary": "msb can't find its firmware library (libkrunfw) beside it",
       "finding": "runtime_missing",
-      "fix": "Reinstall puddle: its runtime folder C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime is incomplete. msb needs the libkrunfw it was released with in the same folder.",
+      "fix": "Reinstall puddle: its runtime folder /opt/puddle/runtime is incomplete. msb needs the libkrunfw it was released with in the same folder.",
       "detail": "error: microsandbox runtime installation is incomplete: /opt/puddle/runtime/msb\nhas no matching libkrunfw"
     }
   ],

@@ -4,16 +4,18 @@
 use std::path::{Path, PathBuf};
 
 use crate::RuntimeError;
+use crate::platform::HostOs;
 
 /// The runtime folder's name, next to the puddle executable.
 pub const RUNTIME_DIR_NAME: &str = "runtime";
 
-/// The msb executable's file name on this platform.
-pub const MSB_FILE_NAME: &str = if cfg!(windows) { "msb.exe" } else { "msb" };
+/// The msb executable's file name on this platform (the [`HostOs::runtime_files`] table).
+pub const MSB_FILE_NAME: &str = HostOs::current().runtime_files().msb;
 
-/// The firmware library msb loads from beside its own binary on Windows (msb's
-/// `libkrunfw_filename`). Other platforms name it by version and aren't shipped.
-pub const LIBKRUNFW_FILE_NAME: &str = "libkrunfw.dll";
+/// The firmware library's file name on this platform. msb loads it from beside its own binary on
+/// Windows (msb's `libkrunfw_filename`); elsewhere it names it by version and puddle doesn't ship
+/// it yet ([`RuntimeLayout::required_files`]).
+pub const LIBKRUNFW_FILE_NAME: &str = HostOs::current().runtime_files().libkrunfw;
 
 /// The msb home's name inside puddle's data folder.
 const HOME_DIR_NAME: &str = "msb";
@@ -48,7 +50,8 @@ impl RuntimeLayout {
 
     /// The installed layout: the runtime in `<folder of exe>/runtime`, the home in
     /// `<data_dir>/msb`. `exe` is normally [`std::env::current_exe`]; `data_dir` is puddle's
-    /// per-user data folder (`%LOCALAPPDATA%\puddle` on Windows).
+    /// per-user data folder ([`puddle_fs::data_dir`]; [`RuntimeLayout::installed_for_user`]
+    /// resolves it).
     ///
     /// # Errors
     ///
@@ -59,6 +62,19 @@ impl RuntimeLayout {
             path: exe.to_path_buf(),
         })?;
         Self::new(exe_dir.join(RUNTIME_DIR_NAME), data_dir.join(HOME_DIR_NAME))
+    }
+
+    /// The installed layout with the data folder from [`puddle_fs::data_dir`].
+    ///
+    /// # Errors
+    ///
+    /// [`RuntimeError::NoDataDir`] without a per-user data folder, else as
+    /// [`RuntimeLayout::installed`].
+    pub fn installed_for_user(exe: &Path) -> Result<Self, RuntimeError> {
+        let data = puddle_fs::data_dir().map_err(|e| RuntimeError::NoDataDir {
+            reason: e.to_string(),
+        })?;
+        Self::installed(exe, &data)
     }
 
     /// The runtime folder.
@@ -85,12 +101,13 @@ impl RuntimeLayout {
         self.runtime_dir.join(LIBKRUNFW_FILE_NAME)
     }
 
-    /// The files that must exist for the runtime to start: `msb`, plus the firmware on Windows
-    /// (msb finds it beside itself, so `MSB_LIBKRUNFW_PATH` stays unset).
+    /// The files that must exist for the runtime to start: `msb`, plus the firmware where msb
+    /// finds it only beside itself (Windows, [`crate::RuntimeFiles::firmware_beside_msb`]), so
+    /// `MSB_LIBKRUNFW_PATH` stays unset.
     #[must_use]
     pub fn required_files(&self) -> Vec<PathBuf> {
         let mut files = vec![self.msb_path()];
-        if cfg!(windows) {
+        if HostOs::current().runtime_files().firmware_beside_msb {
             files.push(self.libkrunfw_path());
         }
         files
@@ -121,7 +138,10 @@ mod tests {
         assert_eq!(l.msb_path(), abs("app/runtime").join(MSB_FILE_NAME));
         assert_eq!(l.home(), abs("data/puddle/msb"));
         assert_eq!(l.config_path(), abs("data/puddle/msb/config.json"));
-        assert_eq!(l.libkrunfw_path(), abs("app/runtime/libkrunfw.dll"));
+        assert_eq!(
+            l.libkrunfw_path(),
+            abs("app/runtime").join(HostOs::current().runtime_files().libkrunfw)
+        );
         assert_eq!(l.required_files().first(), Some(&l.msb_path()));
         assert_eq!(l.required_files().len(), if cfg!(windows) { 2 } else { 1 });
     }
@@ -151,7 +171,17 @@ mod tests {
     }
 
     #[test]
-    fn msb_file_name_matches_the_platform() {
-        assert_eq!(MSB_FILE_NAME == "msb.exe", cfg!(windows));
+    fn file_names_come_from_the_platform_table() {
+        let files = HostOs::current().runtime_files();
+        assert_eq!(MSB_FILE_NAME, files.msb);
+        assert_eq!(LIBKRUNFW_FILE_NAME, files.libkrunfw);
+    }
+
+    #[test]
+    fn installed_for_user_puts_the_home_in_the_data_folder() {
+        let exe = abs("app/puddle");
+        let l = RuntimeLayout::installed_for_user(&exe).unwrap();
+        assert_eq!(l.home(), puddle_fs::data_dir().unwrap().join("msb"));
+        assert_eq!(l.runtime_dir(), abs("app/runtime"));
     }
 }
