@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use puddle_api::wire::NetworkHealth;
 use puddle_types::Event;
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +55,10 @@ pub struct Scenario {
     /// Settings documents kept as given.
     #[serde(default)]
     pub settings: SettingsSeed,
+    /// What `GET /api/network-health` reports at start; a direct machine with no company roots
+    /// when left out. `generated_at` is replaced by the clock on every request.
+    #[serde(default)]
+    pub network_health: Option<NetworkHealth>,
     /// Named lists of steps; run one with `POST /control/script/{name}`.
     #[serde(default)]
     pub scripts: BTreeMap<String, Vec<Step>>,
@@ -324,6 +329,9 @@ pub enum Step {
         /// The reason the failed event carries.
         reason: String,
     },
+    /// Replaces the network-health report and sends `network_changed` with its epoch, as a
+    /// network or proxy change would.
+    NetworkHealth(Box<NetworkHealth>),
     /// Creates a rule.
     Rule(RuleSeed),
     /// Writes a connection audit record.

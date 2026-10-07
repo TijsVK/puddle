@@ -24,6 +24,7 @@ use tower_http::timeout::TimeoutLayer;
 use crate::auth::{Guard, guard};
 use crate::error::ApiError;
 use crate::events::EventHub;
+use crate::network_health::{NetworkHealthService, NoNetworkHealth};
 use crate::routes::{AppState, api_router};
 use crate::settings::SettingsRepo;
 use crate::token::{ApiToken, ConnectionInfo};
@@ -105,6 +106,9 @@ pub struct Services {
     /// The workspaces resource. [`Services::new`] starts with [`NoWorkspaces`], which answers
     /// 503; set the real one with [`Services::with_workspaces`].
     pub workspaces: Arc<dyn WorkspaceService>,
+    /// The network-health report. [`Services::new`] starts with [`NoNetworkHealth`], which
+    /// answers 503; set the real one with [`Services::with_network_health`].
+    pub network_health: Arc<dyn NetworkHealthService>,
 }
 
 impl Services {
@@ -122,7 +126,15 @@ impl Services {
             events,
             clock,
             workspaces: Arc::new(NoWorkspaces),
+            network_health: Arc::new(NoNetworkHealth),
         }
+    }
+
+    /// These services with this network-health report.
+    #[must_use]
+    pub fn with_network_health(mut self, network_health: Arc<dyn NetworkHealthService>) -> Self {
+        self.network_health = network_health;
+        self
     }
 
     /// These services with this workspaces implementation.
@@ -184,6 +196,7 @@ impl ApiServer {
             events: services.events,
             clock: services.clock,
             workspaces: services.workspaces,
+            network_health: services.network_health,
             shutdown,
         };
         let ui = config.ui.clone().map(UiService::new);

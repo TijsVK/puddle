@@ -151,6 +151,12 @@ pub enum Event {
         /// The newest audit record's id.
         id: i64,
     },
+    /// The network or the system's proxy settings changed (after a quiet period), so what
+    /// `GET /api/network-health` showed may be out of date. Global: every subscriber gets it.
+    NetworkChanged {
+        /// The network epoch that began; it only grows while puddle runs.
+        epoch: u64,
+    },
 }
 
 /// An open pending request as [`Event::PendingOpened`] carries it. `host` comes from the guest
@@ -259,7 +265,9 @@ impl Event {
             | Self::PendingClosed { sandbox, .. }
             | Self::SuppressionChanged { sandbox, .. } => Some(sandbox),
             Self::PendingOpened { request } => Some(&request.sandbox),
-            Self::RulesChanged {} | Self::AuditAppended { .. } => None,
+            Self::RulesChanged {} | Self::AuditAppended { .. } | Self::NetworkChanged { .. } => {
+                None
+            }
         }
     }
 }
@@ -506,6 +514,11 @@ mod tests {
                 r#"{"type":"audit_appended","id":99}"#,
                 None,
             ),
+            (
+                Event::NetworkChanged { epoch: 4 },
+                r#"{"type":"network_changed","epoch":4}"#,
+                None,
+            ),
         ] {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);
             assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
@@ -567,7 +580,8 @@ mod tests {
                 "pending_closed",
                 "suppression_changed",
                 "rules_changed",
-                "audit_appended"
+                "audit_appended",
+                "network_changed"
             ]
         );
         for v in variants {

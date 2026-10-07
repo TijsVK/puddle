@@ -155,6 +155,18 @@ impl BypassList {
         Self { entries }
     }
 
+    /// How many entries the list has.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// True when the list has no entry.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// True when `dest` skips the proxy.
     #[must_use]
     pub fn matches(&self, dest: &Destination) -> bool {

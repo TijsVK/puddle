@@ -42,11 +42,14 @@ mod env;
 mod fake;
 #[cfg(any(test, feature = "testing"))]
 mod fake_proxy;
+mod health;
 mod hop;
 pub mod host;
 mod negotiate;
 mod os;
 mod parse;
+mod redact;
+mod signin;
 #[cfg(windows)]
 mod windows;
 mod wire;
@@ -60,6 +63,7 @@ pub use env::{EnvFallback, EnvOs};
 pub use fake::FakeOs;
 #[cfg(any(test, feature = "testing"))]
 pub use fake_proxy::{Behaviour, FakeProxy, Seen};
+pub use health::{DeadProxy, Detected, MAX_ROUTE_SAMPLES, ModeKind, ProxyHealth, RouteSample};
 pub use hop::{Destination, Hop, ParseError, ProxyAddr, Route, Scheme};
 pub use negotiate::{Leg, NegotiateAuth, Package, SecurityContext, TokenSource};
 pub use os::{
@@ -67,5 +71,7 @@ pub use os::{
     system_os,
 };
 pub use parse::{BypassList, PacAnswer, ProxyRules, parse_pac_answer};
+pub use redact::{redact_text, redact_url};
+pub use signin::{SignIn, SignInOutcome};
 #[cfg(windows)]
 pub use windows::WinOs;

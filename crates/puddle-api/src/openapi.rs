@@ -45,6 +45,7 @@ const BEARER: &str = "bearer";
         (name = "audit", description = "The audit log"),
         (name = "settings", description = "Global and per-sandbox settings"),
         (name = "consents", description = "What the user agreed to"),
+        (name = "network", description = "How puddle reaches the internet: proxy, sign-in, company roots"),
         (name = "workspaces", description = "Workspaces: repository checkouts with their own disk and sandbox")
     )
 )]
@@ -162,7 +163,7 @@ mod tests {
                 assert!(op["tags"].as_array().is_some_and(|t| !t.is_empty()));
             }
         }
-        assert_eq!(count, 28, "operations in the spec");
+        assert_eq!(count, 29, "operations in the spec");
     }
 
     /// ADR 0002: responses always carry every field (`null`, never absent), so the generated

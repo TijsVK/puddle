@@ -21,15 +21,16 @@
 //! machine proxy or policy. Nothing in puddle uses it for routing.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use tokio::sync::{Notify, OnceCell, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use crate::hop::{Destination, Hop, ProxyAddr, Route};
+use crate::health::{DeadProxy, Detected, MAX_ROUTE_SAMPLES, ModeKind, ProxyHealth, RouteSample};
+use crate::hop::{Destination, Hop, ProxyAddr, Route, Scheme};
 use crate::os::{Origin, OsProxy, PacError, PacQuery, ProxyConfig, WatchGuard};
 use crate::parse::{BypassList, ProxyRules};
 
@@ -126,6 +127,12 @@ struct Epoch {
     routes: Mutex<HashMap<Destination, Arc<OnceCell<Resolved>>>>,
     pac_down_until: Mutex<Option<Instant>>,
     bad: Mutex<HashMap<ProxyAddr, Instant>>,
+    /// When the epoch began.
+    started: SystemTime,
+    /// A PAC or WPAD evaluation has answered in this epoch.
+    pac_answered: AtomicBool,
+    /// Why the settings could not be read, in words.
+    config_error: Mutex<Option<String>>,
 }
 
 impl Epoch {
@@ -136,7 +143,59 @@ impl Epoch {
             routes: Mutex::default(),
             pac_down_until: Mutex::new(None),
             bad: Mutex::default(),
+            started: SystemTime::now(),
+            pac_answered: AtomicBool::new(false),
+            config_error: Mutex::new(None),
         })
+    }
+}
+
+impl Epoch {
+    /// Proxies marked unreachable and not yet due again, by address.
+    fn dead_proxies(&self, now: Instant) -> Vec<DeadProxy> {
+        let mut dead: Vec<DeadProxy> = self
+            .bad
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|(_, until)| **until > now)
+            .map(|(proxy, until)| DeadProxy {
+                proxy: proxy.clone(),
+                retry_in: *until - now,
+            })
+            .collect();
+        dead.sort_by(|a, b| a.proxy.cmp(&b.proxy));
+        dead
+    }
+
+    /// The routes decided so far, by host, port and scheme, at most [`MAX_ROUTE_SAMPLES`].
+    fn route_samples(&self) -> Vec<RouteSample> {
+        let mut routes: Vec<RouteSample> = self
+            .routes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter_map(|(dest, cell)| {
+                let (route, source) = cell.get()?;
+                Some(RouteSample {
+                    destination: dest.clone(),
+                    route: route.clone(),
+                    source: *source,
+                })
+            })
+            .collect();
+        routes.sort_by(|a, b| {
+            let key = |s: &RouteSample| {
+                (
+                    s.destination.host().to_owned(),
+                    s.destination.port(),
+                    s.destination.scheme().as_str(),
+                )
+            };
+            key(a).cmp(&key(b))
+        });
+        routes.truncate(MAX_ROUTE_SAMPLES);
+        routes
     }
 }
 
@@ -267,6 +326,76 @@ impl Discovery {
         }
     }
 
+    /// What discovery knows right now, for the network-health report: the settings it reads,
+    /// the epoch, the proxies marked dead and the routes decided in this epoch. Reads the OS
+    /// settings if this epoch has not yet. Nothing in it is secret: proxies are host and port,
+    /// the PAC address has no user info or query, and no script text is kept.
+    pub async fn health(&self) -> ProxyHealth {
+        let epoch = self.epoch_state();
+        let now = Instant::now();
+        let changed_at = (epoch.number > 0).then_some(epoch.started);
+        let (mode, settings, settings_error) = match &self.config.mode {
+            Mode::Direct => (ModeKind::Direct, ProxyConfig::default(), None),
+            Mode::Manual(manual) => (
+                ModeKind::Manual,
+                ProxyConfig {
+                    rules: ProxyRules::parse(&manual.proxy_server),
+                    bypass: BypassList::parse(&manual.bypass),
+                    ..ProxyConfig::default()
+                },
+                None,
+            ),
+            Mode::System => {
+                let settings = self.settings(&epoch).await.clone();
+                let error = epoch
+                    .config_error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone();
+                (ModeKind::System, settings, error)
+            }
+        };
+        let detected = if settings.pac_url.is_some() {
+            Detected::Pac
+        } else if settings.auto_detect {
+            Detected::Wpad
+        } else if settings.rules.is_empty() {
+            Detected::Direct
+        } else if settings.origin == Origin::Environment && mode == ModeKind::System {
+            Detected::Env
+        } else {
+            Detected::Static
+        };
+        let pac_in_use = settings.pac_url.is_some() || settings.auto_detect;
+        let pac_reachable = if !pac_in_use {
+            None
+        } else if epoch
+            .pac_down_until
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some_and(|until| until > now)
+        {
+            Some(false)
+        } else {
+            epoch.pac_answered.load(Ordering::SeqCst).then_some(true)
+        };
+        ProxyHealth {
+            mode,
+            detected,
+            auto_detect: settings.auto_detect,
+            pac_url: settings.pac_url.as_deref().map(crate::redact::redact_url),
+            pac_reachable,
+            http_proxy: settings.rules.for_scheme(Scheme::Http).cloned(),
+            https_proxy: settings.rules.for_scheme(Scheme::Https).cloned(),
+            bypass_entries: settings.bypass.len(),
+            settings_error: settings_error.map(|why| crate::redact::redact_text(&why)),
+            epoch: epoch.number,
+            changed_at,
+            dead: epoch.dead_proxies(now),
+            routes: epoch.route_samples(),
+        }
+    }
+
     fn epoch_state(&self) -> Arc<Epoch> {
         Arc::clone(&self.current.read().unwrap_or_else(PoisonError::into_inner))
     }
@@ -287,28 +416,41 @@ impl Discovery {
         }
     }
 
+    /// The OS settings of this epoch, read once.
+    async fn settings<'a>(&self, epoch: &'a Arc<Epoch>) -> &'a ProxyConfig {
+        epoch
+            .config
+            .get_or_init(|| async {
+                let os = Arc::clone(&self.os);
+                let note = |why: String| {
+                    *epoch
+                        .config_error
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(why);
+                };
+                match tokio::task::spawn_blocking(move || os.config()).await {
+                    Ok(Ok(config)) => config,
+                    Ok(Err(err)) => {
+                        tracing::warn!(error = %err, "system proxy settings unreadable; going direct");
+                        note(err.to_string());
+                        ProxyConfig::default()
+                    }
+                    Err(err) => {
+                        tracing::error!(error = %err, "settings task failed");
+                        note("the settings task failed".to_owned());
+                        ProxyConfig::default()
+                    }
+                }
+            })
+            .await
+    }
+
     async fn resolve_system(
         &self,
         epoch: &Arc<Epoch>,
         dest: &Destination,
     ) -> Result<Resolved, Resolved> {
-        let settings = epoch
-            .config
-            .get_or_init(|| async {
-                let os = Arc::clone(&self.os);
-                match tokio::task::spawn_blocking(move || os.config()).await {
-                    Ok(Ok(config)) => config,
-                    Ok(Err(err)) => {
-                        tracing::warn!(error = %err, "system proxy settings unreadable; going direct");
-                        ProxyConfig::default()
-                    }
-                    Err(err) => {
-                        tracing::error!(error = %err, "settings task failed");
-                        ProxyConfig::default()
-                    }
-                }
-            })
-            .await;
+        let settings = self.settings(epoch).await;
         let mut degraded = false;
         if settings.pac_url.is_some() || settings.auto_detect {
             match self.pac(epoch, settings, dest).await {
@@ -355,6 +497,7 @@ impl Discovery {
         };
         match result {
             Ok(hops) => {
+                epoch.pac_answered.store(true, Ordering::SeqCst);
                 if let Some(route) = Route::new(hops) {
                     PacOutcome::Answer((route, RouteSource::Pac))
                 } else {

@@ -1,0 +1,255 @@
+{
+  "name": "corporate-network",
+  "network_health": {
+    "generated_at": 0,
+    "proxy": {
+      "mode": "system",
+      "detected": "pac",
+      "auto_detect": true,
+      "pac_url": "http://wpad.corp.example/proxy.pac",
+      "pac_state": "answering",
+      "http_proxy": null,
+      "https_proxy": null,
+      "bypass_entries": 0,
+      "settings_error": null,
+      "epoch": 3,
+      "last_change_at": 1791374100000,
+      "dead_proxies": [
+        {
+          "proxy": "proxy-b.corp.example:8080",
+          "retry_in_secs": 212
+        }
+      ]
+    },
+    "sign_in": {
+      "methods": ["negotiate", "ntlm"],
+      "attempts": [
+        {
+          "proxy": "proxy-a.corp.example:8080",
+          "scheme": "Negotiate",
+          "result": "signed_in",
+          "detail": null,
+          "at": 1791374280000
+        }
+      ]
+    },
+    "roots": {
+      "synced": true,
+      "synced_at": 1791370800000,
+      "roots": 2,
+      "intermediates": 1,
+      "certificates": [
+        {
+          "subject": "Corp Root CA",
+          "fingerprint": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "kind": "root",
+          "not_after": 4102444800000,
+          "sources": ["LocalMachine\\Root\\.GroupPolicy"]
+        },
+        {
+          "subject": "Corp Inspection CA",
+          "fingerprint": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+          "kind": "root",
+          "not_after": 4102444800000,
+          "sources": [
+            "LocalMachine\\Root\\.Default",
+            "CurrentUser\\Root\\.Default"
+          ]
+        },
+        {
+          "subject": "Corp Issuing CA 01",
+          "fingerprint": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+          "kind": "intermediate",
+          "not_after": 4102444800000,
+          "sources": ["LocalMachine\\CA\\.Default"]
+        }
+      ],
+      "skipped": [
+        {
+          "subject": "Old Corp Root CA",
+          "fingerprint": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+          "reason": "expired"
+        }
+      ],
+      "unreadable_stores": []
+    },
+    "pull_proxy": {
+      "active": true,
+      "via_upstream": true
+    },
+    "routes": [
+      {
+        "scheme": "https",
+        "host": "github.com",
+        "port": 443,
+        "hops": [
+          "PROXY proxy-b.corp.example:8080",
+          "PROXY proxy-a.corp.example:8080",
+          "DIRECT"
+        ],
+        "source": "pac"
+      },
+      {
+        "scheme": "https",
+        "host": "registry.npmjs.org",
+        "port": 443,
+        "hops": ["PROXY proxy-a.corp.example:8080"],
+        "source": "pac"
+      },
+      {
+        "scheme": "https",
+        "host": "wiki.corp.example",
+        "port": 443,
+        "hops": ["DIRECT"],
+        "source": "pac"
+      }
+    ]
+  },
+  "scripts": {
+    "network-change": [
+      {
+        "do": "network_health",
+        "generated_at": 0,
+        "proxy": {
+          "mode": "system",
+          "detected": "pac",
+          "auto_detect": true,
+          "pac_url": "http://wpad.corp.example/proxy.pac",
+          "pac_state": "not_asked",
+          "http_proxy": null,
+          "https_proxy": null,
+          "bypass_entries": 0,
+          "settings_error": null,
+          "epoch": 4,
+          "last_change_at": 1791374405000,
+          "dead_proxies": []
+        },
+        "sign_in": {
+          "methods": ["negotiate", "ntlm"],
+          "attempts": [
+            {
+              "proxy": "proxy-a.corp.example:8080",
+              "scheme": "Negotiate",
+              "result": "signed_in",
+              "detail": null,
+              "at": 1791374280000
+            }
+          ]
+        },
+        "roots": {
+          "synced": true,
+          "synced_at": 1791370800000,
+          "roots": 2,
+          "intermediates": 1,
+          "certificates": [
+            {
+              "subject": "Corp Root CA",
+              "fingerprint": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "kind": "root",
+              "not_after": 4102444800000,
+              "sources": ["LocalMachine\\Root\\.GroupPolicy"]
+            },
+            {
+              "subject": "Corp Inspection CA",
+              "fingerprint": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+              "kind": "root",
+              "not_after": 4102444800000,
+              "sources": [
+                "LocalMachine\\Root\\.Default",
+                "CurrentUser\\Root\\.Default"
+              ]
+            },
+            {
+              "subject": "Corp Issuing CA 01",
+              "fingerprint": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+              "kind": "intermediate",
+              "not_after": 4102444800000,
+              "sources": ["LocalMachine\\CA\\.Default"]
+            }
+          ],
+          "skipped": [
+            {
+              "subject": "Old Corp Root CA",
+              "fingerprint": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+              "reason": "expired"
+            }
+          ],
+          "unreadable_stores": []
+        },
+        "pull_proxy": {
+          "active": true,
+          "via_upstream": true
+        },
+        "routes": []
+      }
+    ],
+    "network-trouble": [
+      {
+        "do": "network_health",
+        "generated_at": 0,
+        "proxy": {
+          "mode": "system",
+          "detected": "pac",
+          "auto_detect": true,
+          "pac_url": "http://wpad.corp.example/proxy.pac",
+          "pac_state": "unreachable",
+          "http_proxy": "fallback.corp.example:3128",
+          "https_proxy": "fallback.corp.example:3128",
+          "bypass_entries": 2,
+          "settings_error": null,
+          "epoch": 7,
+          "last_change_at": 1791374100000,
+          "dead_proxies": [
+            {
+              "proxy": "fallback.corp.example:3128",
+              "retry_in_secs": 180
+            }
+          ]
+        },
+        "sign_in": {
+          "methods": ["negotiate", "ntlm"],
+          "attempts": [
+            {
+              "proxy": "fallback.corp.example:3128",
+              "scheme": "Negotiate",
+              "result": "failed",
+              "detail": "proxy authentication failed: no credentials for the logged-on user",
+              "at": 1791374340000
+            }
+          ]
+        },
+        "roots": {
+          "synced": false,
+          "synced_at": null,
+          "roots": 0,
+          "intermediates": 0,
+          "certificates": [],
+          "skipped": [],
+          "unreadable_stores": [
+            "LocalMachine\\Root\\.GroupPolicy: access denied"
+          ]
+        },
+        "pull_proxy": {
+          "active": true,
+          "via_upstream": true
+        },
+        "routes": [
+          {
+            "scheme": "https",
+            "host": "github.com",
+            "port": 443,
+            "hops": ["PROXY fallback.corp.example:3128"],
+            "source": "system"
+          },
+          {
+            "scheme": "https",
+            "host": "wiki.corp.example",
+            "port": 443,
+            "hops": ["DIRECT"],
+            "source": "bypass"
+          }
+        ]
+      }
+    ]
+  }
+}

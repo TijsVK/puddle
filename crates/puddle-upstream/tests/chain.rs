@@ -615,3 +615,83 @@ async fn a_preemptive_negotiate_meets_a_basic_only_proxy_and_falls_back_on_the_s
         .collect();
     assert_eq!(auth, [Some("Negotiate"), Some("Basic")]);
 }
+
+#[tokio::test]
+async fn the_last_sign_in_to_each_proxy_is_kept_without_its_secrets() {
+    use puddle_upstream::SignInOutcome;
+    let echo = start_echo().await;
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "t188".into(),
+        password: "pw-right".into(),
+    })
+    .await;
+    proxy.resolve_name("a.test", echo.addr);
+    let dest = https("a.test");
+    let request = Request::new(&dest, Form::Tunnel, &[]).name_ok(true);
+
+    let chain = chain(vec![via(&proxy)], basic("t188", "pw-right"));
+    assert_eq!(chain.auth_methods(), ["basic"]);
+    assert_eq!(chain.sign_ins().len(), 0);
+    chain.connect(&request).await.unwrap();
+    let kept = chain.sign_ins();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].proxy, proxy.proxy_addr());
+    assert_eq!(kept[0].scheme.as_deref(), Some("Basic"));
+    assert_eq!(kept[0].outcome, SignInOutcome::SignedIn);
+    // The second connection sends the credential up front and is still a sign-in with Basic.
+    chain.connect(&request).await.unwrap();
+    assert_eq!(chain.sign_ins()[0].scheme.as_deref(), Some("Basic"));
+
+    let wrong = self::chain(vec![via(&proxy)], basic("t188", "pw-wrong"));
+    wrong.connect(&request).await.unwrap_err();
+    let kept = wrong.sign_ins();
+    assert_eq!(kept[0].outcome, SignInOutcome::Failed);
+    let shown = format!("{:?}", kept[0]);
+    assert!(
+        !shown.contains("pw-wrong") && !shown.contains("pw-right"),
+        "{shown}"
+    );
+
+    let none = self::chain(vec![via(&proxy)], Arc::new(BasicAuth::new()));
+    none.connect(&request).await.unwrap_err();
+    let kept = none.sign_ins();
+    assert_eq!(kept[0].outcome, SignInOutcome::Unsupported);
+    assert!(kept[0].detail.as_deref().unwrap().contains("Basic"));
+}
+
+#[tokio::test]
+async fn an_open_proxy_is_recorded_as_needing_no_sign_in_and_a_dead_one_is_not_recorded() {
+    use puddle_upstream::SignInOutcome;
+    let echo = start_echo().await;
+    let open = FakeProxy::start(Behaviour::Open).await;
+    open.resolve_name("a.test", echo.addr);
+    let (dead, _socket) = dead_port();
+    let chain = chain(
+        vec![Hop::Proxy(dead.clone()), via(&open)],
+        Arc::new(puddle_upstream::NoAuth),
+    );
+    assert_eq!(chain.auth_methods().len(), 0);
+    let dest = https("a.test");
+    chain
+        .connect(&Request::new(&dest, Form::Tunnel, &[]).name_ok(true))
+        .await
+        .unwrap();
+    let kept = chain.sign_ins();
+    assert_eq!(
+        kept.len(),
+        1,
+        "an unreachable proxy says nothing about sign-in"
+    );
+    assert_eq!(kept[0].proxy, open.proxy_addr());
+    assert_eq!(kept[0].outcome, SignInOutcome::NotRequired);
+    assert_eq!(kept[0].scheme, None);
+}
+
+#[tokio::test]
+async fn a_list_names_the_methods_of_its_members_once() {
+    let list = AuthList::new()
+        .with(basic("u", "p"))
+        .with(basic("v", "q"))
+        .with(Arc::new(puddle_upstream::NoAuth));
+    assert_eq!(list.methods(), ["basic"]);
+}

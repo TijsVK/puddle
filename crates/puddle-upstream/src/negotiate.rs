@@ -115,6 +115,10 @@ impl NegotiateAuth {
 }
 
 impl ProxyAuth for NegotiateAuth {
+    fn methods(&self) -> Vec<&'static str> {
+        vec!["negotiate", "ntlm"]
+    }
+
     fn begin(
         &self,
         proxy: &ProxyAddr,
