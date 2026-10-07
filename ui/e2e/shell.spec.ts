@@ -2,8 +2,8 @@
 import { axeViolations, expect, signIn, test, watchCsp } from "./support";
 
 const sections = [
-  { path: "/inbox", name: "Inbox" },
   { path: "/workspaces", name: "Workspaces" },
+  { path: "/inbox", name: "Inbox" },
   { path: "/rules", name: "Rules" },
   { path: "/activity", name: "Activity" },
   { path: "/settings", name: "Settings" },
@@ -14,17 +14,18 @@ test.describe("the app shell, served by the real API", () => {
     await signIn(page);
   });
 
-  test("the start page lands on the inbox with the live pending count", async ({
+  test("the start page lands on the workspaces, with the live pending count", async ({
     page,
   }) => {
     const violations = await watchCsp(page);
     await page.goto("/");
-    await expect(page).toHaveURL(/\/inbox$/);
+    await expect(page).toHaveURL(/\/workspaces$/);
     await expect(
-      page.getByRole("heading", { level: 1, name: "Inbox" }),
+      page.getByRole("heading", { level: 1, name: "Workspaces" }),
     ).toBeVisible();
     await expect(page.getByTestId("pending-badge")).toContainText("1 pending");
-    await expect(page).toHaveTitle("Inbox (1) - puddle");
+    await expect(page).toHaveTitle("Workspaces - puddle");
+    await expect(page.getByText("1 request waiting.")).toBeVisible();
     expect(await violations()).toEqual([]);
   });
 
@@ -91,13 +92,9 @@ test.describe("the app shell, served by the real API", () => {
       );
     }
     expect(order[0]).toBe("Skip to content");
-    expect(order[1]).toMatch(/^Inbox/);
-    expect(order.slice(2, 6)).toEqual([
-      "Workspaces",
-      "Rules",
-      "Activity",
-      "Settings",
-    ]);
+    expect(order[1]).toBe("Workspaces");
+    expect(order[2]).toMatch(/^Inbox/);
+    expect(order.slice(3, 6)).toEqual(["Rules", "Activity", "Settings"]);
     expect(order[6]).toMatch(/^(System|Light|Dark)$/);
   });
 
