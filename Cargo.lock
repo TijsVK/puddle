@@ -4065,6 +4065,7 @@ dependencies = [
  "hyper-util",
  "proptest",
  "puddle-fs",
+ "puddle-netpolicy",
  "puddle-settings",
  "puddle-store",
  "puddle-types",

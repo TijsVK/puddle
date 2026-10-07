@@ -50,8 +50,12 @@ pub(crate) async fn start_without_workspaces() -> Api {
 
 async fn start_inner(config: ApiConfig, with_workspaces: bool) -> Api {
     let clock = Arc::new(ManualClock::new(START_MS));
-    let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     let events = Arc::new(EventHub::default());
+    let store = Arc::new(
+        Store::open_in_memory(clock.clone(), Limits::default())
+            .unwrap()
+            .with_events(events.clone()),
+    );
     let settings = Arc::new(MemorySettings::default());
     let launcher = Arc::new(FakeLauncher::new());
     let workspaces = FakeWorkspaces::with_options(

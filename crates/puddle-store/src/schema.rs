@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1];
+const MIGRATIONS: &[&str] = &[V1, V2];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -93,6 +93,37 @@ BEGIN
 END;
 ";
 
+/// The audit filters: `host` and `outcome` become columns so the API's filters never
+/// parse JSON, and the filtered scans are indexed. Existing rows are backfilled from their
+/// lines; `AuditRecord::host` and `AuditRecord::outcome` must give the same values (tested).
+const V2: &str = r"
+ALTER TABLE audit ADD COLUMN host TEXT;
+ALTER TABLE audit ADD COLUMN outcome TEXT;
+UPDATE audit SET
+    host = lower(CASE type
+        WHEN 'connection' THEN json_extract(line, '$.host')
+        WHEN 'pending_created' THEN json_extract(line, '$.pending.host')
+        WHEN 'pending_decided' THEN json_extract(line, '$.pending.host')
+        WHEN 'pending_expired' THEN json_extract(line, '$.pending.host')
+        WHEN 'rule_created' THEN json_extract(line, '$.rule.pattern')
+        WHEN 'rule_updated' THEN json_extract(line, '$.rule.pattern')
+        WHEN 'rule_deleted' THEN json_extract(line, '$.rule.pattern')
+        WHEN 'rule_expired' THEN json_extract(line, '$.rule.pattern')
+    END),
+    outcome = CASE type
+        WHEN 'connection' THEN json_extract(line, '$.decision')
+        WHEN 'pending_created' THEN 'pending'
+        WHEN 'pending_decided' THEN CASE json_extract(line, '$.pending.state')
+            WHEN 'allowed' THEN 'allow'
+            WHEN 'denied' THEN 'deny'
+        END
+        WHEN 'pending_expired' THEN 'expired'
+    END;
+CREATE INDEX audit_type ON audit (type, id);
+CREATE INDEX audit_outcome ON audit (outcome, id) WHERE outcome IS NOT NULL;
+CREATE INDEX audit_ts ON audit (ts);
+";
+
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.
 ///
 /// # Errors
@@ -100,6 +131,12 @@ END;
 /// or the SQLite error of a failed migration (which is rolled back).
 pub(crate) fn migrate(conn: &mut Connection) -> Result<u32, StoreError> {
     migrate_with(conn, MIGRATIONS)
+}
+
+/// Migrates only up to `version`, to build the database an older puddle left behind.
+#[cfg(test)]
+pub(crate) fn migrate_up_to(conn: &mut Connection, version: usize) -> Result<u32, StoreError> {
+    migrate_with(conn, &MIGRATIONS[..version])
 }
 
 fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {

@@ -96,7 +96,9 @@ pub struct Services {
     pub store: Arc<Store>,
     /// Settings documents.
     pub settings: Arc<dyn SettingsRepo>,
-    /// The event hub SSE subscribers read from; give the same hub to whatever emits events.
+    /// The event hub SSE subscribers read from; give the same hub to whatever emits events,
+    /// including the store (`Store::with_events`), which emits the pending, rule and audit
+    /// events.
     pub events: Arc<EventHub>,
     /// The clock consents are stamped with.
     pub clock: Arc<dyn Clock>,

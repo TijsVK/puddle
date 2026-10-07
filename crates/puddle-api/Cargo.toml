@@ -23,6 +23,7 @@ getrandom = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 puddle-fs = { workspace = true }
+puddle-netpolicy = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-store = { workspace = true }
 puddle-types = { workspace = true, features = ["openapi"] }

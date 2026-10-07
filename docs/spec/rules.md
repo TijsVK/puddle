@@ -175,6 +175,22 @@ readable as JSONL (one record per line).
   *(default)*; the excess is counted and written as one `connection` record with
   `reason: suppressed` and a `count` per second.
 
+- **R-28 Reading the audit with filters.** The API filters on the server, on stored columns and
+  indexes (never by parsing JSON): `sandbox`, `type`, `outcome`, `host_contains` (case-folded
+  substring), `from` (inclusive) and `to` (exclusive) as epoch ms. All set filters must match.
+  `host` is the record's host, or a rule record's pattern. `outcome` (`allow`, `deny`, `pending`,
+  `blocked`, `expired`) exists for `connection` (its `decision`), `pending_created` (`pending`),
+  `pending_decided` (`allow` or `deny`) and `pending_expired` (`expired`); every other record has
+  none and never matches an `outcome` filter. Pages are at most 500 records: newest first, paged
+  back with `before`, or oldest first from `after` to follow the tail.
+- **R-29 Events.** After each commit the store emits, per change: `pending_opened` (a new open
+  row), `pending_updated` (a repeat: `attempts`, `last_seen`), `pending_closed` (decided by a user
+  or a rule, or expired: `state`, `rule_id`), `suppression_changed` (R-13: when it starts or ends,
+  and at most twice a second while the count grows), `rules_changed` (any rule created, changed,
+  deleted or expired) and `audit_appended` (once per commit that wrote audit records, with the
+  newest id). Events carry ids and counts, not decisions: a client that missed some refetches.
+  A failed change emits nothing.
+
 ## 6. Out of scope here
 
 The AI judge (D-16: no field or placeholder until its flow is designed), rule sets the user can

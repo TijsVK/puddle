@@ -159,3 +159,116 @@ async fn an_invalid_filter_is_refused() {
     assert_eq!(api.get("/api/events?other=1").await.status, 400);
     api.running.shutdown().await;
 }
+
+fn types(s: &Stream) -> Vec<String> {
+    s.data()
+        .iter()
+        .map(|d| d["type"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_request_that_arrives_shows_up_live_and_a_decision_closes_it() {
+    let api = start().await;
+    let mut s = Stream::open(&api, "").await;
+    let id = api.request("box", "www.example.com");
+    s.read_until(|b| b.contains("audit_appended")).await;
+    let data = s.data();
+    assert_eq!(types(&s), ["pending_opened", "audit_appended"], "{}", s.buf);
+    assert_eq!(data[0]["request"]["id"], id);
+    assert_eq!(data[0]["request"]["sandbox"], "box");
+    assert_eq!(data[0]["request"]["host"], "www.example.com");
+    assert_eq!(data[0]["request"]["port"], 443);
+    assert_eq!(data[0]["request"]["attempts"], 1);
+
+    api.request("box", "www.example.com");
+    s.read_until(|b| b.contains("pending_updated")).await;
+    let updated = &s.data()[2];
+    assert_eq!(
+        (updated["id"].as_i64(), updated["attempts"].as_u64()),
+        (Some(id), Some(2))
+    );
+
+    let sibling = api.request("box", "api.example.com");
+    let reply = api
+        .send(
+            "POST",
+            &format!("/api/pending/{id}/approve"),
+            Some(&serde_json::json!({"suffix": "Example.COM"})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    s.read_until(|b| {
+        b.matches("pending_closed").count() >= 2 && b.matches("rules_changed").count() >= 1
+    })
+    .await;
+    let closed: Vec<_> = s
+        .data()
+        .into_iter()
+        .filter(|d| d["type"] == "pending_closed")
+        .collect();
+    let rule_id = reply.json()["rule"]["id"].clone();
+    assert_eq!(closed.len(), 2);
+    for d in &closed {
+        assert_eq!(
+            (&d["state"], &d["rule_id"], &d["sandbox"]),
+            (&"allowed".into(), &rule_id, &"box".into())
+        );
+    }
+    let ids: Vec<_> = closed.iter().map(|d| d["id"].as_i64().unwrap()).collect();
+    assert!(ids.contains(&id) && ids.contains(&sibling), "{ids:?}");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn rule_changes_reach_every_stream_even_a_filtered_one() {
+    let api = start().await;
+    let mut filtered = Stream::open(&api, "?sandbox=other").await;
+    api.request("box", "example.com");
+    let created = api
+        .send(
+            "POST",
+            "/api/rules",
+            Some(&serde_json::json!({"scope": {"type": "global"}, "pattern": "Example.COM", "effect": "deny"})),
+        )
+        .await;
+    assert_eq!(created.status, 201, "{}", created.body);
+    let id = created.json()["id"].as_i64().unwrap();
+    api.send(
+        "PUT",
+        &format!("/api/rules/{id}/expiry"),
+        Some(&serde_json::json!({"expires_at": null})),
+    )
+    .await;
+    assert_eq!(
+        api.send("DELETE", &format!("/api/rules/{id}"), None)
+            .await
+            .status,
+        200
+    );
+    filtered
+        .read_until(|b| b.matches("rules_changed").count() >= 3)
+        .await;
+    // The other sandbox's pending events are not for this stream; rule and audit events are.
+    assert!(
+        types(&filtered)
+            .iter()
+            .all(|t| t == "rules_changed" || t == "audit_appended"),
+        "{}",
+        filtered.buf
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn audit_appended_names_the_newest_record_so_a_client_can_read_on() {
+    let api = start().await;
+    let mut s = Stream::open(&api, "").await;
+    api.request("box", "example.com");
+    s.read_until(|b| b.contains("audit_appended")).await;
+    let id = s.data().last().unwrap()["id"].as_i64().unwrap();
+    let page = api.get("/api/audit?limit=1").await.json();
+    assert_eq!(page["entries"][0]["id"], id);
+    assert_eq!(page["next_after"], id);
+    api.running.shutdown().await;
+}

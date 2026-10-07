@@ -11,14 +11,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
 use puddle_types::{
-    ConnectionEvent, ConnectionLog, Decision, EgressRequest, Host, PendingId, PendingOutcome,
-    Policy, PolicyError, RuleId, SandboxName, SuffixAllows,
+    ConnectionEvent, ConnectionLog, Decision, EgressRequest, Event, EventSink, Host, NullSink,
+    PendingEnd, PendingId, PendingOutcome, PendingSummary, Policy, PolicyError, RuleId,
+    SandboxName, SuffixAllows,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use crate::audit::{
-    AuditRecord, ConnectionRecord, ConnectionWindow, PendingExpiryReason, PendingWire,
-    RuleDeleteReason, RuleWire, actor_str,
+    AuditOutcome, AuditRecord, ConnectionRecord, ConnectionWindow, PendingExpiryReason,
+    PendingWire, RuleDeleteReason, RuleWire, actor_str,
 };
 use crate::clock::Clock;
 use crate::engine::RuleSet;
@@ -69,6 +70,33 @@ impl Default for Limits {
     }
 }
 
+/// Which audit records to read. Every field left `None` matches everything; the set
+/// ones all have to match.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuditFilter {
+    /// Records about this sandbox.
+    pub sandbox: Option<SandboxName>,
+    /// Records of this `type` (one of [`AuditRecord::KINDS`]).
+    pub kind: Option<&'static str>,
+    /// Records with this outcome. Records that have none never match.
+    pub outcome: Option<AuditOutcome>,
+    /// Records whose host (or a rule's pattern) contains this text, compared case-folded.
+    pub host_contains: Option<String>,
+    /// Records at or after this epoch ms.
+    pub from: Option<u64>,
+    /// Records before this epoch ms.
+    pub to: Option<u64>,
+}
+
+/// Where a page of audit records starts and which way it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditCursor {
+    /// Oldest first, from the record after this id (for following the log's tail).
+    After(i64),
+    /// Newest first, from the record before this id, or from the newest (for paging back).
+    Before(Option<i64>),
+}
+
 /// What one sweep did (R-19 to R-22).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SweepReport {
@@ -89,6 +117,9 @@ pub struct SandboxDeletion {
     pub pending_expired: u64,
 }
 
+/// The least time between two [`Event::SuppressionChanged`] for a growing count.
+const SUPPRESSION_EVENT_EVERY_MS: u64 = 500;
+
 /// Per-sandbox in-memory limits state (R-13, R-26). Lost on restart, which only resets the
 /// limits.
 #[derive(Debug)]
@@ -98,6 +129,7 @@ struct SandboxState {
     episode: u64,
     unrecorded: u64,
     last_record_at: u64,
+    last_event_at: u64,
     connections: ConnectionWindow,
 }
 
@@ -109,6 +141,7 @@ impl SandboxState {
             episode: 0,
             unrecorded: 0,
             last_record_at: 0,
+            last_event_at: 0,
             connections: ConnectionWindow::default(),
         }
     }
@@ -155,6 +188,7 @@ pub struct Store {
     sandboxes: Mutex<HashMap<SandboxName, SandboxState>>,
     clock: Arc<dyn Clock>,
     limits: Limits,
+    events: Arc<dyn EventSink>,
 }
 
 impl std::fmt::Debug for Store {
@@ -215,7 +249,18 @@ impl Store {
             sandboxes: Mutex::new(HashMap::new()),
             clock,
             limits,
+            events: Arc::new(NullSink),
         })
+    }
+
+    /// Sends the events of every change (pending requests opened, updated and closed, rules
+    /// changed, audit records appended, suppression changed) to `sink`, after the change has
+    /// committed. Nothing is emitted by default. Events carry ids, not decisions: a client that
+    /// misses one refetches.
+    #[must_use]
+    pub fn with_events(mut self, sink: Arc<dyn EventSink>) -> Self {
+        self.events = sink;
+        self
     }
 
     fn snapshot(&self) -> Arc<RuleSet> {
@@ -248,8 +293,10 @@ impl Store {
             return Ok(decision);
         }
         let tx = conn.transaction()?;
-        let outcome = self.record_pending(&tx, request, now)?;
-        tx.commit()?;
+        let head = audit_head(&tx)?;
+        let mut fx = Vec::new();
+        let outcome = self.record_pending(&tx, request, now, &mut fx)?;
+        self.commit(tx, head, fx)?;
         Ok(Decision::Pending(outcome))
     }
 
@@ -273,6 +320,7 @@ impl Store {
         tx: &Transaction<'_>,
         request: &EgressRequest,
         now: u64,
+        fx: &mut Vec<Event>,
     ) -> Result<PendingOutcome, StoreError> {
         let (sandbox, host) = (request.sandbox.as_str(), request.host.to_string());
         let existing: Option<i64> = tx
@@ -284,11 +332,18 @@ impl Store {
             )
             .optional()?;
         if let Some(id) = existing {
-            tx.execute(
+            let (attempts, last_seen): (i64, i64) = tx.query_row(
                 "UPDATE pending SET last_seen = max(last_seen, ?1), attempts = attempts + 1
-                 WHERE id = ?2",
+                 WHERE id = ?2 RETURNING attempts, last_seen",
                 params![sql_ts(now), id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
+            fx.push(Event::PendingUpdated {
+                sandbox: request.sandbox.clone(),
+                id,
+                attempts: stored_ts("pending", id, attempts)?,
+                last_seen: stored_ts("pending", id, last_seen)?,
+            });
             return Ok(PendingOutcome::Repeat(PendingId(id)));
         }
         let open: i64 = tx.query_row(
@@ -303,10 +358,28 @@ impl Store {
                 .entry(request.sandbox.clone())
                 .or_insert_with(|| SandboxState::new(&self.limits, now));
             if below_cap && state.bucket.try_take(now) {
+                if state.suppressing {
+                    fx.push(Event::SuppressionChanged {
+                        sandbox: request.sandbox.clone(),
+                        active: false,
+                        count: state.episode,
+                    });
+                }
                 (true, state.end_suppression())
             } else {
                 let every = self.limits.suppressed_record_every_ms;
-                (false, state.suppress(now, every))
+                let recorded = state.suppress(now, every);
+                if state.episode == 1
+                    || now.saturating_sub(state.last_event_at) >= SUPPRESSION_EVENT_EVERY_MS
+                {
+                    state.last_event_at = now;
+                    fx.push(Event::SuppressionChanged {
+                        sandbox: request.sandbox.clone(),
+                        active: true,
+                        count: state.episode,
+                    });
+                }
+                (false, recorded)
             }
         };
         if let Some(count) = to_record {
@@ -336,21 +409,56 @@ impl Store {
                 pending: PendingWire::from(&row),
             },
         )?;
+        fx.push(Event::PendingOpened {
+            request: PendingSummary {
+                id: id.0,
+                sandbox: row.sandbox.clone(),
+                host: row.host.to_string(),
+                port: row.port,
+                first_seen: row.first_seen,
+                last_seen: row.last_seen,
+                attempts: row.attempts,
+            },
+        });
         Ok(PendingOutcome::New(id))
     }
 
-    /// Runs `change` in one transaction, then swaps in the rule set as committed (R-8).
+    /// Commits `tx`, then emits `fx` and, if the transaction appended audit records (the audit's
+    /// newest id passed `head`), one [`Event::AuditAppended`]. Called with `conn` held, so
+    /// events leave in commit order.
+    fn commit(&self, tx: Transaction<'_>, head: i64, fx: Vec<Event>) -> Result<(), StoreError> {
+        let newest = audit_head(&tx)?;
+        tx.commit()?;
+        self.emit_all(fx, head, newest);
+        Ok(())
+    }
+
+    fn emit_all(&self, fx: Vec<Event>, head: i64, newest: i64) {
+        for event in fx {
+            self.events.emit(event);
+        }
+        if newest > head {
+            self.events.emit(Event::AuditAppended { id: newest });
+        }
+    }
+
+    /// Runs `change` in one transaction, then swaps in the rule set as committed (R-8). The
+    /// closure pushes the events its change deserves; they are emitted after the commit.
     fn change<T>(
         &self,
-        change: impl FnOnce(&Transaction<'_>, u64) -> Result<T, StoreError>,
+        change: impl FnOnce(&Transaction<'_>, u64, &mut Vec<Event>) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
         let mut conn = lock(&self.conn);
         let now = self.clock.now_ms();
         let tx = conn.transaction()?;
-        let out = change(&tx, now)?;
+        let head = audit_head(&tx)?;
+        let mut fx = Vec::new();
+        let out = change(&tx, now, &mut fx)?;
         let set = RuleSet::new(load_rules(&tx)?);
+        let newest = audit_head(&tx)?;
         tx.commit()?;
         *self.rules.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(set);
+        self.emit_all(fx, head, newest);
         Ok(out)
     }
 
@@ -362,12 +470,13 @@ impl Store {
         if new.created_by == Actor::System {
             return Err(StoreError::SystemActor);
         }
-        let rule = self.change(|tx, now| {
+        let rule = self.change(|tx, now, fx| {
             if new.expires_at.is_some_and(|at| at <= now) {
                 return Err(StoreError::ExpiryNotInFuture);
             }
             let rule = insert_rule(tx, new, now, None)?;
-            close_decided_rows(tx, &rule, None, new.created_by, now)?;
+            close_decided_rows(tx, &rule, None, new.created_by, now, fx)?;
+            fx.push(Event::RulesChanged {});
             Ok(rule)
         })?;
         tracing::info!(rule = %rule.id, pattern = %rule.pattern, effect = rule.effect.as_str(), "rule created");
@@ -379,7 +488,7 @@ impl Store {
     /// # Errors
     /// [`StoreError::UnknownRule`] or a database error.
     pub fn delete_rule(&self, id: RuleId, actor: Actor) -> Result<Rule, StoreError> {
-        let rule = self.change(|tx, now| {
+        let rule = self.change(|tx, now, fx| {
             let rule = load_rule(tx, id)?;
             tx.execute("DELETE FROM rules WHERE id = ?1", [id.0])?;
             append(
@@ -391,6 +500,7 @@ impl Store {
                     actor: actor_str(actor),
                 },
             )?;
+            fx.push(Event::RulesChanged {});
             Ok(rule)
         })?;
         tracing::info!(rule = %id, "rule deleted");
@@ -411,7 +521,7 @@ impl Store {
         if actor == Actor::System {
             return Err(StoreError::SystemActor);
         }
-        self.change(|tx, now| {
+        self.change(|tx, now, fx| {
             if expires_at.is_some_and(|at| at <= now) {
                 return Err(StoreError::ExpiryNotInFuture);
             }
@@ -430,6 +540,7 @@ impl Store {
                     actor: actor_str(actor),
                 },
             )?;
+            fx.push(Event::RulesChanged {});
             Ok(after)
         })
     }
@@ -453,7 +564,7 @@ impl Store {
         if resolution.expires_in.is_some_and(|d| d.is_zero()) {
             return Err(StoreError::ExpiryNotInFuture);
         }
-        let decided = self.change(|tx, now| {
+        let decided = self.change(|tx, now, fx| {
             let row = load_pending(tx, id)?;
             if row.state != PendingState::Requested {
                 return Err(StoreError::PendingNotOpen {
@@ -477,8 +588,9 @@ impl Store {
                 created_by: actor,
             };
             let rule = insert_rule(tx, &new, now, Some(id))?;
-            decide_row(tx, &row, &rule, actor, now)?;
-            let also_closed = close_decided_rows(tx, &rule, Some(id), actor, now)?;
+            decide_row(tx, &row, &rule, actor, now, fx)?;
+            let also_closed = close_decided_rows(tx, &rule, Some(id), actor, now, fx)?;
+            fx.push(Event::RulesChanged {});
             Ok(Decided {
                 row: load_pending(tx, id)?,
                 rule,
@@ -571,6 +683,7 @@ impl Store {
         }
         let mut conn = lock(&self.conn);
         let tx = conn.transaction()?;
+        let head = audit_head(&tx)?;
         if let Some((ts, count)) = summary {
             let record = ConnectionRecord::suppressed_summary(ts, &event.sandbox, count);
             append(&tx, &AuditRecord::Connection(record))?;
@@ -579,8 +692,7 @@ impl Store {
             let record = ConnectionRecord::from_event(now, event);
             append(&tx, &AuditRecord::Connection(record))?;
         }
-        tx.commit()?;
-        Ok(())
+        self.commit(tx, head, Vec::new())
     }
 
     /// Removes a deleted sandbox's rules and expires its open rows, in one transaction (R-21).
@@ -589,7 +701,7 @@ impl Store {
     /// # Errors
     /// A database or audit error; nothing changes then.
     pub fn delete_sandbox(&self, sandbox: &SandboxName) -> Result<SandboxDeletion, StoreError> {
-        let deletion = self.change(|tx, now| {
+        let deletion = self.change(|tx, now, fx| {
             let mut stmt = tx.prepare(&format!(
                 "SELECT {RULE_COLUMNS} FROM rules WHERE sandbox_id = ?1 ORDER BY id"
             ))?;
@@ -619,13 +731,24 @@ impl Store {
                 &sandbox.as_str(),
                 now,
                 PendingExpiryReason::SandboxDeleted,
+                fx,
             )?;
+            if !rules.is_empty() {
+                fx.push(Event::RulesChanged {});
+            }
             Ok(SandboxDeletion {
                 rules_deleted: rules.len() as u64,
                 pending_expired: expired,
             })
         })?;
-        lock(&self.sandboxes).remove(sandbox);
+        let state = lock(&self.sandboxes).remove(sandbox);
+        if let Some(state) = state.filter(|s| s.suppressing) {
+            self.events.emit(Event::SuppressionChanged {
+                sandbox: sandbox.clone(),
+                active: false,
+                count: state.episode,
+            });
+        }
         tracing::info!(sandbox = %sandbox, rules = deletion.rules_deleted, "sandbox rules removed");
         Ok(deletion)
     }
@@ -635,7 +758,7 @@ impl Store {
     /// # Errors
     /// The first failing step's error; earlier steps stay committed.
     pub fn sweep(&self) -> Result<SweepReport, StoreError> {
-        let rules_expired = self.change(|tx, now| {
+        let rules_expired = self.change(|tx, now, fx| {
             let mut stmt = tx.prepare(&format!(
                 "SELECT {RULE_COLUMNS} FROM rules
                  WHERE expires_at IS NOT NULL AND expires_at <= ?1 ORDER BY id"
@@ -655,6 +778,9 @@ impl Store {
                     },
                 )?;
             }
+            if !rules.is_empty() {
+                fx.push(Event::RulesChanged {});
+            }
             Ok(rules.len() as u64)
         })?;
         let pending_expired = {
@@ -662,14 +788,17 @@ impl Store {
             let now = self.clock.now_ms();
             let cutoff = sql_ts(now.saturating_sub(self.limits.pending_stale_after_ms));
             let tx = conn.transaction()?;
+            let head = audit_head(&tx)?;
+            let mut fx = Vec::new();
             let n = expire_rows(
                 &tx,
                 "last_seen <= ?2",
                 &cutoff,
                 now,
                 PendingExpiryReason::Stale,
+                &mut fx,
             )?;
-            tx.commit()?;
+            self.commit(tx, head, fx)?;
             n
         };
         self.flush_limits()?;
@@ -704,11 +833,11 @@ impl Store {
         }
         let mut conn = lock(&self.conn);
         let tx = conn.transaction()?;
+        let head = audit_head(&tx)?;
         for record in &records {
             append(&tx, record)?;
         }
-        tx.commit()?;
-        Ok(())
+        self.commit(tx, head, Vec::new())
     }
 
     /// Deletes the oldest audit records while the audit is over its cap, then records the trim.
@@ -750,6 +879,7 @@ impl Store {
         }
         let mut conn = lock(&self.conn);
         let tx = conn.transaction()?;
+        let head = audit_head(&tx)?;
         let oldest: Option<i64> = tx
             .query_row("SELECT ts FROM audit ORDER BY id LIMIT 1", [], |row| {
                 row.get(0)
@@ -763,7 +893,7 @@ impl Store {
                 oldest_ts_kept: oldest.and_then(|ts| u64::try_from(ts).ok()),
             },
         )?;
-        tx.commit()?;
+        self.commit(tx, head, Vec::new())?;
         tracing::info!(deleted, "audit trimmed to its size cap");
         Ok(deleted)
     }
@@ -785,6 +915,66 @@ impl Store {
         let mut stmt =
             conn.prepare("SELECT id, line FROM audit WHERE id > ?1 ORDER BY id LIMIT ?2")?;
         let rows = stmt.query_map(params![after, limit], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+impl Store {
+    /// A page of up to `limit` audit records matching `filter`, as `(id, JSONL line)`: oldest
+    /// first for [`AuditCursor::After`], newest first for [`AuditCursor::Before`].
+    ///
+    /// Filters run on indexed columns (`sandbox_id`, `type`, `outcome`, `ts`) and the stored
+    /// `host`; no JSON is parsed. Values are bound, never spliced into the SQL.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn audit_query(
+        &self,
+        filter: &AuditFilter,
+        cursor: AuditCursor,
+        limit: u32,
+    ) -> Result<Vec<(i64, String)>, StoreError> {
+        use rusqlite::types::Value;
+        let mut sql = String::from("SELECT id, line FROM audit WHERE 1");
+        let mut args: Vec<Value> = Vec::new();
+        let mut clause = |text: &str, value: Value| {
+            sql.push_str(" AND ");
+            sql.push_str(text);
+            args.push(value);
+        };
+        match cursor {
+            AuditCursor::After(id) => clause("id > ?", Value::Integer(id)),
+            AuditCursor::Before(Some(id)) => clause("id < ?", Value::Integer(id)),
+            AuditCursor::Before(None) => {}
+        }
+        if let Some(sandbox) = &filter.sandbox {
+            clause("sandbox_id = ?", Value::Text(sandbox.to_string()));
+        }
+        if let Some(kind) = filter.kind {
+            clause("type = ?", Value::Text(kind.to_owned()));
+        }
+        if let Some(outcome) = filter.outcome {
+            clause("outcome = ?", Value::Text(outcome.as_str().to_owned()));
+        }
+        if let Some(from) = filter.from {
+            clause("ts >= ?", Value::Integer(sql_ts(from)));
+        }
+        if let Some(to) = filter.to {
+            clause("ts < ?", Value::Integer(sql_ts(to)));
+        }
+        if let Some(needle) = &filter.host_contains {
+            clause("instr(host, ?) > 0", Value::Text(needle.to_lowercase()));
+        }
+        sql.push_str(match cursor {
+            AuditCursor::After(_) => " ORDER BY id LIMIT ?",
+            AuditCursor::Before(_) => " ORDER BY id DESC LIMIT ?",
+        });
+        args.push(Value::Integer(i64::from(limit)));
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 }
@@ -830,15 +1020,28 @@ fn audit_bytes(conn: &Connection) -> Result<u64, StoreError> {
 fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
     let line = record.to_line()?;
     conn.execute(
-        "INSERT INTO audit (ts, type, sandbox_id, line) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO audit (ts, type, sandbox_id, host, outcome, line)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             sql_ts(record.ts()),
             record.kind(),
             record.sandbox_id(),
+            record.host(),
+            record.outcome().map(AuditOutcome::as_str),
             line
         ],
     )?;
     Ok(())
+}
+
+/// The newest audit record's id (0 for an empty audit). Ids only grow (`AUTOINCREMENT`), so a
+/// transaction that appended anything ends with a larger value than it started with.
+fn audit_head(conn: &Connection) -> Result<i64, StoreError> {
+    Ok(
+        conn.query_row("SELECT coalesce(max(id), 0) FROM audit", [], |row| {
+            row.get(0)
+        })?,
+    )
 }
 
 fn insert_rule(
@@ -889,6 +1092,7 @@ fn decide_row(
     rule: &Rule,
     actor: Actor,
     now: u64,
+    fx: &mut Vec<Event>,
 ) -> Result<(), StoreError> {
     tx.execute(
         "UPDATE pending SET state = ?1, decided_at = ?2, decided_by = ?3, rule_id = ?4
@@ -907,7 +1111,17 @@ fn decide_row(
             ts: now,
             pending: PendingWire::from(&load_pending(tx, row.id)?),
         },
-    )
+    )?;
+    fx.push(Event::PendingClosed {
+        sandbox: row.sandbox.clone(),
+        id: row.id.0,
+        state: match rule.effect {
+            Effect::Allow => PendingEnd::Allowed,
+            Effect::Deny => PendingEnd::Denied,
+        },
+        rule_id: Some(rule.id.0),
+    });
+    Ok(())
 }
 
 /// Closes every other open row that `rule` now decides, the same way (R-16): rows in the rule's
@@ -918,6 +1132,7 @@ fn close_decided_rows(
     except: Option<PendingId>,
     actor: Actor,
     now: u64,
+    fx: &mut Vec<Event>,
 ) -> Result<Vec<PendingId>, StoreError> {
     let set = RuleSet::new(load_rules(tx)?);
     let mut stmt = tx.prepare(&format!(
@@ -936,7 +1151,7 @@ fn close_decided_rows(
         }
         let winner = set.decide(&row.sandbox, &row.host, now, SuffixAllows::Count);
         if winner.is_some_and(|w| w.id == rule.id) {
-            decide_row(tx, &row, rule, actor, now)?;
+            decide_row(tx, &row, rule, actor, now, fx)?;
             closed.push(row.id);
         }
     }
@@ -950,6 +1165,7 @@ fn expire_rows(
     value: &dyn rusqlite::ToSql,
     now: u64,
     reason: PendingExpiryReason,
+    fx: &mut Vec<Event>,
 ) -> Result<u64, StoreError> {
     let mut stmt = tx.prepare(&format!(
         "UPDATE pending SET state = 'expired', decided_at = ?1, decided_by = 'system'
@@ -970,6 +1186,12 @@ fn expire_rows(
                 reason,
             },
         )?;
+        fx.push(Event::PendingClosed {
+            sandbox: row.sandbox.clone(),
+            id: row.id.0,
+            state: PendingEnd::Expired,
+            rule_id: None,
+        });
     }
     Ok(rows.len() as u64)
 }

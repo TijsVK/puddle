@@ -19,7 +19,6 @@ use puddle_settings as settings;
 use puddle_store as store;
 use puddle_types::{MemoryMib, SandboxName};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use utoipa::ToSchema;
 
 use crate::error::ApiError;
@@ -362,7 +361,7 @@ pub struct DecisionRequest {
 }
 
 impl DecisionRequest {
-    pub(crate) fn into_resolution(self, effect: Effect) -> store::Resolution {
+    pub(crate) fn into_resolution(self, effect: Effect) -> Result<store::Resolution, ApiError> {
         let Self {
             scope,
             suffix,
@@ -376,10 +375,15 @@ impl DecisionRequest {
             ScopeChoice::Sandbox => store::ScopeChoice::Sandbox,
             ScopeChoice::Global => store::ScopeChoice::Global,
         };
-        resolution.pattern =
-            suffix.map_or(store::PatternChoice::Exact, store::PatternChoice::Suffix);
+        resolution.pattern = match suffix {
+            None => store::PatternChoice::Exact,
+            Some(text) => {
+                let (_, base) = normalise_pattern("suffix", &text)?;
+                store::PatternChoice::Suffix(base)
+            }
+        };
         resolution.expires_in = expires_in_secs.map(Duration::from_secs);
-        resolution
+        Ok(resolution)
     }
 }
 
@@ -433,15 +437,47 @@ impl NewRuleRequest {
             effect,
             expires_at,
         } = self;
+        let (suffix, base) = normalise_pattern("pattern", &pattern)?;
+        let text = if suffix { format!(".{base}") } else { base };
         Ok(store::NewRule {
             scope: scope.into(),
-            pattern: store::Pattern::parse(&pattern)
-                .map_err(|err| ApiError::invalid(err.to_string()))?,
+            pattern: store::Pattern::parse(&text)
+                .map_err(|err| ApiError::invalid(format!("pattern: {err}")))?,
             effect: effect.into(),
             expires_at,
             created_by: store::Actor::Api,
         })
     }
+}
+
+/// Normalises what a person typed as a rule pattern or suffix, with the proxy's own normaliser, so
+/// a rule matches exactly what the proxy will look up. Returns whether it was written as a suffix
+/// (`.example.com` or `*.example.com`) and the normalised host: lower case, Unicode to punycode,
+/// one trailing dot dropped, IPv6 in its canonical form. Surrounding whitespace is ignored.
+///
+/// URLs, ports and anything else that is not a host are refused with a message that starts with
+/// `field`, so a client can show it next to that field.
+pub(crate) fn normalise_pattern(field: &str, input: &str) -> Result<(bool, String), ApiError> {
+    let text = input.trim();
+    let (suffix, rest) = match text.strip_prefix("*.").or_else(|| text.strip_prefix('.')) {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let refuse = |reason: &str| Err(ApiError::invalid(format!("{field}: {reason}")));
+    if rest.contains('/') || rest.contains('@') || rest.contains('?') || rest.contains('#') {
+        return refuse("give a host name, not a URL");
+    }
+    if let Some((host, port)) = rest.rsplit_once(':')
+        && !host.contains(':')
+        && !host.is_empty()
+        && !port.is_empty()
+        && port.bytes().all(|b| b.is_ascii_digit())
+    {
+        return refuse("a rule covers every port, leave the port out");
+    }
+    let target = puddle_netpolicy::normalise_host(rest)
+        .map_err(|err| ApiError::invalid(format!("{field}: {err}")))?;
+    Ok((suffix, target.host().to_string()))
 }
 
 /// A rule's new expiry.
@@ -456,23 +492,529 @@ pub struct RuleExpiryRequest {
 // ---------------------------------------------------------------------------------------------
 // Audit (docs/spec/rules.md §5)
 
-/// One audit record.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-pub struct AuditEntry {
-    /// Position in the log; pass the last one as `after` to read on.
+/// A rule as an audit record shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AuditRule {
+    /// Row id.
     pub id: i64,
-    /// The record, as written to the JSONL audit log (`type`, `ts`, ...; see the rules spec §5).
-    #[schema(value_type = Value)]
-    pub record: Value,
+    /// `global` or `sandbox`.
+    pub scope: String,
+    /// The sandbox, for a sandbox rule.
+    #[schema(required = true)]
+    pub sandbox_id: Option<String>,
+    /// `exact` or `suffix`.
+    pub pattern_kind: String,
+    /// `example.com` or `.example.com`.
+    pub pattern: String,
+    /// `allow` or `deny`.
+    pub effect: String,
+    /// Epoch ms, or `null` for permanent.
+    #[schema(required = true)]
+    pub expires_at: Option<u64>,
+    /// Epoch ms.
+    pub created_at: u64,
+    /// `cli`, `ui` or `api`.
+    pub created_by: String,
+    /// The pending request it came from.
+    #[schema(required = true)]
+    pub source_pending_id: Option<i64>,
 }
 
-/// A page of the audit log, oldest first.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+impl From<store::RuleWire> for AuditRule {
+    fn from(rule: store::RuleWire) -> Self {
+        let store::RuleWire {
+            id,
+            scope,
+            sandbox_id,
+            pattern_kind,
+            pattern,
+            effect,
+            expires_at,
+            created_at,
+            created_by,
+            source_pending_id,
+        } = rule;
+        Self {
+            id,
+            scope,
+            sandbox_id,
+            pattern_kind,
+            pattern,
+            effect,
+            expires_at,
+            created_at,
+            created_by,
+            source_pending_id,
+        }
+    }
+}
+
+/// A pending request as an audit record shows it. `host` comes from the guest: escape it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AuditPending {
+    /// Row id.
+    pub id: i64,
+    /// The sandbox.
+    pub sandbox_id: String,
+    /// The requested host.
+    pub host: String,
+    /// The requested port.
+    pub port: u16,
+    /// Epoch ms.
+    pub first_seen: u64,
+    /// Epoch ms.
+    pub last_seen: u64,
+    /// Requests the row stands for.
+    pub attempts: u64,
+    /// `requested`, `allowed`, `denied` or `expired`.
+    pub state: String,
+    /// Epoch ms.
+    #[schema(required = true)]
+    pub decided_at: Option<u64>,
+    /// `cli`, `ui`, `api` or `system`.
+    #[schema(required = true)]
+    pub decided_by: Option<String>,
+    /// The deciding rule.
+    #[schema(required = true)]
+    pub rule_id: Option<i64>,
+}
+
+impl From<store::PendingWire> for AuditPending {
+    fn from(row: store::PendingWire) -> Self {
+        let store::PendingWire {
+            id,
+            sandbox_id,
+            host,
+            port,
+            first_seen,
+            last_seen,
+            attempts,
+            state,
+            decided_at,
+            decided_by,
+            rule_id,
+        } = row;
+        Self {
+            id,
+            sandbox_id,
+            host,
+            port,
+            first_seen,
+            last_seen,
+            attempts,
+            state,
+            decided_at,
+            decided_by,
+            rule_id,
+        }
+    }
+}
+
+/// How the proxy handled a connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionDecision {
+    /// Let through.
+    Allow,
+    /// Refused by a deny rule.
+    Deny,
+    /// Refused while waiting for the user.
+    Pending,
+    /// Refused regardless of rules.
+    Blocked,
+}
+
+impl From<puddle_types::ConnectionDecision> for ConnectionDecision {
+    fn from(decision: puddle_types::ConnectionDecision) -> Self {
+        match decision {
+            puddle_types::ConnectionDecision::Allow => Self::Allow,
+            puddle_types::ConnectionDecision::Deny => Self::Deny,
+            puddle_types::ConnectionDecision::Pending => Self::Pending,
+            // A decision this API doesn't know yet is a refusal.
+            _ => Self::Blocked,
+        }
+    }
+}
+
+/// Why a pending request expired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingExpiryReason {
+    /// No repeat for the stale period.
+    Stale,
+    /// Its sandbox was deleted.
+    SandboxDeleted,
+}
+
+/// Why a rule was deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleDeleteReason {
+    /// A user deleted it.
+    User,
+    /// Its sandbox was deleted.
+    SandboxDeleted,
+}
+
+/// One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
+/// from the guest, so escape them when rendering. Records written by an older puddle lack the
+/// fields added since, which read as `null`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AuditRecord {
+    /// A connection the proxy handled. `host`, `port` and `decision` are `null` on a
+    /// `suppressed` summary, which carries `count`.
+    Connection {
+        /// Epoch ms.
+        ts: u64,
+        /// The sandbox.
+        sandbox_id: String,
+        /// The requested host.
+        #[schema(required = true)]
+        host: Option<String>,
+        /// The requested port.
+        #[schema(required = true)]
+        port: Option<u16>,
+        /// The address connected to.
+        #[schema(required = true)]
+        resolved_ip: Option<String>,
+        /// The company-proxy hop that carried it: `DIRECT` or `PROXY host:port`; `null` when no
+        /// upstream route is configured.
+        #[schema(required = true)]
+        upstream: Option<String>,
+        /// What happened.
+        #[schema(required = true)]
+        decision: Option<ConnectionDecision>,
+        /// Why: `rule`, `no_rule`, or a block reason.
+        reason: String,
+        /// The deciding rule.
+        #[schema(required = true)]
+        rule_id: Option<i64>,
+        /// The pending request.
+        #[schema(required = true)]
+        pending_id: Option<i64>,
+        /// The credential binding, by id.
+        #[schema(required = true)]
+        binding_id: Option<String>,
+        /// Whether a credential was injected.
+        injected: bool,
+        /// HTTP method, where the proxy saw the request in clear.
+        #[schema(required = true)]
+        method: Option<String>,
+        /// HTTP path without query string, where `method` is set.
+        #[schema(required = true)]
+        path: Option<String>,
+        /// Whether `path` was cut to fit.
+        path_truncated: bool,
+        /// Bytes from the guest.
+        bytes_up: u64,
+        /// Bytes to the guest.
+        bytes_down: u64,
+        /// Records summarised, on a `suppressed` summary.
+        #[schema(required = true)]
+        count: Option<u64>,
+    },
+    /// A new pending request.
+    PendingCreated {
+        /// Epoch ms.
+        ts: u64,
+        /// The request.
+        pending: AuditPending,
+    },
+    /// A pending request approved or denied.
+    PendingDecided {
+        /// Epoch ms.
+        ts: u64,
+        /// The request as decided.
+        pending: AuditPending,
+    },
+    /// A pending request expired.
+    PendingExpired {
+        /// Epoch ms.
+        ts: u64,
+        /// The request as expired.
+        pending: AuditPending,
+        /// Why.
+        reason: PendingExpiryReason,
+    },
+    /// Requests over a sandbox's limit, not written as rows.
+    PendingSuppressed {
+        /// Epoch ms.
+        ts: u64,
+        /// The sandbox.
+        sandbox_id: String,
+        /// Requests suppressed since the previous record.
+        count: u64,
+    },
+    /// A rule created.
+    RuleCreated {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule.
+        rule: AuditRule,
+    },
+    /// A rule changed.
+    RuleUpdated {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule before.
+        before: AuditRule,
+        /// The rule after.
+        rule: AuditRule,
+        /// Who changed it.
+        actor: String,
+    },
+    /// A rule deleted.
+    RuleDeleted {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule as it was.
+        rule: AuditRule,
+        /// Why.
+        reason: RuleDeleteReason,
+        /// Who deleted it.
+        actor: String,
+    },
+    /// A rule removed after it expired.
+    RuleExpired {
+        /// Epoch ms.
+        ts: u64,
+        /// The rule.
+        rule: AuditRule,
+    },
+    /// The oldest records were deleted to keep the audit under its size cap.
+    AuditTrimmed {
+        /// Epoch ms.
+        ts: u64,
+        /// Records deleted.
+        deleted_records: u64,
+        /// `ts` of the oldest record left; `null` if none.
+        #[schema(required = true)]
+        oldest_ts_kept: Option<u64>,
+    },
+}
+
+impl From<store::ConnectionRecord> for AuditRecord {
+    fn from(record: store::ConnectionRecord) -> Self {
+        let store::ConnectionRecord {
+            ts,
+            sandbox_id,
+            host,
+            port,
+            resolved_ip,
+            upstream,
+            decision,
+            reason,
+            rule_id,
+            pending_id,
+            binding_id,
+            injected,
+            method,
+            path,
+            path_truncated,
+            bytes_up,
+            bytes_down,
+            count,
+        } = record;
+        Self::Connection {
+            ts,
+            sandbox_id,
+            host,
+            port,
+            resolved_ip,
+            upstream,
+            decision: decision.map(Into::into),
+            reason,
+            rule_id,
+            pending_id,
+            binding_id,
+            injected,
+            method,
+            path,
+            path_truncated,
+            bytes_up,
+            bytes_down,
+            count,
+        }
+    }
+}
+
+impl From<store::AuditRecord> for AuditRecord {
+    fn from(record: store::AuditRecord) -> Self {
+        use store::AuditRecord as R;
+        match record {
+            R::Connection(record) => record.into(),
+            R::PendingCreated { ts, pending } => Self::PendingCreated {
+                ts,
+                pending: pending.into(),
+            },
+            R::PendingDecided { ts, pending } => Self::PendingDecided {
+                ts,
+                pending: pending.into(),
+            },
+            R::PendingExpired {
+                ts,
+                pending,
+                reason,
+            } => Self::PendingExpired {
+                ts,
+                pending: pending.into(),
+                reason: match reason {
+                    store::PendingExpiryReason::Stale => PendingExpiryReason::Stale,
+                    store::PendingExpiryReason::SandboxDeleted => {
+                        PendingExpiryReason::SandboxDeleted
+                    }
+                },
+            },
+            R::PendingSuppressed {
+                ts,
+                sandbox_id,
+                count,
+            } => Self::PendingSuppressed {
+                ts,
+                sandbox_id,
+                count,
+            },
+            R::RuleCreated { ts, rule } => Self::RuleCreated {
+                ts,
+                rule: rule.into(),
+            },
+            R::RuleUpdated {
+                ts,
+                before,
+                rule,
+                actor,
+            } => Self::RuleUpdated {
+                ts,
+                before: before.into(),
+                rule: rule.into(),
+                actor,
+            },
+            R::RuleDeleted {
+                ts,
+                rule,
+                reason,
+                actor,
+            } => Self::RuleDeleted {
+                ts,
+                rule: rule.into(),
+                reason: match reason {
+                    store::RuleDeleteReason::User => RuleDeleteReason::User,
+                    store::RuleDeleteReason::SandboxDeleted => RuleDeleteReason::SandboxDeleted,
+                },
+                actor,
+            },
+            R::RuleExpired { ts, rule } => Self::RuleExpired {
+                ts,
+                rule: rule.into(),
+            },
+            R::AuditTrimmed {
+                ts,
+                deleted_records,
+                oldest_ts_kept,
+            } => Self::AuditTrimmed {
+                ts,
+                deleted_records,
+                oldest_ts_kept,
+            },
+        }
+    }
+}
+
+/// One audit record with its position in the log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AuditEntry {
+    /// Position in the log: pass the newest one as `after` to read on, or the oldest as `before`
+    /// to read back.
+    pub id: i64,
+    /// The record.
+    pub record: AuditRecord,
+}
+
+/// A page of the audit log: newest first for a read without `after`, oldest first with it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AuditPage {
     /// The records.
     pub entries: Vec<AuditEntry>,
-    /// The `after` for the next page (the last id here, or the request's `after` if empty).
+    /// The `after` for reading what comes after this page, and the one to tail the log with: the
+    /// newest id here, or the request's `after` (0 without one) if the page is empty.
     pub next_after: i64,
+    /// The `before` for the next older page: the oldest id here; `null` when this page is the
+    /// oldest matching one (it holds fewer records than `limit`) or the read ran oldest first.
+    #[schema(required = true)]
+    pub next_before: Option<i64>,
+}
+
+/// What an audit record says happened, for the `outcome` filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditOutcome {
+    /// A connection let through, or a pending request approved.
+    Allow,
+    /// A connection refused by a deny rule, or a pending request denied.
+    Deny,
+    /// A connection refused while waiting for the user, or a pending request opened.
+    Pending,
+    /// A connection refused regardless of rules.
+    Blocked,
+    /// A pending request that expired.
+    Expired,
+}
+
+impl From<AuditOutcome> for store::AuditOutcome {
+    fn from(outcome: AuditOutcome) -> Self {
+        match outcome {
+            AuditOutcome::Allow => Self::Allow,
+            AuditOutcome::Deny => Self::Deny,
+            AuditOutcome::Pending => Self::Pending,
+            AuditOutcome::Blocked => Self::Blocked,
+            AuditOutcome::Expired => Self::Expired,
+        }
+    }
+}
+
+/// The record types, for the `type` filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditType {
+    /// A connection.
+    Connection,
+    /// A new pending request.
+    PendingCreated,
+    /// A pending request decided.
+    PendingDecided,
+    /// A pending request expired.
+    PendingExpired,
+    /// Requests suppressed over a sandbox's limit.
+    PendingSuppressed,
+    /// A rule created.
+    RuleCreated,
+    /// A rule changed.
+    RuleUpdated,
+    /// A rule deleted.
+    RuleDeleted,
+    /// A rule expired.
+    RuleExpired,
+    /// The audit trimmed to its size cap.
+    AuditTrimmed,
+}
+
+impl AuditType {
+    /// The record `type` tag.
+    pub(crate) fn tag(self) -> &'static str {
+        match self {
+            Self::Connection => "connection",
+            Self::PendingCreated => "pending_created",
+            Self::PendingDecided => "pending_decided",
+            Self::PendingExpired => "pending_expired",
+            Self::PendingSuppressed => "pending_suppressed",
+            Self::RuleCreated => "rule_created",
+            Self::RuleUpdated => "rule_updated",
+            Self::RuleDeleted => "rule_deleted",
+            Self::RuleExpired => "rule_expired",
+            Self::AuditTrimmed => "audit_trimmed",
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -988,6 +1530,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use serde_json::Value;
 
     fn keys(v: &Value) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
@@ -1110,14 +1653,17 @@ mod tests {
 
     #[test]
     fn decision_request_defaults_are_narrowest() {
-        let r = DecisionRequest::default().into_resolution(Effect::Allow);
+        let r = DecisionRequest::default()
+            .into_resolution(Effect::Allow)
+            .unwrap();
         assert_eq!(r, store::Resolution::allow());
         let r = DecisionRequest {
             scope: ScopeChoice::Global,
             suffix: Some("example.com".into()),
             expires_in_secs: Some(60),
         }
-        .into_resolution(Effect::Deny);
+        .into_resolution(Effect::Deny)
+        .unwrap();
         assert_eq!(r.effect, store::Effect::Deny);
         assert_eq!(r.scope, store::ScopeChoice::Global);
         assert_eq!(
@@ -1158,14 +1704,17 @@ mod tests {
             serde_json::to_value(RuleScope::Global).unwrap(),
             json!({"type": "global"})
         );
-        // Patterns must already be normalised (lower case, punycode) until T-132's normaliser.
-        let upper = NewRuleRequest {
+        // Input is normalised, not refused: case, punycode, a trailing dot, a wildcard.
+        let typed = NewRuleRequest {
             scope: RuleScope::Global,
-            pattern: "Example.COM".into(),
+            pattern: "  *.Bücher.Example.COM. ".into(),
             effect: Effect::Allow,
             expires_at: None,
         };
-        assert!(upper.into_new_rule().is_err());
+        assert_eq!(
+            typed.into_new_rule().unwrap().pattern.to_string(),
+            ".xn--bcher-kva.example.com"
+        );
         let new = NewRuleRequest {
             scope: RuleScope::Global,
             pattern: "example.com".into(),
@@ -1287,5 +1836,131 @@ mod tests {
         for e in [Effect::Allow, Effect::Deny] {
             assert_eq!(Effect::from(store::Effect::from(e)), e);
         }
+    }
+
+    #[test]
+    fn patterns_are_normalised_with_the_proxy_normaliser() {
+        for (input, want) in [
+            ("example.com", (false, "example.com")),
+            ("EXAMPLE.com.", (false, "example.com")),
+            (".example.com", (true, "example.com")),
+            ("*.Example.Com", (true, "example.com")),
+            ("Bücher.example", (false, "xn--bcher-kva.example")),
+            ("\t10.0.0.1\n", (false, "10.0.0.1")),
+            ("[2001:DB8::1]", (false, "2001:db8::1")),
+            ("2001:DB8:0::1", (false, "2001:db8::1")),
+        ] {
+            assert_eq!(
+                normalise_pattern("pattern", input).unwrap(),
+                (want.0, want.1.to_owned()),
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn patterns_that_are_not_hosts_are_refused_naming_the_field() {
+        for (input, why) in [
+            ("", "invalid host"),
+            ("https://example.com/a", "not a URL"),
+            ("user@example.com", "not a URL"),
+            ("example.com/path", "not a URL"),
+            ("example.com:443", "leave the port out"),
+            ("*.example.com:8080", "leave the port out"),
+            ("a b.example", "invalid host"),
+            ("127.1", "canonical"),
+            ("exa*mple.com", "invalid host"),
+            ("-.", "invalid host"),
+        ] {
+            let err = normalise_pattern("suffix", input).unwrap_err();
+            assert_eq!(err.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+            let body = format!("{err:?}");
+            assert!(body.contains("suffix: "), "{input:?}: {body}");
+            assert!(body.contains(why), "{input:?}: {body}");
+        }
+    }
+
+    #[test]
+    fn a_decision_suffix_is_normalised_too() {
+        let r = DecisionRequest {
+            scope: ScopeChoice::Sandbox,
+            suffix: Some("*.GitHub.COM".into()),
+            expires_in_secs: None,
+        }
+        .into_resolution(Effect::Allow)
+        .unwrap();
+        assert_eq!(r.pattern, store::PatternChoice::Suffix("github.com".into()));
+        assert!(
+            DecisionRequest {
+                scope: ScopeChoice::Sandbox,
+                suffix: Some("https://github.com".into()),
+                expires_in_secs: None,
+            }
+            .into_resolution(Effect::Allow)
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn audit_types_and_outcomes_cover_the_stores() {
+        let tags: Vec<&str> = [
+            AuditType::Connection,
+            AuditType::PendingCreated,
+            AuditType::PendingDecided,
+            AuditType::PendingExpired,
+            AuditType::PendingSuppressed,
+            AuditType::RuleCreated,
+            AuditType::RuleUpdated,
+            AuditType::RuleDeleted,
+            AuditType::RuleExpired,
+            AuditType::AuditTrimmed,
+        ]
+        .into_iter()
+        .map(AuditType::tag)
+        .collect();
+        assert_eq!(tags, store::AuditRecord::KINDS);
+        for kind in [AuditType::PendingCreated, AuditType::RuleExpired] {
+            assert_eq!(serde_json::to_value(kind).unwrap(), kind.tag());
+        }
+        for (wire, domain) in [
+            (AuditOutcome::Allow, store::AuditOutcome::Allow),
+            (AuditOutcome::Deny, store::AuditOutcome::Deny),
+            (AuditOutcome::Pending, store::AuditOutcome::Pending),
+            (AuditOutcome::Blocked, store::AuditOutcome::Blocked),
+            (AuditOutcome::Expired, store::AuditOutcome::Expired),
+        ] {
+            assert_eq!(
+                serde_json::to_value(wire).unwrap(),
+                domain.as_str(),
+                "{wire:?}"
+            );
+            assert_eq!(store::AuditOutcome::from(wire), domain);
+        }
+    }
+
+    /// The typed record serialises to the very JSON the store wrote, so the API adds no layer
+    /// that could drop or rename a field, including `upstream` and records older than it.
+    #[test]
+    fn typed_audit_records_serialise_as_stored() {
+        let stored = serde_json::json!({
+            "type": "connection", "ts": 5, "sandbox_id": "box", "host": "example.com",
+            "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
+            "decision": "allow", "reason": "rule", "rule_id": 4, "pending_id": null,
+            "binding_id": null, "injected": false, "method": "GET", "path": "/",
+            "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
+        });
+        let record: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(AuditRecord::from(record)).unwrap(),
+            stored
+        );
+        // Written before `upstream` existed.
+        let mut old = stored;
+        old.as_object_mut().unwrap().remove("upstream");
+        let record: store::AuditRecord = serde_json::from_value(old.clone()).unwrap();
+        let mut back = serde_json::to_value(AuditRecord::from(record)).unwrap();
+        assert_eq!(back["upstream"], Value::Null);
+        back.as_object_mut().unwrap().remove("upstream");
+        assert_eq!(back, old);
     }
 }

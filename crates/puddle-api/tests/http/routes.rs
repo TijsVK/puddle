@@ -3,6 +3,9 @@
 
 use serde_json::{Value, json};
 
+use puddle_store::Clock;
+use puddle_types::{EgressRequest, Host, SandboxName};
+
 use crate::common::{START_MS, start};
 
 #[tokio::test]
@@ -76,9 +79,9 @@ async fn a_pending_request_is_listed_approved_and_then_allowed() {
     let decision = api
         .store
         .decide(
-            &puddle_types::EgressRequest::new(
-                puddle_types::SandboxName::new("box").unwrap(),
-                puddle_types::Host::parse_normalised("api.example.com").unwrap(),
+            &EgressRequest::new(
+                SandboxName::new("box").unwrap(),
+                Host::parse_normalised("api.example.com").unwrap(),
                 443,
             ),
             puddle_types::SuffixAllows::Count,
@@ -249,7 +252,6 @@ async fn invalid_rules_are_refused() {
     let api = start().await;
     for body in [
         json!({"scope": {"type": "global"}, "pattern": "*.com", "effect": "allow"}),
-        json!({"scope": {"type": "global"}, "pattern": "Example.com", "effect": "allow"}),
         json!({"scope": {"type": "global"}, "pattern": "example.com", "effect": "maybe"}),
         json!({"scope": {"type": "everyone"}, "pattern": "example.com", "effect": "allow"}),
         json!({"scope": {"type": "sandbox", "sandbox": "tauri"}, "pattern": "example.com", "effect": "allow"}),
@@ -264,7 +266,7 @@ async fn invalid_rules_are_refused() {
 }
 
 #[tokio::test]
-async fn audit_pages_read_on_from_the_last_id() {
+async fn audit_pages_back_newest_first_and_follow_the_tail_oldest_first() {
     let api = start().await;
     for host in ["a.example.com", "b.example.com", "c.example.com"] {
         let id = api.request("box", host);
@@ -277,28 +279,231 @@ async fn audit_pages_read_on_from_the_last_id() {
             .await;
         assert_eq!(reply.status, 200);
     }
+    // Newest first, `before` pages back, and the last page says there is no older one.
     let first = api.get("/api/audit?limit=2").await.json();
     let entries = first["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 2);
+    let (newest, second) = (
+        entries[0]["id"].as_i64().unwrap(),
+        entries[1]["id"].as_i64().unwrap(),
+    );
+    assert!(newest > second);
     assert!(entries[0]["record"]["type"].is_string(), "{first}");
     assert!(entries[0]["record"]["ts"].is_u64(), "{first}");
-    let next = first["next_after"].as_i64().unwrap();
-    assert_eq!(next, entries[1]["id"].as_i64().unwrap());
-    let rest = api
-        .get(&format!("/api/audit?after={next}&limit=1000"))
+    assert_eq!(first["next_after"], newest);
+    assert_eq!(first["next_before"], second);
+    let mut seen = vec![newest, second];
+    let mut before = second;
+    loop {
+        let page = api
+            .get(&format!("/api/audit?before={before}&limit=2"))
+            .await
+            .json();
+        let ids: Vec<i64> = page["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_i64().unwrap())
+            .collect();
+        seen.extend(&ids);
+        match page["next_before"].as_i64() {
+            Some(next) => before = next,
+            None => break,
+        }
+    }
+    let mut oldest_first = seen.clone();
+    oldest_first.sort_unstable();
+    oldest_first.dedup();
+    assert_eq!(oldest_first.len(), seen.len(), "no record twice: {seen:?}");
+    assert_eq!(oldest_first.len(), 9, "3 x (created, rule, decided)");
+    // `after` reads oldest first.
+    let tail = api
+        .get(&format!("/api/audit?after={}&limit=100", oldest_first[2]))
         .await
         .json();
-    let rest_entries = rest["entries"].as_array().unwrap();
-    assert!(!rest_entries.is_empty(), "{rest}");
-    assert!(rest_entries[0]["id"].as_i64().unwrap() > next);
-    let end = rest["next_after"].as_i64().unwrap();
+    let tail_ids: Vec<i64> = tail["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(tail_ids, oldest_first[3..]);
+    assert_eq!(tail["next_before"], json!(null));
+    let end = tail["next_after"].as_i64().unwrap();
     let empty = api.get(&format!("/api/audit?after={end}")).await.json();
     assert_eq!(empty["entries"], json!([]));
     assert_eq!(empty["next_after"], end);
-    for bad in ["/api/audit?limit=0", "/api/audit?limit=1001"] {
-        assert_eq!(api.get(bad).await.status, 422, "{bad}");
+    for bad in [
+        "/api/audit?limit=0",
+        "/api/audit?limit=501",
+        "/api/audit?after=1&before=9",
+        "/api/audit?sandbox=Not%20A%20Name",
+        "/api/audit?from=10&to=10",
+        "/api/audit?type=nope",
+        "/api/audit?outcome=nope",
+    ] {
+        let status = api.get(bad).await.status;
+        assert!(status == 422 || status == 400, "{bad}: {status}");
     }
+    assert_eq!(api.get("/api/audit?limit=0").await.status, 422);
     assert_eq!(api.get("/api/audit?after=x").await.status, 400);
+    assert_eq!(api.get("/api/audit?sandbox=a%20b").await.status, 422);
+    assert_eq!(api.get("/api/audit?unknown=1").await.status, 400);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn audit_filters_run_on_the_server() {
+    let api = start().await;
+    let a = api.request("alpha", "api.github.com");
+    api.request("beta", "registry.npmjs.org");
+    api.clock.advance(60_000);
+    api.send("POST", &format!("/api/pending/{a}/deny"), Some(&json!({})))
+        .await;
+    let t = api.clock.now_ms();
+    let types = |reply: crate::common::Reply| -> Vec<String> {
+        reply.json()["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["record"]["type"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        types(api.get("/api/audit?sandbox=beta").await),
+        ["pending_created"]
+    );
+    assert_eq!(
+        types(api.get("/api/audit?type=rule_created").await),
+        ["rule_created"]
+    );
+    assert_eq!(
+        types(api.get("/api/audit?outcome=deny").await),
+        ["pending_decided"]
+    );
+    assert_eq!(
+        types(
+            api.get("/api/audit?host_contains=GITHUB&type=pending_created")
+                .await
+        ),
+        ["pending_created"]
+    );
+    assert_eq!(
+        types(api.get("/api/audit?host_contains=nothing").await),
+        Vec::<String>::new()
+    );
+    // An empty filter value is no filter (a form that sends `host_contains=`).
+    assert_eq!(
+        types(api.get("/api/audit?host_contains=&sandbox=").await).len(),
+        4
+    );
+    assert_eq!(
+        types(api.get(&format!("/api/audit?from={t}")).await),
+        ["pending_decided", "rule_created"]
+    );
+    assert_eq!(
+        types(api.get(&format!("/api/audit?to={t}&sandbox=alpha")).await),
+        ["pending_created"]
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn audit_records_are_typed_including_the_upstream_hop() {
+    use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason};
+    let api = start().await;
+    let request = EgressRequest::new(
+        SandboxName::new("box").unwrap(),
+        Host::parse_normalised("example.com").unwrap(),
+        443,
+    );
+    let mut event =
+        ConnectionEvent::new(&request, ConnectionDecision::Allow, ConnectionReason::Rule);
+    event.upstream = Some("PROXY corp.example:3128".into());
+    api.store.record(&event);
+    let page = api
+        .get("/api/audit?type=connection&outcome=allow")
+        .await
+        .json();
+    let record = &page["entries"][0]["record"];
+    assert_eq!(record["upstream"], "PROXY corp.example:3128");
+    assert_eq!(record["decision"], "allow");
+    assert_eq!(record["host"], "example.com");
+    assert_eq!(record["rule_id"], json!(null));
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn rule_input_is_normalised_not_refused() {
+    let api = start().await;
+    let reply = api
+        .send(
+            "POST",
+            "/api/rules",
+            Some(&json!({"scope": {"type": "global"}, "pattern": " *.Bücher.EXAMPLE.org. ", "effect": "allow"})),
+        )
+        .await;
+    assert_eq!(reply.status, 201, "{}", reply.body);
+    let rule = reply.json();
+    assert_eq!(rule["pattern"], ".xn--bcher-kva.example.org");
+    assert_eq!(rule["pattern_kind"], "suffix");
+    for (pattern, field) in [
+        ("https://example.com/", "pattern: "),
+        ("example.com:8443", "pattern: "),
+        ("a b", "pattern: "),
+    ] {
+        let reply = api
+            .send(
+                "POST",
+                "/api/rules",
+                Some(&json!({"scope": {"type": "global"}, "pattern": pattern, "effect": "allow"})),
+            )
+            .await;
+        assert_eq!(reply.status, 422, "{pattern}");
+        assert!(
+            reply.json()["message"].as_str().unwrap().starts_with(field),
+            "{pattern}: {}",
+            reply.body
+        );
+    }
+    let public = api
+        .send(
+            "POST",
+            "/api/rules",
+            Some(&json!({"scope": {"type": "global"}, "pattern": "*.CO.UK", "effect": "allow"})),
+        )
+        .await;
+    assert_eq!(public.status, 422);
+    // The same normaliser serves an approval's suffix.
+    let id = api.request("box", "www.github.com");
+    let approved = api
+        .send(
+            "POST",
+            &format!("/api/pending/{id}/approve"),
+            Some(&json!({"suffix": "*.GitHub.com"})),
+        )
+        .await;
+    assert_eq!(approved.status, 200, "{}", approved.body);
+    assert_eq!(approved.json()["rule"]["pattern"], ".github.com");
+    let bad = api
+        .send(
+            "POST",
+            &format!(
+                "/api/pending/{}/approve",
+                api.request("box", "x.example.org")
+            ),
+            Some(&json!({"suffix": "example.org:80"})),
+        )
+        .await;
+    assert_eq!(bad.status, 422);
+    assert!(
+        bad.json()["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("suffix: "),
+        "{}",
+        bad.body
+    );
     api.running.shutdown().await;
 }
 

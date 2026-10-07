@@ -144,7 +144,7 @@ async fn decide(
     crate::extract::Json(body): crate::extract::Json<DecisionRequest>,
     effect: Effect,
 ) -> Result<Json<DecisionOutcome>, ApiError> {
-    let resolution = body.into_resolution(effect);
+    let resolution = body.into_resolution(effect)?;
     let decided = blocking(move || {
         Ok(state
             .store

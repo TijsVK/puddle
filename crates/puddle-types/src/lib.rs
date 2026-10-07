@@ -37,7 +37,10 @@ pub use connection::{
     NullConnectionLog, request_path,
 };
 pub use error::ValidationError;
-pub use event::{CollectingSink, Event, EventSink, NullSink, SandboxStatus, WorkspaceStep};
+pub use event::{
+    CollectingSink, Event, EventSink, NullSink, PendingEnd, PendingSummary, SandboxStatus,
+    WorkspaceStep,
+};
 pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};
 pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
 pub use local::LocalCategory;

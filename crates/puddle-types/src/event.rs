@@ -103,9 +103,88 @@ pub enum Event {
         #[cfg_attr(feature = "openapi", schema(required = true))]
         detail: Option<String>,
     },
-    /// A global event, standing in for the real ones until the first lands.
-    #[cfg(test)]
-    TestGlobal,
+    /// A new open pending request (a sandbox asked for a host:port no rule decides).
+    PendingOpened {
+        /// The request, as `GET /api/pending` shows it.
+        request: PendingSummary,
+    },
+    /// An open pending request was seen again.
+    PendingUpdated {
+        /// The sandbox.
+        sandbox: SandboxName,
+        /// The pending request's id.
+        id: i64,
+        /// Requests the row stands for now.
+        attempts: u64,
+        /// Epoch ms of the latest one.
+        last_seen: u64,
+    },
+    /// A pending request is no longer open: decided by a user or by a rule, or expired.
+    PendingClosed {
+        /// The sandbox.
+        sandbox: SandboxName,
+        /// The pending request's id.
+        id: i64,
+        /// How it ended.
+        state: PendingEnd,
+        /// The rule that decided it; `null` for an expiry.
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
+        rule_id: Option<i64>,
+    },
+    /// A sandbox's "requests held back" state (R-13) changed. Sent when suppression starts or
+    /// ends, and at most twice a second while its count grows.
+    SuppressionChanged {
+        /// The sandbox.
+        sandbox: SandboxName,
+        /// Whether suppression is on.
+        active: bool,
+        /// Requests held back in this episode so far.
+        count: u64,
+    },
+    /// Rules were created, changed, deleted or expired. Global: every subscriber gets it.
+    RulesChanged {},
+    /// New audit records were committed. `id` is the newest record's id, so a client that holds
+    /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit,
+    /// not per record. Global: every subscriber gets it.
+    AuditAppended {
+        /// The newest audit record's id.
+        id: i64,
+    },
+}
+
+/// An open pending request as [`Event::PendingOpened`] carries it. `host` comes from the guest
+/// (already normalised by the proxy): escape it when rendering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct PendingSummary {
+    /// The pending request's id.
+    pub id: i64,
+    /// The sandbox that asked.
+    pub sandbox: SandboxName,
+    /// The requested host, normalised.
+    pub host: String,
+    /// The requested port.
+    pub port: u16,
+    /// Epoch ms of the first request.
+    pub first_seen: u64,
+    /// Epoch ms of the latest one.
+    pub last_seen: u64,
+    /// Requests the row stands for.
+    pub attempts: u64,
+}
+
+/// How a pending request ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub enum PendingEnd {
+    /// Allowed by a rule.
+    Allowed,
+    /// Denied by a rule.
+    Denied,
+    /// Expired without a decision.
+    Expired,
 }
 
 /// Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
@@ -172,9 +251,12 @@ impl Event {
         match self {
             Self::StatusChanged { sandbox, .. }
             | Self::OomKill { sandbox, .. }
-            | Self::WorkspaceProgress { sandbox, .. } => Some(sandbox),
-            #[cfg(test)]
-            Self::TestGlobal => None,
+            | Self::WorkspaceProgress { sandbox, .. }
+            | Self::PendingUpdated { sandbox, .. }
+            | Self::PendingClosed { sandbox, .. }
+            | Self::SuppressionChanged { sandbox, .. } => Some(sandbox),
+            Self::PendingOpened { request } => Some(&request.sandbox),
+            Self::RulesChanged {} | Self::AuditAppended { .. } => None,
         }
     }
 }
@@ -348,14 +430,89 @@ mod tests {
 
     #[test]
     fn global_events_have_no_sandbox_and_round_trip_without_one() {
-        let g = Event::TestGlobal;
+        let g = Event::RulesChanged {};
         assert_eq!(g.sandbox(), None);
         let json = serde_json::to_string(&g).unwrap();
-        assert_eq!(json, r#"{"type":"test_global"}"#);
+        assert_eq!(json, r#"{"type":"rules_changed"}"#);
         assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), g);
         let sink = CollectingSink::default();
         sink.emit(g.clone());
         assert_eq!(sink.take(), [g]);
+    }
+
+    #[test]
+    fn pending_rule_and_audit_events_have_fixed_shapes() {
+        let request = PendingSummary {
+            id: 7,
+            sandbox: name(),
+            host: "example.com".into(),
+            port: 443,
+            first_seen: 1,
+            last_seen: 2,
+            attempts: 3,
+        };
+        for (event, json, sandbox) in [
+            (
+                Event::PendingOpened { request },
+                r#"{"type":"pending_opened","request":{"id":7,"sandbox":"box","host":"example.com","port":443,"first_seen":1,"last_seen":2,"attempts":3}}"#,
+                Some(name()),
+            ),
+            (
+                Event::PendingUpdated {
+                    sandbox: name(),
+                    id: 7,
+                    attempts: 4,
+                    last_seen: 9,
+                },
+                r#"{"type":"pending_updated","sandbox":"box","id":7,"attempts":4,"last_seen":9}"#,
+                Some(name()),
+            ),
+            (
+                Event::PendingClosed {
+                    sandbox: name(),
+                    id: 7,
+                    state: PendingEnd::Allowed,
+                    rule_id: Some(2),
+                },
+                r#"{"type":"pending_closed","sandbox":"box","id":7,"state":"allowed","rule_id":2}"#,
+                Some(name()),
+            ),
+            (
+                Event::PendingClosed {
+                    sandbox: name(),
+                    id: 8,
+                    state: PendingEnd::Expired,
+                    rule_id: None,
+                },
+                r#"{"type":"pending_closed","sandbox":"box","id":8,"state":"expired","rule_id":null}"#,
+                Some(name()),
+            ),
+            (
+                Event::SuppressionChanged {
+                    sandbox: name(),
+                    active: true,
+                    count: 12,
+                },
+                r#"{"type":"suppression_changed","sandbox":"box","active":true,"count":12}"#,
+                Some(name()),
+            ),
+            (Event::RulesChanged {}, r#"{"type":"rules_changed"}"#, None),
+            (
+                Event::AuditAppended { id: 99 },
+                r#"{"type":"audit_appended","id":99}"#,
+                None,
+            ),
+        ] {
+            assert_eq!(serde_json::to_string(&event).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+            assert_eq!(event.sandbox(), sandbox.as_ref());
+        }
+        // `rule_id` may be left out by an older sender.
+        let closed: Event = serde_json::from_str(
+            r#"{"type":"pending_closed","sandbox":"box","id":1,"state":"denied"}"#,
+        )
+        .unwrap();
+        assert!(matches!(closed, Event::PendingClosed { rule_id: None, .. }));
     }
 
     #[test]
@@ -401,7 +558,12 @@ mod tests {
                 "status_changed",
                 "oom_kill",
                 "workspace_progress",
-                "test_global"
+                "pending_opened",
+                "pending_updated",
+                "pending_closed",
+                "suppression_changed",
+                "rules_changed",
+                "audit_appended"
             ]
         );
         for v in variants {
@@ -417,7 +579,7 @@ mod tests {
                 .any(|r| r == "detail"),
             "detail is always present, null when empty: {progress}"
         );
-        let global = &variants[3];
+        let global = &variants[7];
         assert!(global["properties"].get("sandbox").is_none());
         assert_eq!(
             variants[0]["properties"]["sandbox"]["$ref"],

@@ -329,7 +329,109 @@ pub enum AuditRecord {
     },
 }
 
+/// What a record says happened, for filtering (`GET /api/audit?outcome=`). Only records that
+/// are about a decision have one: connections, and pending requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditOutcome {
+    /// A connection let through, or a pending request approved.
+    Allow,
+    /// A connection refused by a deny rule, or a pending request denied.
+    Deny,
+    /// A connection refused while waiting for the user, or a pending request opened.
+    Pending,
+    /// A connection refused regardless of rules.
+    Blocked,
+    /// A pending request that expired without a decision.
+    Expired,
+}
+
+impl AuditOutcome {
+    /// Every outcome.
+    pub const ALL: [Self; 5] = [
+        Self::Allow,
+        Self::Deny,
+        Self::Pending,
+        Self::Blocked,
+        Self::Expired,
+    ];
+
+    /// The `snake_case` name stored in the `audit.outcome` column and used on the wire.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+            Self::Pending => "pending",
+            Self::Blocked => "blocked",
+            Self::Expired => "expired",
+        }
+    }
+}
+
 impl AuditRecord {
+    /// Every `type` tag, in declaration order.
+    pub const KINDS: [&'static str; 10] = [
+        "connection",
+        "pending_created",
+        "pending_decided",
+        "pending_expired",
+        "pending_suppressed",
+        "rule_created",
+        "rule_updated",
+        "rule_deleted",
+        "rule_expired",
+        "audit_trimmed",
+    ];
+
+    /// The host the record is about, lower case: a connection's or pending request's host, or a
+    /// rule's pattern (`.example.com` for a suffix). Stored in a column so `host_contains` needs
+    /// no JSON parsing. The migration that added the column derives the same value in SQL
+    /// (`schema.rs`); a test keeps the two equal.
+    #[must_use]
+    pub fn host(&self) -> Option<String> {
+        let host = match self {
+            Self::Connection(record) => record.host.as_deref()?,
+            Self::PendingCreated { pending, .. }
+            | Self::PendingDecided { pending, .. }
+            | Self::PendingExpired { pending, .. } => &pending.host,
+            Self::RuleCreated { rule, .. }
+            | Self::RuleUpdated { rule, .. }
+            | Self::RuleDeleted { rule, .. }
+            | Self::RuleExpired { rule, .. } => &rule.pattern,
+            Self::PendingSuppressed { .. } | Self::AuditTrimmed { .. } => return None,
+        };
+        Some(host.to_ascii_lowercase())
+    }
+
+    /// The record's [`AuditOutcome`], if it has one.
+    #[must_use]
+    pub fn outcome(&self) -> Option<AuditOutcome> {
+        match self {
+            Self::Connection(record) => record.decision.map(|d| match d {
+                ConnectionDecision::Allow => AuditOutcome::Allow,
+                ConnectionDecision::Deny => AuditOutcome::Deny,
+                ConnectionDecision::Pending => AuditOutcome::Pending,
+                // `ConnectionDecision` is non-exhaustive; a new decision is a refusal until
+                // this match learns it.
+                _ => AuditOutcome::Blocked,
+            }),
+            Self::PendingCreated { .. } => Some(AuditOutcome::Pending),
+            Self::PendingDecided { pending, .. } => match pending.state.as_str() {
+                "allowed" => Some(AuditOutcome::Allow),
+                "denied" => Some(AuditOutcome::Deny),
+                _ => None,
+            },
+            Self::PendingExpired { .. } => Some(AuditOutcome::Expired),
+            Self::PendingSuppressed { .. }
+            | Self::RuleCreated { .. }
+            | Self::RuleUpdated { .. }
+            | Self::RuleDeleted { .. }
+            | Self::RuleExpired { .. }
+            | Self::AuditTrimmed { .. } => None,
+        }
+    }
+
     /// The `type` tag.
     #[must_use]
     pub fn kind(&self) -> &'static str {
@@ -858,6 +960,110 @@ mod tests {
             let value: Value = serde_json::from_str(&line).unwrap();
             prop_assert_eq!(&value["type"], "connection");
             prop_assert!(!value["path"].as_str().unwrap().contains('?'));
+        }
+    }
+
+    #[test]
+    fn kinds_lists_every_type_tag_once() {
+        let kinds: Vec<&str> = every_record().iter().map(AuditRecord::kind).collect();
+        for kind in kinds {
+            assert!(AuditRecord::KINDS.contains(&kind), "{kind}");
+        }
+        let mut sorted = AuditRecord::KINDS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), AuditRecord::KINDS.len());
+    }
+
+    #[test]
+    fn host_and_outcome_per_record_kind() {
+        let mut denied = pending_wire();
+        denied.state = "denied".into();
+        let mut allowed = pending_wire();
+        allowed.state = "allowed".into();
+        let decided = |pending| AuditRecord::PendingDecided { ts: 1, pending };
+        assert_eq!(decided(allowed).outcome(), Some(AuditOutcome::Allow));
+        assert_eq!(decided(denied).outcome(), Some(AuditOutcome::Deny));
+        assert_eq!(decided(pending_wire()).outcome(), None);
+        let mut upper = rule_wire();
+        upper.pattern = ".Example.COM".into();
+        let created = AuditRecord::RuleCreated { ts: 1, rule: upper };
+        assert_eq!(created.host().as_deref(), Some(".example.com"));
+        assert_eq!(created.outcome(), None);
+        let summary = AuditRecord::Connection(ConnectionRecord::suppressed_summary(1, &sb(), 5));
+        assert_eq!((summary.host(), summary.outcome()), (None, None));
+        for decision in [
+            ConnectionDecision::Allow,
+            ConnectionDecision::Deny,
+            ConnectionDecision::Pending,
+            ConnectionDecision::Blocked,
+        ] {
+            let mut record = ConnectionRecord::from_event(1, &event());
+            record.decision = Some(decision);
+            let outcome = AuditRecord::Connection(record).outcome().unwrap();
+            assert_eq!(
+                serde_json::to_value(outcome).unwrap(),
+                serde_json::to_value(decision).unwrap()
+            );
+        }
+        for outcome in AuditOutcome::ALL {
+            assert_eq!(
+                serde_json::to_value(outcome).unwrap(),
+                outcome.as_str(),
+                "{outcome:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn migration_backfills_host_and_outcome_as_the_code_derives_them() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::schema::migrate_up_to(&mut conn, 1).unwrap();
+        let mut records = every_record();
+        let mut allowed = pending_wire();
+        allowed.state = "allowed".into();
+        let mut denied = pending_wire();
+        denied.state = "denied".into();
+        records.extend([
+            AuditRecord::PendingDecided {
+                ts: 9,
+                pending: allowed,
+            },
+            AuditRecord::PendingDecided {
+                ts: 9,
+                pending: denied,
+            },
+        ]);
+        for record in &records {
+            conn.execute(
+                "INSERT INTO audit (ts, type, sandbox_id, line) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    i64::try_from(record.ts()).unwrap(),
+                    record.kind(),
+                    record.sandbox_id(),
+                    record.to_line().unwrap()
+                ],
+            )
+            .unwrap();
+        }
+        crate::schema::migrate(&mut conn).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT type, host, outcome FROM audit ORDER BY id")
+            .unwrap();
+        let rows: Vec<(String, Option<String>, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(rows.len(), records.len());
+        for (record, (kind, host, outcome)) in records.iter().zip(rows) {
+            assert_eq!(kind, record.kind());
+            assert_eq!(host, record.host(), "{kind} host");
+            assert_eq!(
+                outcome.as_deref(),
+                record.outcome().map(AuditOutcome::as_str),
+                "{kind} outcome"
+            );
         }
     }
 }

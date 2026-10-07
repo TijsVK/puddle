@@ -19,7 +19,7 @@ mod store;
 mod sweeper;
 
 pub use audit::{
-    AuditError, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
+    AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
     PendingExpiryReason, PendingWire, RuleDeleteReason, RuleWire,
 };
 pub use clock::{Clock, ManualClock, SystemClock};
@@ -32,5 +32,5 @@ pub use pending::{
 };
 pub use rule::{Actor, Effect, NewRule, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
-pub use store::{Limits, SandboxDeletion, Store, SweepReport};
+pub use store::{AuditCursor, AuditFilter, Limits, SandboxDeletion, Store, SweepReport};
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, Sweeper};
