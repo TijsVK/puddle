@@ -46,8 +46,7 @@ impl BodyReader {
     pub(crate) fn new(body: Body) -> Self {
         Self {
             state: match body {
-                Body::None => State::Done,
-                Body::Length(0) => State::Done,
+                Body::None | Body::Length(0) => State::Done,
                 Body::Length(n) => State::Length(n),
                 Body::Chunked => State::ChunkHeader,
             },

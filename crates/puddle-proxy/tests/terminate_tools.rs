@@ -5,13 +5,7 @@
 //!
 //! Needs `python3` on the path; without it the test skips unless `PUDDLE_TOOLS_REQUIRED` is set
 //! (CI sets it).
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::print_stderr,
-    reason = "tests fail by panicking"
-)]
+#![expect(clippy::print_stderr, reason = "a skipped test says so")]
 mod terminate_support;
 
 use std::process::Command;

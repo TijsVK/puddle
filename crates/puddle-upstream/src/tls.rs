@@ -5,7 +5,7 @@
 //! The server's certificate is checked the way the host's own programs check it, so a host on a
 //! company network that re-signs traffic works when its root is trusted:
 //!
-//! - **Windows**: the platform verifier (CryptoAPI), which already honours the machine's and
+//! - **Windows**: the platform verifier (`CryptoAPI`), which already honours the machine's and
 //!   the user's root stores, plus any extra roots the caller passes;
 //! - **elsewhere**: the system's roots plus the extra roots, checked by `WebPKI`.
 //!
@@ -152,9 +152,8 @@ impl TlsClient {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        let name = match ServerName::try_from(server_name.to_owned()) {
-            Ok(name @ ServerName::DnsName(_)) => name,
-            _ => return Err(TlsConnectError::InvalidName(server_name.to_owned())),
+        let Ok(name @ ServerName::DnsName(_)) = ServerName::try_from(server_name.to_owned()) else {
+            return Err(TlsConnectError::InvalidName(server_name.to_owned()));
         };
         TlsConnector::from(Arc::clone(&self.config))
             .connect(name, stream)
@@ -221,8 +220,8 @@ mod tests {
         let key = rcgen::KeyPair::generate().unwrap();
         let mut leaf = rcgen::CertificateParams::new(vec![san.to_owned()]).unwrap();
         let now = time_now_year();
-        leaf.not_before = rcgen::date_time_ymd((now + years.0) as i32, 1, 1);
-        leaf.not_after = rcgen::date_time_ymd((now + years.1) as i32, 1, 1);
+        leaf.not_before = rcgen::date_time_ymd(i32::try_from(now + years.0).unwrap(), 1, 1);
+        leaf.not_after = rcgen::date_time_ymd(i32::try_from(now + years.1).unwrap(), 1, 1);
         let cert = leaf.signed_by(&key, &issuer).unwrap();
         let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
@@ -258,7 +257,7 @@ mod tests {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        1970 + (secs / 31_556_952) as i64
+        1970 + i64::try_from(secs / 31_556_952).unwrap()
     }
 
     async fn dial(
@@ -312,7 +311,7 @@ mod tests {
     #[tokio::test]
     async fn the_verification_clock_is_the_one_the_client_was_built_with() {
         let server = server("host.test", (-1, 1)).await;
-        let far_future = SystemTime::now() + Duration::from_secs(20 * 365 * 24 * 3600);
+        let far_future = SystemTime::now() + Duration::from_hours(20 * 365 * 24);
         let client = TlsClient::with_clock([server.root.clone()], far_future).unwrap();
         let err = dial(&server, &client, "host.test").await.unwrap_err();
         assert!(matches!(err, TlsConnectError::Certificate(_)), "{err}");

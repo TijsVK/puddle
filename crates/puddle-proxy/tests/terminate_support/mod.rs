@@ -66,12 +66,13 @@ pub(crate) enum Flaw {
     SelfSigned,
 }
 
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+
 impl Pki {
     pub(crate) fn new() -> Self {
         let key = rcgen::KeyPair::generate().unwrap();
         let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
         params.distinguished_name.push(
             rcgen::DnType::CommonName,
             format!("fake internet root {}", NEXT.fetch_add(1, Ordering::SeqCst)),

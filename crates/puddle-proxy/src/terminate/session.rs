@@ -12,13 +12,13 @@ use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::task::JoinHandle;
 
-use super::body::{ChannelBody, pump};
+use super::body::{Abort, ChannelBody, pump};
 use super::guest::{Prefixed, acceptor};
 use super::inject::{InjectContext, InjectDecision, RequestView};
 use super::request::{self, Parsed};
 use super::{Termination, response};
 use crate::http::{self, HeadError};
-use crate::proxy::{ClientReader, Refusal, refuse};
+use crate::proxy::{ClientReader, ProxyConfig, Refusal, refuse};
 use crate::target::Target;
 use crate::upstream::{Admitted, connect_out};
 
@@ -306,7 +306,7 @@ where
         )
         .await?;
         if self.outcome.hop.is_none() && self.outcome.resolved_ip.is_none() {
-            self.outcome.hop = out.hop.clone();
+            self.outcome.hop.clone_from(&out.hop);
             self.outcome.resolved_ip = out.addr.map(|addr| addr.ip());
         }
         let name = cx.target.host.to_string();
@@ -373,50 +373,14 @@ where
             tracing::debug!(error = %err, "guest went away before its body");
             return Flow::Abort;
         }
-        let (sent, pumped) = {
-            let send = upstream.sender.send_request(request);
-            let mut send = pin!(send);
-            let reader = &mut self.reader;
-            let pump_fut = async move {
-                if has_body {
-                    pump(reader, parsed.body, tx, config.body_idle_timeout).await
-                } else {
-                    drop(tx);
-                    Ok(())
-                }
-            };
-            let mut pump_fut = pin!(pump_fut);
-            let mut pumped: Option<io::Result<()>> = None;
-            // The upstream's clock for the response head starts once the whole request is sent.
-            let mut deadline =
-                (!has_body).then(|| Box::pin(tokio::time::sleep(config.upstream_head_timeout)));
-            let sent = loop {
-                tokio::select! {
-                    result = &mut pump_fut, if pumped.is_none() => {
-                        if result.is_err() {
-                            // Never let the upstream mistake a cut-off body for a complete one.
-                            abort.abort();
-                        } else {
-                            deadline = Some(Box::pin(tokio::time::sleep(config.upstream_head_timeout)));
-                        }
-                        pumped = Some(result);
-                    }
-                    result = &mut send => break Some(result),
-                    () = async {
-                        match deadline.as_mut() {
-                            Some(sleep) => sleep.await,
-                            None => std::future::pending().await,
-                        }
-                    } => break None,
-                }
-            };
-            if has_body && !matches!(pumped, Some(Ok(()))) {
-                // The response came before the body was in, or the body failed: cut the upload
-                // off so the upstream sees a failed request, before the sender goes away.
-                abort.abort();
-            }
-            (sent, pumped)
-        };
+        let (sent, pumped) = send_and_pump(
+            &mut upstream.sender,
+            &mut self.reader,
+            request,
+            (parsed.body, tx, abort),
+            config,
+        )
+        .await;
         let body_complete = matches!(pumped, Some(Ok(())));
         let response = match sent {
             Some(Ok(response)) => response,
@@ -481,6 +445,65 @@ where
             }
         }
     }
+}
+
+/// Sends `request` while pumping the guest's body into it. `None` as the first answer: the
+/// upstream did not answer in time. The second is the pump's result, if it finished.
+async fn send_and_pump<R>(
+    sender: &mut SendRequest<ChannelBody>,
+    reader: &mut R,
+    request: ::http::Request<ChannelBody>,
+    (body, tx, abort): (http::Body, tokio::sync::mpsc::Sender<bytes::Bytes>, Abort),
+    config: ProxyConfig,
+) -> (
+    Option<Result<::http::Response<hyper::body::Incoming>, hyper::Error>>,
+    Option<io::Result<()>>,
+)
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    let has_body = !matches!(body, http::Body::None | http::Body::Length(0));
+    let sending = sender.send_request(request);
+    let mut sending = pin!(sending);
+    let pump_fut = async move {
+        if has_body {
+            pump(reader, body, tx, config.body_idle_timeout).await
+        } else {
+            drop(tx);
+            Ok(())
+        }
+    };
+    let mut pump_fut = pin!(pump_fut);
+    let mut pumped: Option<io::Result<()>> = None;
+    // The upstream's clock for the response head starts once the whole request is sent.
+    let mut deadline =
+        (!has_body).then(|| Box::pin(tokio::time::sleep(config.upstream_head_timeout)));
+    let sent = loop {
+        tokio::select! {
+            result = &mut pump_fut, if pumped.is_none() => {
+                if result.is_err() {
+                    // Never let the upstream mistake a cut-off body for a complete one.
+                    abort.abort();
+                } else {
+                    deadline = Some(Box::pin(tokio::time::sleep(config.upstream_head_timeout)));
+                }
+                pumped = Some(result);
+            }
+            result = &mut sending => break Some(result),
+            () = async {
+                match deadline.as_mut() {
+                    Some(sleep) => sleep.await,
+                    None => std::future::pending().await,
+                }
+            } => break None,
+        }
+    };
+    if has_body && !matches!(pumped, Some(Ok(()))) {
+        // The response came before the body was in, or the body failed: cut the upload off so
+        // the upstream sees a failed request, before the sender goes away.
+        abort.abort();
+    }
+    (sent, pumped)
 }
 
 fn short(err: &hyper::Error) -> String {

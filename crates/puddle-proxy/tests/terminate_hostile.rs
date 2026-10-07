@@ -4,11 +4,6 @@
 //! certificate, an oversized or slow response, or a response that is more than it should be.
 //! In every case no credential may leave puddle for the wrong place, and no other connection may
 //! notice.
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests fail by panicking"
-)]
 mod terminate_support;
 
 use std::sync::Arc;
@@ -16,10 +11,12 @@ use std::time::{Duration, SystemTime};
 
 use puddle_proxy::ProxyConfig;
 use rustls::pki_types::ServerName;
+use std::fmt::Write as _;
 use terminate_support::{
     CANARY, FakeServer, Flaw, Guest, Handler, Pki, Reply, RigBuilder, TestInjector, captured_logs,
     inject, refuse,
 };
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn ok_handler() -> Handler {
@@ -357,7 +354,7 @@ async fn the_guests_own_credentials_never_travel_with_an_injected_one() {
         seen.headers_named("authorization"),
         [format!("Basic {CANARY}")]
     );
-    assert!(seen.headers_named("proxy-authorization").is_empty());
+    assert_eq!(seen.headers_named("proxy-authorization").len(), 0);
 }
 
 // HG-19: a bad upstream certificate ----------------------------------------------------------------
@@ -497,7 +494,7 @@ async fn hostile_hg29_a_huge_response_head_is_a_502_and_other_connections_are_fi
             "/many" => {
                 let mut head = String::from("HTTP/1.1 200 OK\r\n");
                 for i in 0..400 {
-                    head.push_str(&format!("X-{i}: v\r\n"));
+                    let _ = write!(head, "X-{i}: v\r\n");
                 }
                 head.push_str("Content-Length: 0\r\n\r\n");
                 Reply::raw(head)

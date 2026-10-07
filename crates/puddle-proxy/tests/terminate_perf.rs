@@ -13,7 +13,6 @@
 //! shared runner.
 #![expect(
     clippy::unwrap_used,
-    clippy::expect_used,
     clippy::print_stderr,
     reason = "tests fail by panicking, and report by printing"
 )]
@@ -63,7 +62,7 @@ async fn bulk_server(pki: &Pki, name: &str) -> std::net::SocketAddr {
                     let mut buf = vec![0_u8; 256 * 1024];
                     while left > 0 {
                         let take = left.min(buf.len());
-                        let n = reader.read(&mut buf[..take]).await.unwrap();
+                        let n = reader.read(buf.split_at_mut(take).0).await.unwrap();
                         assert_ne!(n, 0);
                         left -= n;
                     }
@@ -73,7 +72,11 @@ async fn bulk_server(pki: &Pki, name: &str) -> std::net::SocketAddr {
                     let mut left = length;
                     while left > 0 {
                         let n = left.min(chunk.len());
-                        reader.get_mut().write_all(&chunk[..n]).await.unwrap();
+                        reader
+                            .get_mut()
+                            .write_all(chunk.split_at(n).0)
+                            .await
+                            .unwrap();
                         left -= n;
                     }
                     reader.get_mut().flush().await.unwrap();
@@ -104,8 +107,8 @@ async fn transfer(client: &mut Client, host: &str, mib: usize) -> Duration {
         let mut left = mib * MIB;
         while left > 0 {
             let n = left.min(chunk.len());
-            write.write_all(&chunk[..n]).await.unwrap();
-            if left % (16 * MIB) == 0 {
+            write.write_all(chunk.split_at(n).0).await.unwrap();
+            if left.is_multiple_of(16 * MIB) {
                 eprintln!("  left {} MiB", left / MIB);
             }
             left -= n;
@@ -136,7 +139,7 @@ async fn terminating_costs_little_next_to_splicing() {
     let mut guest = rig.guest().await;
     let mut decrypted = guest.tls("bound.test:443", None).await.unwrap();
     let mut passed = guest
-        .tls_trusting("unbound.test:443", &[pki.root.clone()])
+        .tls_trusting("unbound.test:443", std::slice::from_ref(&pki.root))
         .await
         .unwrap();
     // Warm both paths, then measure each twice and keep the faster run.

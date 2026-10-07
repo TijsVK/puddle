@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! I tests of TLS termination for bound hosts: what is decrypted, what the real server sees,
 //! what the guest sees, and what stays spliced.
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests fail by panicking"
-)]
 mod terminate_support;
 
 use std::sync::Arc;
@@ -84,7 +79,7 @@ async fn an_unbound_host_is_spliced_and_its_real_issuer_reaches_the_guest() {
     let mut guest = rig.guest().await;
     // Trusts only the fake internet's root: it works only if the real chain reaches the guest.
     let mut client = guest
-        .tls_trusting("unbound.test:443", &[pki.root.clone()])
+        .tls_trusting("unbound.test:443", std::slice::from_ref(&pki.root))
         .await
         .expect("the real certificate reaches the guest");
     assert_eq!(
@@ -281,7 +276,7 @@ async fn bodies_are_carried_both_ways_whatever_their_framing() {
     let mut guest = rig.guest().await;
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let body: Vec<u8> = (0..3_000_000_u32)
-        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+        .map(|i| u8::try_from((i.wrapping_mul(2_654_435_761) >> 13) & 0xff).unwrap())
         .collect();
     let digest: u64 = body
         .iter()
