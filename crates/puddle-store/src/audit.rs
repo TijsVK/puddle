@@ -9,7 +9,8 @@
 use std::io;
 
 use puddle_types::{
-    ConnectionDecision, ConnectionEvent, ConnectionReason, SandboxName, request_path,
+    ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionReason, SandboxName,
+    request_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,8 +41,12 @@ pub enum AuditError {
 pub struct ConnectionRecord {
     /// Epoch ms.
     pub ts: u64,
-    /// The sandbox.
-    pub sandbox_id: String,
+    /// The sandbox; `null` for puddle's own connections (`origin: puddle`).
+    pub sandbox_id: Option<String>,
+    /// Whose connection it is: `sandbox` or `puddle`. Absent in records written before it
+    /// existed, which read as `sandbox`.
+    #[serde(default)]
+    pub origin: ConnectionOrigin,
     /// The requested host.
     pub host: Option<String>,
     /// The requested port.
@@ -85,7 +90,8 @@ impl ConnectionRecord {
         });
         Self {
             ts,
-            sandbox_id: event.sandbox.to_string(),
+            sandbox_id: event.sandbox.as_ref().map(ToString::to_string),
+            origin: event.origin,
             host: Some(event.host.to_string()),
             port: Some(event.port),
             resolved_ip: event.resolved_ip.map(|ip| ip.to_string()),
@@ -105,10 +111,17 @@ impl ConnectionRecord {
         }
     }
 
-    pub(crate) fn suppressed_summary(ts: u64, sandbox: &SandboxName, count: u64) -> Self {
+    /// The `suppressed` summary for a sandbox, or for puddle's own connections when `sandbox` is
+    /// `None`.
+    pub(crate) fn suppressed_summary(ts: u64, sandbox: Option<&SandboxName>, count: u64) -> Self {
         Self {
             ts,
-            sandbox_id: sandbox.to_string(),
+            sandbox_id: sandbox.map(ToString::to_string),
+            origin: if sandbox.is_some() {
+                ConnectionOrigin::Sandbox
+            } else {
+                ConnectionOrigin::Puddle
+            },
             host: None,
             port: None,
             resolved_ip: None,
@@ -404,6 +417,17 @@ impl AuditRecord {
         Some(host.to_ascii_lowercase())
     }
 
+    /// Whose connection the record describes: `connection` records only (every other record
+    /// has none). A puddle connection is the one with no sandbox, which is how the `origin`
+    /// filter finds it without a column of its own.
+    #[must_use]
+    pub fn origin(&self) -> Option<ConnectionOrigin> {
+        match self {
+            Self::Connection(record) => Some(record.origin),
+            _ => None,
+        }
+    }
+
     /// The record's [`AuditOutcome`], if it has one.
     #[must_use]
     pub fn outcome(&self) -> Option<AuditOutcome> {
@@ -470,7 +494,7 @@ impl AuditRecord {
     #[must_use]
     pub fn sandbox_id(&self) -> Option<&str> {
         match self {
-            Self::Connection(record) => Some(&record.sandbox_id),
+            Self::Connection(record) => record.sandbox_id.as_deref(),
             Self::PendingCreated { pending, .. }
             | Self::PendingDecided { pending, .. }
             | Self::PendingExpired { pending, .. } => Some(&pending.sandbox_id),
@@ -713,7 +737,7 @@ mod tests {
     fn every_record() -> Vec<AuditRecord> {
         vec![
             AuditRecord::Connection(ConnectionRecord::from_event(9, &event())),
-            AuditRecord::Connection(ConnectionRecord::suppressed_summary(9, &sb(), 12)),
+            AuditRecord::Connection(ConnectionRecord::suppressed_summary(9, Some(&sb()), 12)),
             AuditRecord::PendingCreated {
                 ts: 9,
                 pending: pending_wire(),
@@ -770,9 +794,10 @@ mod tests {
             let back: AuditRecord = serde_json::from_str(&line).unwrap();
             assert_eq!(back, record);
         }
-        let line = AuditRecord::Connection(ConnectionRecord::suppressed_summary(9, &sb(), 12))
-            .to_line()
-            .unwrap();
+        let line =
+            AuditRecord::Connection(ConnectionRecord::suppressed_summary(9, Some(&sb()), 12))
+                .to_line()
+                .unwrap();
         assert!(line.contains(r#""host":null"#), "{line}");
         assert!(line.contains(r#""reason":"suppressed""#));
         assert!(line.contains(r#""count":12"#));
@@ -990,7 +1015,8 @@ mod tests {
         let created = AuditRecord::RuleCreated { ts: 1, rule: upper };
         assert_eq!(created.host().as_deref(), Some(".example.com"));
         assert_eq!(created.outcome(), None);
-        let summary = AuditRecord::Connection(ConnectionRecord::suppressed_summary(1, &sb(), 5));
+        let summary =
+            AuditRecord::Connection(ConnectionRecord::suppressed_summary(1, Some(&sb()), 5));
         assert_eq!((summary.host(), summary.outcome()), (None, None));
         for decision in [
             ConnectionDecision::Allow,

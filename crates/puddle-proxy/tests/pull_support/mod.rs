@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use puddle_netpolicy::PuddleEndpoints;
-use puddle_proxy::testing::StaticResolver;
+use puddle_proxy::testing::{CollectingConnectionLog, StaticResolver};
 use puddle_proxy::{PullProxy, PullRoute};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -93,6 +93,25 @@ pub(crate) fn pull_proxy(
         .with_resolver(Arc::new(resolver));
     let creds = BASE64.encode(format!("puddle:{}", proxy.token().expose()));
     (proxy.serve().unwrap(), creds)
+}
+
+/// Like [`pull_proxy`], with a connection log that keeps what the proxy records.
+pub(crate) fn pull_proxy_logged(
+    endpoints: &PuddleEndpoints,
+    target: Option<IpAddr>,
+) -> (PullRoute, String, Arc<CollectingConnectionLog>) {
+    let mut resolver =
+        StaticResolver::new().with("meta.test", &["169.254.169.254".parse().unwrap()]);
+    if let Some(ip) = target {
+        resolver = resolver.with("registry.test", &[ip]);
+    }
+    let log = Arc::new(CollectingConnectionLog::new());
+    let proxy = PullProxy::bind(endpoints)
+        .unwrap()
+        .with_resolver(Arc::new(resolver))
+        .with_connection_log(log.clone());
+    let creds = BASE64.encode(format!("puddle:{}", proxy.token().expose()));
+    (proxy.serve().unwrap(), creds, log)
 }
 
 /// Sends `request` to the proxy and reads the response head (and, on a refusal, the body).

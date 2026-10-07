@@ -601,17 +601,21 @@ async fn hostile_a_hostile_company_proxy_cannot_hang_or_loop_the_sandbox_proxy()
 struct PullRig {
     route: puddle_proxy::PullRoute,
     credentials: String,
+    log: Arc<CollectingConnectionLog>,
 }
 
 fn pull_rig(resolver: StaticResolver, upstream: Upstream) -> PullRig {
+    let log = Arc::new(CollectingConnectionLog::new());
     let proxy = PullProxy::bind(&PuddleEndpoints::new())
         .unwrap()
         .with_resolver(Arc::new(resolver))
-        .with_upstream(upstream);
+        .with_upstream(upstream)
+        .with_connection_log(log.clone());
     let credentials = BASE64.encode(format!("puddle:{}", proxy.token().expose()));
     PullRig {
         route: proxy.serve().unwrap(),
         credentials,
+        log,
     }
 }
 
@@ -642,6 +646,16 @@ async fn pulls_go_through_the_company_proxy_with_basic_auth_and_unknown_names_re
     let mut back = [0_u8; 11];
     stream.read_exact(&mut back).await.unwrap();
     assert_eq!(&back, b"layer bytes");
+    // The audit names the hop that carried the pull, never its credential.
+    drop(stream);
+    let events = rig.log.wait_for(1, Duration::from_secs(5)).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].origin, puddle_types::ConnectionOrigin::Puddle);
+    assert_eq!(
+        events[0].upstream,
+        Some(format!("PROXY {}", proxy.proxy_addr()))
+    );
+    assert!(!format!("{events:?}").contains("s3cret"));
     let seen = proxy.seen();
     assert_eq!(seen.len(), 2, "one 407, then the credential");
     assert_eq!(seen[1].target, target);

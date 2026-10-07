@@ -643,6 +643,36 @@ impl From<puddle_types::ConnectionDecision> for ConnectionDecision {
     }
 }
 
+/// Whose connection an audit record describes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionOrigin {
+    /// A sandbox's connection.
+    #[default]
+    Sandbox,
+    /// puddle's own connection on the host, such as an image pull; it has no sandbox.
+    Puddle,
+}
+
+impl From<puddle_types::ConnectionOrigin> for ConnectionOrigin {
+    fn from(origin: puddle_types::ConnectionOrigin) -> Self {
+        match origin {
+            puddle_types::ConnectionOrigin::Puddle => Self::Puddle,
+            // An origin this API doesn't know yet is read as a sandbox's.
+            _ => Self::Sandbox,
+        }
+    }
+}
+
+impl From<ConnectionOrigin> for puddle_types::ConnectionOrigin {
+    fn from(origin: ConnectionOrigin) -> Self {
+        match origin {
+            ConnectionOrigin::Sandbox => Self::Sandbox,
+            ConnectionOrigin::Puddle => Self::Puddle,
+        }
+    }
+}
+
 /// Why a pending request expired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -674,8 +704,13 @@ pub enum AuditRecord {
     Connection {
         /// Epoch ms.
         ts: u64,
-        /// The sandbox.
-        sandbox_id: String,
+        /// The sandbox; `null` for puddle's own connections (`origin` is `puddle`).
+        #[schema(required = true)]
+        sandbox_id: Option<String>,
+        /// Whose connection it is. Records written before it existed read as `sandbox`.
+        #[serde(default)]
+        #[schema(required = true)]
+        origin: ConnectionOrigin,
         /// The requested host.
         #[schema(required = true)]
         host: Option<String>,
@@ -806,6 +841,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
         let store::ConnectionRecord {
             ts,
             sandbox_id,
+            origin,
             host,
             port,
             resolved_ip,
@@ -830,6 +866,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             port,
             resolved_ip,
             upstream,
+            origin: origin.into(),
             decision: decision.map(Into::into),
             reason,
             rule_id,
@@ -2114,7 +2151,7 @@ mod tests {
     #[test]
     fn typed_audit_records_serialise_as_stored() {
         let stored = serde_json::json!({
-            "type": "connection", "ts": 5, "sandbox_id": "box", "host": "example.com",
+            "type": "connection", "ts": 5, "sandbox_id": "box", "origin": "sandbox", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
             "decision": "allow", "reason": "rule", "rule_id": 4, "pending_id": null,
             "binding_id": null, "injected": false, "method": "GET", "path": "/",
@@ -2133,5 +2170,24 @@ mod tests {
         assert_eq!(back["upstream"], Value::Null);
         back.as_object_mut().unwrap().remove("upstream");
         assert_eq!(back, old);
+        // Written before `origin` existed: a sandbox's connection.
+        let mut older = serde_json::to_value(AuditRecord::from(
+            serde_json::from_value::<store::AuditRecord>(old).unwrap(),
+        ))
+        .unwrap();
+        older.as_object_mut().unwrap().remove("origin");
+        let record: store::AuditRecord = serde_json::from_value(older).unwrap();
+        let back = serde_json::to_value(AuditRecord::from(record)).unwrap();
+        assert_eq!(back["origin"], "sandbox");
+        assert_eq!(back["sandbox_id"], "box");
+        // puddle's own connection: no sandbox.
+        let mut own = back;
+        own["origin"] = "puddle".into();
+        own["sandbox_id"] = Value::Null;
+        let record: store::AuditRecord = serde_json::from_value(own.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(AuditRecord::from(record)).unwrap(),
+            own
+        );
     }
 }

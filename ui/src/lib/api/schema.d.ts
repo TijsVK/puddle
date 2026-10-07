@@ -589,6 +589,8 @@ export interface components {
             injected: boolean;
             /** @description HTTP method, where the proxy saw the request in clear. */
             method: string | null;
+            /** @description Whose connection it is. Records written before it existed read as `sandbox`. */
+            origin: components["schemas"]["ConnectionOrigin"];
             /** @description HTTP path without query string, where `method` is set. */
             path: string | null;
             /** @description Whether `path` was cut to fit. */
@@ -612,8 +614,8 @@ export interface components {
              * @description The deciding rule.
              */
             rule_id: number | null;
-            /** @description The sandbox. */
-            sandbox_id: string;
+            /** @description The sandbox; `null` for puddle's own connections (`origin` is `puddle`). */
+            sandbox_id: string | null;
             /**
              * Format: int64
              * @description Epoch ms.
@@ -795,6 +797,11 @@ export interface components {
          * @enum {string}
          */
         ConnectionDecision: "allow" | "deny" | "pending" | "blocked";
+        /**
+         * @description Whose connection an audit record describes.
+         * @enum {string}
+         */
+        ConnectionOrigin: "sandbox" | "puddle";
         /** @description What the user agreed to or declined. */
         Consent: {
             /** @enum {string} */
@@ -1563,6 +1570,8 @@ export interface operations {
                 type?: components["schemas"]["AuditType"];
                 /** @description records with this outcome; types that have none never match */
                 outcome?: components["schemas"]["AuditOutcome"];
+                /** @description `connection` records of this origin (`sandbox` or `puddle`); other types have none and never match */
+                origin?: components["schemas"]["ConnectionOrigin"];
                 /** @description records whose host (a rule's pattern) contains this text, case-insensitive */
                 host_contains?: string;
                 /** @description records at or after this epoch ms */

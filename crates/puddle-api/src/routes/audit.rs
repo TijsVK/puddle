@@ -11,7 +11,7 @@ use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
 use crate::extract::Query;
 use crate::routes::AppState;
-use crate::wire::{AuditEntry, AuditOutcome, AuditPage, AuditRecord, AuditType};
+use crate::wire::{AuditEntry, AuditOutcome, AuditPage, AuditRecord, AuditType, ConnectionOrigin};
 
 /// Records per page when the client doesn't say.
 const DEFAULT_LIMIT: u32 = 100;
@@ -31,6 +31,7 @@ pub(crate) struct AuditQuery {
     #[serde(rename = "type")]
     kind: Option<AuditType>,
     outcome: Option<AuditOutcome>,
+    origin: Option<ConnectionOrigin>,
     host_contains: Option<String>,
     from: Option<u64>,
     to: Option<u64>,
@@ -77,6 +78,7 @@ impl AuditQuery {
             sandbox,
             kind: self.kind.map(AuditType::tag),
             outcome: self.outcome.map(Into::into),
+            origin: self.origin.map(Into::into),
             host_contains,
             from: self.from,
             to: self.to,
@@ -99,6 +101,7 @@ impl AuditQuery {
         ("sandbox" = Option<String>, Query, description = "records about this sandbox"),
         ("type" = Option<AuditType>, Query, description = "records of this type"),
         ("outcome" = Option<AuditOutcome>, Query, description = "records with this outcome; types that have none never match"),
+        ("origin" = Option<ConnectionOrigin>, Query, description = "`connection` records of this origin (`sandbox` or `puddle`); other types have none and never match"),
         ("host_contains" = Option<String>, Query, description = "records whose host (a rule's pattern) contains this text, case-insensitive"),
         ("from" = Option<u64>, Query, description = "records at or after this epoch ms"),
         ("to" = Option<u64>, Query, description = "records before this epoch ms")

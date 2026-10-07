@@ -11,9 +11,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
 use puddle_types::{
-    ConnectionEvent, ConnectionLog, Decision, EgressRequest, Event, EventSink, Host, NullSink,
-    PendingEnd, PendingId, PendingOutcome, PendingSummary, Policy, PolicyError, RuleId,
-    SandboxName, SuffixAllows,
+    ConnectionEvent, ConnectionLog, ConnectionOrigin, Decision, EgressRequest, Event, EventSink,
+    Host, NullSink, PendingEnd, PendingId, PendingOutcome, PendingSummary, Policy, PolicyError,
+    RuleId, SandboxName, SuffixAllows,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
@@ -80,6 +80,8 @@ pub struct AuditFilter {
     pub kind: Option<&'static str>,
     /// Records with this outcome. Records that have none never match.
     pub outcome: Option<AuditOutcome>,
+    /// `connection` records with this origin; other records have none and never match.
+    pub origin: Option<ConnectionOrigin>,
     /// Records whose host (or a rule's pattern) contains this text, compared case-folded.
     pub host_contains: Option<String>,
     /// Records at or after this epoch ms.
@@ -186,6 +188,8 @@ pub struct Store {
     conn: Mutex<Connection>,
     rules: RwLock<Arc<RuleSet>>,
     sandboxes: Mutex<HashMap<SandboxName, SandboxState>>,
+    /// The connection limit of puddle's own connections, which have no sandbox.
+    puddle_connections: Mutex<ConnectionWindow>,
     clock: Arc<dyn Clock>,
     limits: Limits,
     events: Arc<dyn EventSink>,
@@ -247,6 +251,7 @@ impl Store {
             conn: Mutex::new(conn),
             rules: RwLock::new(Arc::new(rules)),
             sandboxes: Mutex::new(HashMap::new()),
+            puddle_connections: Mutex::new(ConnectionWindow::default()),
             clock,
             limits,
             events: Arc::new(NullSink),
@@ -674,11 +679,14 @@ impl Store {
     pub fn record_connection(&self, event: &ConnectionEvent) -> Result<(), StoreError> {
         let now = self.clock.now_ms();
         let limit = self.limits.connection_records_per_second;
-        let (admitted, summary) = lock(&self.sandboxes)
-            .entry(event.sandbox.clone())
-            .or_insert_with(|| SandboxState::new(&self.limits, now))
-            .connections
-            .admit(now, limit);
+        let (admitted, summary) = match &event.sandbox {
+            Some(sandbox) => lock(&self.sandboxes)
+                .entry(sandbox.clone())
+                .or_insert_with(|| SandboxState::new(&self.limits, now))
+                .connections
+                .admit(now, limit),
+            None => lock(&self.puddle_connections).admit(now, limit),
+        };
         if !admitted && summary.is_none() {
             return Ok(());
         }
@@ -686,7 +694,7 @@ impl Store {
         let tx = conn.transaction()?;
         let head = audit_head(&tx)?;
         if let Some((ts, count)) = summary {
-            let record = ConnectionRecord::suppressed_summary(ts, &event.sandbox, count);
+            let record = ConnectionRecord::suppressed_summary(ts, event.sandbox.as_ref(), count);
             append(&tx, &AuditRecord::Connection(record))?;
         }
         if admitted {
@@ -825,9 +833,13 @@ impl Store {
                 });
             }
             if let Some((ts, count)) = state.connections.roll(now) {
-                let record = ConnectionRecord::suppressed_summary(ts, sandbox, count);
+                let record = ConnectionRecord::suppressed_summary(ts, Some(sandbox), count);
                 records.push(AuditRecord::Connection(record));
             }
+        }
+        if let Some((ts, count)) = lock(&self.puddle_connections).roll(now) {
+            let record = ConnectionRecord::suppressed_summary(ts, None, count);
+            records.push(AuditRecord::Connection(record));
         }
         if records.is_empty() {
             return Ok(());
@@ -973,33 +985,47 @@ fn audit_query_sql(
     use rusqlite::types::Value;
     let mut sql = String::from("SELECT id, line FROM audit WHERE 1");
     let mut args: Vec<Value> = Vec::new();
-    let mut clause = |text: &str, value: Value| {
+    let mut clause = |text: &str, value: Option<Value>| {
         sql.push_str(" AND ");
         sql.push_str(text);
-        args.push(value);
+        args.extend(value);
     };
     match cursor {
-        AuditCursor::After(id) => clause("id > ?", Value::Integer(id)),
-        AuditCursor::Before(Some(id)) => clause("id < ?", Value::Integer(id)),
+        AuditCursor::After(id) => clause("id > ?", Some(Value::Integer(id))),
+        AuditCursor::Before(Some(id)) => clause("id < ?", Some(Value::Integer(id))),
         AuditCursor::Before(None) => {}
     }
     if let Some(sandbox) = &filter.sandbox {
-        clause("sandbox_id = ?", Value::Text(sandbox.to_string()));
+        clause("sandbox_id = ?", Some(Value::Text(sandbox.to_string())));
     }
     if let Some(kind) = filter.kind {
-        clause("type = ?", Value::Text(kind.to_owned()));
+        clause("type = ?", Some(Value::Text(kind.to_owned())));
     }
     if let Some(outcome) = filter.outcome {
-        clause("outcome = ?", Value::Text(outcome.as_str().to_owned()));
+        clause(
+            "outcome = ?",
+            Some(Value::Text(outcome.as_str().to_owned())),
+        );
+    }
+    match filter.origin {
+        None => {}
+        // A connection record names a sandbox unless puddle made the connection itself.
+        Some(ConnectionOrigin::Puddle) => {
+            clause("type = 'connection' AND sandbox_id IS NULL", None);
+        }
+        Some(_) => clause("type = 'connection' AND sandbox_id IS NOT NULL", None),
     }
     if let Some(from) = filter.from {
-        clause("ts >= ?", Value::Integer(sql_ts(from)));
+        clause("ts >= ?", Some(Value::Integer(sql_ts(from))));
     }
     if let Some(to) = filter.to {
-        clause("ts < ?", Value::Integer(sql_ts(to)));
+        clause("ts < ?", Some(Value::Integer(sql_ts(to))));
     }
     if let Some(needle) = &filter.host_contains {
-        clause("instr(host, ?) > 0", Value::Text(needle.to_lowercase()));
+        clause(
+            "instr(host, ?) > 0",
+            Some(Value::Text(needle.to_lowercase())),
+        );
     }
     sql.push_str(match cursor {
         AuditCursor::After(_) => " ORDER BY id LIMIT ?",
@@ -1035,7 +1061,7 @@ impl Policy for Store {
 impl ConnectionLog for Store {
     fn record(&self, event: &ConnectionEvent) {
         if let Err(err) = self.record_connection(event) {
-            tracing::warn!(sandbox = %event.sandbox, error = %err, "connection record not written");
+            tracing::warn!(origin = %event.origin, error = %err, "connection record not written");
         }
     }
 }

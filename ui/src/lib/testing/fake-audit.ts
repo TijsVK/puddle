@@ -18,6 +18,7 @@ export function connection(
       type: "connection",
       ts: 1_000_000 + id * 1000,
       sandbox_id: "demo",
+      origin: "sandbox",
       host: `h${id}.example.com`,
       port: 443,
       decision: "allow",

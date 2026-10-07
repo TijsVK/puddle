@@ -29,9 +29,40 @@ pub enum ConnectionDecision {
     Blocked,
 }
 
+/// Who the connection belongs to (R-24): a sandbox's traffic, or puddle's own (image pulls
+/// through the pull proxy, which have no sandbox). Records written before this existed read as
+/// [`ConnectionOrigin::Sandbox`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ConnectionOrigin {
+    /// A sandbox's connection.
+    #[default]
+    Sandbox,
+    /// puddle's own connection, made on the host and not for any sandbox.
+    Puddle,
+}
+
+impl ConnectionOrigin {
+    /// The stored and wire name: `sandbox` or `puddle`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sandbox => "sandbox",
+            Self::Puddle => "puddle",
+        }
+    }
+}
+
+impl fmt::Display for ConnectionOrigin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`,
-/// `local_address`), `policy_unavailable` or `suppressed`.
+/// `local_address`), `policy_unavailable`, `puddle_request` or `suppressed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectionReason {
@@ -43,6 +74,8 @@ pub enum ConnectionReason {
     Blocked(BlockReason),
     /// The rules could not be checked; the proxy failed closed.
     PolicyUnavailable,
+    /// puddle's own request, which no rule decides (an image pull that passed the address guard).
+    PuddleRequest,
     /// Summary of connection records over the per-sandbox limit (R-26).
     Suppressed,
 }
@@ -54,6 +87,7 @@ impl fmt::Display for ConnectionReason {
             Self::NoRule => f.write_str("no_rule"),
             Self::Blocked(reason) => f.write_str(reason.code()),
             Self::PolicyUnavailable => f.write_str("policy_unavailable"),
+            Self::PuddleRequest => f.write_str("puddle_request"),
             Self::Suppressed => f.write_str("suppressed"),
         }
     }
@@ -121,8 +155,10 @@ impl HttpRequestLine {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ConnectionEvent {
-    /// The sandbox it came from (the route's).
-    pub sandbox: SandboxName,
+    /// Whose connection it is.
+    pub origin: ConnectionOrigin,
+    /// The sandbox it came from (the route's); `None` for puddle's own connections.
+    pub sandbox: Option<SandboxName>,
     /// The requested host.
     pub host: Host,
     /// The requested port.
@@ -162,9 +198,38 @@ impl ConnectionEvent {
         reason: ConnectionReason,
     ) -> Self {
         Self {
-            sandbox: request.sandbox.clone(),
+            origin: ConnectionOrigin::Sandbox,
+            sandbox: Some(request.sandbox.clone()),
             host: request.host.clone(),
             port: request.port,
+            resolved_ip: None,
+            upstream: None,
+            decision,
+            reason,
+            rule_id: None,
+            pending_id: None,
+            binding_id: None,
+            injected: false,
+            http: None,
+            bytes_up: 0,
+            bytes_down: 0,
+        }
+    }
+
+    /// An event for a connection puddle makes itself (no sandbox, origin
+    /// [`ConnectionOrigin::Puddle`]), with no row, credential, request line or bytes.
+    #[must_use]
+    pub fn puddle(
+        host: Host,
+        port: u16,
+        decision: ConnectionDecision,
+        reason: ConnectionReason,
+    ) -> Self {
+        Self {
+            origin: ConnectionOrigin::Puddle,
+            sandbox: None,
+            host,
+            port,
             resolved_ip: None,
             upstream: None,
             decision,
@@ -369,11 +434,11 @@ mod tests {
         );
         assert_eq!(
             (
-                blocked.sandbox.as_str(),
+                blocked.sandbox.as_ref().map(SandboxName::as_str),
                 blocked.host.to_string(),
                 blocked.port
             ),
-            ("box", "api.example.com".to_owned(), 443)
+            (Some("box"), "api.example.com".to_owned(), 443)
         );
         assert_eq!(
             (blocked.bytes_up, blocked.bytes_down, blocked.injected),
@@ -400,6 +465,34 @@ mod tests {
         assert_eq!(request_path("http://h.example/x/y?z"), "/x/y");
         assert_eq!(request_path("http://u:p@h.example"), "/");
         assert_eq!(request_path("*"), "*");
+    }
+
+    #[test]
+    fn puddle_events_have_an_origin_and_no_sandbox() {
+        let event = ConnectionEvent::puddle(
+            Host::parse_normalised("registry.example").unwrap(),
+            443,
+            ConnectionDecision::Allow,
+            ConnectionReason::PuddleRequest,
+        );
+        assert_eq!(event.origin, ConnectionOrigin::Puddle);
+        assert_eq!(event.sandbox, None);
+        assert_eq!(event.reason.to_string(), "puddle_request");
+        assert_eq!(
+            ConnectionEvent::new(
+                &request(),
+                ConnectionDecision::Allow,
+                ConnectionReason::Rule
+            )
+            .origin,
+            ConnectionOrigin::Sandbox
+        );
+        assert_eq!(ConnectionOrigin::default(), ConnectionOrigin::Sandbox);
+        assert_eq!(ConnectionOrigin::Puddle.to_string(), "puddle");
+        assert_eq!(
+            serde_json::to_string(&[ConnectionOrigin::Sandbox, ConnectionOrigin::Puddle]).unwrap(),
+            r#"["sandbox","puddle"]"#
+        );
     }
 
     #[test]

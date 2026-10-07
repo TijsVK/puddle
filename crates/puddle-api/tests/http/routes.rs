@@ -434,6 +434,47 @@ async fn audit_records_are_typed_including_the_upstream_hop() {
 }
 
 #[tokio::test]
+async fn puddles_own_connections_have_an_origin_and_the_origin_filter_finds_them() {
+    use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason};
+    let api = start().await;
+    let host = || Host::parse_normalised("registry-1.docker.io").unwrap();
+    let mut pull = ConnectionEvent::puddle(
+        host(),
+        443,
+        ConnectionDecision::Allow,
+        ConnectionReason::PuddleRequest,
+    );
+    pull.bytes_down = 1024;
+    api.store.record(&pull);
+    api.store.record(&ConnectionEvent::new(
+        &EgressRequest::new(SandboxName::new("box").unwrap(), host(), 443),
+        ConnectionDecision::Allow,
+        ConnectionReason::Rule,
+    ));
+    api.request("box", "other.example.com");
+
+    let page = api.get("/api/audit?origin=puddle").await.json();
+    let entries = page["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "{page}");
+    let record = &entries[0]["record"];
+    assert_eq!(record["origin"], "puddle");
+    assert_eq!(record["sandbox_id"], json!(null));
+    assert_eq!(record["reason"], "puddle_request");
+    assert_eq!(record["bytes_down"], 1024);
+
+    let page = api.get("/api/audit?origin=sandbox").await.json();
+    let entries = page["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "{page}");
+    assert_eq!(entries[0]["record"]["origin"], "sandbox");
+    assert_eq!(entries[0]["record"]["sandbox_id"], "box");
+    // Only connection records have an origin; a sandbox filter excludes puddle's own.
+    let both = api.get("/api/audit?origin=puddle&sandbox=box").await.json();
+    assert!(both["entries"].as_array().unwrap().is_empty(), "{both}");
+    assert_eq!(api.get("/api/audit?origin=elsewhere").await.status, 400);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn local_destinations_name_the_toggle_that_blocks_their_approval() {
     let api = start().await;
     let private = api.request("box", "10.0.0.5");

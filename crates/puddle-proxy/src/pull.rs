@@ -25,8 +25,13 @@
 //!   root passed to the client), and absolute-form `http://` is forwarded once with the proxy
 //!   credentials dropped.
 //!
-//! Upstream chaining (company proxy, PAC, proxy authentication) is planned work; until then
-//! the pull proxy connects directly.
+//! - **Recorded in the audit.** With a log set ([`PullProxy::with_connection_log`]), every pull
+//!   whose destination was parsed ends as one `connection` record with `origin: puddle` and no
+//!   sandbox: allowed, refused by the address guard, or failed to connect. It carries the
+//!   upstream hop and the bytes, and never a header, credential or query string.
+//!
+//! Pulls leave through the company proxy route when one is set ([`PullProxy::with_upstream`]),
+//! and connect directly otherwise.
 
 use std::fmt::{self, Write as _};
 use std::io;
@@ -39,7 +44,10 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use puddle_netpolicy::{
     AddressClass, EndpointKind, LocalAccess, NetPolicy, PuddleEndpoints, Registration,
 };
-use puddle_types::{BlockReason, Host, LocalCategory};
+use puddle_types::{
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Host,
+    HttpRequestLine, LocalCategory, NullConnectionLog,
+};
 use subtle::ConstantTimeEq;
 use tokio::io::BufReader;
 use tokio::net::{TcpListener, TcpStream};
@@ -168,6 +176,7 @@ pub struct PullProxy {
     resolver: Arc<dyn Resolver>,
     config: ProxyConfig,
     upstream: Option<Upstream>,
+    log: Arc<dyn ConnectionLog>,
     registration: Registration,
 }
 
@@ -203,6 +212,7 @@ impl PullProxy {
             resolver: Arc::new(SystemResolver),
             config: ProxyConfig::default(),
             upstream: None,
+            log: Arc::new(NullConnectionLog),
             registration,
         })
     }
@@ -237,6 +247,13 @@ impl PullProxy {
     #[must_use]
     pub fn with_upstream(mut self, upstream: Upstream) -> Self {
         self.upstream = Some(upstream);
+        self
+    }
+
+    /// Records every pull in `log`, as a `connection` record with origin `puddle`.
+    #[must_use]
+    pub fn with_connection_log(mut self, log: Arc<dyn ConnectionLog>) -> Self {
+        self.log = log;
         self
     }
 
@@ -276,6 +293,7 @@ impl PullProxy {
             resolver: self.resolver,
             streams: Arc::new(Semaphore::new(self.config.max_streams_per_sandbox)),
             upstream: self.upstream,
+            log: self.log,
             config: self.config,
         });
         let task = tokio::spawn(accept_loop(listener, shared));
@@ -328,6 +346,7 @@ struct Shared {
     resolver: Arc<dyn Resolver>,
     streams: Arc<Semaphore>,
     upstream: Option<Upstream>,
+    log: Arc<dyn ConnectionLog>,
     config: ProxyConfig,
 }
 
@@ -420,7 +439,44 @@ async fn serve(shared: &Shared, stream: TcpStream) {
             return;
         }
     };
-    let admitted = match admit(shared, &target).await {
+    let mut event = ConnectionEvent::puddle(
+        target.host.clone(),
+        target.port,
+        ConnectionDecision::Allow,
+        ConnectionReason::PuddleRequest,
+    );
+    if let Some(path) = &path {
+        event.http = Some(HttpRequestLine::new(head.method.as_str(), path));
+    }
+    relay(shared, reader, &head, &target, path, body, &mut event).await;
+    event.bytes_up = counts.read();
+    event.bytes_down = counts.written();
+    tracing::debug!(
+        host = %target.host,
+        bytes_up = event.bytes_up,
+        bytes_down = event.bytes_down,
+        "image-pull connection closed"
+    );
+    let log = Arc::clone(&shared.log);
+    if tokio::task::spawn_blocking(move || log.record(&event))
+        .await
+        .is_err()
+    {
+        tracing::warn!("connection log panicked; record lost");
+    }
+}
+
+/// Admits, connects and relays one pull, noting in `event` what happened.
+async fn relay(
+    shared: &Shared,
+    mut reader: BufReader<Counted<TcpStream>>,
+    head: &Head,
+    target: &Target,
+    path: Option<String>,
+    body: http::Body,
+    event: &mut ConnectionEvent,
+) {
+    let admitted = match admit(shared, target, event).await {
         Ok(admitted) => admitted,
         Err(refusal) => {
             refuse(reader.get_mut(), &refusal).await;
@@ -429,7 +485,7 @@ async fn serve(shared: &Shared, stream: TcpStream) {
     };
     let out = match connect_out(
         shared.upstream.as_ref(),
-        &target,
+        target,
         path.is_none(),
         &admitted,
         shared.config.connect_timeout,
@@ -442,6 +498,8 @@ async fn serve(shared: &Shared, stream: TcpStream) {
             return;
         }
     };
+    event.resolved_ip = out.addr.map(|addr| addr.ip());
+    event.upstream = out.hop.clone();
     tracing::info!(host = %target.host, port = target.port, addr = ?out.addr, hop = ?out.hop, "image-pull connection");
     match path {
         None => {
@@ -451,21 +509,15 @@ async fn serve(shared: &Shared, stream: TcpStream) {
             forward(
                 reader,
                 out.stream,
-                &head,
+                head,
                 &path,
-                &target,
+                target,
                 body,
                 out.via.as_ref(),
             )
             .await;
         }
     }
-    tracing::debug!(
-        host = %target.host,
-        bytes_up = counts.read(),
-        bytes_down = counts.written(),
-        "image-pull connection closed"
-    );
 }
 
 /// The verdict on one address a pull would connect to.
@@ -481,13 +533,22 @@ fn verdict(guard: &NetPolicy, access: LocalAccess, addr: SocketAddr) -> Result<(
 
 /// The addresses a pull to `target` may connect to: the name stage (`localhost`, metadata
 /// names), then every resolved address through [`verdict`].
-async fn admit(shared: &Shared, target: &Target) -> Result<Admitted, Refusal> {
+async fn admit(
+    shared: &Shared,
+    target: &Target,
+    event: &mut ConnectionEvent,
+) -> Result<Admitted, Refusal> {
     let host = &target.host;
     let port = target.port;
     let named = puddle_netpolicy::Target::from_host(host.clone()).named_category();
     if let Some(category) = named {
         if !shared.access.is_on(category) {
-            return Err(blocked(host, port, &[BlockReason::LocalToggle(category)]));
+            return Err(blocked(
+                host,
+                port,
+                &[BlockReason::LocalToggle(category)],
+                event,
+            ));
         }
         // `localhost:<puddle port>`: refused before any lookup.
         let loopback = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
@@ -497,7 +558,7 @@ async fn admit(shared: &Shared, target: &Target) -> Result<Admitted, Refusal> {
                 AddressClass::PuddleEndpoint(_)
             )
         {
-            return Err(blocked(host, port, &[BlockReason::PuddleEndpoint]));
+            return Err(blocked(host, port, &[BlockReason::PuddleEndpoint], event));
         }
     }
     let addrs = match host {
@@ -540,7 +601,7 @@ async fn admit(shared: &Shared, target: &Target) -> Result<Admitted, Refusal> {
                 format!("{host} has no addresses"),
             ));
         }
-        return Err(blocked(host, port, &reasons));
+        return Err(blocked(host, port, &reasons, event));
     }
     // A proxy may be told the name only when every address it resolved to passed the guard.
     let name_ok = matches!(host, Host::Ip(_)) || usable.len() == resolved;
@@ -563,13 +624,20 @@ fn left_to_upstream(shared: &Shared, host: &Host, why: &str) -> Option<Admitted>
 }
 
 /// The refusal for a pull to an address it may not reach.
-fn blocked(host: &Host, port: u16, reasons: &[BlockReason]) -> Refusal {
+fn blocked(
+    host: &Host,
+    port: u16,
+    reasons: &[BlockReason],
+    event: &mut ConnectionEvent,
+) -> Refusal {
     let reason = reasons
         .iter()
         .find(|r| matches!(r, BlockReason::PuddleEndpoint))
         .or_else(|| reasons.first())
         .copied()
         .unwrap_or(BlockReason::LocalAddress);
+    event.decision = ConnectionDecision::Blocked;
+    event.reason = ConnectionReason::Blocked(reason);
     tracing::info!(%host, port, %reason, "image pull blocked");
     let what = match reason {
         BlockReason::PuddleEndpoint => "one of puddle's own endpoints".to_owned(),
@@ -718,6 +786,12 @@ mod tests {
     #[test]
     fn a_block_names_puddle_endpoints_first() {
         let host = Host::parse_normalised("localhost").unwrap();
+        let mut event = ConnectionEvent::puddle(
+            host.clone(),
+            1,
+            ConnectionDecision::Allow,
+            ConnectionReason::PuddleRequest,
+        );
         let r = blocked(
             &host,
             1,
@@ -725,6 +799,14 @@ mod tests {
                 BlockReason::LocalToggle(LocalCategory::Special),
                 BlockReason::PuddleEndpoint,
             ],
+            &mut event,
+        );
+        assert_eq!(
+            (event.decision, event.reason),
+            (
+                ConnectionDecision::Blocked,
+                ConnectionReason::Blocked(BlockReason::PuddleEndpoint)
+            )
         );
         assert_eq!(r.status, "403 Forbidden");
         assert!(
@@ -740,9 +822,10 @@ mod tests {
             &host,
             1,
             &[BlockReason::LocalToggle(LocalCategory::Metadata)],
+            &mut event,
         );
         assert!(r.message.contains("metadata"), "{}", r.message);
-        let r = blocked(&host, 1, &[]);
+        let r = blocked(&host, 1, &[], &mut event);
         assert!(
             r.headers
                 .contains(&("x-puddle-blocked", "local_address".to_owned()))

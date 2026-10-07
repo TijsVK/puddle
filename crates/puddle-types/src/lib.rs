@@ -31,8 +31,8 @@ mod name;
 mod policy;
 
 pub use connection::{
-    ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, HttpRequestLine,
-    NullConnectionLog, request_path,
+    ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionReason,
+    HttpRequestLine, NullConnectionLog, request_path,
 };
 pub use error::ValidationError;
 pub use event::{

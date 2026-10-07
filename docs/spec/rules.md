@@ -163,6 +163,13 @@ readable as JSONL (one record per line).
   never credentials; `null` when no upstream route is configured or nothing connected), and when
   it is a proxy hop `resolved_ip` is the address sent to the proxy, or `null` if the proxy was told
   the name (or this host could not resolve it). *Added 2026-10-07 (additive).*
+  `origin` says whose connection it is: `sandbox` (a sandbox's, the default) or `puddle` (puddle's
+  own, made on the host with no sandbox: image pulls through the pull proxy). A `puddle` record has
+  `sandbox_id: null`, `reason: puddle_request` when the address guard let it through (or a block
+  reason when it did not), no rule or pending row, and carries `upstream`, `resolved_ip` and the
+  bytes like any other. The pull proxy writes one per pull whose destination it parsed; a request
+  refused before that (no or wrong token) is only logged. Records written before `origin`
+  existed have no such field and read as `sandbox`. *Added 2026-10-07 (additive).*
 - **R-25 No secrets.** Never header values, credential material, query strings or request bodies;
   credentials appear only as `binding_id` and `injected: true|false`. Every audit struct has a test
   that serialises it with canary values in every secret-bearing input and asserts the canary is
@@ -172,7 +179,7 @@ readable as JSONL (one record per line).
   capped at 256 MiB *(default)*; the sweeper deletes the oldest records first and writes one
   `audit_trimmed` record per trim. Per sandbox, `connection` records are limited to 200 per second
   *(default)*; the excess is counted and written as one `connection` record with
-  `reason: suppressed` and a `count` per second.
+  `reason: suppressed` and a `count` per second. puddle's own connections (`origin: puddle`) share one limit of the same size.
 
 - **R-28 Reading the audit with filters.** The API filters on the server, on stored columns and
   indexes (never by parsing JSON): `sandbox`, `type`, `outcome`, `host_contains` (case-folded
@@ -180,7 +187,9 @@ readable as JSONL (one record per line).
   `host` is the record's host, or a rule record's pattern. `outcome` (`allow`, `deny`, `pending`,
   `blocked`, `expired`) exists for `connection` (its `decision`), `pending_created` (`pending`),
   `pending_decided` (`allow` or `deny`) and `pending_expired` (`expired`); every other record has
-  none and never matches an `outcome` filter. Pages are at most 500 records: newest first, paged
+  none and never matches an `outcome` filter. `origin` (`sandbox` or `puddle`) matches `connection`
+  records only (a puddle record is one without a sandbox); every other record has no origin and
+  never matches. *`origin` added 2026-10-07.* Pages are at most 500 records: newest first, paged
   back with `before`, or oldest first from `after` to follow the tail.
 - **R-29 Events.** After each commit the store emits, per change: `pending_opened` (a new open
   row), `pending_updated` (a repeat: `attempts`, `last_seen`), `pending_closed` (decided by a user

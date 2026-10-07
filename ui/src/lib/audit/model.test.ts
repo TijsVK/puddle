@@ -194,6 +194,21 @@ describe("a record as a row", () => {
     );
     expect(odd.detail).toBe("PUT · because something_new");
   });
+  it("shows puddle's own connections as puddle, with its own reason", () => {
+    const view = row(
+      connection(1, {
+        sandbox_id: null,
+        origin: "puddle",
+        reason: "puddle_request",
+        rule_id: null,
+        bytes_down: 2048,
+      }).record,
+    );
+    expect(view.workspace).toBeNull();
+    expect(view.detail).toBe(
+      "because puddle's own request · 0 B up, 2.0 KB down",
+    );
+  });
   it("leaves the outcome and the address out when the record has none", () => {
     const view = row(
       connection(1, { decision: null, host: null, port: null }).record,

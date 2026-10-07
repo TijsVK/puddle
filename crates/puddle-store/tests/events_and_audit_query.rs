@@ -17,8 +17,9 @@ use puddle_store::{
     RuleWire, Scope, Store,
 };
 use puddle_types::{
-    CollectingSink, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
-    EgressRequest, Event, Host, PendingEnd, PendingId, PendingOutcome, SandboxName, SuffixAllows,
+    CollectingSink, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
+    ConnectionReason, Decision, EgressRequest, Event, Host, PendingEnd, PendingId, PendingOutcome,
+    SandboxName, SuffixAllows,
 };
 use rusqlite::params;
 
@@ -465,10 +466,16 @@ fn rule_wire(sandbox: Option<&str>, pattern: &str) -> RuleWire {
     }
 }
 
+/// A connection record; an empty `sandbox` is one of puddle's own (no sandbox).
 fn connection(ts: u64, sandbox: &str, host: &str, decision: ConnectionDecision) -> AuditRecord {
     AuditRecord::Connection(ConnectionRecord {
         ts,
-        sandbox_id: sandbox.into(),
+        sandbox_id: (!sandbox.is_empty()).then(|| sandbox.to_owned()),
+        origin: if sandbox.is_empty() {
+            ConnectionOrigin::Puddle
+        } else {
+            ConnectionOrigin::Sandbox
+        },
         host: Some(host.into()),
         port: Some(443),
         resolved_ip: None,
@@ -532,6 +539,7 @@ fn naive(records: &[AuditRecord], filter: &AuditFilter) -> Vec<i64> {
                 .is_none_or(|s| r.sandbox_id() == Some(s.as_str()))
                 && filter.kind.is_none_or(|k| r.kind() == k)
                 && filter.outcome.is_none_or(|o| r.outcome() == Some(o))
+                && filter.origin.is_none_or(|o| r.origin() == Some(o))
                 && filter.from.is_none_or(|t| r.ts() >= t)
                 && filter.to.is_none_or(|t| r.ts() < t)
                 && filter.host_contains.as_ref().is_none_or(|h| {
@@ -567,7 +575,8 @@ fn any_record() -> impl Strategy<Value = AuditRecord> {
     (0..8_u8, sandbox, host, ts, decision, state).prop_map(|(kind, sb_, host, ts, d, st)| {
         let host = host.to_lowercase();
         match kind {
-            0 | 1 => connection(ts, sb_, &host, d),
+            0 => connection(ts, sb_, &host, d),
+            1 => connection(ts, "", &host, d),
             2 => AuditRecord::PendingCreated {
                 ts,
                 pending: pending_wire(sb_, &host, "requested"),
@@ -606,6 +615,10 @@ fn any_filter() -> impl Strategy<Value = AuditFilter> {
         prop::option::of(prop::sample::select(AuditRecord::KINDS.to_vec())),
         prop::option::of(prop::sample::select(AuditOutcome::ALL.to_vec())),
         prop::option::of(prop::sample::select(vec![
+            ConnectionOrigin::Sandbox,
+            ConnectionOrigin::Puddle,
+        ])),
+        prop::option::of(prop::sample::select(vec![
             "example",
             "EXAMPLE.com",
             ".example",
@@ -616,14 +629,17 @@ fn any_filter() -> impl Strategy<Value = AuditFilter> {
         prop::option::of(0_u64..22),
         prop::option::of(0_u64..22),
     )
-        .prop_map(|(sandbox, kind, outcome, host, from, to)| AuditFilter {
-            sandbox: sandbox.map(sb),
-            kind,
-            outcome,
-            host_contains: host.map(str::to_owned),
-            from: from.map(|t| T0 + t * 1000),
-            to: to.map(|t| T0 + t * 1000),
-        })
+        .prop_map(
+            |(sandbox, kind, outcome, origin, host, from, to)| AuditFilter {
+                sandbox: sandbox.map(sb),
+                kind,
+                outcome,
+                origin,
+                host_contains: host.map(str::to_owned),
+                from: from.map(|t| T0 + t * 1000),
+                to: to.map(|t| T0 + t * 1000),
+            },
+        )
 }
 
 proptest! {
@@ -874,6 +890,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 sandbox: Some(sb("gamma")),
                 kind: Some("connection"),
                 outcome: Some(AuditOutcome::Pending),
+                origin: Some(ConnectionOrigin::Sandbox),
                 host_contains: Some("site7".into()),
                 from: Some(T0),
                 to: Some(last),

@@ -14,7 +14,11 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use puddle_netpolicy::{EndpointKind, LocalAccess, PuddleEndpoints};
 use puddle_proxy::PullProxy;
 use puddle_proxy::testing::StaticResolver;
-use pull_support::{LOCAL, connect, echo, http_server, pull_proxy, send};
+use puddle_types::{
+    BlockReason, ConnectionDecision, ConnectionOrigin, ConnectionReason, LocalCategory,
+};
+use pull_support::{LOCAL, connect, echo, http_server, pull_proxy, pull_proxy_logged, send};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -225,4 +229,95 @@ async fn unresolvable_and_unreachable_registries_are_502() {
     assert!(head.starts_with("HTTP/1.1 502 "), "{head}");
     let (head, _) = send(route.local_addr(), &connect("not a host", Some(&auth))).await;
     assert!(head.starts_with("HTTP/1.1 400 "), "{head}");
+}
+
+#[tokio::test]
+async fn a_tunnel_is_recorded_as_puddles_own_connection_with_its_bytes() {
+    let endpoints = PuddleEndpoints::new();
+    let server = echo().await;
+    let (route, good, log) = pull_proxy_logged(&endpoints, Some(LOCAL));
+    let target = format!("registry.test:{}", server.addr.port());
+    let (head, mut s) = send(
+        route.local_addr(),
+        &connect(&target, Some(&format!("Basic {good}"))),
+    )
+    .await;
+    assert!(head.starts_with("HTTP/1.1 200 "), "{head}");
+    s.write_all(b"layer bytes").await.unwrap();
+    let mut back = [0u8; 11];
+    s.read_exact(&mut back).await.unwrap();
+    drop(s);
+    let events = log.wait_for(1, Duration::from_secs(5)).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    let event = &events[0];
+    assert_eq!(event.origin, ConnectionOrigin::Puddle);
+    assert_eq!(event.sandbox, None);
+    assert_eq!(
+        (event.host.to_string(), event.port),
+        ("registry.test".to_owned(), server.addr.port())
+    );
+    assert_eq!(
+        (event.decision, event.reason),
+        (ConnectionDecision::Allow, ConnectionReason::PuddleRequest)
+    );
+    assert_eq!(event.resolved_ip, Some(LOCAL));
+    assert_eq!(event.upstream, None);
+    assert_eq!((event.rule_id, event.pending_id), (None, None));
+    // Counted on the client side, the proxy's own 200 included.
+    assert!(event.bytes_up >= 11 && event.bytes_down >= 11, "{event:?}");
+}
+
+#[tokio::test]
+async fn plain_http_pulls_record_the_method_and_path_without_the_query() {
+    let endpoints = PuddleEndpoints::new();
+    let (server, _heads) = http_server().await;
+    let (route, good, log) = pull_proxy_logged(&endpoints, Some(LOCAL));
+    let target = format!("registry.test:{}", server.port());
+    let (_, mut s) = send(
+        route.local_addr(),
+        &format!(
+            "GET http://{target}/v2/?token=secret HTTP/1.1\r\nHost: {target}\r\nProxy-Authorization: Basic {good}\r\n\r\n"
+        ),
+    )
+    .await;
+    let mut body = String::new();
+    s.read_to_string(&mut body).await.unwrap();
+    let events = log.wait_for(1, Duration::from_secs(5)).await;
+    let http = events[0].http.as_ref().unwrap();
+    assert_eq!((http.method(), http.path()), ("GET", "/v2/"));
+    assert!(!format!("{events:?}").contains("secret"));
+}
+
+#[tokio::test]
+async fn refused_pulls_are_recorded_and_unauthorised_ones_are_not() {
+    let endpoints = PuddleEndpoints::new();
+    let (route, good, log) = pull_proxy_logged(&endpoints, None);
+    let own = route.local_addr();
+    // No credentials: the destination is never read, so nothing is recorded.
+    let (head, _) = send(own, &connect("registry.test:443", None)).await;
+    assert!(head.starts_with("HTTP/1.1 407 "), "{head}");
+    let auth = format!("Basic {good}");
+    let (head, _) = send(own, &connect("169.254.169.254:80", Some(&auth))).await;
+    assert!(head.starts_with("HTTP/1.1 403 "), "{head}");
+    let (head, _) = send(own, &connect("registry.test:443", Some(&auth))).await;
+    assert!(head.starts_with("HTTP/1.1 502 "), "{head}");
+    let events = log.wait_for(2, Duration::from_secs(5)).await;
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert!(events.iter().all(|e| e.origin == ConnectionOrigin::Puddle));
+    let blocked = events
+        .iter()
+        .find(|e| e.decision == ConnectionDecision::Blocked)
+        .unwrap();
+    assert_eq!(
+        blocked.reason,
+        ConnectionReason::Blocked(BlockReason::LocalToggle(LocalCategory::Metadata))
+    );
+    assert_eq!(blocked.resolved_ip, None);
+    // A name that doesn't resolve: allowed by puddle, nothing connected.
+    let failed = events
+        .iter()
+        .find(|e| e.decision == ConnectionDecision::Allow)
+        .unwrap();
+    assert_eq!(failed.resolved_ip, None);
+    assert_eq!(failed.host.to_string(), "registry.test");
 }

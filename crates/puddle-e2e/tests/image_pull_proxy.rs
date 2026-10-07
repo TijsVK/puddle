@@ -35,7 +35,8 @@ use puddle_compute::{ComputeError, Runtime};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::{BoxFuture, PullProxy, Resolver};
-use puddle_types::{DomainName, ImageRef};
+use puddle_store::{AuditCursor, AuditFilter, AuditRecord, Clock, Limits, Store, SystemClock};
+use puddle_types::{ConnectionDecision, ConnectionOrigin, DomainName, ImageRef};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -341,6 +342,19 @@ fn decoy_environment() -> std::net::TcpListener {
     decoy
 }
 
+/// The `connection` records `filter` matches, oldest first.
+fn connection_records(store: &Store, filter: &AuditFilter) -> Vec<puddle_store::ConnectionRecord> {
+    store
+        .audit_query(filter, AuditCursor::After(0), 500)
+        .unwrap()
+        .iter()
+        .filter_map(|(_, line)| match serde_json::from_str(line).unwrap() {
+            AuditRecord::Connection(record) => Some(record),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
 fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
     if std::env::var_os(DUMP_ENV).is_some() {
@@ -362,9 +376,13 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
     let registry_listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let registry_addr = registry_listener.local_addr().unwrap();
     let endpoints = PuddleEndpoints::new();
+    let store = Arc::new(
+        Store::open_in_memory(Arc::new(SystemClock) as Arc<dyn Clock>, Limits::default()).unwrap(),
+    );
     let proxy = PullProxy::bind(&endpoints)
         .unwrap()
-        .with_resolver(Arc::new(LabResolver(registry_addr)));
+        .with_resolver(Arc::new(LabResolver(registry_addr)))
+        .with_connection_log(store.clone());
     let token = proxy.token().expose().to_owned();
     let proxy_url = proxy.proxy_url().expose().to_owned();
 
@@ -428,6 +446,41 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
             requests.len(),
             "served from the cache"
         );
+        // The pulls are in the audit as puddle's own connections: no sandbox, the address
+        // connected to, and the bytes that went through.
+        let puddle_only = AuditFilter {
+            origin: Some(ConnectionOrigin::Puddle),
+            ..AuditFilter::default()
+        };
+        let mut records = Vec::new();
+        for _ in 0..100 {
+            records = connection_records(&store, &puddle_only);
+            if records.iter().any(|r| r.bytes_down > 0) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(!records.is_empty(), "the pull proxy wrote no audit record");
+        for record in &records {
+            assert_eq!(record.sandbox_id, None);
+            assert_eq!(record.origin, ConnectionOrigin::Puddle);
+            assert_eq!(record.host.as_deref(), Some(REGISTRY));
+            assert_eq!(record.port, Some(443));
+            assert_eq!(record.decision, Some(ConnectionDecision::Allow));
+            assert_eq!(record.reason, "puddle_request");
+            assert_eq!(record.resolved_ip.as_deref(), Some("127.0.0.1"));
+            assert_eq!(record.upstream, None, "no company proxy is configured");
+            assert!(!format!("{record:?}").contains(&token));
+        }
+        assert!(
+            records.iter().any(|r| r.bytes_up > 0 && r.bytes_down > 0),
+            "{records:?}"
+        );
+        let sandbox_only = AuditFilter {
+            origin: Some(ConnectionOrigin::Sandbox),
+            ..AuditFilter::default()
+        };
+        assert!(connection_records(&store, &sandbox_only).is_empty());
         route.shutdown().await;
     });
 

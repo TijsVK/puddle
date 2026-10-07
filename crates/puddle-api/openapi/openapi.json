@@ -82,6 +82,15 @@
             }
           },
           {
+            "name": "origin",
+            "in": "query",
+            "description": "`connection` records of this origin (`sandbox` or `puddle`); other types have none and never match",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ConnectionOrigin"
+            }
+          },
+          {
             "name": "host_contains",
             "in": "query",
             "description": "records whose host (a rule's pattern) contains this text, case-insensitive",
@@ -2782,6 +2791,7 @@
             "required": [
               "ts",
               "sandbox_id",
+              "origin",
               "host",
               "port",
               "resolved_ip",
@@ -2858,6 +2868,10 @@
                 ],
                 "description": "HTTP method, where the proxy saw the request in clear."
               },
+              "origin": {
+                "$ref": "#/components/schemas/ConnectionOrigin",
+                "description": "Whose connection it is. Records written before it existed read as `sandbox`."
+              },
               "path": {
                 "type": [
                   "string",
@@ -2906,8 +2920,11 @@
                 "description": "The deciding rule."
               },
               "sandbox_id": {
-                "type": "string",
-                "description": "The sandbox."
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The sandbox; `null` for puddle's own connections (`origin` is `puddle`)."
               },
               "ts": {
                 "type": "integer",
@@ -3334,6 +3351,14 @@
           "deny",
           "pending",
           "blocked"
+        ]
+      },
+      "ConnectionOrigin": {
+        "type": "string",
+        "description": "Whose connection an audit record describes.",
+        "enum": [
+          "sandbox",
+          "puddle"
         ]
       },
       "Consent": {

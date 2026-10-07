@@ -809,8 +809,12 @@ async fn an_allowed_connect_is_reported_with_address_and_bytes() {
     let events = rig.events(1).await;
     let event = &events[0];
     assert_eq!(
-        (event.sandbox.as_str(), event.host.to_string(), event.port),
-        ("box", "echo.test".to_owned(), echo.port())
+        (
+            event.sandbox.as_ref().map(SandboxName::as_str),
+            event.host.to_string(),
+            event.port
+        ),
+        (Some("box"), "echo.test".to_owned(), echo.port())
     );
     assert_eq!(
         (

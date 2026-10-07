@@ -13,13 +13,14 @@ use std::time::Duration;
 
 use proptest::prelude::*;
 use puddle_store::{
-    Actor, AuditRecord, Effect, Limits, ManualClock, NewRule, Pattern, PatternChoice, PatternError,
-    PendingState, Resolution, Scope, ScopeChoice, Store, StoreError, Sweeper,
+    Actor, AuditCursor, AuditFilter, AuditRecord, Effect, Limits, ManualClock, NewRule, Pattern,
+    PatternChoice, PatternError, PendingState, Resolution, Scope, ScopeChoice, Store, StoreError,
+    Sweeper,
 };
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
-    EgressRequest, Host, HttpRequestLine, PatternKind, PendingId, PendingOutcome, Policy, RuleId,
-    SandboxName, SuffixAllows,
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
+    ConnectionReason, Decision, EgressRequest, Host, HttpRequestLine, PatternKind, PendingId,
+    PendingOutcome, Policy, RuleId, SandboxName, SuffixAllows,
 };
 use serde_json::Value;
 
@@ -1111,6 +1112,87 @@ fn r26_connection_records_are_limited_per_sandbox_per_second() {
         .collect();
     assert_eq!(flushed.len(), 1);
     assert_eq!(flushed[0]["count"], 1);
+}
+
+fn puddle_connection() -> ConnectionEvent {
+    ConnectionEvent::puddle(
+        Host::parse_normalised("registry-1.docker.io").unwrap(),
+        443,
+        ConnectionDecision::Allow,
+        ConnectionReason::PuddleRequest,
+    )
+}
+
+#[test]
+fn r24_a_puddle_connection_has_an_origin_and_no_sandbox() {
+    let (_, store) = fixture();
+    let mut event = puddle_connection();
+    event.upstream = Some("PROXY proxy.corp:3128".into());
+    event.bytes_down = 4096;
+    store.record_connection(&event).unwrap();
+    store.record_connection(&connection("a")).unwrap();
+    let records = audit_of(&store, "connection");
+    assert_eq!(records[0]["origin"], "puddle");
+    assert!(records[0]["sandbox_id"].is_null());
+    assert_eq!(records[0]["reason"], "puddle_request");
+    assert_eq!(records[0]["upstream"], "PROXY proxy.corp:3128");
+    assert_eq!(records[0]["bytes_down"], 4096);
+    assert_eq!(records[1]["origin"], "sandbox");
+    assert_eq!(records[1]["sandbox_id"], "a");
+    let found = |origin| {
+        let filter = AuditFilter {
+            origin: Some(origin),
+            ..AuditFilter::default()
+        };
+        store
+            .audit_query(&filter, AuditCursor::After(0), 10)
+            .unwrap()
+            .len()
+    };
+    assert_eq!(
+        (
+            found(ConnectionOrigin::Puddle),
+            found(ConnectionOrigin::Sandbox)
+        ),
+        (1, 1)
+    );
+}
+
+#[test]
+fn r24_a_record_written_before_origin_existed_reads_as_a_sandbox_connection() {
+    let (_, store) = fixture();
+    store.record_connection(&connection("a")).unwrap();
+    let (_, line) = store.audit_lines(0, 1).unwrap().remove(0);
+    let mut value: Value = serde_json::from_str(&line).unwrap();
+    assert!(value.as_object_mut().unwrap().remove("origin").is_some());
+    let old = serde_json::to_string(&value).unwrap();
+    let record: puddle_store::AuditRecord = serde_json::from_str(&old).unwrap();
+    assert_eq!(record.origin(), Some(ConnectionOrigin::Sandbox));
+    assert_eq!(record.sandbox_id(), Some("a"));
+}
+
+#[test]
+fn r26_puddle_connection_records_are_limited_on_their_own() {
+    let (clock, store) = fixture_with(Limits {
+        connection_records_per_second: 2,
+        ..Limits::default()
+    });
+    for _ in 0..4 {
+        store.record_connection(&puddle_connection()).unwrap();
+    }
+    // A sandbox keeps its own allowance.
+    store.record_connection(&connection("a")).unwrap();
+    assert_eq!(audit_of(&store, "connection").len(), 3);
+    clock.advance(1000);
+    store.sweep().unwrap();
+    let summary: Vec<_> = audit_of(&store, "connection")
+        .into_iter()
+        .filter(|r| r["reason"] == "suppressed")
+        .collect();
+    assert_eq!(summary.len(), 1);
+    assert_eq!(summary[0]["count"], 2);
+    assert_eq!(summary[0]["origin"], "puddle");
+    assert!(summary[0]["sandbox_id"].is_null());
 }
 
 #[test]

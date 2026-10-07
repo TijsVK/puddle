@@ -34,6 +34,7 @@ const BEARER: &str = "bearer";
         crate::wire::ConsentKind,
         crate::wire::AuditType,
         crate::wire::AuditOutcome,
+        crate::wire::ConnectionOrigin,
         puddle_types::SandboxName
     )),
     tags(
