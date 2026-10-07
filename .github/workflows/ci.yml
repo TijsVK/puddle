@@ -27,7 +27,7 @@ env:
   RUST_BACKTRACE: 1
   # Line tables only: backtraces and coverage keep file:line, while the test binaries that link
   # the msb SDK (puddle-vm-tests) stay small enough for the runner's disk (full debug info filled
-  # it: `ld terminated with signal 7 [Bus error]`, T-102).
+  # it: `ld terminated with signal 7 [Bus error]`).
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
@@ -114,7 +114,7 @@ jobs:
       - name: doc tests and rustdoc
         if: ${{ !cancelled() }}
         run: scripts/check.sh doc
-      - name: Squid for the upstream-chaining e2e (T-165, Basic-auth company proxy)
+      - name: Squid for the upstream-chaining e2e (Basic-auth company proxy)
         run: |
           sudo apt-get install -y --no-install-recommends squid
           # The package starts its own daemon; the test runs its own Squid on a free port.

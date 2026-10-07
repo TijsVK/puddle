@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Native Windows MSVC build and tests (D-35). Windows runners are the slowest to start, so this
+# Native Windows MSVC build and tests. Windows runners are the slowest to start, so this
 # runs nightly (skipped when this workflow already has a green run on develop's head), on pull
 # requests to main, and by hand. Linux CI already cross-checks clippy for the msvc target.
 # The nightly also reruns each failed test once and lists the ones that pass only on retry
@@ -31,7 +31,7 @@ jobs:
     name: windows-msvc (build, clippy, tests)
     runs-on: windows-2025
     # A cold cache (any Cargo.lock change) takes ~40 min: clippy 6, tests 14, release build 15,
-    # then the cache save (T-117, run 37431418875 was cut off at 40 while saving).
+    # then the cache save (a run was once cut off at 40 minutes while saving).
     timeout-minutes: 60
     # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
     permissions:
