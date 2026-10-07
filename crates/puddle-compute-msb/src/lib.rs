@@ -30,12 +30,13 @@
 mod config;
 pub mod error;
 mod image;
+mod logs;
 mod runtime;
 mod sandbox;
 pub mod spec;
 mod volume;
 
-pub use config::{MsbConfig, SshConfig};
+pub use config::{DEFAULT_RUNTIME_LOG_LEVEL, MsbConfig, RUNTIME_LOG_CAP_BYTES, SshConfig};
 pub use runtime::MsbRuntime;
 pub use sandbox::MsbSandbox;
 pub use spec::{SDK_OPTIONS, SdkOption, SdkSetting};

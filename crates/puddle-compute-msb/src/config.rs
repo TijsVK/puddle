@@ -57,10 +57,26 @@ pub struct MsbConfig {
     /// to the process environment, which is what tests without a pull proxy want.
     pub registry_proxy: Option<RegistryProxy>,
     /// Default log level of msb's sandbox runtimes (`runtime.log`, msb's `log_level`): `error`,
-    /// `warn`, `info`, `debug` or `trace`. `None` (the default) leaves them silent. The VM tests
-    /// set `debug`, so a failed boot keeps the VMM's trace.
+    /// `warn`, `info`, `debug` or `trace`. [`DEFAULT_RUNTIME_LOG_LEVEL`] unless changed, so a rare
+    /// boot failure in the field leaves the VMM's trace. `None` leaves msb's own default, which
+    /// is silent. The VM tests set `debug`.
     pub runtime_log_level: Option<String>,
+    /// Where [`crate::MsbRuntime`] copies a sandbox's `logs/` directory to before it removes the
+    /// sandbox, as `<dir>/<sandbox>/logs/`. `None` (the default) keeps nothing: removing a sandbox
+    /// deletes its logs. The VM tests set it so a failed boot keeps its full logs as CI artifacts.
+    pub keep_logs_dir: Option<PathBuf>,
 }
+
+/// The default [`MsbConfig::runtime_log_level`]. `info` is a few lines per boot; msb rotates
+/// `runtime.log` at 10 MiB on Linux and macOS (3 rotated files kept). On Windows msb appends
+/// without rotating, which [`crate::MsbRuntime`] bounds itself (see [`RUNTIME_LOG_CAP_BYTES`]).
+pub const DEFAULT_RUNTIME_LOG_LEVEL: &str = "info";
+
+/// The size at which [`crate::MsbRuntime`] moves a sandbox's `runtime.log` aside to
+/// `runtime.log.1` (replacing an older one) before it starts the sandbox. It matches msb's own
+/// rotation size on Linux and macOS, and makes Windows, where msb never rotates, as bounded
+/// (about twice the cap per sandbox).
+pub const RUNTIME_LOG_CAP_BYTES: u64 = 10 * 1024 * 1024;
 
 impl MsbConfig {
     /// A config for msb home `home`, runtime pair `msb` + `libkrunfw` and guest-share root
@@ -80,14 +96,27 @@ impl MsbConfig {
             ssh: SshConfig::default(),
             registry_roots: Vec::new(),
             registry_proxy: None,
-            runtime_log_level: None,
+            runtime_log_level: Some(DEFAULT_RUNTIME_LOG_LEVEL.to_owned()),
+            keep_logs_dir: None,
         }
     }
 
-    /// The same config, with msb's sandbox runtimes logging at `level` (`None`: silent).
+    /// The same config, with msb's sandbox runtimes logging at `level`; `None` keeps the level
+    /// the config has (by default [`DEFAULT_RUNTIME_LOG_LEVEL`]), so a test can pass an optional
+    /// override straight through.
     #[must_use]
     pub fn with_runtime_log_level(mut self, level: Option<impl Into<String>>) -> Self {
-        self.runtime_log_level = level.map(Into::into);
+        if let Some(level) = level {
+            self.runtime_log_level = Some(level.into());
+        }
+        self
+    }
+
+    /// The same config, keeping a removed sandbox's `logs/` under `dir` (see
+    /// [`MsbConfig::keep_logs_dir`]).
+    #[must_use]
+    pub fn with_keep_logs_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.keep_logs_dir = Some(dir.into());
         self
     }
 
@@ -208,8 +237,9 @@ mod tests {
     }
 
     #[test]
-    fn config_json_pins_only_the_runtime_pair() {
-        let c = MsbConfig::new("/h", "/rt/msb", "/rt/libkrunfw.so", "/share");
+    fn config_json_pins_only_the_runtime_pair_and_the_log_level() {
+        let mut c = MsbConfig::new("/h", "/rt/msb", "/rt/libkrunfw.so", "/share");
+        c.runtime_log_level = None;
         let v: serde_json::Value = serde_json::from_str(&c.config_json()).unwrap();
         assert_eq!(v["version"], 1);
         assert_eq!(v["paths"]["msb"], "/rt/msb");
@@ -219,15 +249,29 @@ mod tests {
     }
 
     #[test]
-    fn config_json_carries_the_runtime_log_level_only_when_set() {
+    fn the_runtime_log_level_defaults_to_info_and_none_keeps_what_is_set() {
         let plain = MsbConfig::new("/h", "/m", "/l", "/s");
-        assert_eq!(plain.runtime_log_level, None);
+        assert_eq!(plain.runtime_log_level.as_deref(), Some("info"));
+        let v: serde_json::Value = serde_json::from_str(&plain.config_json()).unwrap();
+        assert_eq!(v["log_level"], "info");
         let c = plain.clone().with_runtime_log_level(Some("debug"));
         let v: serde_json::Value = serde_json::from_str(&c.config_json()).unwrap();
         assert_eq!(v["log_level"], "debug");
         assert_eq!(v["paths"]["msb"], "/m");
-        let off = c.with_runtime_log_level(None::<String>);
-        assert_eq!(off.config_json(), plain.config_json());
+        let same = c.clone().with_runtime_log_level(None::<String>);
+        assert_eq!(same.config_json(), c.config_json());
+        let mut silent = plain;
+        silent.runtime_log_level = None;
+        let v: serde_json::Value = serde_json::from_str(&silent.config_json()).unwrap();
+        assert!(v.get("log_level").is_none());
+    }
+
+    #[test]
+    fn kept_logs_are_off_unless_a_directory_is_given() {
+        let c = MsbConfig::new("/h", "/m", "/l", "/s");
+        assert_eq!(c.keep_logs_dir, None);
+        let c = c.with_keep_logs_dir("/kept");
+        assert_eq!(c.keep_logs_dir, Some(PathBuf::from("/kept")));
     }
 
     #[test]

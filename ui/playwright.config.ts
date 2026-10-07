@@ -6,9 +6,29 @@
 //   Linux: Chromium and WebKit (WebKit stands in for WebKitGTK and, later, WKWebView).
 //   Windows: the installed Edge (WebView2's engine), so no browser download.
 import { defineConfig, devices } from "@playwright/test";
+import { createServer } from "node:net";
 import { resolve } from "node:path";
 
-const PORT = 4173;
+// A free port per run, so gate runs from several checkouts can overlap. Playwright loads this
+// config again in every worker, so the first load (the runner's) picks the port and passes it on
+// through the environment.
+async function freePort(): Promise<number> {
+  return new Promise((done, fail) => {
+    const probe = createServer();
+    probe.once("error", fail);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      probe.close(() =>
+        typeof address === "object" && address !== null
+          ? done(address.port)
+          : fail(new Error("no port")),
+      );
+    });
+  });
+}
+const PORT = Number(
+  (process.env["PUDDLE_E2E_PORT"] ??= String(await freePort())),
+);
 const CONNECTION_FILE = resolve(
   import.meta.dirname,
   ".svelte-kit",

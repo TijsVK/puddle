@@ -29,6 +29,7 @@ pub(crate) async fn runtime(settings: &Settings) -> MsbRuntime {
     let home = settings.home();
     let config = MsbConfig::new(&home, pair.msb, pair.libkrunfw, home.join("guest-share"))
         .with_ssh_key(TEST_SSH_KEY)
-        .with_runtime_log_level(settings.msb_log_level.clone());
+        .with_runtime_log_level(settings.msb_log_level.clone())
+        .with_keep_logs_dir(settings.kept_logs());
     MsbRuntime::open(config).await.expect("open msb")
 }

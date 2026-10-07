@@ -35,7 +35,8 @@ async fn runtime() -> (MsbRuntime, Settings) {
     let pair = settings.prepare().expect("msb runtime pair");
     let home = settings.home();
     let config = MsbConfig::new(&home, pair.msb, pair.libkrunfw, home.join("guest-share"))
-        .with_runtime_log_level(settings.msb_log_level.clone());
+        .with_runtime_log_level(settings.msb_log_level.clone())
+        .with_keep_logs_dir(settings.kept_logs());
     (MsbRuntime::open(config).await.expect("open msb"), settings)
 }
 

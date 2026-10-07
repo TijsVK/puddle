@@ -19,7 +19,7 @@ use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus, VolumeName};
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
 use crate::volume::{Mounter, holders, info, named_volumes};
-use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, spec};
+use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, RUNTIME_LOG_CAP_BYTES, image, logs, spec};
 
 struct Inner {
     config: MsbConfig,
@@ -221,10 +221,21 @@ impl MsbRuntime {
         self.inner.sandboxes_dir.join(name)
     }
 
+    /// Copies the sandbox's msb logs to [`MsbConfig::keep_logs_dir`], when one is set.
+    fn keep_logs(&self, name: &str) {
+        if let Some(dir) = &self.inner.config.keep_logs_dir {
+            logs::keep(
+                &self.sandbox_dir(name).join("logs"),
+                &dir.join(name).join("logs"),
+            );
+        }
+    }
+
     /// Logs a lost boot race with the tail of msb's logs for the sandbox. Both known causes are fixed
     /// in the fork (`-puddle.6` and `-puddle.8`), so seeing this means a regression or
     /// a new cause: the logs are the evidence.
     fn log_boot_race(&self, op: &str, name: &SandboxName, error: &MicrosandboxError) {
+        self.keep_logs(name.as_str());
         let logs = log_tail(
             &self.sandbox_dir(name.as_str()).join("logs"),
             LOG_TAIL_BYTES,
@@ -404,6 +415,10 @@ impl Runtime for MsbRuntime {
                 .map(|v| (v, None))
                 .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
+            logs::cap_runtime_log(
+                &self.sandbox_dir(name.as_str()).join("logs"),
+                RUNTIME_LOG_CAP_BYTES,
+            );
             match self.sdk(Sandbox::start(name.as_str())).await {
                 Ok(sdk) => self.handle_for(name, sdk).await,
                 Err(e) => {
@@ -493,6 +508,7 @@ impl Runtime for MsbRuntime {
                     status: current,
                 });
             }
+            self.keep_logs(name.as_str());
             self.sdk(Sandbox::remove(name.as_str()))
                 .await
                 .map_err(|e| map("remove", name.as_str(), e))
@@ -535,6 +551,7 @@ impl Runtime for MsbRuntime {
             if self.record(name.as_str()).await?.is_some() || !dir.is_dir() {
                 return Err(not_found());
             }
+            self.keep_logs(name.as_str());
             std::fs::remove_dir_all(&dir).map_err(|e| runtime("remove stale dir", &e))
         })
     }
