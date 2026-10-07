@@ -34,7 +34,7 @@ describe("DeleteWorkspaceDialog", () => {
     expect(dialog).toHaveTextContent("M a.md");
     expect(dialog).toHaveTextContent("and 3 more");
     expect(dialog).toHaveTextContent("abc123 Fix it");
-    expect(dialog).toHaveTextContent("Outside any repository");
+    expect(dialog).toHaveTextContent("Files outside any repository");
     expect(dialog).toHaveTextContent("scratch");
   });
 

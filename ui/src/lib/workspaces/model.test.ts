@@ -274,8 +274,8 @@ describe("what a delete would lose", () => {
         more: 0,
       },
       {
-        where: "Outside any repository",
-        what: "Files",
+        where: "",
+        what: "Files outside any repository",
         items: ["scratch"],
         more: 0,
       },

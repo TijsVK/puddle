@@ -218,6 +218,7 @@ export function sortWorkspaces(list: readonly Workspace[]): Workspace[] {
 
 /** What a delete would lose, as sentences for the confirm dialog. */
 export interface LossLine {
+  /** The checkout's directory; empty for what is outside any. */
   where: string;
   what: string;
   items: string[];
@@ -244,8 +245,8 @@ export function losses(check: DeleteCheck): LossLine[] {
   }
   if (check.other.items.length > 0 || check.other.more > 0)
     lines.push({
-      where: "Outside any repository",
-      what: "Files",
+      where: "",
+      what: "Files outside any repository",
       items: check.other.items,
       more: check.other.more,
     });

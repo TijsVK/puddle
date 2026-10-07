@@ -1049,12 +1049,10 @@ test.describe("accessibility", () => {
         expect(await axeViolations(page), tab).toEqual([]);
       }
 
-      await openDetail(page, backend, "docs-site");
-      await page
-        .getByRole("button", { name: "Stop docs-site" })
-        .waitFor({ state: "attached" })
-        .catch(() => undefined);
       await page.goto("/workspaces/data-tools");
+      await expect(
+        page.getByRole("heading", { level: 1, name: "data-tools" }),
+      ).toBeVisible();
       await page.getByRole("button", { name: "Delete workspace…" }).click();
       const confirm = page.getByRole("alertdialog");
       await expect(confirm).toBeVisible();

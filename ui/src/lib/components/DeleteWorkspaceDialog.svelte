@@ -76,7 +76,8 @@
           <ul class="losses">
             {#each lines as line (line.where + line.what)}
               <li>
-                <b>{line.what}</b> in <span class="mono">{line.where}</span>
+                <b>{line.what}</b>
+                {#if line.where}in <span class="mono">{line.where}</span>{/if}
                 <ul>
                   {#each line.items as item, i (i)}
                     <li class="mono">{item}</li>
