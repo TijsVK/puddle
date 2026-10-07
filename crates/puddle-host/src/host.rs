@@ -18,12 +18,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, Launcher, RunningApi, Services, SettingsRepo,
+    ApiConfig, ApiServer, ApiToken, EventHub, HostNetworkHealth, Launcher, RunningApi, Services,
+    SettingsRepo, forward_network_changes,
 };
 use puddle_certs::CorporateRoots;
 use puddle_compute::{Runtime, SandboxInfo};
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
-use puddle_netpolicy::{EndpointKind, LocalAccess, NetPolicy, PuddleEndpoints};
+use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Upstream};
 use puddle_settings::{GlobalSettings, SandboxSettings, resolve};
 use puddle_store::{DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
@@ -275,6 +276,17 @@ struct Background {
     pull: PullRoute,
     // Dropped (stopped) with the rest; `None` where the OS cannot watch.
     _watching: Option<Watching>,
+    // Tells the API's event stream about each new network epoch; ended with the rest.
+    _network_events: AbortOnDrop,
+}
+
+/// Aborts its task when dropped, so a forwarder never outlives the host.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// The running host. Its API URL and token are what a window or the CLI connects with.
@@ -289,8 +301,6 @@ pub struct Host<R: Runtime + Clone> {
     grace: std::time::Duration,
     api: AsyncMutex<Option<RunningApi>>,
     background: AsyncMutex<Option<Background>>,
-    // Keeps the API's address registered, so no guest can reach it through the proxy.
-    api_registration: Mutex<Option<puddle_netpolicy::Registration>>,
     steps: Mutex<Vec<Step>>,
     reconcile: puddle_lifecycle::ReconcileReport,
     stopped: OnceCell<HostShutdown>,
@@ -364,6 +374,12 @@ impl<R: Runtime + Clone> Host<R> {
         // sandbox proxy and the pull proxy alike.
         let egress = Egress::build(&config, &options, &settings, &endpoints, &store, &events);
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
+        // What the network-health screen reads: what discovery, the sign-in log, the company
+        // roots read above and the pull proxy know.
+        let network_health = Arc::new(
+            HostNetworkHealth::new(discovery.clone(), clock.clone()).with_chain(egress.chain),
+        );
+        network_health.set_roots(Arc::new(roots.clone()));
         let pull_url = pull.proxy_url();
         // Image pulls are puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
         let pull = pull
@@ -401,9 +417,15 @@ impl<R: Runtime + Clone> Host<R> {
 
         // From here the host serves. The pull proxy first: the first create pulls an image.
         let pull = pull.serve().map_err(HostError::PullProxy)?;
+        // Image pulls leave through the company proxy chain, like the sandboxes' traffic.
+        network_health.set_pull_proxy(true, true);
         steps.push(Step::PullProxyServing);
         let sweeper = Sweeper::spawn(store.clone(), DEFAULT_SWEEP_PERIOD);
         let watching = discovery.watch();
+        let network_events = AbortOnDrop(forward_network_changes(
+            &discovery,
+            events.clone() as Arc<dyn EventSink>,
+        ));
         steps.push(Step::BackgroundStarted);
 
         let lifecycle = Arc::new(Lifecycle::new(runtime.clone(), config.shutdown.clone()));
@@ -425,10 +447,11 @@ impl<R: Runtime + Clone> Host<R> {
         steps.push(Step::WorkspacesReady);
 
         let services = Services::new(store.clone(), settings, events.clone(), clock)
-            .with_workspaces(Arc::new(service.clone()));
-        let served = serve_api(&config, services, &endpoints).await?;
-        let (info, url, api, registration) =
-            (served.info, served.url, served.api, served.registration);
+            .with_workspaces(Arc::new(service.clone()))
+            .with_network_health(network_health)
+            .with_endpoints(endpoints.clone());
+        let served = serve_api(&config, services).await?;
+        let (info, url, api) = (served.info, served.url, served.api);
         steps.push(Step::ApiServing);
         tracing::info!(%url, "puddle is up");
 
@@ -446,8 +469,8 @@ impl<R: Runtime + Clone> Host<R> {
                 sweeper,
                 pull,
                 _watching: watching,
+                _network_events: network_events,
             })),
-            api_registration: Mutex::new(Some(registration)),
             steps: Mutex::new(steps),
             reconcile: report,
             stopped: OnceCell::new(),
@@ -536,10 +559,6 @@ impl<R: Runtime + Clone> Host<R> {
                 if let Some(api) = self.api.lock().await.take() {
                     api.shutdown().await;
                 }
-                self.api_registration
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .take();
                 self.step(Step::ApiStopped);
                 if let Some(background) = self.background.lock().await.take() {
                     background.sweeper.shutdown().await;
@@ -601,6 +620,7 @@ fn open_state(
 struct Egress {
     proxy: Arc<Proxy>,
     upstream: Upstream,
+    chain: Arc<Chain>,
     discovery: Arc<Discovery>,
 }
 
@@ -623,7 +643,8 @@ impl Egress {
         if let Some(credentials) = config.upstream.basic.clone() {
             auth = auth.with(Arc::new(BasicAuth::new().with_default(credentials)));
         }
-        let upstream = Upstream::new(Chain::new(discovery.clone(), Arc::new(auth)));
+        let chain = Chain::new(discovery.clone(), Arc::new(auth));
+        let upstream = Upstream::new(chain.clone());
         let access_settings = settings.clone();
         let guard = NetPolicy::new(Arc::new(move |sandbox: &SandboxName| {
             local_access(access_settings.as_ref(), sandbox)
@@ -638,24 +659,21 @@ impl Egress {
         Self {
             proxy,
             upstream,
+            chain,
             discovery,
         }
     }
 }
 
-/// The API, bound, announced to the destination guard and serving.
+/// The API, bound and serving. It registers its own address in the services' endpoint registry
+/// (the guard's) and drops that entry when it stops.
 struct ServedApi {
     info: puddle_api::ConnectionInfo,
     url: Url,
     api: RunningApi,
-    registration: puddle_netpolicy::Registration,
 }
 
-async fn serve_api(
-    config: &HostConfig,
-    services: Services,
-    endpoints: &PuddleEndpoints,
-) -> Result<ServedApi, HostError> {
+async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi, HostError> {
     let mut api_config = ApiConfig::with_port(config.api.port);
     api_config
         .extra_origins
@@ -664,8 +682,6 @@ async fn serve_api(
         api_config.ui = Some(ui.clone());
     }
     let server = ApiServer::bind(api_config, ApiToken::generate()?, services).await?;
-    // Registered before it serves, so no guest can ask the proxy for it.
-    let registration = endpoints.register(server.local_addr(), EndpointKind::Api);
     let info = server.connection_info();
     if let Some(file) = &config.api.connection_file {
         info.write(file)?;
@@ -675,12 +691,7 @@ async fn serve_api(
         reason: e.to_string(),
     })?;
     let api = server.spawn();
-    Ok(ServedApi {
-        info,
-        url,
-        api,
-        registration,
-    })
+    Ok(ServedApi { info, url, api })
 }
 
 /// What reconcile works from: the workspaces puddle knows, the sandboxes they own and which of

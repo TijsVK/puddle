@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use puddle_api::{LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord};
-use puddle_certs::CorporateRoots;
+use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime};
 use puddle_compute::{ExecOutput, ExecRequest, Runtime};
 use puddle_host::{
@@ -28,7 +28,7 @@ use puddle_host::{
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_types::{SandboxName, WorkspaceId};
-use puddle_upstream::Mode;
+use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
 use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH};
 use serde_json::json;
 use support::{Api, ended};
@@ -39,6 +39,7 @@ type Log = Arc<Mutex<Vec<String>>>;
 struct FakePlatform {
     log: Log,
     refuse: Option<&'static str>,
+    roots: CorporateRoots,
 }
 
 impl FakePlatform {
@@ -46,6 +47,7 @@ impl FakePlatform {
         Self {
             log: log.clone(),
             refuse: None,
+            roots: CorporateRoots::default(),
         }
     }
 
@@ -70,8 +72,23 @@ impl Platform for FakePlatform {
 
     fn corporate_roots(&self) -> Result<CorporateRoots, HostError> {
         self.call("corporate_roots")?;
-        Ok(CorporateRoots::default())
+        Ok(self.roots.clone())
     }
+}
+
+/// The company roots of a machine that has one: a single self-signed root.
+fn company_roots() -> CorporateRoots {
+    let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "Corp Root CA");
+    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    params.not_after = rcgen::date_time_ymd(2090, 1, 1);
+    let key = rcgen::KeyPair::generate().unwrap();
+    let cert = params.self_signed(&key).unwrap();
+    let mut snapshot = StoreSnapshot::new();
+    snapshot.add(SOURCES[0], cert.der().to_vec());
+    CorporateRoots::select(&snapshot, std::time::SystemTime::now())
 }
 
 /// Opens the shared `FakeRuntime` and records what it was given.
@@ -493,6 +510,84 @@ async fn the_apis_address_is_registered_so_no_guest_can_ask_the_proxy_for_it() {
         "{:?}",
         host.endpoints().list()
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_api_and_the_pull_proxy_are_each_registered_once_in_the_one_registry() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let kinds: Vec<_> = host
+        .endpoints()
+        .list()
+        .into_iter()
+        .map(|(_, kind)| kind)
+        .collect();
+    assert_eq!(
+        kinds.iter().filter(|k| **k == EndpointKind::Api).count(),
+        1,
+        "{kinds:?}"
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|k| **k == EndpointKind::PullProxy)
+            .count(),
+        1,
+        "{kinds:?}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_network_health_report_is_the_hosts_own_and_follows_a_network_change() {
+    let rig = Rig::new();
+    let os = FakeOs::new(ProxyConfig::default());
+    let mut platform = FakePlatform::new(&rig.log);
+    platform.roots = company_roots();
+    let prepared = prepare(rig.config(), &platform).unwrap();
+    let mut options = HostOptions::default();
+    options.discovery = Some(Discovery::new(
+        os.clone(),
+        puddle_upstream::Config::default(),
+    ));
+    let host = Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
+        .await
+        .unwrap();
+    let api = api(&host);
+
+    assert_eq!(
+        api.request("GET", "/api/network-health", None, false)
+            .await
+            .status,
+        401
+    );
+    let reply = api.get("/api/network-health").await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let report = reply.json();
+    assert_eq!(report["roots"]["synced"], true, "{report}");
+    assert_eq!(report["roots"]["roots"], 1, "{report}");
+    assert_eq!(
+        report["roots"]["certificates"][0]["subject"],
+        "Corp Root CA"
+    );
+    assert_eq!(
+        report["pull_proxy"],
+        json!({"active": true, "via_upstream": true})
+    );
+    assert_eq!(report["proxy"]["epoch"], 0);
+    assert_eq!(report["proxy"]["last_change_at"], serde_json::Value::Null);
+
+    // A network change: the event, then a report that shows the new epoch.
+    let mut events = api.events().await;
+    assert!(os.fire_change());
+    let event = events
+        .until(|e| e["type"] == "network_changed", Duration::from_secs(20))
+        .await;
+    assert_eq!(event["epoch"], 1, "{event}");
+    let after = api.get("/api/network-health").await.json();
+    assert_eq!(after["proxy"]["epoch"], 1, "{after}");
+    assert!(after["proxy"]["last_change_at"].as_u64().unwrap() > 0);
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
