@@ -621,7 +621,7 @@ async fn the_last_sign_in_to_each_proxy_is_kept_without_its_secrets() {
     use puddle_upstream::SignInOutcome;
     let echo = start_echo().await;
     let proxy = FakeProxy::start(Behaviour::Basic {
-        user: "t188".into(),
+        user: "bob".into(),
         password: "pw-right".into(),
     })
     .await;
@@ -629,7 +629,7 @@ async fn the_last_sign_in_to_each_proxy_is_kept_without_its_secrets() {
     let dest = https("a.test");
     let request = Request::new(&dest, Form::Tunnel, &[]).name_ok(true);
 
-    let chain = chain(vec![via(&proxy)], basic("t188", "pw-right"));
+    let chain = chain(vec![via(&proxy)], basic("bob", "pw-right"));
     assert_eq!(chain.auth_methods(), ["basic"]);
     assert_eq!(chain.sign_ins().len(), 0);
     chain.connect(&request).await.unwrap();
@@ -642,7 +642,7 @@ async fn the_last_sign_in_to_each_proxy_is_kept_without_its_secrets() {
     chain.connect(&request).await.unwrap();
     assert_eq!(chain.sign_ins()[0].scheme.as_deref(), Some("Basic"));
 
-    let wrong = self::chain(vec![via(&proxy)], basic("t188", "pw-wrong"));
+    let wrong = self::chain(vec![via(&proxy)], basic("bob", "pw-wrong"));
     wrong.connect(&request).await.unwrap_err();
     let kept = wrong.sign_ins();
     assert_eq!(kept[0].outcome, SignInOutcome::Failed);
