@@ -37,18 +37,21 @@ async fn direct_ssh_of(state: &AppState, records: &[WorkspaceRecord]) -> Vec<boo
         Ok(names
             .iter()
             .map(|name| {
-                crate::routes::settings::load_sandbox(repo, name)
-                    .map(|own| {
-                        resolve(&global.settings, Some(&own.settings))
-                            .direct_ssh
-                            .value
-                    })
-                    .unwrap_or(false)
+                crate::routes::settings::load_sandbox(repo, name).is_ok_and(|own| {
+                    resolve(&global.settings, Some(&own.settings))
+                        .direct_ssh
+                        .value
+                })
             })
             .collect())
     })
     .await
     .unwrap_or_else(|_| vec![false; records.len()])
+}
+
+/// Whether direct SSH is on for one workspace.
+async fn direct_ssh_on(state: &AppState, record: WorkspaceRecord) -> bool {
+    direct_ssh_of(state, &[record]).await.first() == Some(&true)
 }
 
 /// The workspaces as the API shows them.
@@ -63,8 +66,8 @@ async fn views(state: &AppState, records: Vec<WorkspaceRecord>) -> Vec<Workspace
 
 /// One workspace as the API shows it.
 async fn view(state: &AppState, record: WorkspaceRecord) -> Workspace {
-    let mut all = views(state, vec![record]).await;
-    all.remove(0)
+    let on = direct_ssh_on(state, record.clone()).await;
+    Workspace::new(record, on)
 }
 
 /// Every workspace.
@@ -269,7 +272,7 @@ pub(crate) async fn attach_workspace(
         // A workspace that is not up gets the service's own "start it first" answer.
         let record = state.workspaces.get(&id).await?;
         let up = record.busy.is_none() && record.status == puddle_types::SandboxStatus::Running;
-        if up && !direct_ssh_of(&state, &[record]).await[0] {
+        if up && !direct_ssh_on(&state, record).await {
             return Err(crate::WorkspaceError::Conflict(
                 "direct SSH is off for this workspace; allow it first".to_owned(),
             )
