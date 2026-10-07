@@ -279,7 +279,14 @@ async fn the_health_report_names_what_windows_holds_and_hides_what_is_secret() {
     let _bypass = RegValue::set("ProxyOverride", "REG_SZ", "*.corp.test;<local>");
     let _on = RegValue::set("ProxyEnable", "REG_DWORD", "1");
     let health = discovery().health().await;
-    assert_eq!(health.detected, Detected::Static);
+    // Windows may have "detect settings automatically" on (a runner does): WPAD is then asked
+    // first and the static proxy is what it falls back to. Both are reported.
+    let expected = if health.auto_detect {
+        Detected::Wpad
+    } else {
+        Detected::Static
+    };
+    assert_eq!(health.detected, expected);
     assert_eq!(
         health.https_proxy,
         Some(ProxyAddr::new("static.corp", 3128))
