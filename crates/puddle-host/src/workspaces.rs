@@ -629,6 +629,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// SSH way into a workspace (the endpoint, and any ssh config entry) must check this first.
     /// It is its override over the global default over
     /// off. A settings document that cannot be read counts as off.
+    #[must_use]
     pub fn direct_ssh_allowed(&self, name: &SandboxName) -> bool {
         let settings = self.inner.settings.as_ref();
         let Some(global) = settings
@@ -674,13 +675,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let stale = {
             let mut live = inner.live.lock().await;
-            match live.get_mut(name) {
-                Some(entry) => entry.ssh.replace(ssh),
-                None => {
-                    drop(live);
-                    ssh.close().await;
-                    return;
-                }
+            if let Some(entry) = live.get_mut(name) {
+                entry.ssh.replace(ssh)
+            } else {
+                drop(live);
+                ssh.close().await;
+                return;
             }
         };
         if let Some(stale) = stale {
@@ -691,7 +691,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Makes every running sandbox's SSH endpoint and ssh config entry match its direct SSH
     /// setting, at once and without a restart.
     async fn apply_direct_ssh(&self) {
-        let running: Vec<(SandboxName, Option<Arc<GatedSandbox<R::Sandbox>>>, bool)> = {
+        type Running<S> = (SandboxName, Option<Arc<GatedSandbox<S>>>, bool);
+        let running: Vec<Running<R::Sandbox>> = {
             let live = self.inner.live.lock().await;
             live.iter()
                 .filter_map(|(name, entry)| {
