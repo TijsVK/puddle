@@ -34,8 +34,8 @@ const PNPM: &str = "pnpm@10.12.1";
 const YARN_BERRY: &str = "yarn@4.9.2";
 
 const CREATE_BUDGET: Duration = Duration::from_secs(300);
-/// Per setup step; the guest enforces it with `timeout` (a bit less), so a hung step ends with its
-/// own output instead of a bare host-side timeout.
+/// Per setup step; the guest enforces it with `timeout` (a bit less) and writes the step's output to a
+/// file, so a hung step ends with its output instead of a bare host-side timeout.
 const SETUP_STEP_BUDGET: Duration = Duration::from_secs(300);
 const PROBE_BUDGET: Duration = Duration::from_secs(150);
 const STEP_BUDGET: Duration = Duration::from_secs(60);
@@ -47,9 +47,25 @@ const KNOWN_GAPS: &[&str] = &[];
 const SETUP_STEPS: &[(&str, &str)] = &[
     ("apt update", "apt-get update -qq"),
     (
+        // Names and routes the install needs, so a stall can be told from a dead network.
+        "network probe",
+        "getent ahosts deb.debian.org | head -4; node -e \"const t = Date.now(); \\
+         fetch('http://deb.debian.org/debian/dists/trixie/InRelease', {signal: AbortSignal.timeout(20000)}) \\
+         .then((r) => console.log('debian http=' + r.status + ' ms=' + (Date.now() - t))) \\
+         .catch((e) => { console.log('debian failed ms=' + (Date.now() - t) + ' ' + e); process.exit(1); })\"",
+    ),
+    (
+        // eatmydata turns fsync into a no-op for the install: on the Linux KVM host one fsync in
+        // the guest took ~0.4 s (the host's own ~14 ms), and dpkg syncs for every package, so
+        // the unpack alone ran past five minutes. The tools are only needed for this test.
+        "apt install eatmydata",
+        "apt-get install -y -q --no-install-recommends eatmydata",
+    ),
+    (
+        // Output kept (no -qq): a stall shows the last package unpacked.
         "apt install (JDK 21, maven, tools)",
-        "apt-get install -y -qq --no-install-recommends ca-certificates curl wget git sudo unzip \
-         python3-pip openjdk-21-jdk-headless maven >/dev/null",
+        "eatmydata apt-get install -y -o Dpkg::Use-Pty=0 --no-install-recommends ca-certificates \
+         curl wget git sudo unzip python3-pip openjdk-21-jdk-headless maven",
     ),
     (
         "gradle download",
@@ -438,7 +454,9 @@ async fn fixture_log(sb: &Sandbox) -> Vec<String> {
 async fn setup_step(sb: &Sandbox, name: &str, script: &str) {
     let guest_limit = SETUP_STEP_BUDGET.as_secs() - 10;
     let wrapped = format!(
-        "set -eu; export DEBIAN_FRONTEND=noninteractive; exec 2>&1; timeout {guest_limit} sh -c {}",
+        "export DEBIAN_FRONTEND=noninteractive; \
+         timeout -k 5 {guest_limit} sh -c {} >/tmp/setup-step.log 2>&1; rc=$?; \
+         tail -n 40 /tmp/setup-step.log; exit $rc",
         sh_quote(&format!("set -eu; {script}"))
     );
     let started = Instant::now();
