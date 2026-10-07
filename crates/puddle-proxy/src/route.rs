@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The host listener on one sandbox's route (T-105 endpoint): accept agent connections and serve
+//! The host listener on one sandbox's route: accept agent connections and serve
 //! each as a yamux session whose proxied streams go to that sandbox's [`SandboxHandler`].
 //!
-//! The endpoint is the identity (HO-3): every connection on it belongs to the sandbox the route
+//! The endpoint is the identity: every connection on it belongs to the sandbox the route
 //! was created for, whatever the guest says.
 
 use std::sync::Arc;

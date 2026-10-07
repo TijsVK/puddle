@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The consent store: one record per thing puddle asks the user's permission for. Telemetry and
-//! crash reports (D-18, strictly opt-in) and Microsoft's VS Code server (D-40's enable popup,
+//! crash reports (strictly opt-in) and Microsoft's VS Code server (the enable popup,
 //! consent recorded per user) share this one type, so there is one store, not two.
 
 use std::collections::BTreeMap;
@@ -144,11 +144,11 @@ impl Consent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConsentKind {
-    /// puddle's own usage telemetry (D-18).
+    /// puddle's own usage telemetry.
     Telemetry,
-    /// Sending puddle's crash reports (D-18).
+    /// Sending puddle's crash reports.
     CrashReports,
-    /// Downloading and running Microsoft's VS Code server under its licence terms (D-40, D-43 (5)).
+    /// Downloading and running Microsoft's VS Code server under its licence terms.
     #[serde(rename = "vscode_server")]
     VsCodeServer,
 }

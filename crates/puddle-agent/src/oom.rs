@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Watching the guest kernel's OOM killer (D-47: show the guest's OOM kills to the user).
+//! Watching the guest kernel's OOM killer, so the user sees the guest's OOM kills.
 //!
 //! Two sources, because each misses something the other has:
 //!

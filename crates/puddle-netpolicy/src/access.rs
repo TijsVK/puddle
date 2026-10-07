@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The local-destination settings one sandbox runs with: a toggle per category (D-1) and
-//! whether wildcard allows reach local addresses (D-44).
+//! The local-destination settings one sandbox runs with: a toggle per category and
+//! whether wildcard allows reach local addresses.
 
 use puddle_settings::Effective;
 use puddle_types::{LocalCategory, SandboxName};

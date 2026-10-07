@@ -18,15 +18,15 @@ use crate::EndpointKind;
 pub enum AddressClass {
     /// Public unicast: only the rules decide.
     Public,
-    /// In a local category; its toggle decides whether rules may allow it (D-1, D-37).
+    /// In a local category; its toggle decides whether rules may allow it.
     Local {
         /// The category.
         category: LocalCategory,
         /// Why, for the audit (`rfc1918`, `nat64`, `metadata`, ...).
         rule: &'static str,
     },
-    /// One of puddle's own listeners (D-26). Not host loopback: no toggle reaches it, and
-    /// D-26's later per-sandbox unblock keys on this class. Only
+    /// One of puddle's own listeners. Not host loopback: no toggle reaches it, and
+    /// a later per-sandbox unblock would key on this class. Only
     /// [`crate::NetPolicy::classify`] gives it, since it needs the port and the registry.
     PuddleEndpoint(EndpointKind),
 }
@@ -229,7 +229,7 @@ mod tests {
         }
     }
 
-    // Brief 4 §A6 rows 1–32 and 39 (T-005), with D-1's categories in place of "hard deny".
+    // The reserved-range table, one case per row, with the local-destination categories.
 
     #[test]
     fn row01_06_metadata_addresses() {

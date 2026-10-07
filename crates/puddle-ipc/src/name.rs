@@ -3,7 +3,7 @@
 //!
 //! On Windows the pipe namespace is shared by every user on the machine and anyone can list it, so
 //! the name carries no sandbox name (it would tell other users which sandboxes exist) and 128
-//! random bits, so nobody can create it first (HO-2) except by listing it after puddle did, which
+//! random bits, so nobody can create it first except by listing it after puddle did, which
 //! `FILE_FLAG_FIRST_PIPE_INSTANCE` then catches.
 
 use crate::IpcError;

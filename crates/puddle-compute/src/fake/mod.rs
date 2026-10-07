@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! [`FakeRuntime`]: an in-memory [`Runtime`] that behaves like msb as T-028 observed it, for
+//! [`FakeRuntime`]: an in-memory [`Runtime`] that behaves like msb as observed on msb 0.7.6, for
 //! unit tests of everything above the compute plane (feature `fake`).
 //!
 //! What it reproduces (each pinned by a case in [`crate::contract`]):
 //!
 //! - `create` boots the sandbox and returns an owning handle; dropping it without `stop` leaves
-//!   the sandbox `Stopped`, as msb 0.7.7 does (T-106; 0.7.6 said `Crashed`, T-028 L1). `get`
+//!   the sandbox `Stopped`, as msb 0.7.7 does (0.7.6 said `Crashed`). `get`
 //!   re-adopts a running sandbox without owning it.
 //! - Exit codes come through exactly; a signal-killed command reports `-1`.
 //! - File mounts are read-only (`tee` reports `Read-only file system`).
 //! - Root disk and owned disks survive stop/start and die with `remove`; named volumes survive
 //!   `remove` and reattach with a plain `named()` mount.
 //! - A second attach of a volume held by a running sandbox is refused naming the holder, and
-//!   leaves the refused sandbox behind as a `Stopped` record (T-028
-//!   `volume.second_attach_leftover`).
+//!   leaves the refused sandbox behind as a `Stopped` record.
 //! - A create that fails its volume check (missing volume, size mismatch) leaves a stale
-//!   directory that blocks the name, unless [`FakeConfig::stale_dir_fixed`] (msb T-039).
+//!   directory that blocks the name, unless [`FakeConfig::stale_dir_fixed`] (an upstream msb bug).
 //! - The SSH server writes an `SSH-2.0-` identification line first.
 //! - Every boot writes `/proc/meminfo` with `MemTotal` = the spec's memory, so a
 //!   [`Runtime::set_memory`] shows only after the next start.
@@ -175,14 +174,14 @@ impl Fault {
 pub struct FakeConfig {
     /// Reported by [`Runtime::probe`].
     pub runtime_version: String,
-    /// When `true`, a failed create leaves no stale directory (msb T-039 fixed).
+    /// When `true`, a failed create leaves no stale directory (the upstream msb bug fixed).
     pub stale_dir_fixed: bool,
     /// Reported by [`Runtime::probe`]; the fake's SSH server runs no commands either way.
     pub ssh_reports_signal_exit: bool,
 }
 
 impl Default for FakeConfig {
-    /// msb 0.7.6 as T-028 found it: stale directories, signal exit lost over SSH.
+    /// msb 0.7.6 as observed: stale directories, signal exit lost over SSH.
     fn default() -> Self {
         Self {
             runtime_version: "fake".into(),
@@ -335,9 +334,9 @@ impl std::fmt::Debug for FakeRuntime {
 }
 
 impl FakeRuntime {
-    /// `mcr.microsoft.com/devcontainers/base:debian`: no ENTRYPOINT, CMD `bash` (T-028).
+    /// `mcr.microsoft.com/devcontainers/base:debian`: no ENTRYPOINT, CMD `bash`.
     pub const DEBIAN: &'static str = "mcr.microsoft.com/devcontainers/base:debian";
-    /// `docker:dind`: ENTRYPOINT `dockerd-entrypoint.sh` (T-028 chain run).
+    /// `docker:dind`: ENTRYPOINT `dockerd-entrypoint.sh`.
     pub const DIND: &'static str = "docker:dind";
     /// `alpine:3`: CMD `/bin/sh`.
     pub const ALPINE: &'static str = "alpine:3";
@@ -433,7 +432,7 @@ impl FakeRuntime {
         self.lock().foreign.insert(name.to_owned(), status);
     }
 
-    /// Adds a sandbox directory without a record, as a failed create leaves it (T-039) or as
+    /// Adds a sandbox directory without a record, as a failed create leaves it or as
     /// another tool might; `name` need not be a valid [`SandboxName`].
     pub fn add_stale_dir(&self, name: &str) {
         self.lock().stale_dirs.insert(name.to_owned());
@@ -460,7 +459,7 @@ impl FakeRuntime {
         }
     }
 
-    /// Marks a failed create's leftover directory, as msb does until T-039 is fixed.
+    /// Marks a failed create's leftover directory, as msb does until the upstream bug is fixed.
     fn leave_stale_dir(&self, state: &mut State, name: &SandboxName) {
         if !self.inner.config.stale_dir_fixed {
             state.stale_dirs.insert(name.to_string());
@@ -536,7 +535,7 @@ impl Runtime for FakeRuntime {
             }
         }
         if let Err(e) = state.check_holders(&spec) {
-            // msb records the sandbox before the VMM refuses the disk (T-028).
+            // msb records the sandbox before the VMM refuses the disk.
             state.sandboxes.insert(
                 name.to_string(),
                 SandboxRecord {

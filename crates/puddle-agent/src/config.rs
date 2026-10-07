@@ -4,11 +4,11 @@
 //! | Variable | Default | |
 //! |---|---|---|
 //! | `PUDDLE_AGENT_LISTEN` | `127.0.0.1:3128` | proxy listener (the sandbox's own processes) |
-//! | `PUDDLE_AGENT_BRIDGE` | `172.17.0.1:3128` | the Docker bridge address nested containers use as their proxy (T-099): the agent listens there only while a bridge interface owns that address; `off` disables it |
+//! | `PUDDLE_AGENT_BRIDGE` | `172.17.0.1:3128` | the Docker bridge address nested containers use as their proxy: the agent listens there only while a bridge interface owns that address; `off` disables it |
 //! | `PUDDLE_AGENT_BRIDGE_POLL_MS` | `200` | how often the bridge is looked for |
 //! | `PUDDLE_AGENT_TARGET` | `vsock://2:5000` | the host: `vsock://<cid>:<port>`, or `unix:///path` for tests without a VM |
 //! | `PUDDLE_AGENT_MUX` | `4` | yamux sessions (vsock connections) to spread streams over, 1–64 |
-//! | `PUDDLE_AGENT_VSOCK_BUF` | `16777216` | vsock socket buffer in bytes; `0` keeps the kernel default (reproduces the T-004 upload stall) |
+//! | `PUDDLE_AGENT_VSOCK_BUF` | `16777216` | vsock socket buffer in bytes; `0` keeps the kernel default (reproduces a slow-upload stall) |
 //! | `PUDDLE_AGENT_WINDOW` | `16777216` | yamux receive window per stream (download direction), for experiments |
 //! | `PUDDLE_AGENT_OOM` | `1` | `0` turns the OOM watch off |
 //! | `PUDDLE_AGENT_VMSTAT` | `/proc/vmstat` | where the `oom_kill` counter is read |
@@ -25,7 +25,7 @@ use std::time::Duration;
 use puddle_agent_proto::yamux::STREAM_WINDOW;
 
 /// The vsock buffer the agent asks for: above msb's 8 MiB, so the guest's send window is the
-/// host's and msb's 4 MiB credit updates arrive (T-004).
+/// host's and msb's 4 MiB credit updates arrive.
 pub const DEFAULT_VSOCK_BUFFER: u64 = 16 * 1024 * 1024;
 
 /// Most yamux sessions the agent keeps.
@@ -93,7 +93,7 @@ impl Default for OomSources {
     }
 }
 
-/// The Docker bridge listener (T-099).
+/// The Docker bridge listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BridgeConfig {
     /// The bridge's address and the proxy port containers use. Bound only while a bridge

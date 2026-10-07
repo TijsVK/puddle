@@ -86,7 +86,7 @@ impl Default for BootHook {
 }
 
 impl BootHook {
-    /// Default hook timeout: 60 s (T-028 measured about 1 s).
+    /// Default hook timeout: 60 s (a normal boot takes about 1 s).
     pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
     /// Default time a gated call waits for a booting sandbox: 90 s.
     pub const DEFAULT_READY_WAIT: Duration = Duration::from_secs(90);
@@ -173,7 +173,7 @@ impl BootHook {
     }
 
     /// Starts a stopped or crashed sandbox, runs the hook, opens the gate (the guest resets its
-    /// sysctls on every boot, T-028).
+    /// sysctls on every boot).
     ///
     /// # Errors
     ///
@@ -286,7 +286,7 @@ fn classify(result: Result<ExecOutput, ComputeError>) -> Result<String, BootFail
 }
 
 /// Whether a runtime error says the program wasn't there (wording of the msb guest agent's
-/// spawn error; T-106's VM test pins it).
+/// spawn error; the VM test pins it).
 fn spawn_not_found(message: &str) -> bool {
     let m = message.to_lowercase();
     m.contains("no such file") || m.contains("not found")

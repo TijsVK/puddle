@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Harness for tests that boot real microVMs through the msb SDK (T-032 tiers K, W and L).
+//! Harness for tests that boot real microVMs through the msb SDK (tiers K, W and R).
 //!
 //! Test code only; never a dependency of product crates.
 //!
@@ -15,16 +15,16 @@
 //!   pair. The user's own `~/.microsandbox` is never read or written;
 //! - the **runtime pair** (`msb` + `libkrunfw`) from `PUDDLE_VM_RUNTIME_DIR` ([`RuntimePair`]),
 //!   the flat layout of msb's release archive. Ambient `MSB_*` variables are refused, because
-//!   they would silently override the explicit pair (D-19);
+//!   they would silently override the explicit pair;
 //! - an SDK backend scoped to the test ([`VmEnv::scope`]): SDK calls inside the scope use the
 //!   private home, without touching process-wide state.
 //!
 //! # Conventions
 //!
 //! - VM test functions (or their test binaries) are named `vm_*`. nextest runs them only under
-//!   `--profile vm`, one at a time, and never retries them (`.config/nextest.toml`, T-032).
-//! - Laptop-only tests (tier L: real client OS, mains power, corporate network) are named
-//!   `vm_laptop_*`; the CI jobs skip them, `ci/windows-e2e.ps1` runs them.
+//!   `--profile vm`, one at a time, and never retries them (`.config/nextest.toml`).
+//! - Real-machine tests (tier R: real client OS, mains power, corporate network) are named
+//!   `vm_machine_*`; the CI jobs skip them, `ci/windows-e2e.ps1` runs them.
 //! - Sandbox names come from [`VmEnv::sandbox_name`]; images from the constants below.
 //!
 //! # Running
@@ -47,7 +47,7 @@ pub use error::HarnessError;
 pub use prefix::RunPrefix;
 pub use runtime::{AMBIENT_MSB_VARS, RuntimePair, refuse_ambient_msb_vars};
 
-/// The stock devcontainer image every VM tier boots first (T-028, T-041).
+/// The stock devcontainer image every VM tier boots first.
 pub const DEBIAN_DEVCONTAINER: &str = "mcr.microsoft.com/devcontainers/base:debian";
 
 /// Environment variable naming the directory that holds `msb` and `libkrunfw`.
@@ -61,7 +61,7 @@ pub const ROOT_VAR: &str = "PUDDLE_VM_ROOT";
 
 /// Environment variable with the default log level of msb's sandbox runtimes (`error`, `warn`,
 /// `info`, `debug` or `trace`); unset leaves them silent. The VM workflows set `debug`, so a failed
-/// boot's `runtime.log` has the VMM trace (T-164).
+/// boot's `runtime.log` has the VMM trace.
 pub const MSB_LOG_LEVEL_VAR: &str = "PUDDLE_VM_MSB_LOG_LEVEL";
 
 /// Label every harness-created sandbox carries, with the run prefix as its value.

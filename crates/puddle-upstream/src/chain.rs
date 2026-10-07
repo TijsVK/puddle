@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Connecting through the route [`Discovery`] picked (T-165): the hops in order, the `CONNECT`
+//! Connecting through the route [`Discovery`] picked: the hops in order, the `CONNECT`
 //! and absolute-form exchanges with a proxy, and the `407` loop driven by [`ProxyAuth`].
 //!
 //! The caller (the sandbox proxy, the pull proxy, a host-side client) has already decided that

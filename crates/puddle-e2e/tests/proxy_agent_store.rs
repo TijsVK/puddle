@@ -182,7 +182,7 @@ async fn round_trip(agent: SocketAddr, authority: &str, i: usize) -> io::Result<
     Ok(started.elapsed())
 }
 
-/// The T-131 bar through the real agent and the real rules engine: 256 parallel `CONNECT`s,
+/// The load bar through the real agent and the real rules engine: 256 parallel `CONNECT`s,
 /// 0 failures, none slower than 5 s.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn parallel_connects_256_through_agent_proxy_and_store() {
@@ -419,7 +419,7 @@ async fn sink_server() -> (
     (addr, ends, firsts)
 }
 
-/// T-048 through the product proxy: an aborted upload reaches the server as a reset, not as a
+/// Through the product proxy: an aborted upload reaches the server as a reset, not as a
 /// complete-looking EOF.
 #[tokio::test]
 async fn an_aborted_guest_upload_reaches_the_server_as_a_reset() {
@@ -510,7 +510,7 @@ impl puddle_agent::bridge::Probe for BridgeUp {
     }
 }
 
-/// T-099: a request that arrives on the Docker bridge listener meets the same policy and lands
+/// A request that arrives on the Docker bridge listener meets the same policy and lands
 /// in the same audit as one on the loopback listener: same sandbox, same pending row (the
 /// repeat bumps `attempts`), same rule once approved, same record shape.
 #[tokio::test]

@@ -2,7 +2,7 @@
 //! The boot plan: everything one run of `boot.sh` applies, rendered as the shell fragment it
 //! reads on stdin.
 //!
-//! The hook holds no provider logic. Providers (proxy config T-109, corporate roots T-110, the
+//! The hook holds no provider logic. Providers (proxy config, corporate roots, the
 //! per-sandbox CA) hand over [`GuestFile`]s and a [`GuestEnv`]; the plan adds puddle's own files
 //! (the image `PATH` fix, the env file for login shells, the git settings and VS Code's Machine
 //! settings) and the image's ENTRYPOINT, and checks that no two of them claim the same path.
@@ -20,8 +20,7 @@ use crate::quote::{printf_format, sh_word};
 /// The plan's first line; `boot.sh` refuses any other.
 pub const PLAN_HEADER: &str = "# puddle-boot-plan 1";
 
-/// Restores the image's `ENV PATH` in login shells, which Debian's `/etc/profile` resets (T-019
-/// §3, D-4).
+/// Restores the image's `ENV PATH` in login shells, which Debian's `/etc/profile` resets.
 pub const PATH_FILE_GUEST: &str = "/etc/profile.d/00-puddle-path.sh";
 
 /// The provider environment, for login shells and the chained ENTRYPOINT.
@@ -31,7 +30,7 @@ pub const ENV_FILE_GUEST: &str = "/etc/profile.d/01-puddle-env.sh";
 pub const GIT_CONFIG_GUEST: &str = "/etc/puddle/gitconfig";
 
 /// When a file below this directory changes, the hook runs `update-ca-certificates`; when none
-/// did, it skips it (T-028 measured 0.6–0.9 s per boot for it).
+/// did, it skips it (it costs 0.6–0.9 s per boot).
 pub const CA_DIR_GUEST: &str = "/usr/local/share/ca-certificates";
 
 /// The port `puddle-agent` listens on in the guest (the proxy address in `HTTP(S)_PROXY`).
@@ -98,7 +97,7 @@ pub enum PlanError {
     },
 }
 
-/// The git identity puddle writes into the sandbox (D-4: a basic identities feature; the user
+/// The git identity puddle writes into the sandbox (a basic identities feature: the user
 /// sets it in puddle, nothing is copied from the host's `.gitconfig`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitIdentity {
@@ -240,7 +239,7 @@ impl BootPlan {
 
     /// The command the hook chains after setup: the image's ENTRYPOINT + CMD, or `None` when the
     /// image declares no ENTRYPOINT (a CMD alone, such as `bash`, is the interactive default,
-    /// not a service; T-028).
+    /// not a service).
     #[must_use]
     pub fn entrypoint(&self) -> Option<&[String]> {
         (!self.entrypoint.is_empty()).then_some(self.entrypoint.as_slice())
@@ -252,7 +251,7 @@ impl BootPlan {
         self.agent.as_ref()
     }
 
-    /// The binary that applies merged files (`puddle-agent merge-file`, T-097): the agent's,
+    /// The binary that applies merged files (`puddle-agent merge-file`): the agent's,
     /// or [`AGENT_GUEST`] when the plan starts no agent. It must be mounted when
     /// [`BootPlan::has_merged_files`]; the hook also needs it to remove the keys of a merged file
     /// an earlier plan listed, and keeps that record for a later boot when it is missing.
@@ -362,7 +361,7 @@ impl BootPlanBuilder {
 
     /// Runs `script`, one of the plan's provider files, with `/bin/sh` at every boot after the
     /// files and `update-ca-certificates` (a provider's own setup that needs the guest's state,
-    /// such as merging the image's CA bundle, T-110). Steps run in the order added; a step added
+    /// such as merging the image's CA bundle). Steps run in the order added; a step added
     /// twice runs once. A failing step fails the boot with its output.
     pub fn step(mut self, script: GuestPath) -> Self {
         if !self.steps.contains(&script) {
@@ -506,7 +505,7 @@ fn env_file(env: &GuestEnv) -> GuestFile {
 }
 
 /// puddle's git settings: `core.fsync=committed` always (ADR 0006: no lost commits on a VM
-/// kill), the identity when set. Never a credential helper (T-029 CR-1).
+/// kill), the identity when set. Never a credential helper.
 fn git_config(identity: Option<&GitIdentity>) -> GuestFile {
     let quote = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
     let mut text = String::from(GENERATED);
@@ -837,7 +836,7 @@ mod tests {
         let merged = GuestFile::merged(GuestPath::new("/root/c.json").unwrap(), spec)
             .with_mode(0o600)
             .unwrap();
-        // Every plan merges VS Code's Machine settings (T-125).
+        // Every plan merges VS Code's Machine settings.
         let without = BootPlan::builder(&ImageConfig::default()).build().unwrap();
         assert!(without.has_merged_files());
         let plan = BootPlan::builder(&ImageConfig::default())

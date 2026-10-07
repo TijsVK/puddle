@@ -201,7 +201,7 @@ impl VmEnv {
     /// Stops and removes every sandbox of this run, including ones a failed test left behind.
     /// Returns the names it removed. Each sandbox's msb logs are copied to
     /// [`Settings::kept_logs`] first, so a boot that failed keeps its evidence for the CI
-    /// artefact (T-164); [`VmEnv::remove_home`] deletes them after a passing test.
+    /// artefact; [`VmEnv::remove_home`] deletes them after a passing test.
     ///
     /// # Errors
     ///
@@ -243,7 +243,7 @@ impl VmEnv {
     /// test, so a failure keeps msb's logs for the CI artefact.
     ///
     /// Takes the environment by value: the backend's database must be closed first, because
-    /// Windows refuses to delete an open file (T-102 saw "being used by another process"). Files
+    /// Windows refuses to delete an open file ("being used by another process"). Files
     /// msb or SQLite release a moment later are retried for up to 5 s.
     ///
     /// # Errors

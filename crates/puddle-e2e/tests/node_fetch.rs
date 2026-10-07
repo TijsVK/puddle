@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! T-098 regression, L2 with a real client: Node `fetch` with `NODE_USE_ENV_PROXY=1` (what
-//! `puddle-guest-env` sets in the guest, T-109) sends a plain `http://` URL as a `CONNECT host:port`
+//! Regression test, L2 with a real client: Node `fetch` with `NODE_USE_ENV_PROXY=1` (what
+//! `puddle-guest-env` sets in the guest) sends a plain `http://` URL as a `CONNECT host:port`
 //! tunnel, not as an absolute-form request. Through the real agent, proxy and SQLite store, such a
 //! tunnel must be decided like any request (pending until allowed), work once allowed, and be
 //! audited with its method and path.

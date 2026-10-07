@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-ca"
-description = "puddle's per-sandbox, name-constrained CA and its leaf certificate cache (W2, credential injection)"
+description = "puddle's per-sandbox, name-constrained CA and its leaf certificate cache (credential injection)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

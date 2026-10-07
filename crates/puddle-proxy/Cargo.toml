@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-proxy"
-description = "puddle's egress proxy: CONNECT/HTTP handling, pending requests, credential injection (W2)"
+description = "puddle's egress proxy: CONNECT/HTTP handling, pending requests, credential injection"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -11,7 +11,7 @@ use super::sys::Job;
 use crate::LifecycleError;
 
 /// The job's limits. Breakaway is not allowed, so nothing puddle starts can leave the job.
-/// Later hardening (D-27) adds its limits here.
+/// Later hardening adds its limits here.
 const LIMITS: JOB_OBJECT_LIMIT = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 
 /// The job, once created. Never dropped: closing the last handle kills this process too.

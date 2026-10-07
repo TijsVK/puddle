@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! puddle's settings model (T-088): the global settings, per-sandbox overrides, the consent
+//! puddle's settings model: the global settings, per-sandbox overrides, the consent
 //! store, and how a stored document is versioned, migrated and read back. No storage and no API:
 //! a store keeps the documents ([`GlobalSettings::to_document`] gives a JSON value), the API
-//! serves them (T-137).
+//! serves them.
 //!
 //! | Item | What |
 //! |---|---|

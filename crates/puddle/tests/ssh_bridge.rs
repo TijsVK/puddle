@@ -3,7 +3,7 @@
 //!
 //! On Unix the endpoint serves each client with a real OpenSSH server (`sshd -i`, as the test
 //! user, standing in for msb's server), so real `ssh`, `scp`, `sftp` and `-L` run through the
-//! bridge and the endpoint. The same with Windows OpenSSH and msb is the VM bar (T-114 brief).
+//! bridge and the endpoint. The same with Windows OpenSSH and msb is the VM bar.
 #![expect(
     clippy::expect_used,
     reason = "test helpers outside #[test] fns: a failed setup fails the test"

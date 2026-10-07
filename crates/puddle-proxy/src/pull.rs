@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The image-pull proxy (T-116, D-8 interim design): the listener puddle's own registry traffic
+//! The image-pull proxy (interim design): the listener puddle's own registry traffic
 //! goes through, so image pulls take the same way out as everything else.
 //!
 //! msb's registry client (run inside puddle by the msb adapter) is given this listener as its
 //! proxy, with a per-run token as the URL's userinfo (`http://puddle:<token>@127.0.0.1:<port>`),
-//! through the SDK's own setting (`puddle_compute_msb::MsbConfig::with_registry_proxy`, T-144),
+//! through the SDK's own setting (`puddle_compute_msb::MsbConfig::with_registry_proxy`),
 //! not through `HTTPS_PROXY`: the token is never in the process environment, so no child process
 //! inherits it. Then:
 //!
@@ -13,9 +13,9 @@
 //!   connection is closed. The token is 256 random bits, compared in constant time, and never
 //!   logged (`Debug` and `Display` redact it; the log lines carry host and port only).
 //! - **Guests never reach it.** It registers itself in [`PuddleEndpoints`] as
-//!   [`EndpointKind::PullProxy`], so the sandbox proxy's guard blocks it (D-26, T-020 C-9).
+//!   [`EndpointKind::PullProxy`], so the sandbox proxy's guard blocks it.
 //! - **No rules, but the guard.** Pulls are puddle's own requests, not a sandbox's, so the rules
-//!   engine isn't asked and no pending row is written (T-033 F6). The address guard still
+//!   engine isn't asked and no pending row is written. The address guard still
 //!   applies: puddle's own endpoints (this listener included), cloud metadata, link-local and
 //!   special addresses are blocked. Private and loopback addresses are allowed by default, so a
 //!   company registry on an internal address and a developer's `localhost:5000` registry work
@@ -25,7 +25,7 @@
 //!   root passed to the client), and absolute-form `http://` is forwarded once with the proxy
 //!   credentials dropped.
 //!
-//! Upstream chaining (company proxy, PAC, proxy authentication) is W2's (T-134/T-135); until then
+//! Upstream chaining (company proxy, PAC, proxy authentication) is planned work; until then
 //! the pull proxy connects directly.
 
 use std::fmt::{self, Write as _};
@@ -152,7 +152,7 @@ impl fmt::Debug for ProxyUrl {
     }
 }
 
-/// The image-pull proxy (T-116), bound but not serving yet: `127.0.0.1` only, a per-run token
+/// The image-pull proxy, bound but not serving yet: `127.0.0.1` only, a per-run token
 /// every request must carry (`407` otherwise), registered in [`PuddleEndpoints`] so guests never
 /// reach it, and the address guard without the rules.
 ///
@@ -232,7 +232,7 @@ impl PullProxy {
         self
     }
 
-    /// Sends pulls out along the company proxy route (T-165). The guard still runs on every
+    /// Sends pulls out along the company proxy route. The guard still runs on every
     /// address first, and a `DIRECT` hop connects only to an address that passed.
     #[must_use]
     pub fn with_upstream(mut self, upstream: Upstream) -> Self {

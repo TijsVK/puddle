@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-doctor"
-description = "`puddle doctor`: checks the host's prerequisites and what can interfere, with the exact fix for each finding (W1, D-23, D-24)"
+description = "`puddle doctor`: checks the host's prerequisites and what can interfere, with the exact fix for each finding"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

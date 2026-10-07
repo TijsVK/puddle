@@ -17,7 +17,7 @@
 //! session by closing), a Windows pipe's EOF is a full close anyway, and `ssh` may keep the
 //! bridge's stdin open after the connection is gone.
 //!
-//! **Windows named pipes can't half-close** (T-105): after the client's input ends, the server
+//! **Windows named pipes can't half-close**: after the client's input ends, the server
 //! only learns of it through SSH itself (`DISCONNECT`, channel EOF), never from the stream.
 //! Nothing in SSH needs more.
 

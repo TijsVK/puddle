@@ -2,11 +2,11 @@
 //! One proxied guest connection: read the request head, decide, connect, splice.
 //!
 //! The order matters for security: the head is bounded in size and time before anything else;
-//! the rules engine decides on the normalised name **before** it is resolved (R-10, EG-8); every
+//! the rules engine decides on the normalised name **before** it is resolved (R-10); every
 //! resolved address is checked against its IP rules (R-27) and its address class (R-14), and the
 //! proxy connects only to an address that passed.
 //! Every refusal is an HTTP error response followed by a clean close (a reset could overtake the
-//! response, T-111); every failure after the connection is open is passed on as a reset (T-048).
+//! response); every failure after the connection is open is passed on as a reset.
 
 use std::io;
 use std::net::SocketAddr;
@@ -46,7 +46,7 @@ pub struct ProxyConfig {
     /// How long connecting to one address may take before the next is tried. All failed: `502`.
     pub connect_timeout: Duration,
     /// Proxied connections one sandbox may have open at once. Over it: `503`. Far above what
-    /// real tools open (D-2: pnpm, `BuildKit` and `NuGet` peak in the hundreds).
+    /// real tools open (pnpm, `BuildKit` and `NuGet` peak in the hundreds).
     pub max_streams_per_sandbox: usize,
     /// Agent connections (yamux sessions) one route accepts at once. The agent opens 1 to 64.
     pub max_sessions_per_route: usize,
@@ -182,7 +182,7 @@ impl Proxy {
     }
 
     /// Sends admitted connections out along the company proxy route instead of straight to the
-    /// destination (T-165). Admission is unchanged: the rules, the address guard and the IP rules
+    /// destination. Admission is unchanged: the rules, the address guard and the IP rules
     /// all run first, and `DIRECT` hops connect only to an address that passed.
     #[must_use]
     pub fn with_upstream(mut self, upstream: Upstream) -> Self {
@@ -204,7 +204,7 @@ impl Proxy {
     }
 
     /// The [`StreamHandler`] for one sandbox's route. `sandbox` comes from the route, never from
-    /// the guest (HO-3). Each handler has its own stream cap, so give each route one handler.
+    /// the guest. Each handler has its own stream cap, so give each route one handler.
     #[must_use]
     pub fn handler(self: &Arc<Self>, sandbox: SandboxName) -> SandboxHandler {
         SandboxHandler {
@@ -585,11 +585,11 @@ async fn admit_into(
         }
     }
     if pattern == PatternKind::Exact {
-        // An exact allow reaches local addresses whose toggle is on (D-37).
+        // An exact allow reaches local addresses whose toggle is on.
         usable.append(&mut exact_only);
     } else if !exact_only.is_empty() {
         // After a wildcard allow, a local address whose toggle is on needs an exact allow of its
-        // own (R-14, D-44): an exact rule for the address itself admits it.
+        // own (R-14): an exact rule for the address itself admits it.
         let (by_ip, rest): (Vec<_>, Vec<_>) = exact_only.into_iter().partition(|addr| {
             let rule = ip_allows.iter().find(|(allowed, _)| allowed == addr);
             if let Some((_, rule_id)) = rule {
@@ -684,7 +684,7 @@ type IpRuleHit = (SocketAddr, RuleId);
 enum IpRule {
     /// No rule for the address.
     NoRule,
-    /// An exact allow: admits a local address after a wildcard allow (R-14, D-44).
+    /// An exact allow: admits a local address after a wildcard allow (R-14).
     Allow(RuleId),
     /// A deny: the address is never used (R-27).
     Deny(RuleId),
@@ -746,7 +746,7 @@ fn unavailable() -> Refusal {
     )
 }
 
-/// Adds to a pending refusal why the wildcard allow didn't count (D-44).
+/// Adds to a pending refusal why the wildcard allow didn't count.
 fn wildcard_note(mut refusal: Refusal, categories: &[LocalCategory]) -> Refusal {
     if let Some(category) = categories.first() {
         refusal.message = format!(
@@ -841,11 +841,11 @@ fn shown_reason(reasons: &[BlockReason]) -> BlockReason {
 pub(crate) use puddle_upstream::connect_first;
 
 /// `CONNECT`: answer `200`, pass on bytes the guest sent early, splice. On an error both ends
-/// reset (T-048): [`splice`] sets zero linger on the server socket, and the guest stream is dropped
+/// reset: [`splice`] sets zero linger on the server socket, and the guest stream is dropped
 /// without a shutdown.
 ///
 /// Returns the tunnel's first request line if it carried plain HTTP/1.x (Node `fetch` and Yarn
-/// Berry tunnel `http://` this way, T-098), for the audit. The bytes are relayed unchanged.
+/// Berry tunnel `http://` this way), for the audit. The bytes are relayed unchanged.
 pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     reader: ClientReader<S>,
     mut server: TcpStream,

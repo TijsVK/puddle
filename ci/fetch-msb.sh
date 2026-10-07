@@ -10,13 +10,12 @@
 #              msb.exe + libkrunfw.dll.
 #     Linux:   the fork releases no Linux msb, so msb is built from the tag's source (commit
 #              pinned) with upstream's agentd embedded; libkrunfw from upstream's release v<release>
-#              (the fork keeps upstream's firmware, T-077). Needs cargo and libcap-ng-dev; takes
+#              (the fork keeps upstream's firmware). Needs cargo and libcap-ng-dev; takes
 #              ~10 min cold. MSB_BUILD_DIR (default <dest-dir>/../msb-build) holds the checkout,
 #              its target dir and the result msb-<commit>, which is reused when present (a CI
 #              cache keeps only that file).
 #   upstream tag v<release> (superradcompany/microsandbox): the release archive for this host.
-# Works in Linux sh and in Git Bash on Windows. Network failures are retried (infrastructure,
-# T-032) and each retry is printed; a checksum mismatch never is.
+# Works in Linux sh and in Git Bash on Windows. Network failures are retried (infrastructure) and each retry is printed; a checksum mismatch never is.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)

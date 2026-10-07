@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 /// Why puddle can't use its bundled runtime. Each message names the file and, for version
-/// problems, both versions, so `puddle doctor` (T-115) can show it as is.
+/// problems, both versions, so `puddle doctor` can show it as is.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RuntimeError {
     /// A path that must be absolute isn't (the SDK would resolve it against the working directory).

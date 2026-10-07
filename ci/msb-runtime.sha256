@@ -4,7 +4,7 @@
 # refuses anything not listed here. Values copied from each release's checksums.sha256 and checked
 # against a download.
 #
-# Fork tags (TijsVK/microsandbox; T-117, 2026-10-06). The tag's source commit pins the Linux build.
+# Fork tags (TijsVK/microsandbox, 2026-10-06). The tag's source commit pins the Linux build.
 # Older tags stay listed so earlier commits still fetch their runtime (e.g. windows-e2e.ps1 -Bisect).
 v0.7.7-puddle.8 msb-windows-x86_64.exe bbdf31484d6c2927278ca081c0397efc73a127d5279340a534022c716c0e9d4d
 v0.7.7-puddle.8 libkrunfw-windows-x86_64.dll bc633c0330346fabfbfa4d91fb4e544f8a9bae2857c22dd808b4bb396bd9c44e
@@ -18,7 +18,7 @@ v0.7.7-puddle.6 source-commit 7ac3f65496c09539b75c7d5ecaa9a7f86788f25a
 v0.7.7-puddle.3 msb-windows-x86_64.exe ed73bd972680da66b1807bbc5098fe3a52238015fda67c380a3c3ec86160f91e
 v0.7.7-puddle.3 libkrunfw-windows-x86_64.dll bc633c0330346fabfbfa4d91fb4e544f8a9bae2857c22dd808b4bb396bd9c44e
 v0.7.7-puddle.3 source-commit 7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7
-# Upstream v0.7.7 (superradcompany/microsandbox): the stock archives (T-102), and the firmware and
+# Upstream v0.7.7 (superradcompany/microsandbox): the stock archives, and the firmware and
 # agentd a fork Linux build of that release uses.
 v0.7.7 microsandbox-linux-x86_64.tar.gz b3cc4a5e3f52dfdd938a6f67ac4a9a959ddfe304bab56de4964044b8613f01bb
 v0.7.7 microsandbox-windows-x86_64.tar.gz 641375e70d65ce2ac167040f8eb238c878db92202edf4f1aa91d3ddcb7fdb8d1

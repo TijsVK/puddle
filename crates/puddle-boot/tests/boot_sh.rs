@@ -103,7 +103,7 @@ fn boot_applies_every_step() {
         let mode = |p: &str| std::fs::metadata(fr.path(p)).unwrap().permissions().mode() & 0o7777;
         assert_eq!(mode("/etc/npmrc"), 0o600);
         assert_eq!(mode(ENV_FILE_GUEST), 0o644);
-        // VS Code's Machine settings go through the merge tool as JSONC (T-125).
+        // VS Code's Machine settings go through the merge tool as JSONC.
         let machine = fr.read(&format!(
             "/merge-specs/{}",
             MACHINE_SETTINGS_GUEST.replace('/', "_")
@@ -640,7 +640,7 @@ fn a_failing_or_odd_merge_tool_fails_the_boot_with_its_message() {
 #[test]
 fn switching_a_file_between_replace_and_merge_keeps_it() {
     let fr = FakeRoot::new(&shells()[0]);
-    // T-109's whole-file Docker config, then the merged one (an upgrade): the file stays.
+    // The earlier whole-file Docker config, then the merged one (an upgrade): the file stays.
     assert!(
         fr.run(&plan_with(vec![file(DOCKER, b"{}")]))
             .status
@@ -672,7 +672,7 @@ fn without_the_merge_tool_the_removal_waits_for_a_later_boot() {
         .no_agent()
         .build()
         .unwrap();
-    // Every plan merges VS Code's Machine settings (T-125), so a missing tool now fails the boot
+    // Every plan merges VS Code's Machine settings, so a missing tool now fails the boot
     // before anything is removed: the record of Docker's keys stays for a later boot.
     let out = fr.run(&bare);
     assert_eq!(out.status.code(), Some(1));

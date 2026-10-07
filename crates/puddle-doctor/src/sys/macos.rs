@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! macOS probes. puddle doesn't run on macOS yet (T-148 §5, the M-1 spike decides), so the
-//! hypervisor is reported as unsupported and the report says so; Hypervisor.framework checks
-//! (Apple Silicon only, the `com.apple.security.hypervisor` entitlement) come with that work.
+//! macOS probes. puddle doesn't run on macOS yet, so the hypervisor is
+//! reported as unsupported and the report says so; Hypervisor.framework checks (Apple Silicon
+//! only, the `com.apple.security.hypervisor` entitlement) come with that work.
 
 use crate::facts::{HypervisorApi, HypervisorFacts};
 

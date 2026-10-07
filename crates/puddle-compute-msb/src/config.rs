@@ -11,7 +11,7 @@ use puddle_compute::ComputeError;
 pub struct SshConfig {
     /// OpenSSH public key lines that may log in. The SDK refuses to serve without one.
     pub authorized_keys: Vec<String>,
-    /// Session inactivity timeout; `None` turns it off (IDE sessions sit idle for long, T-114).
+    /// Session inactivity timeout; `None` turns it off (IDE sessions sit idle for long).
     pub inactivity_timeout: Option<Duration>,
 }
 
@@ -44,21 +44,21 @@ pub struct MsbConfig {
     /// The `libkrunfw` library released with it.
     pub libkrunfw: PathBuf,
     /// The only directory file mounts may come from: it holds just the files meant for guests,
-    /// never puddle's data (database, tokens, CA keys). T-020 C-7.
+    /// never puddle's data (database, tokens, CA keys).
     pub guest_share: PathBuf,
     /// SSH server settings.
     pub ssh: SshConfig,
     /// Extra roots the registry client trusts for image pulls, as PEM: the corporate roots
-    /// (`puddle-certs`), so pulls work behind a TLS-intercepting company proxy (T-116, T-033 P1).
+    /// (`puddle-certs`), so pulls work behind a TLS-intercepting company proxy.
     /// Added to the platform's roots, never instead of them.
     pub registry_roots: Vec<String>,
-    /// Where image pulls go: puddle's pull proxy (T-116). Given to the SDK's registry client
-    /// directly (T-144), so the token is never in the process environment. `None` leaves pulls
+    /// Where image pulls go: puddle's pull proxy. Given to the SDK's registry client
+    /// directly, so the token is never in the process environment. `None` leaves pulls
     /// to the process environment, which is what tests without a pull proxy want.
     pub registry_proxy: Option<RegistryProxy>,
     /// Default log level of msb's sandbox runtimes (`runtime.log`, msb's `log_level`): `error`,
     /// `warn`, `info`, `debug` or `trace`. `None` (the default) leaves them silent. The VM tests
-    /// set `debug`, so a failed boot keeps the VMM's trace (T-164).
+    /// set `debug`, so a failed boot keeps the VMM's trace.
     pub runtime_log_level: Option<String>,
 }
 
@@ -140,7 +140,7 @@ impl MsbConfig {
     }
 
     /// Checks that `host` lies under [`MsbConfig::guest_share`] after resolving symlinks and
-    /// `..`, so a mount can never expose puddle's own data (T-020 C-7, T-029).
+    /// `..`, so a mount can never expose puddle's own data.
     ///
     /// # Errors
     ///

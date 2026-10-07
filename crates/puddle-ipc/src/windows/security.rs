@@ -167,7 +167,7 @@ impl Drop for LocalBox {
 
 #[cfg(test)]
 mod tests {
-    //! HO-1 on a real pipe: the DACL as the OS reports it, and clients under restricted tokens.
+    //! A real pipe: the DACL as the OS reports it, and clients under restricted tokens.
 
     use super::*;
     use crate::IpcRoot;

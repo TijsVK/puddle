@@ -25,7 +25,7 @@ default-filter = "not (test(/(^|::)vm_/) | binary(/^vm_/))"
 [profile.ci.junit]
 path = "junit.xml"
 
-# VM tests only, one at a time (hosted runners have 2 vCPU / 8 GB), never retried (T-032).
+# VM tests only, one at a time (hosted runners have 2 vCPU / 8 GB), never retried.
 # A test is killed after 12 minutes, inside the jobs' 15-minute limit.
 [profile.vm]
 retries = 0

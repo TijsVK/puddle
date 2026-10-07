@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 <#
 .SYNOPSIS
-Runs puddle's laptop VM tests (T-032 tier L) on a real Windows machine and posts the result as
+Runs puddle's real-machine VM tests (tier R) on a real Windows machine and posts the result as
 the commit status `puddle/windows-e2e`.
 
 .DESCRIPTION
-Tier L covers what the hosted runners can't: a real client OS on mains power, sleep/resume,
+Tier R covers what the hosted runners can't: a real client OS on mains power, sleep/resume,
 Defender, the corporate network. The tests live in crates/puddle-vm-tests and are named
-`vm_laptop_*`; -All also runs the K/W set the CI jobs run.
+`vm_machine_*`; -All also runs the K/W set the CI jobs run.
 
 Steps: power check (refuses on battery below -MinBattery percent), per-run prefix, private msb
 home under -Root, `cargo nextest run --profile vm`, the msb fork's regression repros
@@ -21,10 +21,10 @@ Directory with msb.exe and libkrunfw.dll (the fork tag's release assets, e.g. fr
 in Git Bash). Defaults to $env:PUDDLE_VM_RUNTIME_DIR.
 
 .PARAMETER Filter
-nextest filter expression for the tests to run. Default: the laptop tests.
+nextest filter expression for the tests to run. Default: the real-machine tests.
 
 .PARAMETER All
-Run every VM test (laptop and CI ones) instead of -Filter.
+Run every VM test (real-machine and CI ones) instead of -Filter.
 
 .PARAMETER MsbRepros
 Cases of ci/msb-repros/repros.ps1 to run against the runtime's msb.exe after the nextest run:
@@ -75,7 +75,7 @@ powershell -ExecutionPolicy Bypass -File ci\windows-e2e.ps1 -Bisect -Good v0.1.0
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$RuntimeDir = $env:PUDDLE_VM_RUNTIME_DIR,
-    [string]$Filter = 'test(/(^|::)vm_laptop_/)',
+    [string]$Filter = 'test(/(^|::)vm_machine_/)',
     [switch]$All,
     [string[]]$MsbRepros = @('relay', 'signal', 'scp', 'forward', 'stale-dir'),
     [int]$ReproPort = 18190,

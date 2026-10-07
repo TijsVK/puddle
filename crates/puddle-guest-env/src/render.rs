@@ -9,7 +9,7 @@ use puddle_types::{GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, Merg
 use crate::settings::{java_ip, loopback_entries};
 use crate::{ConfigError, NoProxyEntry, ProxySettings};
 
-/// apt's proxy drop-in (T-030 §4, S7). apt ignores `*_proxy` under `sudo` and in its `_apt`
+/// apt's proxy drop-in. apt ignores `*_proxy` under `sudo` and in its `_apt`
 /// sandbox, so it gets its own file.
 pub const APT_CONF_GUEST: &str = "/etc/apt/apt.conf.d/99puddle-proxy";
 
@@ -87,7 +87,7 @@ pub fn guest_proxy_config(
     }
     env.set("NO_PROXY", &no_proxy);
     env.set("no_proxy", &no_proxy);
-    // Node >= 22.21 / 24: built-in fetch and http(s) read the variables above (T-030, verified).
+    // Node >= 22.21 / 24: built-in fetch and http(s) read the variables above (verified).
     env.set("NODE_USE_ENV_PROXY", "1");
     // Yarn Berry reads only its own variables.
     env.set("YARN_HTTP_PROXY", &proxy_url);
@@ -114,7 +114,7 @@ pub fn guest_proxy_config(
         &appended(image("MAVEN_ARGS"), &format!("-gs {MAVEN_SETTINGS_GUEST}")),
     );
     // Cargo fetches git dependencies with the git CLI, which follows the variables and, later,
-    // ssh_config's ProxyCommand (T-021).
+    // ssh_config's ProxyCommand.
     env.set("CARGO_NET_GIT_FETCH_WITH_CLI", "true");
     let env = env.finish()?;
 
@@ -314,7 +314,7 @@ fn gradle_init(proxy: SocketAddr, java_bypass: &str) -> String {
 /// guest's proxy at the bridge gateway, not at loopback; the bypass list is the guest's.
 ///
 /// The file is the user's (`docker login` keeps `auths` and `credHelpers` in it), so puddle owns
-/// only `proxies.default` and merges it in (T-097); other daemons' `proxies` entries stay too.
+/// only `proxies.default` and merges it in; other daemons' `proxies` entries stay too.
 fn docker_cli_config(container: SocketAddr, no_proxy: &str) -> Result<MergeSpec, ConfigError> {
     let proxy = url(container);
     let default = serde_json::json!({

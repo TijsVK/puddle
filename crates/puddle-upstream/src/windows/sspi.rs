@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Windows SSPI as a [`TokenSource`] (T-135): `Negotiate` and `NTLM` contexts for the logged-on
+//! Windows SSPI as a [`TokenSource`]: `Negotiate` and `NTLM` contexts for the logged-on
 //! user. The credential handle is acquired with no identity (`pAuthData = NULL`), which makes
 //! Windows use the user's own sign-in: no password is read, stored or asked for, and no flag
 //! that could show a prompt is ever passed.
 //!
-//! Every SSPI call runs under one process-wide lock: in the T-033 lab, parallel NTLM handshakes
+//! Every SSPI call runs under one process-wide lock: in testing, parallel NTLM handshakes
 //! without it had 12 of 30 well-formed challenges rejected with `SEC_E_INVALID_TOKEN` (serial: 0
 //! of 30; locked: 0 of 60). The calls take microseconds, so the lock costs nothing measurable.
 

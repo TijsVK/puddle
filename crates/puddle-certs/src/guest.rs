@@ -32,7 +32,7 @@ pub const BUNDLE_STEP_SH: &str = include_str!("../guest/ca-bundle.sh");
 const NAME_HEX: usize = 16;
 
 /// The guest side of root sync for one sandbox: the host's synced roots plus puddle's own CAs
-/// ([`TrustBundle`], a list so a dev CA is one more entry, T-020 F-9).
+/// ([`TrustBundle`], a list so a dev CA is one more entry).
 ///
 /// Hand [`GuestTrust::guest_files`], [`GuestTrust::env`] and [`GuestTrust::boot_step`] to the
 /// boot plan. With nothing to add, all three are empty and the guest keeps the image's trust.
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn a_ca_present_on_both_sides_is_listed_once() {
         let ca = puddle_ca("localhost");
-        // The user also trusted puddle's CA in Windows (a dev CA, D-13).
+        // The user also trusted puddle's CA in Windows (a dev CA).
         let corp = corporate(&[ca.der().to_vec(), root_der("Corp")]);
         let trust = GuestTrust::new(&corp, &TrustBundle::new().with(ca));
         let extra = text(&trust.guest_files(), EXTRA_CAS_PATH);

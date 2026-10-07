@@ -3,19 +3,19 @@
 //!
 //! msb connects each guest vsock route to a host endpoint: a named pipe on Windows, a Unix socket
 //! elsewhere. puddle gives every sandbox its own endpoint, so the endpoint a connection arrives on
-//! *is* the sandbox's identity (T-029 HO-3). This crate makes those endpoints safe to rely on:
+//! *is* the sandbox's identity. This crate makes those endpoints safe to rely on:
 //!
-//! | Threat (T-029) | Windows | Linux |
+//! | Threat | Windows | Linux |
 //! |---|---|---|
-//! | HO-1: another user or a restricted process opens the endpoint | explicit DACL granting the current user's SID only (no Everyone/anonymous read); remote clients rejected | socket file `0600` inside a fresh `0700` directory |
-//! | HO-2: a process creates the name first (squatting) | 128-bit random name; the first instance is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`; an existing name is refused ([`IpcError::NameTaken`]); one of puddle's instances exists for as long as the [`Listener`] lives | a fresh directory with a random name that only puddle can write; `bind` fails on an existing path |
+//! | Another user or a restricted process opens the endpoint | explicit DACL granting the current user's SID only (no Everyone/anonymous read); remote clients rejected | socket file `0600` inside a fresh `0700` directory |
+//! | A process creates the name first (squatting) | 128-bit random name; the first instance is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`; an existing name is refused ([`IpcError::NameTaken`]); one of puddle's instances exists for as long as the [`Listener`] lives | a fresh directory with a random name that only puddle can write; `bind` fails on an existing path |
 //!
 //! # Use
 //!
 //! ```no_run
 //! # async fn demo() -> Result<(), puddle_ipc::IpcError> {
 //! let root = puddle_ipc::IpcRoot::new()?;
-//! let mut listener = root.listen()?;          // bind *before* the VM boots (HO-2)
+//! let mut listener = root.listen()?;          // bind *before* the VM boots
 //! let route_target = listener.endpoint().path(); // goes into the sandbox's vsock route
 //! # let _ = route_target;
 //! let connection = listener.accept().await?;  // AsyncRead + AsyncWrite
@@ -102,7 +102,7 @@ impl IpcRoot {
     ///
     /// # Errors
     ///
-    /// - [`IpcError::NameTaken`] when something already exists at that name (HO-2): nothing is
+    /// - [`IpcError::NameTaken`] when something already exists at that name: nothing is
     ///   bound and the caller must not boot the sandbox against it.
     /// - [`IpcError::ForeignEndpoint`] when `endpoint` was made by another root.
     /// - [`IpcError::NoRuntime`] outside a tokio runtime.

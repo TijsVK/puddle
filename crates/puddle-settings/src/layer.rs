@@ -25,23 +25,22 @@ use crate::{ClipboardRead, ReconnectionGrace};
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SandboxLayer {
-    /// Guest memory, msb's `--memory` (D-47 (1)); applies at the sandbox's next start.
+    /// Guest memory, msb's `--memory`; applies at the sandbox's next start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<MemoryMib>,
-    /// Local-destination toggles, one per address category (D-1, D-37).
+    /// Local-destination toggles, one per address category.
     #[serde(default, skip_serializing_if = "LocalToggles::is_empty")]
     pub local_toggles: LocalToggles,
-    /// Whether a wildcard or suffix allow may match a name that resolves to a local address
-    /// (D-44).
+    /// Whether a wildcard or suffix allow may match a name that resolves to a local address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wildcards_reach_local: Option<bool>,
-    /// Browser VS Code's reconnection grace (D-43 (1)).
+    /// Browser VS Code's reconnection grace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reconnection_grace: Option<ReconnectionGrace>,
-    /// Zoom hotkeys in sandbox windows (D-46 (1)).
+    /// Zoom hotkeys in sandbox windows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zoom_hotkeys: Option<bool>,
-    /// Programmatic clipboard reads in sandbox windows (D-46 (2)).
+    /// Programmatic clipboard reads in sandbox windows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clipboard_read: Option<ClipboardRead>,
     #[serde(flatten)]
@@ -62,8 +61,8 @@ impl SandboxLayer {
     }
 }
 
-/// One toggle per local-destination category (D-1). A toggle only *permits* its category: the
-/// allowlist still decides each destination (D-37). puddle's default for each is off.
+/// One toggle per local-destination category. A toggle only *permits* its category: the
+/// allowlist still decides each destination. puddle's default for each is off.
 ///
 /// One field per [`LocalCategory`], named by its [`LocalCategory::key`] (a test checks this), so
 /// the stored names and the classifier's categories can't drift apart. Read a toggle by category

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Corporate root sync (W1, T-110; design T-026 §2b, D-24, D-11).
+//! Corporate root sync.
 //!
 //! Behind a TLS-inspecting corporate proxy, every HTTPS call in the guest fails unless the guest
 //! trusts the company's root. puddle copies every root an admin or the user deliberately added

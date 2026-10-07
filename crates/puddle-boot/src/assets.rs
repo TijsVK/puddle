@@ -20,7 +20,7 @@ pub const BOOT_SH_GUEST: &str = "/puddle/boot.sh";
 /// Where `agent-supervise.sh` is mounted (`boot.sh` finds it next to itself).
 pub const AGENT_SUPERVISE_GUEST: &str = "/puddle/agent-supervise.sh";
 
-/// Where the `puddle-agent` binary is mounted by default (T-111 builds it).
+/// Where the `puddle-agent` binary is mounted by default (`ci/build-agent.sh` builds it).
 pub const AGENT_GUEST: &str = "/puddle/puddle-agent";
 
 /// The guest directory with puddle's read-only mounts. The plan may not write below it.
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn read_only_takes_regular_files_puddle_wrote() {
         // dash's `read` takes one byte per read(2) and procfs answers a read at a non-zero
-        // offset with EOF: `read x </proc/sys/...` sees "1" for 1024 (found on msb 0.7.7, T-106).
+        // offset with EOF: `read x </proc/sys/...` sees "1" for 1024 (found on msb 0.7.7).
         // The fake-root tests use regular files and can't catch it, so `read` may only redirect
         // from the plan or puddle's own pid files; procfs values go through `cat`.
         for (name, script) in [

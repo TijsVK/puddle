@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! U tests of the workspace lifecycle on the msb fake (T-112 bar, "on the fake").
+//! U tests of the workspace lifecycle on the msb fake ("on the fake").
 #![expect(
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
@@ -290,7 +290,8 @@ async fn a_failed_create_leaves_no_record_dir_or_volume() {
 
 #[tokio::test]
 async fn an_abort_removes_the_stale_dir_a_refused_create_leaves() {
-    // msb 0.7.6 without the T-039 fix: a create that fails its volume check leaves a directory.
+    // msb 0.7.6 has an upstream bug: a create that fails its volume check leaves a
+    // directory.
     let rt = FakeRuntime::new();
     let w = Workspaces::default();
     let id = ws("acme");

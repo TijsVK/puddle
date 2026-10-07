@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Where a workspace lives in the guest: the volume's mount point, the checkouts below it and
-//! puddle's own directory beside them (T-020 seams for T-112).
+//! puddle's own directory beside them.
 //!
 //! ```text
 //! /workspaces/<id>/            the volume root (ext4); never cloned into, it holds .puddle
@@ -111,8 +111,7 @@ impl Layout {
 
     /// `sync`, as root: flushes everything the guest has cached to the volume. Directory entries
     /// aren't covered by `core.fsync=committed` until the first fsync, so a VMM kill within
-    /// seconds of a fresh clone or `git init` can lose the whole repository without it (T-112
-    /// finding 2).
+    /// seconds of a fresh clone or `git init` can lose the whole repository without it.
     #[must_use]
     pub fn sync_request() -> ExecRequest {
         ExecRequest::new("sync", Vec::<String>::new())

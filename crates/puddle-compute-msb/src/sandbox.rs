@@ -24,7 +24,7 @@ pub(crate) fn boot_id(record: &SandboxHandle) -> Option<i32> {
 }
 
 /// A handle to one msb sandbox. Handles from [`puddle_compute::Runtime::create`] and
-/// [`puddle_compute::Runtime::start`] own the VM (dropping them kills it, T-028 L1); handles from
+/// [`puddle_compute::Runtime::start`] own the VM (dropping them kills it); handles from
 /// [`puddle_compute::Runtime::get`] don't. A handle belongs to the boot it was made for: after a
 /// restart, exec, SSH and stop through it fail with [`ComputeError::StaleHandle`].
 pub struct MsbSandbox {

@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Removes stale git lock files after a crash or hard kill (T-139, T-112 follow-up 3).
+# Removes stale git lock files after a crash or hard kill.
 #
 # Usage: sh clear-locks.sh <volume mount point> [proc dir, default /proc]
 # Runs as root in the guest after a boot. A VMM kill leaves `*.lock` files (index.lock, HEAD.lock,

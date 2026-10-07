@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn accepts_ci_style_prefixes() {
-        for ok in ["r123456789-1", "v0abc", "a", "laptop-3"] {
+        for ok in ["r123456789-1", "v0abc", "a", "host-3"] {
             assert_eq!(RunPrefix::new(ok).unwrap().as_str(), ok);
         }
     }

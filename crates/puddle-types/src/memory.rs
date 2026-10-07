@@ -3,7 +3,7 @@
 //! `puddle-settings`.
 //!
 //! The value becomes msb's `--memory` at create; a change applies at the sandbox's next start.
-//! puddle never sets `--max-memory` (T-106).
+//! puddle never sets `--max-memory`.
 
 use std::fmt;
 

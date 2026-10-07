@@ -15,7 +15,7 @@ pub const DEFAULT_PROXY: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCAL
 pub const DEFAULT_CONTAINER_PROXY: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 1)), 3128);
 
-/// Home of the user sessions run as (root, T-003; `puddle-boot` writes VS Code's Machine settings
+/// Home of the user sessions run as (root; `puddle-boot` writes VS Code's Machine settings
 /// there too).
 pub const DEFAULT_HOME: &str = "/root";
 
@@ -69,7 +69,7 @@ fn default_home() -> GuestPath {
 /// One destination that bypasses the proxy: a host name (which also covers its subdomains, as
 /// curl and most tools read `NO_PROXY`), a `.suffix` (subdomains only), or an IP address.
 ///
-/// CIDR ranges, wildcards and ports are refused: half the tools don't read them (T-030 §4), and
+/// CIDR ranges, wildcards and ports are refused: half the tools don't read them, and
 /// a value that works in some tools and not others is worse than none.
 ///
 /// ```

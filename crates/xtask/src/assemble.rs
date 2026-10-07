@@ -162,8 +162,8 @@ fn build(
         std::fs::rename(from, &to)
             .map_err(|e| XtaskError::io(format!("moving {}", from.display()), e))
     };
-    // The assets are the Windows release's, whatever OS runs xtask; a Linux runtime folder is a
-    // v1 task (T-148 L-5..L-12) and picks its row of the table here.
+    // The assets are the Windows release's, whatever OS runs xtask; a Linux runtime folder is
+    // not built yet and would pick its row of the table here.
     let files = HostOs::Windows.runtime_files();
     rename(&msb, files.msb)?;
     rename(&fw, files.libkrunfw)?;

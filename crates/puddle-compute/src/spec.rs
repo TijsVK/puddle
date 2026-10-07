@@ -10,7 +10,7 @@ use puddle_types::{GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, Volume
 use crate::ComputeError;
 
 /// The guest's network. puddle only ever uses [`NetworkPolicy::None`]: the guest has no network
-/// interface at all, and its only way out is the vsock routes in [`SandboxSpec::routes`] (D-1).
+/// interface at all, and its only way out is the vsock routes in [`SandboxSpec::routes`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NetworkPolicy {
@@ -29,7 +29,7 @@ impl NetworkPolicy {
 
 /// A vsock port in the guest that the runtime connects to a host endpoint: a named pipe on
 /// Windows (`\\.\pipe\…`), a Unix socket elsewhere. Only routed ports are reachable from the
-/// guest (T-029 HG-02).
+/// guest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VsockRoute {
     /// The guest-side vsock port (non-zero).
@@ -49,8 +49,8 @@ impl VsockRoute {
     }
 }
 
-/// A host file mounted **read-only** at a guest path (virtiofs; a guest write gets `EROFS`,
-/// T-029 HO-6). puddle uses these for the agent binary, the boot hook and its inputs.
+/// A host file mounted **read-only** at a guest path (virtiofs; a guest write gets `EROFS`).
+/// puddle uses these for the agent binary, the boot hook and its inputs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileMount {
     /// The file on the host.
@@ -110,7 +110,7 @@ impl fmt::Display for DiskSize {
 /// A named disk volume attached at a guest path. The volume outlives the sandbox (ADR 0006).
 ///
 /// Without [`VolumeMount::ensure_size`] the volume must exist and is reattached as it is (msb
-/// reads kind and size from its catalog, T-028). With it, a missing volume is created with that
+/// reads kind and size from its catalog). With it, a missing volume is created with that
 /// size, and an existing one must have exactly that size.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VolumeMount {

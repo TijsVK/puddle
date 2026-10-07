@@ -25,8 +25,8 @@ pub enum ComputeError {
         /// The name.
         sandbox: String,
     },
-    /// The name is blocked by a directory a failed create left behind (msb T-039). Remove it with
-    /// [`crate::Runtime::remove_stale_dir`].
+    /// The name is blocked by a directory a failed create left behind (an upstream msb
+    /// bug). Remove it with [`crate::Runtime::remove_stale_dir`].
     #[error("sandbox name {sandbox:?} is blocked by a stale directory from a failed create")]
     StaleDir {
         /// The blocked name.

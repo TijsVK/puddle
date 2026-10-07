@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` variables as an [`OsProxy`]: the
-//! whole OS layer on Unix (T-148 L-2), and the last fallback on Windows ([`crate::EnvFallback`]).
+//! whole OS layer on Unix, and the last fallback on Windows ([`crate::EnvFallback`]).
 
 use std::ffi::OsString;
 use std::sync::Arc;

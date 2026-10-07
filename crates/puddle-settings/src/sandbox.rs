@@ -16,7 +16,7 @@ pub const SANDBOX_SCHEMA_VERSION: u32 = 1;
 /// One sandbox's settings. The sandbox it belongs to is the store's key, not part of the
 /// document, so renaming or importing a sandbox doesn't rewrite it.
 ///
-/// Settings that exist only per sandbox (never as a global default, like D-26's "dangerous"
+/// Settings that exist only per sandbox (never as a global default, like "dangerous"
 /// settings) go next to [`SandboxSettings::overrides`].
 ///
 /// ```

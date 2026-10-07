@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-vm-tests"
-description = "VM test harness (T-032 tiers K/W/L): per-run prefix, private MSB_HOME, msb runtime pair, boot helpers; tests only, no product code"
+description = "VM test harness (tiers K/W/R): per-run prefix, private MSB_HOME, msb runtime pair, boot helpers; tests only, no product code"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

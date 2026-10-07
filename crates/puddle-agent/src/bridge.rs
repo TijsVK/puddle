@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The Docker bridge listener (T-099): nested containers use `172.17.0.1:3128` as their proxy
-//! (the boot-time Docker CLI config, T-109), so the agent listens there too, **only while a
+//! The Docker bridge listener: nested containers use `172.17.0.1:3128` as their proxy
+//! (the boot-time Docker CLI config), so the agent listens there too, **only while a
 //! bridge owns that address**.
 //!
 //! dockerd can start after boot or restart, so [`watch()`] polls instead of looking once:

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-netpolicy"
-description = "puddle's destination guard: host-name normalisation, address classes, local-destination toggles, puddle's own endpoints (W2)"
+description = "puddle's destination guard: host-name normalisation, address classes, local-destination toggles, puddle's own endpoints"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

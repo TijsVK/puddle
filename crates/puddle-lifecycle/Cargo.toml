@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-lifecycle"
-description = "Shutdown and reconcile (D-20): stop every sandbox with puddle, clean up after a puddle that died, one kill-on-close job for puddle and its VMs (W1, T-113)"
+description = "Shutdown and reconcile: stop every sandbox with puddle, clean up after a puddle that died, one kill-on-close job for puddle and its VMs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

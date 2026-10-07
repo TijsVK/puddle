@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Workspace volume lifecycle (W1, T-112; ADR 0006, D-10).
+//! Workspace volume lifecycle (ADR 0006).
 //!
 //! Each workspace is a named msb disk volume `ws-<id>` (ext4), mounted at `/workspaces/<id>`.
 //! The volume outlives its sandboxes: rebuilding a sandbox reattaches it. Code gets in by
@@ -15,7 +15,7 @@
 //! | after every boot: puddle's directory, and stale git locks of a crash cleared | [`Workspaces::after_boot`] ([`Workspaces::clear_stale_locks`]) |
 //! | `fstrim` before stop; "reclaim space" | [`Workspaces::stop`], [`Workspaces::reclaim_space`] |
 //! | delete after listing unsaved work, with explicit confirmation | [`Workspaces::check_delete`] → [`DeleteReport::confirm`] → [`Workspaces::delete`] |
-//! | reconcile after a restart (T-113) | [`Workspaces::adopt`], [`is_maintenance_name`] |
+//! | reconcile after a restart | [`Workspaces::adopt`], [`is_maintenance_name`] |
 //!
 //! A workspace no sandbox runs with is checked or trimmed in a short-lived maintenance sandbox
 //! (`m--<id>`, [`WorkspaceConfig::maintenance_image`]) that is removed again afterwards.

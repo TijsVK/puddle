@@ -93,7 +93,7 @@ impl Guest {
         }
         std::fs::write(root.join("proc/sys/kernel/random/boot_id"), "boot-1\n").unwrap();
         write_exec(&root.join("puddle/boot.sh"), BOOT_SH);
-        // Every plan merges VS Code's Machine settings through the agent binary (T-125).
+        // Every plan merges VS Code's Machine settings through the agent binary.
         write_exec(&root.join("puddle/puddle-agent"), MERGE_TOOL_STUB);
         let stubs = root.join("stubs");
         write_exec(&stubs.join("sysctl"), SYSCTL_STUB);

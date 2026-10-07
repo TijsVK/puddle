@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! T-116 on real registries (T-033 P2/P3, tiers K/W): the adapter pulls `alpine:3.20` from
+//! Image pulls on real registries (tiers K/W): the adapter pulls `alpine:3.20` from
 //! Docker Hub and `mcr.microsoft.com/dotnet/sdk:8.0` through puddle's image-pull proxy (the
 //! registry client's own proxy setting, per-run token), then boots the pulled alpine image.
 //!

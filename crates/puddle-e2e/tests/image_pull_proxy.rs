@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! I test of the image-pull path (T-116, T-033 P1/P2 without a VM): the msb adapter's real
+//! I test of the image-pull path (P1/P2 without a VM): the msb adapter's real
 //! `pull_image` (the SDK's registry client) → the client's own proxy setting
-//! ([`MsbConfig::with_registry_proxy`], T-144) → puddle's [`PullProxy`] with its per-run token → a TLS registry whose certificate chains to a lab root
+//! ([`MsbConfig::with_registry_proxy`]) → puddle's [`PullProxy`] with its per-run token → a TLS registry whose certificate chains to a lab root
 //! nobody trusts, standing in for a TLS-intercepting company proxy.
 //!
 //! - **P1**: without the lab root the pull fails on the certificate, after the proxy tunnelled
@@ -11,7 +11,7 @@
 //! - The registry's name resolves only inside the pull proxy, so a pull that skipped the proxy
 //!   could not reach it at all.
 //! - No log line (every crate, `trace` level) and no error carries the token.
-//! - **The token is not in any environment (T-144).** After the pulls, neither this process nor a
+//! - **The token is not in any environment.** After the pulls, neither this process nor a
 //!   child it spawns has a variable that holds it. The process environment carries a decoy
 //!   `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` instead, which the pulls ignore: nothing connects to
 //!   it, so puddle needs no scrubbing of the user's own proxy variables.
@@ -67,10 +67,9 @@ fn lab_pki() -> (String, Arc<rustls::ServerConfig>) {
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-    ca_params.distinguished_name.push(
-        rcgen::DnType::CommonName,
-        "puddle T-116 lab interceptor root",
-    );
+    ca_params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "puddle lab interceptor root");
     let ca = ca_params.self_signed(&ca_key).unwrap();
     let issuer = rcgen::Issuer::new(ca_params, ca_key);
     let leaf_key = rcgen::KeyPair::generate().unwrap();

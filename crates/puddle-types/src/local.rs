@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Local-destination categories (D-1): the address classes a user can switch on per sandbox.
+//! Local-destination categories: the address classes a user can switch on per sandbox.
 //!
 //! One enum for every crate: `puddle-netpolicy` classifies addresses into it, `puddle-settings`
 //! stores one toggle per category under [`LocalCategory::key`], the proxy's block reason and the
@@ -16,9 +16,9 @@ use crate::ValidationError;
 /// A class of local destination with its own toggle. Everything outside these is public.
 ///
 /// A toggle only *permits* its category; each destination still needs an allow rule or an
-/// approval (D-37). puddle's own endpoints are not a category: no toggle reaches them (D-26).
+/// approval. puddle's own endpoints are not a category: no toggle reaches them.
 ///
-/// Non-exhaustive: a "company network" category (D-24) may follow.
+/// Non-exhaustive: a "company network" category may follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

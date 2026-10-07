@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The way out of the host once a connection has been admitted (T-165): straight to a checked
+//! The way out of the host once a connection has been admitted: straight to a checked
 //! address, or along the route the company's proxy settings give ([`puddle_upstream::Chain`]).
 //!
 //! Admission (rules, address guard, IP rules) has already happened by the time this runs, and

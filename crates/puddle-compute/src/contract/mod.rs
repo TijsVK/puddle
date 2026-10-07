@@ -23,16 +23,17 @@
 //! afterwards (also when it fails), so several runs can share one runtime as long as their
 //! prefixes differ.
 //!
-//! # Cases and T-028's smoke checks
+//! # Cases and the smoke checks
 //!
-//! [`CASES`] lists the cases. [`SMOKE_CHECKS`] maps each of the 57 checks that passed in T-028's
-//! SDK smoke runs (`poc/sdk-smoke`, runs 2 and 3) to the case that covers it, or to the VM-only
-//! test (and task) that does; a unit test keeps the map complete and pointing at real cases.
-//! T-028's informational results (signal exit, second-attach leftover, wrong-size leftover,
-//! image facts) and its lifecycle runs (L1 drop, re-adoption) have cases too.
+//! [`CASES`] lists the cases. [`SMOKE_CHECKS`] maps each of the 57 checks that passed in the
+//! first SDK smoke runs on msb 0.7.6 to the case that covers it, or to the test file and test
+//! elsewhere in the workspace that does; a unit test keeps the map complete and pointing at real
+//! cases. The smoke runs' informational results (signal exit, second-attach leftover,
+//! wrong-size leftover, image facts) and lifecycle runs (owner-handle drop, re-adoption) have
+//! cases too.
 //!
-//! Cases marked *assumed* in [`CASE_NOTES`] pin behaviour T-028 didn't observe directly; the
-//! first run against the SDK (T-106) confirms or corrects them, together with the fake.
+//! Cases marked *assumed* in [`CASE_NOTES`] pin behaviour that was not observed directly; the
+//! first run against the SDK confirms or corrects them, together with the fake.
 
 mod cases;
 
@@ -297,24 +298,24 @@ pub async fn assert_case<R: Runtime>(name: &str, env: ContractEnv<R>) {
 /// How long a case waits for a runtime call that should be quick before failing.
 pub const STEP_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Where a T-028 smoke check is covered.
+/// Where a smoke check is covered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Coverage {
     /// By this contract case (on the fake and on every runtime).
     Case(&'static str),
-    /// Only on a real VM: by the named test in the named task.
-    VmOnly {
-        /// The task that owns the VM test.
-        task: &'static str,
+    /// Outside this suite: by the named test in the named test file (a path under `crates/`).
+    Elsewhere {
+        /// The test file, such as `puddle-boot/tests/vm_boot.rs`.
+        file: &'static str,
         /// What that test checks.
         test: &'static str,
     },
 }
 
-/// One of the 57 checks that passed in T-028's SDK smoke run, and where it is covered.
+/// One of the 57 checks that passed in the SDK smoke runs, and where it is covered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SmokeCheck {
-    /// The check's name in `poc/sdk-smoke/results/g1-run2.log`.
+    /// The check's name in the smoke run's log.
     pub check: &'static str,
     /// Where it is covered.
     pub coverage: Coverage,
@@ -327,132 +328,132 @@ const fn case(check: &'static str, case: &'static str) -> SmokeCheck {
     }
 }
 
-const fn vm(check: &'static str, task: &'static str, test: &'static str) -> SmokeCheck {
+const fn elsewhere(check: &'static str, file: &'static str, test: &'static str) -> SmokeCheck {
     SmokeCheck {
         check,
-        coverage: Coverage::VmOnly { task, test },
+        coverage: Coverage::Elsewhere { file, test },
     }
 }
 
-/// Boot-hook checks T-028 ran after first boot (`boot1.*`), after a restart (`boot2.*`): the
-/// hook's effects, owned by T-108's VM tests on the fake-free path.
+/// Boot-hook checks the smoke run made after first boot (`boot1.*`) and after a restart
+/// (`boot2.*`): the hook's effects, covered by the boot hook's VM tests.
 const BOOT_HOOK_TEST: &str = "boot hook effects after create and after restart (K/W)";
 
-/// Every check that passed in T-028's SDK smoke runs 2 and 3, in log order.
+const VM_BOOT: &str = "puddle-boot/tests/vm_boot.rs";
+const VM_MSB: &str = "puddle-compute-msb/tests/vm_msb.rs";
+const VM_WORKSPACE: &str = "puddle-workspace/tests/vm_workspace.rs";
+
+/// Every check that passed in the SDK smoke runs, in log order.
 pub const SMOKE_CHECKS: [SmokeCheck; 57] = [
-    vm(
+    elsewhere(
         "runtime.bundled_pair",
-        "T-107",
+        "puddle-runtime/tests/bundled.rs",
         "bundled msb + libkrunfw pair is the one used",
     ),
     case("runtime.version_pin", "probe_reports_runtime_version"),
-    vm(
+    elsewhere(
         "runtime.private_home",
-        "T-107",
+        "puddle-runtime/tests/isolation.rs",
         "private MSB_HOME, user's MSB_* ignored",
     ),
     case("volume.capacity_readback", "volume_capacity_reads_back"),
     case("sdk.create_owned", "create_boots_and_returns_owning_handle"),
-    vm("boot.hook_rc", "T-108", BOOT_HOOK_TEST),
-    vm("boot1.sysctl_inotify_watches", "T-108", BOOT_HOOK_TEST),
-    vm("boot1.sysctl_inotify_instances", "T-108", BOOT_HOOK_TEST),
-    vm("boot1.unpriv_bpf_off", "T-108", BOOT_HOOK_TEST),
-    vm("boot1.git_fsync", "T-108", BOOT_HOOK_TEST),
-    vm("boot1.git_identity", "T-108", BOOT_HOOK_TEST),
-    vm("boot1.path_fix_login_shell", "T-108", BOOT_HOOK_TEST),
-    vm(
+    elsewhere("boot.hook_rc", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot1.sysctl_inotify_watches", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot1.sysctl_inotify_instances", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot1.unpriv_bpf_off", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot1.git_fsync", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot1.git_identity", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot1.path_fix_login_shell", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere(
         "boot1.proxy_env_login_shell",
-        "T-109",
+        "puddle-vm-tests/tests/vm_guest_env.rs",
         "proxy env visible in login shells",
     ),
-    vm(
+    elsewhere(
         "boot1.ca_in_bundle",
-        "T-110",
+        "puddle-vm-tests/tests/vm_root_sync.rs",
         "synced roots in the guest bundle",
     ),
-    vm(
+    elsewhere(
         "boot1.ca_env_node",
-        "T-110",
+        "puddle-vm-tests/tests/vm_root_sync.rs",
         "NODE_EXTRA_CA_CERTS points at the bundle",
     ),
-    vm("boot1.agent_listening", "T-108", BOOT_HOOK_TEST),
+    elsewhere("boot1.agent_listening", VM_BOOT, BOOT_HOOK_TEST),
     case("exec.exit0", "exec_exit_codes_are_exact"),
     case("exec.exit3", "exec_exit_codes_are_exact"),
     case("exec.exit127", "exec_exit_codes_are_exact"),
     case("env.create_env_in_exec", "create_env_reaches_exec"),
-    vm(
+    elsewhere(
         "net.proxy_allowed_github",
-        "T-131",
+        "puddle-e2e/tests/proxy_agent_store.rs",
         "allowed host reachable through the route",
     ),
-    vm(
+    elsewhere(
         "net.proxy_denied_example",
-        "T-131",
+        "puddle-e2e/tests/proxy_agent_store.rs",
         "denied host gets 403 through the route",
     ),
-    vm(
+    elsewhere(
         "net.direct_egress_blocked",
-        "T-106",
-        "HG-01: direct DNS fails in the guest",
+        VM_MSB,
+        "direct DNS fails in the guest",
     ),
-    vm(
+    elsewhere(
         "net.direct_ip_blocked",
-        "T-106",
-        "HG-01: direct IP fails in the guest",
+        VM_MSB,
+        "direct IP fails in the guest",
     ),
-    vm(
+    elsewhere(
         "net.unrouted_vsock_port_unreachable",
-        "T-106",
-        "HG-02: only routed vsock ports accept",
+        VM_MSB,
+        "only routed vsock ports accept",
     ),
     case("mount_file.readonly", "file_mount_is_read_only"),
-    vm("volume.ext4", "T-106", "named volume is ext4 in the guest"),
-    vm(
-        "owned_disk.ext4",
-        "T-106",
-        "owned disk is ext4 in the guest",
-    ),
+    elsewhere("volume.ext4", VM_MSB, "named volume is ext4 in the guest"),
+    elsewhere("owned_disk.ext4", VM_MSB, "owned disk is ext4 in the guest"),
     case(
         "volume.write_repo",
         "named_volume_survives_restart_and_remove",
     ),
     case("owned_disk.write", "owned_disk_survives_restart_not_remove"),
-    vm(
+    elsewhere(
         "agent.restarted_after_kill",
-        "T-108",
+        VM_BOOT,
         "agent back within 1 s after kill -9",
     ),
-    vm(
+    elsewhere(
         "agent.proxy_after_restart",
-        "T-111",
+        VM_BOOT,
         "agent proxies again after a restart",
     ),
     case("ssh.serve_connection_exec", "ssh_server_speaks_first"),
     case("sdk.list", "create_boots_and_returns_owning_handle"),
     case("sdk.stopped_status", "stop_then_start_boots_again"),
-    vm("restart.boot_hook_rc", "T-108", BOOT_HOOK_TEST),
-    vm("boot2.sysctl_inotify_watches", "T-108", BOOT_HOOK_TEST),
-    vm("boot2.sysctl_inotify_instances", "T-108", BOOT_HOOK_TEST),
-    vm("boot2.unpriv_bpf_off", "T-108", BOOT_HOOK_TEST),
-    vm("boot2.git_fsync", "T-108", BOOT_HOOK_TEST),
-    vm("boot2.git_identity", "T-108", BOOT_HOOK_TEST),
-    vm("boot2.path_fix_login_shell", "T-108", BOOT_HOOK_TEST),
-    vm(
+    elsewhere("restart.boot_hook_rc", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot2.sysctl_inotify_watches", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot2.sysctl_inotify_instances", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot2.unpriv_bpf_off", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot2.git_fsync", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot2.git_identity", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere("boot2.path_fix_login_shell", VM_BOOT, BOOT_HOOK_TEST),
+    elsewhere(
         "boot2.proxy_env_login_shell",
-        "T-109",
+        "puddle-vm-tests/tests/vm_guest_env.rs",
         "proxy env visible in login shells",
     ),
-    vm(
+    elsewhere(
         "boot2.ca_in_bundle",
-        "T-110",
+        "puddle-vm-tests/tests/vm_root_sync.rs",
         "synced roots in the guest bundle",
     ),
-    vm(
+    elsewhere(
         "boot2.ca_env_node",
-        "T-110",
+        "puddle-vm-tests/tests/vm_root_sync.rs",
         "NODE_EXTRA_CA_CERTS points at the bundle",
     ),
-    vm("boot2.agent_listening", "T-108", BOOT_HOOK_TEST),
+    elsewhere("boot2.agent_listening", VM_BOOT, BOOT_HOOK_TEST),
     case(
         "restart.volume_marker",
         "named_volume_survives_restart_and_remove",
@@ -481,19 +482,19 @@ pub const SMOKE_CHECKS: [SmokeCheck; 57] = [
         "volume.reattach_plain_named",
         "named_volume_survives_restart_and_remove",
     ),
-    vm("recreate.boot_hook_rc", "T-108", BOOT_HOOK_TEST),
+    elsewhere("recreate.boot_hook_rc", VM_BOOT, BOOT_HOOK_TEST),
     case(
         "recreate.volume_marker",
         "named_volume_survives_restart_and_remove",
     ),
-    vm(
+    elsewhere(
         "recreate.repo_head",
-        "T-112",
+        VM_WORKSPACE,
         "clone, stop, recreate: HEAD and marker intact",
     ),
-    vm(
+    elsewhere(
         "recreate.repo_fsck",
-        "T-112",
+        VM_WORKSPACE,
         "git fsck clean after recreate and after VMM kill",
     ),
 ];
@@ -566,8 +567,8 @@ mod tests {
                 Coverage::Case(name) => {
                     assert!(CASES.contains(&name), "{}: no case {name}", c.check);
                 }
-                Coverage::VmOnly { task, test } => {
-                    assert!(task.starts_with("T-") && !test.is_empty(), "{}", c.check);
+                Coverage::Elsewhere { file, test } => {
+                    assert!(file.ends_with(".rs") && !test.is_empty(), "{}", c.check);
                 }
             }
         }

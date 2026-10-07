@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Shared setup of the VM tests: the adapter on the VM harness's private msb home (T-102).
+//! Shared setup of the VM tests: the adapter on the VM harness's private msb home.
 #![allow(
     dead_code,
     reason = "each test binary uses a different subset of the helpers"

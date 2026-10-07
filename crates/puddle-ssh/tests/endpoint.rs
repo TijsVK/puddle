@@ -51,7 +51,7 @@ fn spec(name: &str) -> SandboxSpec {
         SandboxName::new(name).unwrap(),
         ImageRef::new(FakeRuntime::DEBIAN).unwrap(),
     );
-    // Every plan merges VS Code's Machine settings, so the agent binary is mounted (T-125).
+    // Every plan merges VS Code's Machine settings, so the agent binary is mounted.
     with_boot_mounts(spec, mounts, Some(Path::new("agent")))
 }
 
@@ -410,7 +410,7 @@ async fn closing_the_endpoint_ends_sessions_and_removes_it() {
     assert!(!report.input_ended);
     // A late client is told so, never left hanging: NotFound, or on Windows possibly no answer,
     // because a pipe instance whose last read was cancelled can briefly outlive the listener
-    // and take a client that nobody serves (puddle-ipc follow-up in the T-114 brief).
+    // and take a client that nobody serves.
     let (_stdin, input) = duplex(64);
     let (output, _stdout) = duplex(64);
     let late = timeout(

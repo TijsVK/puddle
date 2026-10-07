@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Stale git lock files after a crash (T-139): `guest/clear-locks.sh` run after a boot, and its
+//! Stale git lock files after a crash: `guest/clear-locks.sh` run after a boot, and its
 //! parsed result.
 //!
 //! A VMM kill leaves `index.lock`, `HEAD.lock`, `refs/**.lock` and friends behind, and git then

@@ -2,8 +2,8 @@
 //! Windows: files and folders inherit the ACL of their parent. In the user's profile
 //! (`%LOCALAPPDATA%`, see [`crate::data_dir`]) that is the user, administrators and `SYSTEM`.
 //!
-//! T-093 replaces these with an explicit owner-only ACL (the descriptor code is
-//! `puddle-ipc/src/windows/security.rs`) and makes [`check`] read it back. Nothing here sets an
+//! An explicit owner-only ACL should replace these (the descriptor code is
+//! `puddle-ipc/src/windows/security.rs`), and [`check`] should read it back. Nothing here sets an
 //! ACL yet, so behaviour is what `puddle-api` did before this module existed.
 
 use std::fs::{self, File, Metadata, OpenOptions};
@@ -20,7 +20,7 @@ pub(super) fn create_file(path: &Path) -> io::Result<File> {
 
 #[expect(
     clippy::unnecessary_wraps,
-    reason = "same signature as the Unix check; T-093 reads the ACL here"
+    reason = "same signature as the Unix check; the ACL will be read here"
 )]
 pub(super) fn check(_meta: &Metadata) -> Result<(), u32> {
     Ok(())

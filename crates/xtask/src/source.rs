@@ -12,14 +12,14 @@ use crate::error::{Result, XtaskError};
 use crate::inventory::{Inventory, shipped_packages};
 use crate::tools::{Cargo, Features, run};
 
-/// The fork's Windows msb asset (upstream's name, kept by the fork's release job, T-103).
+/// The fork's Windows msb asset (upstream's name, kept by the fork's release job).
 pub const MSB_ASSET: &str = "msb-windows-x86_64.exe";
-/// Upstream's Windows firmware asset (the fork uses upstream's firmware, T-077).
+/// Upstream's Windows firmware asset (the fork uses upstream's firmware).
 pub const LIBKRUNFW_ASSET: &str = "libkrunfw-windows-x86_64.dll";
 /// Every release's checksum list.
 pub const CHECKSUMS_ASSET: &str = "checksums.sha256";
 
-/// The msb package and features `msb.exe` is built from (upstream's MSVC release steps, T-077).
+/// The msb package and features `msb.exe` is built from (upstream's MSVC release steps).
 const MSB_MANIFEST: &str = "crates/cli/Cargo.toml";
 const MSB_FEATURES: [&str; 3] = ["embed-binaries", "net", "ssh"];
 const MSB_TARGET: &str = "x86_64-pc-windows-msvc";
@@ -52,7 +52,7 @@ pub struct Commit {
     pub subject: String,
 }
 
-/// The firmware's source, for the written offer (D-35).
+/// The firmware's source, for the written offer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Firmware {
     /// libkrunfw version (`FULL_VERSION` in its Makefile).

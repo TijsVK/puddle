@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! I tests of upstream chaining (T-165): the sandbox proxy and the pull proxy send admitted
+//! I tests of upstream chaining: the sandbox proxy and the pull proxy send admitted
 //! connections out along a company-proxy route, against a scripted proxy on loopback. The hostile
 //! cases pin what chaining must never change: the rules, the address guard and the IP rules run
 //! first, and no hop is ever contacted for a request admission refused.

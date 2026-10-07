@@ -9,11 +9,11 @@
 //! |---|---|---|
 //! | a [`kind`] preamble `\0puddle-control/1\n` | the **control stream**: newline-delimited JSON [`AgentMessage`]s, guest → host only | [`host::serve_session`] turns them into [`puddle_types::Event`]s |
 //! | another [`kind`] preamble (`connect`, `ssh-agent`: reserved) or an unknown one | — | closed with a logged reason |
-//! | anything else (an HTTP request line) | one proxied guest connection: `CONNECT host:port` or an absolute-form request | handed to the caller's [`host::StreamHandler`] (the proxy, T-131) |
+//! | anything else (an HTTP request line) | one proxied guest connection: `CONNECT host:port` or an absolute-form request | handed to the caller's [`host::StreamHandler`] (the proxy) |
 //!
 //! Both sides use [`yamux::client_config`] / [`yamux::server_config`], and both splice a guest
 //! connection with [`relay::splice`], which passes an abort on as a TCP reset instead of a clean
-//! close (T-048).
+//! close.
 //!
 //! Everything the guest sends is untrusted: the host bounds line lengths, rate-limits control
 //! messages, cleans process names ([`puddle_types::Event::oom_kill`]) and ignores message types it

@@ -7,7 +7,7 @@ use tokio_yamux::Config;
 
 /// Receive window per stream, both directions: 16 MiB.
 ///
-/// With the agent's vsock buffer raised past msb's 8 MiB (T-004, `puddle-agent`'s vsock module),
+/// With the agent's vsock buffer raised past msb's 8 MiB (`puddle-agent`'s vsock module),
 /// this window sets per-stream speed only; a single 1 GiB upload went from 68 to 334 MiB/s when it
 /// went from 256 KiB back to 16 MiB.
 pub const STREAM_WINDOW: u32 = 16 * 1024 * 1024;

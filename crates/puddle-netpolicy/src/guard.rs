@@ -19,7 +19,7 @@ pub enum AddressVerdict {
     /// Connect if the rules allow the request.
     Allow,
     /// A local address whose toggle is on: connect only after an **exact** allow of the name or
-    /// of this address (R-14, D-44). After a suffix allow the proxy admits the address if an
+    /// of this address (R-14). After a suffix allow the proxy admits the address if an
     /// exact rule for its IP allows it, and otherwise asks again with `SuffixAllows::Ignore`, so
     /// the request goes pending for the exact name.
     ExactOnly(LocalCategory),
@@ -268,7 +268,7 @@ mod tests {
             g.check_address(&sandbox(), sa("10.1.2.3:80")),
             AddressVerdict::Allow
         );
-        // The wildcard setting never replaces a toggle (D-44).
+        // The wildcard setting never replaces a toggle.
         let (g, _api) = guard(LocalAccess::NONE.with_wildcards_reach_local(true));
         assert_eq!(
             g.check_address(&sandbox(), sa("10.1.2.3:80")),

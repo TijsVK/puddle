@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Proxy discovery: which route a request takes to leave the machine.
 //!
-//! Order for [`Mode::System`] (T-026 section 2a): a loopback destination goes direct; then what
+//! Order for [`Mode::System`] : a loopback destination goes direct; then what
 //! the [`OsProxy`] reports: a PAC script or WPAD evaluated per URL, else the static proxies with
 //! their bypass list; else direct. On Windows the OS layer is the user's WinINet settings as
 //! WinHTTP reads them (PAC and WPAD by Windows' own engine), then the machine-wide WinHTTP proxy,

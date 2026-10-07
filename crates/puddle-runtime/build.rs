@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Reads the msb runtime version this build of puddle runs from the workspace `Cargo.lock`: the
 //! version of the `microsandbox` SDK package, which the root `Cargo.toml` takes from the fork tag
-//! `v<version>` (D-19: the SDK and the bundled runtime move together, so the tag there is the only
+//! `v<version>` (the SDK and the bundled runtime move together, so the tag there is the only
 //! place the version is written). Fails the build when the SDK doesn't come from that fork tag, or
 //! when the SDK's crates resolve to more than one source (a half-done bump).
 

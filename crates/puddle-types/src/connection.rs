@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! One connection as the proxy reports it for the audit (`docs/spec/rules.md` R-24).
 //!
-//! The proxy (W2) builds a [`ConnectionEvent`] and hands it to a [`ConnectionLog`]; the store
-//! (W3) implements the log and turns the event into a `connection` record. Neither crate depends
+//! The proxy builds a [`ConnectionEvent`] and hands it to a [`ConnectionLog`]; the store
+//! implements the log and turns the event into a `connection` record. Neither crate depends
 //! on the other. Nothing secret is representable: there are no header, body or credential
 //! fields, and an [`HttpRequestLine`] keeps only the path of a request target (R-25).
 
@@ -114,14 +114,14 @@ impl HttpRequestLine {
     }
 }
 
-/// One connection as the proxy (W2) reports it; the store stamps the time.
+/// One connection as the proxy reports it; the store stamps the time.
 ///
 /// Non-exhaustive: build it with [`ConnectionEvent::new`] or [`ConnectionEvent::decided`] and
 /// set the remaining fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ConnectionEvent {
-    /// The sandbox it came from (the route's, HO-3).
+    /// The sandbox it came from (the route's).
     pub sandbox: SandboxName,
     /// The requested host.
     pub host: Host,
@@ -130,7 +130,7 @@ pub struct ConnectionEvent {
     /// The address connected to, once connected.
     pub resolved_ip: Option<IpAddr>,
     /// The hop of the company-proxy route that carried the connection (`DIRECT` or
-    /// `PROXY host:port`, T-165), once connected; `None` when no upstream route is configured.
+    /// `PROXY host:port`), once connected; `None` when no upstream route is configured.
     /// Never carries credentials.
     pub upstream: Option<String>,
     /// What happened.
@@ -141,7 +141,7 @@ pub struct ConnectionEvent {
     pub rule_id: Option<RuleId>,
     /// The pending row, when pending.
     pub pending_id: Option<PendingId>,
-    /// The credential binding used, by id only (D-11). Never the credential.
+    /// The credential binding used, by id only. Never the credential.
     pub binding_id: Option<String>,
     /// Whether a credential was injected.
     pub injected: bool,

@@ -304,7 +304,7 @@ impl Resolver for StaticResolver {
 }
 
 /// What Node 24 `fetch` sends through a proxy for a plain `http://` URL (`NODE_USE_ENV_PROXY=1`,
-/// `HTTP_PROXY` set): a `CONNECT host:80` tunnel, not an absolute-form request (T-109, T-098).
+/// `HTTP_PROXY` set): a `CONNECT host:80` tunnel, not an absolute-form request.
 /// Captured 2026-10-06 from Node v24.18.0 for
 /// `fetch("http://node.fixture.test/some/path?q=canary", { method: "POST", body: "hello" })`.
 pub mod node_fetch {

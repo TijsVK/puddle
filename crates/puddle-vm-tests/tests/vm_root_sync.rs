@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Corporate root sync on a real microVM (T-110, tier K on Linux KVM, W on Windows WHP).
+//! Corporate root sync on a real microVM (tier K on Linux KVM, W on Windows WHP).
 //!
 //! A test "corporate" root, selected from a store snapshot as the Windows export would, signs a
 //! fixture HTTPS server inside the guest. Before the sync curl refuses it; after the root-sync
@@ -9,7 +9,7 @@
 //!
 //! The steps are applied by plain exec, in `boot.sh`'s order, not through `boot.sh` itself: on
 //! a real msb VM `boot.sh` currently stops at its first sysctl (`fs.inotify.max_user_instances
-//! is '1' after setting it to 1024`, T-110 brief), which is the boot hook's VM bar (T-108/T-106).
+//! is '1' after setting it to 1024`), which is the boot hook's VM bar.
 //! The fake-root test `puddle-certs/tests/boot_trust.rs` covers the same plan through `boot.sh`.
 #![expect(
     clippy::unwrap_used,
@@ -73,10 +73,8 @@ struct Fixture {
 
 fn fixture() -> Fixture {
     let mut root = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
-    root.distinguished_name.push(
-        rcgen::DnType::CommonName,
-        "puddle T-110 corporate test root",
-    );
+    root.distinguished_name
+        .push(rcgen::DnType::CommonName, "puddle corporate test root");
     root.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     root.key_usages = vec![
         rcgen::KeyUsagePurpose::KeyCertSign,
@@ -101,9 +99,9 @@ fn fixture() -> Fixture {
     );
     let corporate = CorporateRoots::select(&snapshot, SystemTime::now());
     assert_eq!(corporate.certificates().len(), 1);
-    // And puddle's own proxy CA next to it (D-11), as in a real sandbox.
+    // And puddle's own proxy CA next to it, as in a real sandbox.
     let proxy_ca = CaBuilder::new(
-        "puddle proxy CA (T-110 VM test)",
+        "puddle proxy CA (VM test)",
         NameConstraints::new().permit_dns("github.com").unwrap(),
     )
     .build()

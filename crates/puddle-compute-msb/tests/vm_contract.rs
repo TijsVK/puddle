@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The runtime contract suite on real microVMs through the adapter (T-106 bar: `run_all` green
-//! on K and W). One test per case; the binary's `vm_` name keeps them in the VM profile.
+//! The runtime contract suite on real microVMs through the adapter (`run_all` green on tiers K
+//! and W). One test per case; the binary's `vm_` name keeps them in the VM profile.
 #![expect(clippy::expect_used, reason = "a failed setup fails the test")]
 
 mod support;

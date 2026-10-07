@@ -8,8 +8,8 @@
 //! job doesn't allow breakaway. When puddle ends in any way, `TerminateProcess` included, the
 //! handle closes and Windows kills everything left in the job.
 //!
-//! This is the one place to add job limits (UI restrictions, a process count) for the D-27
-//! escape review (T-020 F-7). On Linux it does nothing: msb's parent watchdog stops the VMs.
+//! This is the one place to add job limits (UI restrictions, a process count) for a
+//! sandbox-escape review. On Linux it does nothing: msb's parent watchdog stops the VMs.
 
 use crate::LifecycleError;
 

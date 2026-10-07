@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
-//! The two file-system seams that differ per OS (T-150, D-66):
+//! The two file-system seams that differ per OS:
 //!
 //! - [`data_dir`]: puddle's per-user data folder, resolved by the `dirs` crate in this one place.
 //! - [`private`]: owner-only files and folders. On Unix the modes `0600` / `0700`; on Windows the
-//!   file inherits its folder's ACL for now, and the explicit owner-only ACL (T-093) lands in
+//!   file inherits its folder's ACL for now, and the explicit owner-only ACL lands in
 //!   `private/windows.rs`.
 //!
 //! | OS | `data_dir()` |

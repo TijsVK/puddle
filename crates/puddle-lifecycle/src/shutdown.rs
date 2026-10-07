@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The sandboxes puddle runs, and stopping all of them when puddle exits (D-20).
+//! The sandboxes puddle runs, and stopping all of them when puddle exits.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};

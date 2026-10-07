@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The VM smoke every VM tier runs first (T-102): one stock devcontainer sandbox boots through
+//! The VM smoke every VM tier runs first: one stock devcontainer sandbox boots through
 //! the SDK and runs `true`. Runs only under `cargo nextest run --profile vm` (crate docs).
 
 use std::time::{Duration, Instant};
@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use microsandbox::Sandbox;
 use puddle_vm_tests::{DEBIAN_DEVCONTAINER, HarnessError, VmEnv, within};
 
-/// Cold pull of the devcontainer image plus first boot: T-041 saw 7-12 s on `windows-2025`,
-/// T-028 60 s on the laptop's first pull. The job's own limit is 15 minutes.
+/// Cold pull of the devcontainer image plus first boot: 7-12 s on `windows-2025`,
+/// 60 s on a workstation's first pull. The job's own limit is 15 minutes.
 const CREATE_BUDGET: Duration = Duration::from_secs(600);
 const EXEC_BUDGET: Duration = Duration::from_secs(60);
 const STOP_BUDGET: Duration = Duration::from_secs(60);

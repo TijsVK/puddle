@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The runtime's NOTICE file: what is bundled, under which licence, what puddle changed in msb
-//! (Apache-2.0 §4(b)), and the written offer for the firmware's source (GPL-2.0 §3(b), D-35).
+//! (Apache-2.0 §4(b)), and the written offer for the firmware's source (GPL-2.0 §3(b)).
 
 use std::fmt::Write as _;
 
 use crate::source::ForkFacts;
 
-/// Where source requests go (D-55 contact address).
+/// Where source requests go (contact address).
 pub const SOURCE_REQUEST_CONTACT: &str = "puddle@tijsvankampen.be";
 
 /// The NOTICE text for a runtime built from `facts`.

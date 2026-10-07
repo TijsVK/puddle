@@ -114,7 +114,7 @@ impl RuntimeLayout {
     }
 
     /// msb's config file inside puddle's home (`MSB_CONFIG_PATH`); without it msb falls back to
-    /// `~/.microsandbox/config.json` (T-028).
+    /// `~/.microsandbox/config.json`.
     #[must_use]
     pub fn config_path(&self) -> PathBuf {
         self.home.join(CONFIG_FILE_NAME)

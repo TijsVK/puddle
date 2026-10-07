@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Connections puddle makes for itself (T-020 C-11): telemetry upload, downloads, anything the
+//! Connections puddle makes for itself: telemetry upload, downloads, anything the
 //! host program fetches. They take the same route and authentication as a sandbox's traffic.
 //!
 //! Unlike a guest's request there is nothing to guard: the destination is a fixed endpoint of

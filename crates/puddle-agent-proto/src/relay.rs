@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Splicing a TCP connection to a yamux stream so that an abort stays an abort (T-048).
+//! Splicing a TCP connection to a yamux stream so that an abort stays an abort.
 //!
 //! If one side of a proxied connection fails (the client aborted its upload, the server reset, or
 //! the session died), the other side must see a **reset**, not a clean close: a FIN would make a

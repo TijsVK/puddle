@@ -224,8 +224,8 @@ impl<S: Sandbox> GatedSandbox<S> {
         self.inner.stop().await
     }
 
-    /// The handle without the gate, for puddle's own maintenance only (`fstrim` before a stop,
-    /// T-113). Never hand it to a user-facing path.
+    /// The handle without the gate, for puddle's own maintenance only (`fstrim` before a stop).
+    /// Never hand it to a user-facing path.
     #[must_use]
     pub fn ungated(&self) -> &S {
         &self.inner

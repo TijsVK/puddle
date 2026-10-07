@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle"
-description = "The puddle host program: CLI and daemon that wires the other crates together (W7)"
+description = "The puddle host program: CLI and daemon that wires the other crates together"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

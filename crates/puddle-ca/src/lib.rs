@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! puddle's per-sandbox certificate authority and its leaf certificate cache (W2, D-11).
+//! puddle's per-sandbox certificate authority and its leaf certificate cache.
 //!
 //! The proxy terminates TLS only for hosts with a credential binding. For those hosts it presents
 //! a leaf certificate issued by a CA that belongs to one sandbox and lives only in the host
-//! process's memory (T-002, HO-4: nothing is shared between sandboxes).
+//! process's memory (nothing is shared between sandboxes).
 //!
 //! - [`NameConstraints`] says which names a CA may certify. It is a builder input, so the proxy
-//!   CA (the sandbox's bound hosts) and a later localhost-only dev CA (T-020 F-9) share
+//!   CA (the sandbox's bound hosts) and a later localhost-only dev CA share
 //!   [`CaBuilder`]. The constraints go into the CA certificate as a critical RFC 5280 extension,
 //!   so a client rejects a leaf for any other name even if one were ever signed.
 //! - [`SandboxCa`] holds the CA key. It has no way to export, clone or serialise it; leaves come

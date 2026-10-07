@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `puddle doctor` on a real host with the real runtime (T-115, tiers K and W): all green with
+//! `puddle doctor` on a real host with the real runtime (tiers K and W): all green with
 //! the runtime CI installed, including a test boot, in under 30 s; and a missing runtime, another
 //! version and a runtime file this user may not run (a deny ACE on Windows, no execute bit on
 //! Linux) each give their own finding on the real probes. Runs only under `--profile vm`.
@@ -19,7 +19,7 @@ use puddle_runtime::{
 };
 use puddle_vm_tests::{RuntimePair, Settings};
 
-/// The acceptance bar for a whole run (T-081).
+/// The acceptance bar for a whole run.
 const BAR: Duration = Duration::from_secs(30);
 
 /// The firmware file name msb 0.7.7 looks for beside itself on Linux
@@ -93,8 +93,8 @@ fn vm_doctor_is_all_green_with_a_test_boot_under_30_s() {
     );
 }
 
-/// msb's boot race is fixed in the fork (T-096), so the doctor's test boot has no retry: every one
-/// of 20 boots in a row must pass on its own (T-138).
+/// msb's boot race is fixed in the fork, so the doctor's test boot has no retry: every one
+/// of 20 boots in a row must pass on its own.
 #[test]
 fn vm_test_boot_passes_20_in_a_row_without_a_retry() {
     let root = tempfile::tempdir().unwrap();

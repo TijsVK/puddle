@@ -103,7 +103,7 @@ fn test_root(tag: &str) -> TestCert {
     let mut p = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     p.distinguished_name.push(
         rcgen::DnType::CommonName,
-        format!("puddle T-110 test root {tag} {nanos}"),
+        format!("puddle test root {tag} {nanos}"),
     );
     p.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     p.not_after = rcgen::date_time_ymd(2040, 1, 1);
@@ -201,8 +201,8 @@ const LM_GP_ROOT_KEY: &str = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\SystemCertif
 
 /// `CurrentUser\\Root` needs the user to confirm each added root in a dialog; a non-interactive
 /// session (the hosted runner) gets "UI is not allowed in this operation", and a root written to
-/// the store's registry key directly is not enumerated (T-110 CI run 37404373158). So the
-/// export half runs where the import succeeds (an interactive session, e.g. the laptop, where
+/// the store's registry key directly is not enumerated. So the
+/// export half runs where the import succeeds (an interactive session, e.g. a workstation, where
 /// someone clicks Yes) and is reported as skipped otherwise.
 #[test]
 fn a_current_user_root_is_exported_when_one_can_be_added() {
@@ -279,7 +279,7 @@ fn machine_and_group_policy_roots_are_exported() {
     ]);
     // Needs an elevated runner (GitHub's is); Intune puts its roots in LocalMachine\Root.
     add(&intune, "Cert:\\LocalMachine\\Root");
-    // A GPO-pushed root, written where Group Policy writes it (T-026 lab L8).
+    // A GPO-pushed root, written where Group Policy writes it.
     write_registry_blob(&gpo, LM_GP_ROOT_KEY);
 
     let roots = select();

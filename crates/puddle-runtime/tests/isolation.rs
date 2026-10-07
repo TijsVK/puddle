@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A user's own msb setup never leaks into puddle: their `MSB_*` variables are dropped and an
-//! `msb` on `PATH` is never what runs (D-19, T-028 §1.3). nextest runs each test in its own
+//! `msb` on `PATH` is never what runs. nextest runs each test in its own
 //! process, so changing the process environment here is safe.
 #![expect(
     clippy::unwrap_used,

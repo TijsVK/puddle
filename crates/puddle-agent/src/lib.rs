@@ -5,12 +5,12 @@
 //!   carries each connection to puddle's proxy as one yamux stream over vsock ([`serve`],
 //!   [`upstream`]);
 //! - also listens on the Docker bridge address (`172.17.0.1:3128`) while a bridge owns it, so
-//!   containers inside the sandbox reach the same proxy ([`bridge`], T-099);
+//!   containers inside the sandbox reach the same proxy ([`bridge`]);
 //! - watches the guest kernel's OOM killer and reports each kill on the control stream
 //!   ([`oom`], [`control`]), which the host turns into
 //!   [`puddle_types::Event::OomKill`].
 //!
-//! It also applies merged guest files for the boot hook ([`merge_file`], T-097).
+//! It also applies merged guest files for the boot hook ([`merge_file`]).
 //!
 //! The wire protocol is in `puddle-agent-proto`. Settings come from environment variables
 //! ([`config`]). The binary's `main` only parses the command line ([`cli`]) and starts an

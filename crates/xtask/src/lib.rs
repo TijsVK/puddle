@@ -56,7 +56,7 @@ commands:
             --check                only check that both are current (types skipped without Node
                                    unless CI is set)";
 
-/// The default fork (D-53).
+/// The default fork.
 pub const DEFAULT_FORK: &str = "TijsVK/microsandbox";
 /// Upstream msb.
 pub const DEFAULT_UPSTREAM: &str = "superradcompany/microsandbox";

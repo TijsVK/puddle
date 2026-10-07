@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# VM tests on Windows WHP (T-032 tier W): crate puddle-vm-tests under `nextest --profile vm` on the
-# hosted windows-2025 runner, whose Hyper-V/WHP runs msb microVMs (T-041: observed, not promised by
+# VM tests on Windows WHP (tier W): crate puddle-vm-tests under `nextest --profile vm` on the
+# hosted windows-2025 runner, whose Hyper-V/WHP runs msb microVMs (observed, not promised by
 # GitHub). Windows runners are the slowest to queue, so this runs by hand on any branch
 # (`gh workflow run vm-windows.yml --ref <branch>`) and nightly on develop unless it already has a green run on that
-# commit. VM tests are never retried (T-032); a runner without a usable hypervisor
+# commit. VM tests are never retried; a runner without a usable hypervisor
 # is reported as an infrastructure skip, not a test result.
 name: vm-windows
 
@@ -26,10 +26,10 @@ env:
   # Line tables only: backtraces keep file:line, builds and the cache stay much smaller.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   # Crates with VM tests: the harness smoke, the msb adapter (contract suite, HG-01/02, memory),
-  # the boot hook (T-108), the workspace lifecycle (T-112), shutdown and reconcile (T-113).
+  # the boot hook, the workspace lifecycle, shutdown and reconcile.
   VM_CRATES: -p puddle-vm-tests -p puddle-compute-msb -p puddle-boot -p puddle-workspace -p puddle-lifecycle
   # msb's sandbox runtimes log at debug, and the harness keeps each removed sandbox's logs beside
-  # the run home, so a boot that fails keeps its VMM trace and kernel.log in the artefact (T-164).
+  # the run home, so a boot that fails keeps its VMM trace and kernel.log in the artefact.
   PUDDLE_VM_MSB_LOG_LEVEL: debug
 
 jobs:
@@ -100,14 +100,14 @@ jobs:
         run: cargo nextest run $VM_CRATES --profile vm --locked --no-run
       - name: VM tests (tier W)
         if: steps.whp.outputs.ok == 'true'
-        # ~40 VM tests since T-106 (contract suite, adapter bars, boot hook).
+        # ~40 VM tests (contract suite, adapter bars, boot hook).
         timeout-minutes: 30
         shell: bash
         run: |
-          # Laptop-only tests (vm_laptop_*) run in ci/windows-e2e.ps1, not here.
+          # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, not here.
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             cargo nextest run $VM_CRATES --profile vm --locked \
-            -E 'not test(/(^|::)vm_laptop_/)'
+            -E 'not test(/(^|::)vm_machine_/)'
       - name: upload test results and msb logs
         if: ${{ !cancelled() && steps.whp.outputs.ok == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

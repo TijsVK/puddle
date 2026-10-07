@@ -23,7 +23,7 @@ pub enum ParseError {
 }
 
 /// An HTTP proxy to send a request through: a host name or address and a port. Credentials are
-/// never part of it (T-135 supplies them at connect time).
+/// never part of it (the auth layer supplies them at connect time).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProxyAddr {
     host: String,

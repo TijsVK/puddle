@@ -287,7 +287,7 @@ async fn r27_a_sandbox_ip_deny_counts_until_it_expires() {
 }
 
 /// The IP's own rules decide with R-6 precedence: a sandbox allow of the address beats a global
-/// deny of it, as it would for a request to the literal (T-095 default).
+/// deny of it, as it would for a request to the literal (the default).
 #[tokio::test]
 async fn r27_a_sandbox_ip_allow_overrides_a_global_ip_deny_as_for_the_literal() {
     let rig = rig().await;

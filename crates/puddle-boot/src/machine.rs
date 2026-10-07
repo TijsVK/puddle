@@ -1,25 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! VS Code's Machine settings in the guest: how ports are forwarded (D-4, T-019) and the
-//! accident guard that keeps desktop VS Code from handing its git credentials to the guest
-//! (D-30 (c)).
+//! VS Code's Machine settings in the guest: how ports are forwarded and the
+//! accident guard that keeps desktop VS Code from handing its git credentials to the guest.
 
 use puddle_types::{GuestFile, MergeEntry, MergeFormat, MergeSpec};
 use serde_json::json;
 
 use crate::assets::guest_path;
 
-/// Where the VS Code server reads Machine settings for the `root` user (T-003).
+/// Where the VS Code server reads Machine settings for the `root` user.
 pub const MACHINE_SETTINGS_GUEST: &str = "/root/.vscode-server/data/Machine/settings.json";
 
-/// The Machine settings file, as a JSONC merge (T-125): puddle owns only these keys, so the
+/// The Machine settings file, as a JSONC merge: puddle owns only these keys, so the
 /// user's own Machine settings, comments and trailing commas survive every boot.
 ///
 /// - `remote.autoForwardPortsSource: process` and `remote.autoForwardPortsFallback: 0`, so ports
-///   are found from listening processes and VS Code never falls back to output scanning (D-4,
-///   T-019 §2);
+///   are found from listening processes and VS Code never falls back to output scanning;
 /// - the agent's proxy port is never auto-forwarded (`remote.portsAttributes.<port>`), other ports
 ///   notify (`remote.otherPortsAttributes.onAutoForward`); the user's own port entries stay;
-/// - `github.gitAuthentication: false` and `git.terminalAuthentication: false` (D-30 (c): an
+/// - `github.gitAuthentication: false` and `git.terminalAuthentication: false` (an
 ///   accident guard only, desktop VS Code attach stays a trusted mode). Puddle sets them again
 ///   at every boot, so a user's own value for these two does not last.
 ///

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Egress proxy: the only way out of a sandbox (MWE plan W2).
+//! Egress proxy: the only way out of a sandbox.
 //!
 //! Every guest connection reaches the host as a yamux stream on the sandbox's route (a per-sandbox
 //! named pipe or Unix socket, `puddle-ipc`), carried by the guest agent (`puddle-agent-proto`).
@@ -19,9 +19,9 @@
 //!    [`AddressCheck`] (`puddle_netpolicy::NetPolicy`: address classes, local toggles, puddle's
 //!    own endpoints) and only an address that passed is connected to. A local address needs its
 //!    toggle on and an exact allow of the name or of the address itself, unless "wildcards
-//!    reach local addresses" is on (R-14, D-44); a block names the toggle that would allow it.
+//!    reach local addresses" is on (R-14); a block names the toggle that would allow it.
 //! 5. **Relay**: `CONNECT` is spliced both ways, an abort on either side reaching the other as a
-//!    reset (T-048); a plain-HTTP request is forwarded once with `Host` rewritten to the checked
+//!    reset; a plain-HTTP request is forwarded once with `Host` rewritten to the checked
 //!    target and its body framed exactly, so nothing unchecked rides along.
 //!    A tunnel that carries plain HTTP (Node `fetch` and Yarn Berry send `http://` as
 //!    `CONNECT host:80`) is decided and relayed like any tunnel; only its first request line is
@@ -32,12 +32,12 @@
 //!    way) handed to the
 //!    [`puddle_types::ConnectionLog`] set with [`Proxy::with_connection_log`] (the store, R-24).
 //!
-//! The sandbox is the route's, never anything the guest says (HO-3). Each sandbox has a cap on
+//! The sandbox is the route's, never anything the guest says. Each sandbox has a cap on
 //! open connections and each route on agent sessions ([`ProxyConfig`]), far above what real tools
-//! open (D-2).
+//! open.
 //!
 //! [`PullProxy`] is the other way out: the loopback listener for puddle's own image pulls
-//! (T-116), with a per-run token instead of a route, and the address guard without the rules.
+//!, with a per-run token instead of a route, and the address guard without the rules.
 //!
 //! # Features
 //!

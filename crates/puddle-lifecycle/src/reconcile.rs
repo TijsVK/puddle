@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Reconcile at start (D-20): clean up after a puddle that died without its shutdown.
+//! Reconcile at start: clean up after a puddle that died without its shutdown.
 //!
 //! puddle-owned means: a sandbox the runtime lists with [`SandboxInfo::puddle_owned`] (msb: the
 //! owner label) **and** a valid [`SandboxName`]; a stale directory with a valid [`SandboxName`]
-//! (it has no record that could carry the label; puddle's msb home is private, T-107); a volume
+//! (it has no record that could carry the label; puddle's msb home is private); a volume
 //! named `ws-<workspace id>`. Everything else is foreign and only reported.
 //!
-//! A puddle-owned maintenance sandbox (`m--<workspace id>`, T-112) only lives while puddle checks
+//! A puddle-owned maintenance sandbox (`m--<workspace id>`) only lives while puddle checks
 //! or trims a workspace, so one found at start is always a leftover: it is stopped and removed
 //! even if the inventory lists it. After reconcile, [`adopt_workspaces`] rebuilds the workspace
 //! holder registry (it lives in memory) from the inventory.
@@ -53,7 +53,7 @@ pub struct ReconcileReport {
     pub removed: Vec<SandboxName>,
     /// Known sandboxes found `Crashed`: kept, and reported so the UI can say so.
     pub crashed: Vec<SandboxName>,
-    /// Stale directories (a failed create's leftovers, T-039), removed.
+    /// Stale directories (a failed create's leftovers), removed.
     pub stale_dirs_removed: Vec<SandboxName>,
     /// `ws-*` volumes of workspaces puddle no longer knows, removed.
     pub volumes_removed: Vec<VolumeName>,
@@ -144,7 +144,7 @@ pub async fn reconcile<R: Runtime>(
     Ok(report)
 }
 
-/// Rebuilds `workspaces`' holder registry after a restart (T-112): every attachment in
+/// Rebuilds `workspaces`' holder registry after a restart: every attachment in
 /// `inventory.attached` whose workspace and sandbox are both known is adopted, so a second
 /// sandbox can't take a workspace a stopped one still holds. Call it after [`reconcile`] and
 /// before any sandbox starts. Returns the adopted pairs; an attachment naming an unknown
@@ -187,7 +187,7 @@ async fn reconcile_sandbox<R: Runtime>(
 ) {
     let mut down = status.is_down();
     if !down {
-        // Left running by a puddle that died (D-20: VMs never outlive puddle). Starting,
+        // Left running by a puddle that died (VMs never outlive puddle). Starting,
         // Draining and Paused are treated the same: stop is the only way back to a known state.
         match runtime.get(&name).await {
             Ok(handle) => match trim_and_stop(&handle, &[], config).await.1 {

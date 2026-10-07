@@ -143,7 +143,7 @@ pub struct SkippedCert {
 /// The host's admin- and user-added roots (and the intermediates they issued) that the guest
 /// trusts, plus what was left out, for the network health page.
 ///
-/// Selection (D-24, T-026 §2b): every certificate from a `Root` store; from a `CA` store only
+/// Selection: every certificate from a `Root` store; from a `CA` store only
 /// those issued by a synced certificate; never one whose certificate or public key is in a
 /// `Disallowed` store; never an expired one. Each certificate once, however many stores hold
 /// it, sorted by fingerprint so the same stores give byte-identical guest files.

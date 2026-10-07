@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! [`puddle_compute::SandboxSpec`] to the SDK's `SandboxBuilder`, and the list of every SDK option
-//! puddle sets or leaves at its default ([`SDK_OPTIONS`], input for the D-27 escape review).
+//! puddle sets or leaves at its default ([`SDK_OPTIONS`], input for the escape-hardening review).
 
 use microsandbox::Sandbox;
 use microsandbox::sandbox::{DeploymentProfile, PullPolicy, SandboxBuilder, SecurityProfile};
@@ -74,22 +74,22 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     set(
         "SandboxBuilder::label",
         "dev.puddle.owner=puddle",
-        "reconcile touches only puddle's sandboxes (T-113)",
+        "reconcile touches only puddle's sandboxes",
     ),
     set(
         "SandboxBuilder::disable_network",
         "no network device; policy none",
-        "D-1: the guest's only way out is the vsock route (HG-01)",
+        "the guest's only way out is the vsock route",
     ),
     set(
         "SandboxBuilder::vsock",
         "one stream route per spec route (port -> named pipe / Unix socket)",
-        "only routed ports reach the host (HG-02)",
+        "only routed ports reach the host",
     ),
     set(
         "SandboxBuilder::volume",
         "file mounts: bind + readonly; named volumes: named / named_with(ensure_exists, disk, size); owned disks: owned_with(disk, size)",
-        "read-only mounts only (HO-6); sources under the guest-share root (C-7)",
+        "read-only mounts only; sources under the guest-share root",
     ),
     set(
         "SandboxBuilder::security",
@@ -99,7 +99,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     set(
         "SandboxBuilder::deployment_profile",
         "DeploymentProfile::SingleTenant",
-        "one user's laptop; MultiTenant is for shared hosting",
+        "one user's machine; MultiTenant is for shared hosting",
     ),
     set(
         "SandboxBuilder::pull_policy",
@@ -115,13 +115,13 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "SandboxBuilder::max_memory",
         "unset: the SDK makes it equal to memory (no hotplug reserve)",
-        "never above memory (T-106 bar); set_memory pins it to the new size via modify(); VM test checks the stored config",
+        "never above memory; set_memory pins it to the new size via modify(); VM test checks the stored config",
     ),
     default("SandboxBuilder::max_cpus", "unset", "no CPU hotplug"),
     default(
         "SandboxBuilder::cpu_placement / placement_profile",
         "unset",
-        "no pinning on a laptop",
+        "no pinning on a workstation",
     ),
     default(
         "SandboxBuilder::root_disk / root_disk_with / oci_upper_size",
@@ -139,11 +139,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "global default",
         "msb logs under the private home",
     ),
-    default(
-        "SandboxBuilder::detached",
-        "false",
-        "VMs die with puddle (D-20 A, T-028 L2)",
-    ),
+    default("SandboxBuilder::detached", "false", "VMs die with puddle"),
     default(
         "SandboxBuilder::disable_metrics_sample / metrics_sample_interval",
         "msb default sampling",
@@ -167,12 +163,12 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     set(
         "RegistryBuilder::extra_ca_certs (pull_image)",
         "msb's configured roots + MsbConfig::registry_roots",
-        "corporate roots, so pulls work behind a TLS-intercepting proxy (T-116)",
+        "corporate roots, so pulls work behind a TLS-intercepting proxy",
     ),
     set(
         "LocalBackendBuilder::registry_proxy (RegistryBuilder::proxy in pull_image)",
         "puddle's image-pull proxy with a per-run token (MsbConfig::registry_proxy)",
-        "pulls take puddle's way out; an explicit client setting, so the token is not in the process environment and the user's proxy variables are not read (T-116, T-144)",
+        "pulls take puddle's way out; an explicit client setting, so the token is not in the process environment and the user's proxy variables are not read",
     ),
     default("SandboxBuilder::slug", "unset", "cloud only"),
     default(
@@ -183,7 +179,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "SandboxBuilder::entrypoint / cmd",
         "image's, not run",
-        "SDK create/start run no image workload (T-028); the boot hook chains the ENTRYPOINT",
+        "SDK create/start run no image workload; the boot hook chains the ENTRYPOINT",
     ),
     default(
         "SandboxBuilder::foreground_command / background_command",
@@ -193,7 +189,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "SandboxBuilder::init / init_with",
         "msb's init",
-        "T-028 rejected the init handoff (race, stop hang)",
+        "msb's own init is used: the init handoff raced and hung stop on msb 0.7.6",
     ),
     default("SandboxBuilder::hostname", "msb default", "not used yet"),
     default(
@@ -204,12 +200,12 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "SandboxBuilder::network / proxy / prepend_network_policy_rules",
         "unset (network disabled)",
-        "puddle's own proxy is the chokepoint (D-1)",
+        "puddle's own proxy is the chokepoint",
     ),
     default(
         "SandboxBuilder::port / port_bind / port_udp / port_udp_bind",
         "none",
-        "no published ports; forwards go through puddle (W5)",
+        "no published ports; forwards go through puddle",
     ),
     default(
         "SandboxBuilder::vsock_dgram / vsock_route",
@@ -219,7 +215,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "SandboxBuilder::secret / secret_entry / secret_env / secret_violation_action",
         "none",
-        "credentials are injected by puddle's proxy (W2)",
+        "credentials are injected by puddle's proxy",
     ),
     default(
         "SandboxBuilder::envs / labels",
@@ -269,7 +265,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "MountBuilder::follow_root_symlinks",
         "false",
-        "a planted symlink can't redirect a mount; sources are also resolved by puddle (C-7)",
+        "a planted symlink can't redirect a mount; sources are also resolved by puddle",
     ),
     // exec, SSH, backend, config.json
     set(
@@ -280,7 +276,7 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     set(
         "ssh::server_with",
         "authorized keys from MsbConfig; inactivity timeout off unless configured",
-        "IDE sessions sit idle (T-114)",
+        "IDE sessions sit idle",
     ),
     default(
         "ssh::host_key",
@@ -290,12 +286,12 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
     default(
         "ssh::sftp / user",
         "sftp on; guest user msb default",
-        "scp/sftp for the IDE (T-114)",
+        "scp/sftp for the IDE",
     ),
     set(
         "LocalBackend::home / config_path",
         "puddle's private msb home and its config.json",
-        "never the user's ~/.microsandbox (D-19)",
+        "never the user's ~/.microsandbox",
     ),
     default(
         "LocalBackend::default_cpus / default_memory_mib / ca_certs / registry_hosts / ssh_inactivity_timeout_secs / deployment_profile",

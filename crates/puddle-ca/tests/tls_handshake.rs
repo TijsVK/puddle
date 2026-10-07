@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A guest-side TLS client that trusts only the sandbox's CA completes a handshake with a server
-//! that presents the CA's leaf, the way the proxy will terminate bound hosts (D-11).
+//! that presents the CA's leaf, the way the proxy will terminate bound hosts.
 #![expect(
     clippy::unwrap_used,
     clippy::panic,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Shutdown and reconcile on the fake runtime (tier U of the T-113 bar).
+//! Shutdown and reconcile on the fake runtime (tier U).
 #![expect(
     clippy::unwrap_used,
     reason = "test helpers: a failed step fails the test"

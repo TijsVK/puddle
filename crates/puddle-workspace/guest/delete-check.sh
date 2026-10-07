@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# puddle's unsaved-work check before a workspace is deleted (ADR 0006 point 3, D-10 L1).
+# puddle's unsaved-work check before a workspace is deleted (ADR 0006 point 3).
 #
 # Usage: sh delete-check.sh <volume mount point>
 # Runs as root in the guest. Lists, for every git checkout directly under the volume root,

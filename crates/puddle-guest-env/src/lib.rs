@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Boot-time proxy config for the guest (T-030 §4, T-109).
+//! Boot-time proxy config for the guest.
 //!
 //! Every tool in the guest reaches the network through the agent's proxy listener. Most tools
 //! follow `HTTP(S)_PROXY`; the rest need their own variable or config file. This crate is a pure
@@ -23,8 +23,8 @@
 //! | containers (Docker CLI) | `~/.docker/config.json` `proxies.default`, at the bridge gateway, merged |
 //!
 //! Every file is one puddle owns outright, except the Docker CLI config, where puddle owns only
-//! `proxies.default` and the boot hook merges it in (`docker login`'s `auths` survive a restart,
-//! T-097). No other user file is touched (Maven's goes in through `-gs`, Gradle's is an init
+//! `proxies.default` and the boot hook merges it in (`docker login`'s `auths` survive a restart).
+//! No other user file is touched (Maven's goes in through `-gs`, Gradle's is an init
 //! script next to the user's).
 
 #![forbid(unsafe_code)]

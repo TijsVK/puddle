@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The workspace lifecycle on real microVMs (K on Linux KVM, W on Windows WHP): the T-112 VM bar.
+//! The workspace lifecycle on real microVMs (K on Linux KVM, W on Windows WHP).
 //!
 //! - a clone through the route (guest git → `puddle-agent` → vsock route → puddle's proxy → a
 //!   local git server) survives stop, sandbox removal and a new sandbox on the same workspace;
 //! - a VMM kill during commits, with the boot hook's `core.fsync=committed`, leaves a repository
 //!   that passes `git fsck --full`, 5 of 5 times;
-//! - a VMM kill right after `Workspaces::clone_checkout` keeps the clone (T-139: the clone is
+//! - a VMM kill right after `Workspaces::clone_checkout` keeps the clone (the clone is
 //!   synced before it is reported done);
 //! - a VMM kill in the middle of commits leaves git locks; the next boot's
-//!   `Workspaces::after_boot` clears them and `git commit` works again (T-139);
+//!   `Workspaces::after_boot` clears them and `git commit` works again;
 //! - `fstrim` on stop and "reclaim space" (in the running holder and in a maintenance sandbox)
 //!   each return more than 80 % of a deleted 1 GiB to the host's disk image.
 //!
-//! Runs on the msb adapter over the VM harness's private msb home (T-102), with the static
+//! Runs on the msb adapter over the VM harness's private msb home, with the static
 //! `puddle-agent` from `PUDDLE_AGENT_BIN` (`ci/build-agent.sh`).
 #![expect(
     clippy::unwrap_used,
@@ -44,7 +44,7 @@ use puddle_workspace::{Layout, WorkspaceConfig, Workspaces};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-/// The guest port puddle routes (T-020 C-5); the agent's default target.
+/// The guest port puddle routes; the agent's default target.
 const ROUTE_PORT: u32 = 5000;
 /// The agent's listener in the guest.
 const GUEST_PROXY: &str = "http://127.0.0.1:3128";
@@ -126,7 +126,7 @@ impl Boot {
         let dir = rt.config().guest_share.join(format!("t112-{tag}"));
         let mounts = write_assets(&dir).unwrap();
         // Mounted even for a plan that starts no agent: it is the merge tool for the Machine
-        // settings (T-125).
+        // settings.
         let agent = Some({
             let built = PathBuf::from(
                 std::env::var_os("PUDDLE_AGENT_BIN")

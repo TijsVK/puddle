@@ -4,11 +4,11 @@
 //! | OS | Folder | File | [`check`] |
 //! |---|---|---|---|
 //! | Unix | new folders `0700` | `0600`, created exclusively | refuses a file with any group or other bit |
-//! | Windows | inherits the parent's ACL (the user's profile: user, administrators, `SYSTEM`) | same | accepts (T-093 adds the explicit ACL in `windows.rs`, and the check with it) |
+//! | Windows | inherits the parent's ACL (the user's profile: user, administrators, `SYSTEM`) | same | accepts (an explicit ACL, and the check with it, belongs in `windows.rs`) |
 //!
-//! The Windows half is deliberately a stub with the Unix behaviour's shape, so T-093 changes one
-//! file and every caller (the API's connection file today; settings, consent and CA key files
-//! later) gets the ACL.
+//! The Windows half is deliberately a stub with the Unix behaviour's shape, so adding the ACL
+//! changes one file and every caller (the API's connection file today; settings, consent and CA
+//! key files later) gets the ACL.
 
 use std::fs::{self, File, Metadata};
 use std::io::{self, Write};

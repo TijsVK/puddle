@@ -307,7 +307,7 @@ async fn wpad_failure_is_remembered_for_every_host_then_retried() {
     assert_eq!(
         os.pac_calls(),
         1,
-        "one failed lookup per outage, not one per host (T-033 F3: 95 before)"
+        "one failed lookup per outage, not one per host"
     );
     tokio::time::advance(Duration::from_secs(61)).await;
     os.set_pac(|_| Ok(vec![proxy("squid", 3128)]));

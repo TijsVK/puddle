@@ -2,7 +2,7 @@
 # cargo-about: third-party notices for the bundled msb.exe, run on the fork tag's source
 # (`cargo xtask runtime`). Attribution only: msb's own deny.toml decides what msb may use. The list
 # is msb's allow list plus the licences its tree is known to carry (aws-lc: OpenSSL, webpki-roots:
-# CDLA-Permissive-2.0, T-028 §3).
+# CDLA-Permissive-2.0).
 accepted = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",

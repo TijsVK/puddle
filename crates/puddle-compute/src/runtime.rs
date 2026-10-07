@@ -16,11 +16,10 @@ use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec};
 pub struct Capabilities {
     /// The runtime's version (`0.7.7`, `0.7.7-puddle.1`, `fake`).
     pub runtime_version: String,
-    /// A failed create leaves no stale directory behind (T-039 fixed). When `false`, a failed
-    /// create blocks its name until [`Runtime::remove_stale_dir`].
+    /// A failed create leaves no stale directory behind (the upstream msb bug is fixed). When
+    /// `false`, a failed create blocks its name until [`Runtime::remove_stale_dir`].
     pub stale_dir_fixed: bool,
-    /// SSH sessions report a signal-killed command as a failure. msb 0.7.6 reports exit 0
-    /// (T-028 `ssh.signal_kill9_exit`).
+    /// SSH sessions report a signal-killed command as a failure. msb 0.7.6 reports exit 0.
     pub ssh_reports_signal_exit: bool,
 }
 
@@ -58,7 +57,7 @@ pub struct VolumeSpec {
 pub struct VolumeInfo {
     /// The name as the runtime reports it; may be a name puddle didn't create.
     pub name: String,
-    /// Its capacity, read back from the runtime's catalog (T-028 `volume.capacity_readback`).
+    /// Its capacity, read back from the runtime's catalog.
     pub size: DiskSize,
     /// The running sandbox it is attached to, if any (ADR 0006 point 8: single writer).
     pub holder: Option<String>,
@@ -73,8 +72,8 @@ impl VolumeInfo {
 }
 
 /// An image's OCI config, as far as puddle needs it (the boot hook chains `entrypoint` and uses
-/// the image `PATH`; `user` and `labels` carry the image's `USER` and `devcontainer.metadata`,
-/// T-020 C-8). All values come from the image and are untrusted. Build it with
+/// the image `PATH`; `user` and `labels` carry the image's `USER` and `devcontainer.metadata`).
+/// All values come from the image and are untrusted. Build it with
 /// `..ImageConfig::default()` so new fields don't break callers.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ImageConfig {
@@ -149,14 +148,14 @@ pub trait Runtime: Send + Sync + 'static {
 
     /// Creates a sandbox and boots it; returns an **owning** handle (`Running`). Dropping that
     /// handle without [`Sandbox::stop`] shuts the VM down: the record reads `Stopped` on msb 0.7.7
-    /// (T-106) and read `Crashed` on 0.7.6 (T-028 L1). puddle still stops every sandbox itself at
+    /// and read `Crashed` on 0.7.6. puddle still stops every sandbox itself at
     /// shutdown (`fstrim` first, ADR 0006). Pulls the image if needed. Named volumes with
     /// [`crate::VolumeMount::ensure_size`] are created if missing.
     ///
     /// On failure nothing is created, except that, without
     /// [`Capabilities::stale_dir_fixed`], a failed volume check leaves a stale directory that
-    /// blocks the name; and a refused volume attach leaves a `Stopped` record (T-028
-    /// `volume.second_attach_leftover`), which [`Runtime::remove`] clears.
+    /// blocks the name; and a refused volume attach leaves a `Stopped` record, which
+    /// [`Runtime::remove`] clears.
     ///
     /// # Errors
     ///
@@ -182,8 +181,8 @@ pub trait Runtime: Send + Sync + 'static {
         name: &SandboxName,
     ) -> impl Future<Output = Result<Self::Sandbox, ComputeError>> + Send;
 
-    /// Connects to a `Running` sandbox, e.g. one a previous puddle left behind (re-adoption,
-    /// T-028 reconcile). The handle does **not** own the VM: dropping it does nothing.
+    /// Connects to a `Running` sandbox, e.g. one a previous puddle left behind (re-adoption). The
+    /// handle does **not** own the VM: dropping it does nothing.
     ///
     /// # Errors
     ///
@@ -222,7 +221,8 @@ pub trait Runtime: Send + Sync + 'static {
     fn remove(&self, name: &SandboxName) -> impl Future<Output = Result<(), ComputeError>> + Send;
 
     /// Names whose sandbox directory exists without a sandbox record (left by a failed create
-    /// while T-039 is unfixed), in name order. May include names puddle didn't create.
+    /// while the upstream msb bug is unfixed), in name order. May include names puddle didn't
+    /// create.
     ///
     /// # Errors
     ///

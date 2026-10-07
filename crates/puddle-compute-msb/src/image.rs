@@ -7,9 +7,9 @@
 //! puddle's registry roots ([`crate::MsbConfig::registry_roots`]).
 //!
 //! The registry client's proxy is the SDK backend's own setting (`LocalBackendBuilder::registry_proxy`,
-//! from [`crate::MsbConfig::registry_proxy`]): puddle's image-pull proxy (`puddle_proxy::PullProxy`,
-//! T-116). It comes back in the resolved registry settings and replaces the process environment
-//! for the client, so nothing sets `HTTPS_PROXY` (T-144).
+//! from [`crate::MsbConfig::registry_proxy`]): puddle's image-pull proxy (`puddle_proxy::PullProxy`).
+//! It comes back in the resolved registry settings and replaces the process environment for the
+//! client, so nothing sets `HTTPS_PROXY`.
 
 use std::collections::BTreeMap;
 

@@ -518,8 +518,8 @@ fn config_builders_set_their_field() {
     assert_eq!(handler.sandbox(), &sandbox());
 }
 
-// T-132: the real guard (`puddle_netpolicy::NetPolicy`) in the proxy. Ports of T-005's HG-06 to
-// HG-08, T-052's D-37 and T-059's D-44 cases, and D-26.
+// The real guard (`puddle_netpolicy::NetPolicy`) in the proxy: the local-destination toggles,
+// exact-only allows after a wildcard, and puddle's own listeners.
 
 mod guard {
     use std::sync::atomic::AtomicUsize;
@@ -923,7 +923,7 @@ mod guard {
         assert_eq!(policy.decisions(), 1);
     }
 
-    /// R-27 (T-095): an exact deny of an address wins over every rule for the name.
+    /// R-27: an exact deny of an address wins over every rule for the name.
     mod r27 {
         use std::collections::HashMap;
         use std::sync::atomic::AtomicBool;
@@ -1230,7 +1230,7 @@ mod guard {
                         prop_assert!(resolved.contains(&addr.ip()), "{addr} was never resolved");
                         prop_assert!(!is_denied(&addr.ip()), "{addr} is IP-denied but admitted");
                     }
-                    // T-165: a proxy may be told the name only if nothing it resolves to is
+                    // A proxy may be told the name only if nothing it resolves to is
                     // denied or dropped.
                     prop_assert!(
                         !admitted.name_ok || admitted.addrs.len() == resolved.len(),

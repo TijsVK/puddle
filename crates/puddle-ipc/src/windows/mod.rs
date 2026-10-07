@@ -3,7 +3,7 @@
 
 #[expect(
     unsafe_code,
-    reason = "Win32 calls for the user's SID and the pipe's security descriptor (T-029 HO-1)"
+    reason = "Win32 calls for the user's SID and the pipe's security descriptor"
 )]
 mod security;
 
@@ -28,7 +28,7 @@ use crate::{CONNECT_BUSY_TIMEOUT, IpcError, PIPE_ACCEPTORS};
 /// Every endpoint name starts with this.
 const PIPE_PREFIX: &str = r"\\.\pipe\puddle-";
 
-/// Per-instance buffer size hint, from the `PoC` (T-004 throughput).
+/// Per-instance buffer size hint, from a throughput proof of concept.
 const PIPE_BUFFER: u32 = 4 * 1024 * 1024;
 
 /// How long [`connect`] waits between tries on a busy pipe.
@@ -72,7 +72,7 @@ impl Root {
                 root: PathBuf::from(PIPE_PREFIX),
             });
         }
-        // The first instance proves the name is new (HO-2); every later one is created while one
+        // The first instance proves the name is new; every later one is created while one
         // of ours still exists, so the name can't change hands in between.
         let first = self
             .create(path, true)
@@ -115,7 +115,7 @@ impl Root {
 }
 
 /// A DACL that grants the user `sid` full access and nobody else anything; `P` blocks
-/// inheritance, so no default ACEs (Everyone and anonymous read, T-029 HO-1) come back.
+/// inheritance, so no default ACEs (Everyone and anonymous read) come back.
 fn owner_only_sddl(sid: &str) -> String {
     format!("D:P(A;;GA;;;{sid})")
 }
@@ -148,7 +148,7 @@ async fn acceptor(
 ) {
     loop {
         let connected = server.connect().await;
-        // Create the next instance while the current one still holds the name (HO-2).
+        // Create the next instance while the current one still holds the name.
         let next = match root.create(&path, false) {
             Ok(next) => next,
             Err(err) => {

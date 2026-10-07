@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! L2 end to end against a real Squid with Basic proxy authentication (T-165, T-116 P4): a guest
+//! L2 end to end against a real Squid with Basic proxy authentication: a guest
 //! TCP client → the real guest agent → yamux over the sandbox's real endpoint → the real proxy
 //! (real SQLite rules and audit) → upstream chaining (route from a PAC, dead hop, `407` Basic) →
 //! Squid → a local server. The audit must name the hop, and Squid's own access log is the witness
 //! that traffic went through it as the configured user.
 //!
 //! Squid is started from `PUDDLE_SQUID_BIN` (a `squid` binary, as on the CI runner) or
-//! `PUDDLE_SQUID_DOCKER` (an image such as `ubuntu/squid`, run with host networking, as in the
-//! T-033 lab). With neither set the tests skip, unless `PUDDLE_SQUID_REQUIRED=1`, which makes a
+//! `PUDDLE_SQUID_DOCKER` (an image such as `ubuntu/squid`, run with host networking, as in a
+//! local lab). With neither set the tests skip, unless `PUDDLE_SQUID_REQUIRED=1`, which makes a
 //! missing Squid a failure (CI sets it).
 #![cfg(unix)]
 #![expect(

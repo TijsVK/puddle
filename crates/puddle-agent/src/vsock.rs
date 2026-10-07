@@ -2,7 +2,7 @@
 //! `AF_VSOCK` connect with a raised socket buffer (Linux guest only). The only `unsafe` in the
 //! agent: std and tokio have no vsock sockets, and the buffer must be set before `connect`.
 //!
-//! **Why the buffer (T-004):** since Linux 6.12.68 (the CVE-2026-23086 fix) a guest sends at most
+//! **Why the buffer:** since Linux 6.12.68 (the CVE-2026-23086 fix) a guest sends at most
 //! min(peer `buf_alloc`, own `buf_alloc`) unacknowledged bytes, and its own `buf_alloc` defaults to
 //! 256 KiB. msb's vsock device sends a standalone credit update only after the host has consumed
 //! 4 MiB, which a 256 KiB window never reaches, so every guest-to-host stream stalled after
@@ -120,7 +120,7 @@ mod tests {
     use super::*;
 
     /// A vsock socket, or `None` where the kernel has no `AF_VSOCK` (the test then has nothing to
-    /// check; CI runners and WSL have it).
+    /// check; CI runners have it).
     fn vsock() -> Option<OwnedFd> {
         match socket() {
             Ok(fd) => Some(fd),

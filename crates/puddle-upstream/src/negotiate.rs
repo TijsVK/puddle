@@ -4,10 +4,10 @@
 //! This module is the protocol half and is portable: which scheme to speak, how a `407`
 //! challenge becomes the next `Proxy-Authorization` value, how many legs, what happens when the
 //! proxy refuses. The other half, producing the opaque tokens as the logged-on user, is a
-//! [`TokenSource`]: Windows SSPI (`windows/sspi.rs`), later GSSAPI on Linux (T-148 L-2). A
+//! [`TokenSource`]: Windows SSPI (`windows/sspi.rs`), later GSSAPI on Linux. A
 //! source never asks for a password; if the OS has no ticket for the user the session fails.
 //!
-//! Behaviour (T-026 section 2a, T-033 S7):
+//! Behaviour:
 //!
 //! - **Negotiate is preferred over NTLM** when the proxy offers both.
 //! - **Preemptive first leg.** Before any `407` (`offered` empty) a session starts on the scheme

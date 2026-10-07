@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-fs"
-description = "Where puddle keeps its files (the per-user data folder) and how it keeps the private ones (owner-only files and folders), per OS (T-150, D-66)"
+description = "Where puddle keeps its files (the per-user data folder) and how it keeps the private ones (owner-only files and folders), per OS"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

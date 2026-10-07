@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The boot hook on real microVMs (K on Linux KVM, W on Windows WHP): the T-108 VM bar.
+//! The boot hook on real microVMs (K on Linux KVM, W on Windows WHP): the VM bar.
 //!
-//! Runs on the msb adapter (`puddle-compute-msb`, T-106) over the VM harness's private msb home
-//! (T-102), with the static `puddle-agent` from `PUDDLE_AGENT_BIN` (built by
+//! Runs on the msb adapter (`puddle-compute-msb`) over the VM harness's private msb home,
+//! with the static `puddle-agent` from `PUDDLE_AGENT_BIN` (built by
 //! `ci/build-agent.sh`). The checks themselves only use the `Runtime` trait.
 #![expect(
     clippy::unwrap_used,
@@ -25,7 +25,7 @@ use puddle_guest_env::{ProxySettings, guest_proxy_config};
 use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, SandboxName};
 use puddle_vm_tests::Settings;
 
-/// The adapter on the run's private msb home (T-102 harness), and the run's settings.
+/// The adapter on the run's private msb home (the VM harness), and the run's settings.
 async fn runtime() -> (MsbRuntime, Settings) {
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -40,7 +40,7 @@ async fn runtime() -> (MsbRuntime, Settings) {
 }
 
 /// Where a test writes its boot assets: under the guest-share root, the only place mounts may
-/// come from (T-020 C-7).
+/// come from.
 fn assets_dir(rt: &MsbRuntime, tag: &str) -> PathBuf {
     rt.config().guest_share.join(format!("t108-{tag}"))
 }
@@ -50,7 +50,7 @@ fn sandbox_name(settings: &Settings, tag: &str) -> SandboxName {
     SandboxName::new(&format!("{}-t108-{tag}", settings.prefix)).unwrap()
 }
 
-/// The guest agent binary (T-111's static build, `ci/build-agent.sh`), copied into `dir` so the
+/// The guest agent binary (the static build, `ci/build-agent.sh`), copied into `dir` so the
 /// mount source is under the guest-share root.
 fn agent_binary(dir: &std::path::Path) -> PathBuf {
     let built = PathBuf::from(
@@ -71,7 +71,7 @@ async fn sh<S: Sandbox>(sb: &GatedSandbox<S>, script: &str) -> (i32, String) {
 }
 
 /// Boots `image` with a CA file from a "provider", a git identity and the proxy env, and checks
-/// every VM item of the T-108 bar, after create and again after stop + start.
+/// every VM item of the bar, after create and again after stop + start.
 async fn check_image(image: &str, tag: &str) {
     let (rt, settings) = runtime().await;
     let rt = &rt;
@@ -111,7 +111,7 @@ async fn check_image(image: &str, tag: &str) {
 
     check_boot(&sb, &config, "create").await;
     sb.stop().await.unwrap();
-    // After a restart the guest is back at default sysctls (T-028): the hook redoes them, and
+    // After a restart the guest is back at default sysctls: the hook redoes them, and
     // skips the unchanged CA step.
     let again = hook.start(rt, &name, &plan, &gate).await.unwrap();
     assert!(
@@ -265,7 +265,7 @@ async fn write_guest<S: Sandbox>(sb: &GatedSandbox<S>, path: &str, text: &str) {
     assert_eq!(out.status.code, 0);
 }
 
-/// T-097: the Docker CLI config from `puddle-guest-env` is merged, so a `docker login` survives
+/// The Docker CLI config from `puddle-guest-env` is merged, so a `docker login` survives
 /// restarts byte for byte; when the provider stops listing it only puddle's keys go; a file the
 /// merge tool can't parse is left alone and the boot goes on. On Alpine (busybox ash runs the
 /// hook; the static agent is the merge tool).
@@ -358,7 +358,7 @@ async fn check_merge() {
     rt.remove(&name).await.unwrap();
 }
 
-/// T-125: VS Code's Machine settings are merged as JSONC, so the user's own settings, comments
+/// VS Code's Machine settings are merged as JSONC, so the user's own settings, comments
 /// and trailing commas survive restarts byte for byte; an invalid file is left as it is. On
 /// Alpine, like [`check_merge`].
 async fn check_machine_merge() {

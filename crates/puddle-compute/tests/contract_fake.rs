@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The contract suite against `FakeRuntime`: the fake must pass every case, with T-039 unfixed
-//! (msb 0.7.6) and fixed (the fork).
+//! The contract suite against `FakeRuntime`: the fake must pass every case, with the upstream stale-directory bug
+//! unfixed (msb 0.7.6) and fixed (the fork).
 #![expect(
     clippy::unwrap_used,
     reason = "the env helper runs outside #[test] but only in tests"

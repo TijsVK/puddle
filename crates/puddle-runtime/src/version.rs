@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The pinned runtime version and the exact-match rule (D-19: refuse a runtime puddle wasn't built
+//! The pinned runtime version and the exact-match rule (refuse a runtime puddle wasn't built
 //! for; an override for dev builds only).
 
 use std::fmt;
 use std::str::FromStr;
 
-/// The msb fork version this build of puddle runs, as `<release>-puddle.<N>` (D-56: fork tag
+/// The msb fork version this build of puddle runs, as `<release>-puddle.<N>` (fork tag
 /// `v<release>-puddle.N`). It is the Cargo package version the fork's `msb` embeds in its
 /// `.msbver` section, so the fork sets its workspace version to this string when it tags.
 ///
 /// Not written here: the build script takes it from the msb SDK's package version in the workspace
 /// `Cargo.lock`, which comes from the fork tag in the root `Cargo.toml` (and fails the build if
-/// the two disagree). So the SDK and the runtime it expects can't drift apart (D-19).
+/// the two disagree). So the SDK and the runtime it expects can't drift apart.
 pub const BUILT_FOR: &str = env!("PUDDLE_MSB_BUILT_FOR");
 
 /// The environment variable that, in builds with the `dev-override` feature, makes puddle accept a

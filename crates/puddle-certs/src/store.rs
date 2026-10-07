@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The host certificate stores puddle reads, and a snapshot of their contents.
 //!
-//! Which stores (T-026 §2b option C, D-24): every root an admin or the user deliberately added,
+//! Which stores: every root an admin or the user deliberately added,
 //! so the physical `Root` stores `.Default`, `.GroupPolicy` and `.Enterprise` (Intune lands in
 //! `LocalMachine\Root\.Default`, GPO in `.GroupPolicy`, AD in `.Enterprise`), the same for the
 //! intermediate `CA` stores, and the logical `Disallowed` stores. Not `AuthRoot`: those are the

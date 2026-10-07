@@ -298,7 +298,7 @@ async fn missing_mounts_are_refused_before_anything_is_created() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("/puddle/puddle-agent"), "{err}");
-    // A plan without the agent still needs its binary when it merges a file (T-097).
+    // A plan without the agent still needs its binary when it merges a file.
     let spec =
         MergeSpec::new(MergeFormat::Json, vec![MergeEntry::json(&["a"], &1.into())]).unwrap();
     let merging = BootPlan::builder(&ImageConfig::default())

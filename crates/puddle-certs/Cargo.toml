@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-certs"
-description = "Corporate root sync: the host's admin- and user-added roots, minus Disallowed, into the guest's CA bundle (W1, T-110)"
+description = "Corporate root sync: the host's admin- and user-added roots, minus Disallowed, into the guest's CA bundle"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

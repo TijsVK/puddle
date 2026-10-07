@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Normalised egress destinations.
 //!
-//! The proxy normalises what a guest asks for (W2); everything downstream, the rules engine
+//! The proxy normalises what a guest asks for; everything downstream, the rules engine
 //! included, accepts only these validated types and never parses raw input itself
 //! (`docs/spec/rules.md` §1).
 

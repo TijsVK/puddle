@@ -2,7 +2,7 @@
 //! The environment that makes the msb SDK use puddle's runtime and home, and nothing of the user's.
 //!
 //! The SDK reads its paths from the process environment, and a user's `MSB_PATH` beats the SDK's
-//! own `set_sdk_msb_path` (T-028 §1.3). msb also reads `MSB_BACKEND`, `MSB_API_URL`,
+//! own `set_sdk_msb_path`. msb also reads `MSB_BACKEND`, `MSB_API_URL`,
 //! `MSB_PROFILE` and more, any of which could redirect puddle. So the rule is simple: remove
 //! every `MSB_*` variable, then set exactly the three puddle owns.
 

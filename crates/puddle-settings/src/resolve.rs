@@ -82,9 +82,9 @@ impl EffectiveToggles {
 }
 
 impl Effective {
-    /// puddle's built-in defaults: 8 GiB, every local toggle off (D-1), wildcards don't reach
-    /// local addresses (D-44), 300 s grace (D-43), zoom hotkeys on (D-46 (1)), clipboard reads
-    /// ask (D-46 (2)).
+    /// puddle's built-in defaults: 8 GiB, every local toggle off, wildcards don't reach
+    /// local addresses, 300 s grace, zoom hotkeys on, clipboard reads
+    /// ask.
     pub const DEFAULTS: Effective = Effective {
         memory: default(MemoryMib::DEFAULT),
         local_toggles: EffectiveToggles {

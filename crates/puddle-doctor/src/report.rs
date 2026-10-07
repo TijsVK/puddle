@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The report: one line per check, a finding code and the exact fix for each problem, as text for
-//! people and as versioned JSON for tools and (later, D-18) crash reports.
+//! people and as versioned JSON for tools and (later) crash reports.
 
 use std::fmt::Write as _;
 

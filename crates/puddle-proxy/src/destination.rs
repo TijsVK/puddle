@@ -2,7 +2,7 @@
 //! Which destinations and resolved addresses the proxy may connect to (R-14), and how names are
 //! resolved.
 //!
-//! The proxy resolves a name only after a rule allowed it (R-10, T-029 EG-8), checks every
+//! The proxy resolves a name only after a rule allowed it (R-10), checks every
 //! address it got, and connects only to an address that passed: it never resolves twice, so a
 //! DNS answer can't change between the check and the connect. The checks are
 //! `puddle-netpolicy`'s [`NetPolicy`]: address classes, the sandbox's local-destination toggles

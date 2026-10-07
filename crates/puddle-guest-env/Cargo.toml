@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-guest-env"
-description = "Boot-time proxy config for the guest (T-030 §4): proxy env and tool config files as GuestEnv/GuestFiles for the boot hook"
+description = "Boot-time proxy config for the guest: proxy env and tool config files as GuestEnv/GuestFiles for the boot hook"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-workspace"
-description = "Workspace volume lifecycle: one named disk volume per workspace, attach tracking, trim, checked delete (W1, T-112, ADR 0006)"
+description = "Workspace volume lifecycle: one named disk volume per workspace, attach tracking, trim, checked delete (ADR 0006)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

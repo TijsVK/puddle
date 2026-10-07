@@ -81,7 +81,7 @@ impl MsbRuntime {
             match opened {
                 Ok(local) => break local,
                 // SQLite on Windows: an msb process that is just exiting can still hold the
-                // database, and the open fails with "disk I/O error" (T-106, hosted runner).
+                // database, and the open fails with "disk I/O error" (seen on hosted CI runners).
                 Err(e) if attempt < OPEN_ATTEMPTS => {
                     tracing::warn!(error = %e, attempt, "msb database busy at open; retrying");
                     tokio::time::sleep(OPEN_BACKOFF).await;
@@ -222,7 +222,7 @@ impl MsbRuntime {
     }
 
     /// Logs a lost boot race with the tail of msb's logs for the sandbox. Both known causes are fixed
-    /// in the fork (T-096 in `-puddle.6`, T-164 in `-puddle.8`), so seeing this means a regression or
+    /// in the fork (`-puddle.6` and `-puddle.8`), so seeing this means a regression or
     /// a new cause: the logs are the evidence.
     fn log_boot_race(&self, op: &str, name: &SandboxName, error: &MicrosandboxError) {
         let logs = log_tail(
@@ -256,9 +256,9 @@ const OPEN_BACKOFF: std::time::Duration = std::time::Duration::from_millis(500);
 const LOG_TAIL_BYTES: usize = 4096;
 
 /// msb on Windows used to lose the race between the guest's bootstrap and the host's agent
-/// relay: the VM exited 0 before the relay was up, and the SDK reported a synthetic boot error
-/// (T-106). Two causes, both fixed in the fork: the guest's timer check (`-puddle.6`, T-096) and
-/// PID 1 started without a console (`-puddle.8`, T-164). This only recognises it for the diagnostic.
+/// relay: the VM exited 0 before the relay was up, and the SDK reported a synthetic boot error.
+/// Two causes, both fixed in the fork: the guest's timer check (`-puddle.6`) and PID 1 started
+/// without a console (`-puddle.8`). This only recognises it for the diagnostic.
 pub(crate) fn is_boot_race(error: &MicrosandboxError) -> bool {
     matches!(error, MicrosandboxError::BootStart { err, .. }
         if err.message.contains("before agent relay became available"))

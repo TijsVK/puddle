@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! I test with a real Linux bridge (T-099): the built agent binary runs in its own network
+//! I test with a real Linux bridge: the built agent binary runs in its own network
 //! namespace (`unshare -n`), where the test script creates, deletes and re-creates a bridge that
 //! owns `172.17.0.1`, the way dockerd's `docker0` comes and goes. It checks with `ss` what the
 //! agent really listens on, and that a client on the bridge address gets through to the host

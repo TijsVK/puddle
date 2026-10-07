@@ -81,15 +81,15 @@ impl Document for GlobalSettings {
     }
 }
 
-/// Options for Microsoft's VS Code server once the user enabled it (D-40). Whether it is
+/// Options for Microsoft's VS Code server once the user enabled it. Whether it is
 /// enabled at all is [`Consents::vscode_server`].
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct VsCodeServer {
     /// Let the server send Microsoft its telemetry: the checkbox in the enable popup, default
-    /// off (unchecked passes `--disable-telemetry`, D-40 (6)).
+    /// off (unchecked passes `--disable-telemetry`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telemetry: Option<bool>,
-    /// Update the server automatically when no window is connected; default on (D-43 (6)).
+    /// Update the server automatically when no window is connected; default on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_update: Option<bool>,
     #[serde(flatten)]

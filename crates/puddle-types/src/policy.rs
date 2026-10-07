@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! What the proxy asks the rules engine, and what it gets back (`docs/spec/rules.md` R-9, R-14).
 //!
-//! The proxy (W2) depends on [`Policy`]; the store (W3) implements it; the host program wires
+//! The proxy depends on [`Policy`]; the store implements it; the host program wires
 //! them. Neither crate depends on the other.
 
 use std::fmt;
@@ -63,7 +63,7 @@ impl PendingOutcome {
 ///
 /// `Pending` means the connection is refused now (R-10) and the request waits in the inbox.
 ///
-/// Non-exhaustive: a match from a user rule set (D-52), which has no rule row, will be an
+/// Non-exhaustive: a match from a user rule set, which has no rule row, will be an
 /// additive variant rather than a nullable `rule_id` here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -84,7 +84,7 @@ pub enum Decision {
     },
     /// No rule decided.
     Pending(PendingOutcome),
-    /// Refused whatever the rules say (R-14, D-26, F-8). Never approvable: no pending row is
+    /// Refused whatever the rules say (R-14, F-8). Never approvable: no pending row is
     /// written and nothing in the inbox can change it; the reason names what would.
     Blocked {
         /// Why.
@@ -106,13 +106,13 @@ impl Decision {
 pub enum BlockReason {
     /// SSH through the proxy isn't supported yet (F-8; audit reason `ssh_unsupported`).
     SshUnsupported,
-    /// The destination is one of puddle's own endpoints (D-26; `puddle_endpoint`).
+    /// The destination is one of puddle's own endpoints (`puddle_endpoint`).
     PuddleEndpoint,
     /// Every address of the destination is local and the checker has no toggles to offer
     /// (`local_address`): the fail-closed fallback of a proxy without a toggle-aware address
     /// check. With toggles, the reason is [`Self::LocalToggle`].
     LocalAddress,
-    /// The destination is in a local category whose toggle is off (D-1, R-14;
+    /// The destination is in a local category whose toggle is off (R-14;
     /// `toggle:<category>`). When several categories are off, this names the first one in
     /// [`LocalCategory::ALL`] order; the block message lists them all.
     LocalToggle(LocalCategory),
@@ -228,7 +228,7 @@ pub trait Policy: Send + Sync {
     /// - R-27: a deny for the address (an exact IP rule) excludes that address, whatever the
     ///   name's rules say, so a policy that holds IP rules must implement it;
     /// - R-14: after a wildcard allow, an exact allow of a resolved local address admits that
-    ///   address (D-44).
+    ///   address.
     ///
     /// The default answers `None` (no IP rules): nothing is excluded or admitted this way.
     ///

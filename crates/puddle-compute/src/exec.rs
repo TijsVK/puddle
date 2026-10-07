@@ -99,7 +99,7 @@ impl ExecRequest {
     }
 }
 
-/// How a command ended. msb reports a command killed by a signal as code `-1` (T-028; the CLI
+/// How a command ended. msb reports a command killed by a signal as code `-1` (the CLI
 /// says 0, the SDK doesn't), so a signal is always a failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExitStatus {

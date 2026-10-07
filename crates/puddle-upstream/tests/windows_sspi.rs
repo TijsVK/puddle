@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Windows only (T-135): puddle's SSPI sign-in against a fake corporate proxy whose server side
+//! Windows only: puddle's SSPI sign-in against a fake corporate proxy whose server side
 //! is Windows' own SSPI (`AcceptSecurityContext`). So the tokens are checked by the real NTLM and
 //! Negotiate packages, as the logged-on user of the runner, instead of by a stand-in that
-//! "accepts anything" (T-033 F2: Squid's `ntlm_fake_auth` sends a Type 2 Windows rejects).
+//! "accepts anything" (Squid's `ntlm_fake_auth` sends a Type 2 Windows rejects).
 //!
-//! Not covered here: real Kerberos (needs a domain controller, T-026 L5); the proxy's side of an
+//! Not covered here: real Kerberos (needs a domain controller); the proxy's side of an
 //! AD identity (the runner is a local account, so Negotiate settles on NTLM inside SPNEGO).
 #![cfg(windows)]
 #![expect(
@@ -306,7 +306,7 @@ struct Outcome {
     legs: usize,
 }
 
-/// The loop T-165's 407 handling runs, on one connection: send, read, answer a 407 with the
+/// The loop the 407 handling runs, on one connection: send, read, answer a 407 with the
 /// session's next header. `preemptive` starts a session before the first request.
 fn connect_through(
     port: u16,
@@ -452,7 +452,7 @@ fn a_garbage_challenge_is_an_error_naming_only_the_status() {
     assert!(err.contains("InitializeSecurityContext 0x"), "{err}");
 }
 
-/// T-033 F1 with the logged-on user: without the lock, parallel handshakes failed 12 of 30.
+/// With the logged-on user: without the lock, parallel handshakes failed 12 of 30.
 #[test]
 fn thirty_parallel_handshakes_all_succeed() {
     let proxy = fake_proxy(&["NTLM"], Behaviour::Verify);

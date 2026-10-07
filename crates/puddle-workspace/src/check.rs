@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The unsaved-work check before a delete (ADR 0006 point 3, D-10 L1): `guest/delete-check.sh`
+//! The unsaved-work check before a delete (ADR 0006 point 3): `guest/delete-check.sh`
 //! in a sandbox that has the workspace, and its parsed result.
 //!
 //! The guest owns the volume, so a hostile guest can make its own workspace look clean; the

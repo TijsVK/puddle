@@ -2,7 +2,7 @@
 //! The seam to the operating system: what the OS says about proxies, in neutral terms. Discovery
 //! only talks to [`OsProxy`], so every decision path is tested with [`crate::FakeOs`]. The
 //! Windows implementation (WinINet and WinHTTP, `windows/`) keeps its own field names and syntax
-//! inside itself; Unix is the environment ([`crate::EnvOs`], T-148 L-2).
+//! inside itself; Unix is the environment ([`crate::EnvOs`]).
 
 use std::sync::Arc;
 use std::time::Duration;

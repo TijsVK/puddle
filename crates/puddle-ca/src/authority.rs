@@ -54,7 +54,7 @@ impl CaBuilder {
     /// slept.
     pub const DEFAULT_BACKDATE: Duration = Duration::from_hours(24);
     /// Default number of cached leaves per CA. A guest can ask for any name below a bound host,
-    /// so the cache is bounded (HO-7); the least recently used leaf goes first.
+    /// so the cache is bounded; the least recently used leaf goes first.
     pub const DEFAULT_LEAF_CACHE_CAPACITY: usize = 256;
 
     /// A CA named `common_name` (visible in the guest's trust store) that may certify only the
@@ -162,11 +162,11 @@ impl CaBuilder {
     }
 }
 
-/// One sandbox's CA (HO-4: never shared between sandboxes), with the leaves it issued.
+/// One sandbox's CA (never shared between sandboxes), with the leaves it issued.
 ///
 /// The key stays inside: the type has no accessor for it and implements neither `Clone` nor
 /// serde's traits, and `Debug` prints only the certificate and constraints. A later dev CA that
-/// must hand its key to the guest (T-020 F-9) is a separate type.
+/// must hand its key to the guest is a separate type.
 pub struct SandboxCa {
     certificate: CaCertificate,
     issuer: Issuer<'static, KeyPair>,

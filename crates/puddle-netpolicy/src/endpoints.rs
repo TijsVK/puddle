@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! puddle's own listeners (seam C-9): every puddle listener registers here when it binds, and
-//! the guard blocks a sandbox from reaching any of them (D-26), whatever the loopback toggle or
+//! puddle's own listeners: every puddle listener registers here when it binds, and
+//! the guard blocks a sandbox from reaching any of them, whatever the loopback toggle or
 //! the rules say.
 
 use std::fmt;
@@ -12,13 +12,13 @@ use std::sync::{Arc, PoisonError, RwLock};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum EndpointKind {
-    /// The local API (T-137).
+    /// The local API.
     Api,
-    /// The image-pull proxy (T-116).
+    /// The image-pull proxy.
     PullProxy,
-    /// The browser front for VS Code in the browser (W9).
+    /// The browser front for VS Code in the browser.
     BrowserFront,
-    /// A pinned port forward (W5).
+    /// A pinned port forward.
     PinnedForward,
     /// Any other listener.
     Other,

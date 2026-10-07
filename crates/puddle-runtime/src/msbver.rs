@@ -4,7 +4,7 @@
 //! msb's CLI (since 0.7.6) stores its Cargo package version as plain UTF-8 in a section named
 //! `.msbver` (ELF and PE). The SDK's `setup::resolve_runtime_version` reads the same section, but
 //! the SDK only exposes it with its `local` feature, i.e. the whole runtime client; this crate
-//! stays independent of the SDK so it builds and tests without it (T-107 brief). The two readers
+//! stays independent of the SDK so it builds and tests without it. The two readers
 //! agree on the format: the section's bytes are the version, 1 to [`MAX_VERSION_BYTES`] long.
 
 use std::fs::File;

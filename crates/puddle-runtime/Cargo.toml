@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-runtime"
-description = "The bundled msb runtime: environment pinning, private MSB_HOME and the exact-version check (W1, D-19)"
+description = "The bundled msb runtime: environment pinning, private MSB_HOME and the exact-version check"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

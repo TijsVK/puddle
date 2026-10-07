@@ -10,10 +10,10 @@ use std::time::Duration;
 pub enum Os {
     /// Windows: WHP, AppLocker/WDAC, Global Secure Access.
     Windows,
-    /// Linux: KVM (a supported second host, D-66).
+    /// Linux: KVM (a supported second host).
     Linux,
-    /// macOS: the probes exist so the report names it, but puddle doesn't run there yet (T-148
-    /// §5): the hypervisor check says "not supported yet".
+    /// macOS: the probes exist so the report names it, but puddle doesn't run there yet: the
+    /// hypervisor check says "not supported yet".
     MacOs,
     /// Anything else: only the portable checks.
     Other,

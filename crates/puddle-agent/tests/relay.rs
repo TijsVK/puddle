@@ -163,7 +163,7 @@ async fn an_aborted_guest_upload_reaches_the_server_as_a_reset() {
     tokio::time::timeout(Duration::from_secs(5), firsts.recv())
         .await
         .unwrap();
-    // Abort: zero linger makes the close an RST, like a killed upload (T-048).
+    // Abort: zero linger makes the close an RST, like a killed upload.
     conn.get_ref().set_zero_linger().unwrap();
     drop(conn);
     let end = tokio::time::timeout(Duration::from_secs(5), ends.recv())

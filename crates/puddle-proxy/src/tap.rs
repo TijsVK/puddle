@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The first request line inside a `CONNECT` tunnel, for the audit (T-098).
+//! The first request line inside a `CONNECT` tunnel, for the audit.
 //!
 //! Node `fetch` (`NODE_USE_ENV_PROXY`) and Yarn Berry send a plain `http://` request as
 //! `CONNECT host:80` followed by the request itself, not as an absolute-form request. The tunnel is

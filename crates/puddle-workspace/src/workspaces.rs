@@ -19,7 +19,7 @@ use crate::trim::{self, TrimReport, tail};
 use crate::{Layout, WorkspaceError, checkout_name};
 
 /// Prefix of puddle's short-lived maintenance sandboxes: `m--<workspace id>` (fits the 63
-/// characters of a sandbox name for the longest workspace id). Reconcile (T-113) may remove
+/// characters of a sandbox name for the longest workspace id). Reconcile may remove
 /// leftovers with this prefix.
 pub const MAINTENANCE_PREFIX: &str = "m--";
 
@@ -57,7 +57,7 @@ pub struct WorkspaceConfig {
 impl WorkspaceConfig {
     /// Default [`WorkspaceConfig::default_size`]: 32 GiB.
     pub const DEFAULT_SIZE: DiskSize = DiskSize::gib(32);
-    /// Default [`WorkspaceConfig::maintenance_image`]: the stock devcontainer image (T-028).
+    /// Default [`WorkspaceConfig::maintenance_image`]: the stock devcontainer image.
     pub const DEFAULT_MAINTENANCE_IMAGE: &'static str =
         "mcr.microsoft.com/devcontainers/base:debian";
     /// Default [`WorkspaceConfig::maintenance_memory`], in MiB.
@@ -147,7 +147,7 @@ impl Workspaces {
     }
 
     /// Records that `sandbox` (which exists already) was created with workspace `id`: for
-    /// reconcile after a restart (T-113).
+    /// reconcile after a restart.
     pub fn adopt(&self, id: &WorkspaceId, sandbox: &SandboxName) {
         self.registry.attach(id, sandbox);
     }
@@ -324,8 +324,8 @@ impl Workspaces {
 
     /// Clones `url` into a checkout directory of workspace `id` (named by [`checkout_name`])
     /// and then runs `sync`, so the clone is on the volume before this returns: a VMM kill
-    /// within seconds of a clone could otherwise lose the whole repository (T-112 finding 2:
-    /// directory entries aren't covered by `core.fsync=committed` until the first fsync).
+    /// within seconds of a clone could otherwise lose the whole repository (directory
+    /// entries aren't covered by `core.fsync=committed` until the first fsync).
     /// Runs as `user` (the sandbox's default user if `None`), with the sandbox's own
     /// environment (the proxy settings). Returns the checkout's path.
     ///

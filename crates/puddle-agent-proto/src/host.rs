@@ -174,7 +174,7 @@ struct Shared<H> {
 }
 
 /// Serves one connection from a sandbox's agent until it closes. `sandbox` is the sandbox the
-/// route belongs to (the route is the identity, HO-3): nothing the guest sends can change it.
+/// route belongs to (the route is the identity): nothing the guest sends can change it.
 ///
 /// Every stream task is owned here and ends when the session does.
 ///

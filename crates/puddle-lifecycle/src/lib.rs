@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Shutdown and reconcile (D-20): puddle's VMs live and die with puddle.
+//! Shutdown and reconcile: puddle's VMs live and die with puddle.
 //!
 //! - **Shutdown.** [`Lifecycle`] holds the owning handle of every sandbox puddle runs. When puddle
 //!   exits, [`Lifecycle::shutdown`] runs `fstrim` in each one (ADR 0006: msb mounts volumes without
@@ -9,13 +9,13 @@
 //! - **Hard kills.** On Windows every process puddle starts, msb's VMM processes included, runs in
 //!   one kill-on-close job object ([`job`]): if puddle is killed (`TerminateProcess`, a crash), the
 //!   job's last handle closes and Windows kills the VMs with it. This job is the one place where
-//!   later hardening adds job limits (T-020 F-7, D-27). On Linux msb's own parent watchdog does the
+//!   later hardening adds job limits. On Linux msb's own parent watchdog does the
 //!   same.
 //! - **Reconcile.** After a hard kill the records are wrong (`Running` for a VM that is gone, or
 //!   `Crashed`). [`reconcile`] runs at start: it stops VMs a previous puddle left running, removes
 //!   records, stale directories and orphaned `ws-*` volumes puddle no longer knows, and **never
 //!   touches anything puddle didn't create** (a foreign name). Leftover maintenance sandboxes
-//!   (`m--*`, T-112) always go; [`adopt_workspaces`] then rebuilds the workspace holders.
+//!   (`m--*`) always go; [`adopt_workspaces`] then rebuilds the workspace holders.
 //!
 //! # Windows consoles: why puddle runs as two processes
 //!

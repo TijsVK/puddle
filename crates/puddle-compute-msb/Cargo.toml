@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-compute-msb"
-description = "The compute-plane traits over the msb SDK: sandboxes, volumes, images, exec, SSH, the memory setting (W1, T-106)"
+description = "The compute-plane traits over the msb SDK: sandboxes, volumes, images, exec, SSH, the memory setting"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

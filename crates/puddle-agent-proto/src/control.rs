@@ -102,7 +102,7 @@ impl AgentMessage {
 }
 
 /// One message from the host to the agent, on a `host-control` stream. Reserved: no messages are
-/// defined yet (T-020 C-6: extension-host cleanup, idle cache drop, CA rotation are candidates).
+/// defined yet (extension-host cleanup, idle cache drop and CA rotation are candidates).
 /// An agent ignores types it doesn't know.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

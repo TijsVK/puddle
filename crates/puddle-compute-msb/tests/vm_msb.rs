@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The adapter's own VM bars (T-106), beyond the contract suite: HG-01 (no direct network from
-//! the guest), HG-02 (only the routed vsock port reaches the host), ext4 volumes and owned disks,
-//! three sandboxes at once with their own routes, `--max-memory` never set, and (fork, T-117) SSH
+//! The adapter's own VM bars, beyond the contract suite: no direct network from
+//! the guest, only the routed vsock port reaching the host, ext4 volumes and owned disks,
+//! three sandboxes at once with their own routes, `--max-memory` never set, and (fork) SSH
 //! reporting a signal-killed command as a failure.
 #![expect(
     clippy::expect_used,
@@ -25,7 +25,7 @@ use puddle_types::{GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName};
 use puddle_vm_tests::{DEBIAN_DEVCONTAINER, Settings, VmEnv};
 use tokio::io::AsyncReadExt;
 
-/// The guest port puddle routes (T-020 C-5).
+/// The guest port puddle routes.
 const ROUTE_PORT: u32 = 5000;
 
 /// Connects to host CID 2 on each port given and prints the ones that accepted. perl-base is
@@ -46,7 +46,7 @@ for my $port (@ARGV) {
     select((select($s), $| = 1)[0]);
     print {$s} "$msg\n"; print "$port\n";
     # Linger before closing: msb on Windows can lose the last bytes of a stream the guest closes
-    # at once (tail loss, T-119), which is not what this probe tests.
+    # at once (tail loss), which is not what this probe tests.
     select(undef, undef, undef, 0.3);
   }
   close $s;
@@ -118,7 +118,7 @@ async fn cleanup(rt: &MsbRuntime, names: &[&SandboxName]) {
     }
 }
 
-/// HG-01: no network interface is up but loopback (msb's guest kernel has a `dummy0` sink
+/// No network interface is up but loopback (msb's guest kernel has a `dummy0` sink
 /// device, down), and direct DNS, IPv4 TCP, UDP and IPv6 all fail. Loopback works (the agent
 /// listens on 127.0.0.1).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -150,7 +150,7 @@ exit $fail
     assert_eq!(out.status.code, 0, "{}", out.stdout_text());
 }
 
-/// HG-02: of a sweep over guest-to-host vsock ports, only the routed one accepts, and what the
+/// Of a sweep over guest-to-host vsock ports, only the routed one accepts, and what the
 /// guest sends arrives on puddle's endpoint.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_hg02_only_the_routed_vsock_port_accepts() {
@@ -173,7 +173,7 @@ async fn vm_hg02_only_the_routed_vsock_port_accepts() {
     assert_eq!(lines.await.unwrap(), ["hello-hg02"]);
 }
 
-/// Named volumes and owned disks are ext4 in the guest (T-028 `volume.ext4`, `owned_disk.ext4`).
+/// Named volumes and owned disks are ext4 in the guest.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_volume_and_owned_disk_are_ext4() {
     let settings = support::settings();
@@ -335,7 +335,7 @@ async fn vm_mount_sources_outside_the_share_are_refused() {
 
 /// The fork's SSH server (SDK, in puddle's process) reports a signal-killed command as a failure:
 /// it sends no exit status, so OpenSSH exits 255 and the SDK client reads `-1`; a normal exit
-/// code still arrives as is (msb fork `359f1585`, T-028 `ssh.signal_kill9_exit`). The reason
+/// code still arrives as is (msb fork `359f1585`). The reason
 /// [`puddle_compute::Capabilities::ssh_reports_signal_exit`] is `true` on the fork.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_ssh_reports_a_signal_killed_command_as_a_failure() {

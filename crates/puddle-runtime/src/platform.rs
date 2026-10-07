@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The per-OS runtime table and the guest architecture: the one place that spells the file names
-//! of msb and its firmware and the Rust target of the guest agent (T-150, D-66). `check.sh`'s
+//! of msb and its firmware and the Rust target of the guest agent. `check.sh`'s
 //! `platform-literals` gate fails on those names anywhere else in `crates/`.
 
 use std::fmt;
@@ -79,7 +79,7 @@ pub struct RuntimeFiles {
     pub libkrunfw_prefix: &'static str,
     /// Whether msb finds the firmware only beside itself, so the runtime folder must hold it
     /// (Windows). Elsewhere msb searches its library paths by version, and puddle doesn't ship
-    /// the file yet (v1, T-148).
+    /// the file yet (v1).
     pub firmware_beside_msb: bool,
 }
 

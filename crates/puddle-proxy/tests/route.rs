@@ -265,7 +265,7 @@ async fn round_trip(control: &mut Control, authority: &str, i: usize) -> io::Res
     Ok(started.elapsed())
 }
 
-/// The T-131 bar (D-2): 256 parallel `CONNECT`s over 4 agent sessions on one Unix-socket/pipe
+/// 256 parallel `CONNECT`s over 4 agent sessions on one Unix-socket/pipe
 /// route, 0 failures and none slower than 5 s.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn parallel_connects_256_all_succeed_with_no_stall_over_5_s() {
@@ -593,7 +593,7 @@ async fn the_default_address_check_blocks_loopback_even_when_allowed() {
     assert_eq!(policy.decisions(), 0);
 }
 
-/// HO-3: the sandbox is the route's. Two routes, the same request: each pending item names the
+/// The sandbox is the route's. Two routes, the same request: each pending item names the
 /// sandbox of the route it came in on.
 #[tokio::test]
 async fn each_route_speaks_for_its_own_sandbox() {
@@ -747,7 +747,7 @@ async fn a_server_answering_before_the_upload_ends_reaches_the_guest() {
     assert_eq!(code, 413);
 }
 
-/// T-048 for plain HTTP: a server that resets mid-request makes the guest stream fail, not end
+/// Plain HTTP: a server that resets mid-request makes the guest stream fail, not end
 /// cleanly as if the response were complete.
 #[tokio::test]
 async fn a_server_reset_during_a_plain_http_request_reaches_the_guest_as_an_error() {
@@ -950,7 +950,7 @@ async fn a_block_after_an_allow_is_reported_with_the_rule_and_the_toggle() {
     assert!(!format!("{event:?}").contains("CANARY"));
 }
 
-/// T-098: Node `fetch` and Yarn Berry send `http://` as `CONNECT host:80`. Node's exact bytes
+/// Node `fetch` and Yarn Berry send `http://` as `CONNECT host:80`. Node's exact bytes
 /// (port changed to the test server's) pass through unchanged, and the audit names the method and
 /// path as for an absolute-form request, without the query string.
 #[tokio::test]
@@ -1007,7 +1007,7 @@ async fn node_fetch_connect_for_plain_http_is_relayed_unchanged_and_audited_with
     );
 }
 
-/// T-098: `CONNECT host:80` is decided exactly like `GET http://host/`: the same pending item
+/// `CONNECT host:80` is decided exactly like `GET http://host/`: the same pending item
 /// (counted twice), the same deny rule, and nothing resolved or connected before the decision.
 #[tokio::test]
 async fn connect_to_port_80_and_absolute_form_http_get_the_same_decision() {
@@ -1052,7 +1052,7 @@ async fn connect_to_port_80_and_absolute_form_http_get_the_same_decision() {
     }
 }
 
-/// Hostile guest (T-098): a tunnel to an allowed name that carries a request for another host
+/// Hostile guest: a tunnel to an allowed name that carries a request for another host
 /// still reaches only the checked address, and is recorded under the tunnel's name. A tunnel
 /// that doesn't start with an HTTP/1.x request line is relayed as before, with no request line.
 #[tokio::test]

@@ -61,7 +61,7 @@ fn status(code: u32) -> i32 {
     i32::from_ne_bytes(code.to_ne_bytes())
 }
 
-/// A healthy Windows laptop.
+/// A healthy Windows workstation.
 fn windows() -> Fake {
     Fake {
         os: Os::Windows,

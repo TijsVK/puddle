@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The msb runtime puddle ships with (D-19): where it lives, the environment that makes the SDK use
+//! The msb runtime puddle ships with: where it lives, the environment that makes the SDK use
 //! it and nothing else, and the check that it is exactly the version this build was made for.
 //!
 //! puddle never uses a user's own msb. At startup it:
@@ -15,7 +15,7 @@
 //!
 //! Image pulls go through puddle's pull proxy by an explicit setting on the registry client
 //! (`microsandbox_image::RegistryBuilder::proxy`, set from `puddle-compute-msb`'s
-//! `MsbConfig::with_registry_proxy`, T-144), not through the environment: the per-run token never
+//! `MsbConfig::with_registry_proxy`), not through the environment: the per-run token never
 //! enters the process environment, so no child process inherits it.
 //!
 //! | Item | What |

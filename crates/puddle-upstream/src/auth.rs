@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The seam for authenticating to an upstream proxy (T-135 fills it: Windows SSPI Negotiate,
-//! later GSSAPI Kerberos on Linux, T-148 L-2). Discovery names the proxy ([`ProxyAddr`]); this
+//! The seam for authenticating to an upstream proxy (Windows SSPI Negotiate today,
+//! GSSAPI Kerberos on Linux later). Discovery names the proxy ([`ProxyAddr`]); this
 //! trait turns a proxy's `407` challenge into the next `Proxy-Authorization` value, so the code
 //! that connects (CONNECT, absolute-form HTTP) does not know which scheme or OS is behind it.
 //!
@@ -72,7 +72,7 @@ impl ProxyAuth for NoAuth {
 }
 
 /// The authentication of the current platform: Windows SSPI Negotiate and NTLM as the logged-on
-/// user (T-135). [`NoAuth`] elsewhere (T-148 L-2); a GSSAPI [`TokenSource`](crate::TokenSource) for
+/// user. [`NoAuth`] elsewhere; a GSSAPI [`TokenSource`](crate::TokenSource) for
 /// [`NegotiateAuth`](crate::NegotiateAuth) is the Linux follow-up.
 #[must_use]
 pub fn system_auth() -> Arc<dyn ProxyAuth> {

@@ -226,7 +226,7 @@ async fn closing_the_listener_closes_the_endpoint() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_half_closes_only_on_unix() {
-    // Pinned so protocols over these endpoints (SSH bridge, T-114) frame their own end: on a
+    // Pinned so protocols over these endpoints (the SSH bridge) frame their own end: on a
     // named pipe `shutdown` is a no-op and the peer sees EOF only when the handle closes.
     let root = root();
     let mut listener = root.listen().unwrap();

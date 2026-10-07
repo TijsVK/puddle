@@ -146,7 +146,7 @@ pub struct GuestFile {
     apply: ApplyKind,
 }
 
-/// How the boot hook applies a [`GuestFile`] (T-020 C-4).
+/// How the boot hook applies a [`GuestFile`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -155,7 +155,7 @@ pub enum ApplyKind {
     /// and deleted when no provider lists it any more.
     #[default]
     Replace,
-    /// The file is the user's; puddle owns only the keys in the spec (T-097). They are set at
+    /// The file is the user's; puddle owns only the keys in the spec. They are set at
     /// every boot and removed when no provider lists the file any more; everything else stays.
     /// A file that can't be parsed is left alone. The file's mode applies when puddle creates it.
     Merge(MergeSpec),
@@ -242,7 +242,7 @@ impl GuestFile {
 /// [`GuestEnv::extend`]s win.
 ///
 /// Names follow POSIX shell rules (`[A-Za-z_][A-Za-z0-9_]*`), values may be anything but NUL.
-/// Case matters: `HTTP_PROXY` and `http_proxy` are separate variables (both are set, T-030).
+/// Case matters: `HTTP_PROXY` and `http_proxy` are separate variables (both are set).
 ///
 /// ```
 /// use puddle_types::GuestEnv;

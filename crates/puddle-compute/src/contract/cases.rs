@@ -31,8 +31,8 @@ macro_rules! cases {
         /// Every contract case, in run order.
         pub const CASES: &[&str] = &[$(stringify!($name)),*];
 
-        /// Per case: where its expected behaviour comes from. "T-028 …" = observed on msb 0.7.6
-        /// through the SDK; "assumed" = not observed yet, confirmed or corrected by T-106.
+        /// Per case: where its expected behaviour comes from. "observed on msb 0.7.6" = seen
+        /// through the SDK; "assumed" = not observed yet, confirmed or corrected by the VM tests.
         pub const CASE_NOTES: &[(&str, &str)] = &[$((stringify!($name), $note)),*];
 
         pub(super) async fn dispatch<R: Runtime>(case: &Case<'_, R>, name: &str) -> Outcome {
@@ -46,34 +46,34 @@ macro_rules! cases {
 }
 
 cases! {
-    probe_reports_runtime_version => "T-028 runtime.version_pin (the version is readable)",
-    pull_image_returns_its_config => "T-028 image.facts; unknown image fails: assumed",
+    probe_reports_runtime_version => "observed on msb 0.7.6 (the version is readable)",
+    pull_image_returns_its_config => "observed on msb 0.7.6 (image config facts); unknown image fails: assumed",
     unknown_image_fails_create_cleanly => "assumed",
-    create_boots_and_returns_owning_handle => "T-028 sdk.create_owned, sdk.list; puddle_owned from the owner label (T-106, T-113)",
+    create_boots_and_returns_owning_handle => "observed on msb 0.7.6 (create as owner, list); puddle_owned from the owner label",
     create_refuses_a_taken_name => "assumed",
     invalid_spec_is_refused_before_anything_exists => "puddle-side check (SandboxSpec::validate)",
-    stop_then_start_boots_again => "T-028 sdk.stopped_status, restart; stop twice: assumed",
-    dropping_the_owning_handle_stops_the_vm => "T-028 lifecycle L1 (0.7.6: Crashed); msb 0.7.7: Stopped (T-106); the case accepts either",
-    get_readopts_a_running_sandbox_without_owning_it => "T-028 reconcile re-adoption",
-    unknown_names_are_not_found => "T-028 sdk.removed (not found after remove); others assumed",
-    remove_needs_a_stopped_sandbox_and_frees_the_name => "T-028 sdk.removed; refusal while running: assumed",
-    exec_exit_codes_are_exact => "T-028 exec.exit0/exit3/exit127",
-    signal_killed_exec_is_a_failure => "T-028 exec.signal_kill9 (code -1)",
+    stop_then_start_boots_again => "observed on msb 0.7.6 (status after stop, restart); stop twice: assumed",
+    dropping_the_owning_handle_stops_the_vm => "observed on msb 0.7.6 (dropping the owner handle: Crashed); msb 0.7.7: Stopped; the case accepts either",
+    get_readopts_a_running_sandbox_without_owning_it => "observed on msb 0.7.6 (re-adopting a running sandbox)",
+    unknown_names_are_not_found => "observed on msb 0.7.6 (not found after remove); others assumed",
+    remove_needs_a_stopped_sandbox_and_frees_the_name => "observed on msb 0.7.6 (remove frees the name); refusal while running: assumed",
+    exec_exit_codes_are_exact => "observed on msb 0.7.6 (exit codes 0, 3 and 127)",
+    signal_killed_exec_is_a_failure => "observed on msb 0.7.6 (a SIGKILLed command reports code -1)",
     exec_timeout_is_enforced => "assumed (SDK exec timeout)",
     exec_needs_a_running_sandbox => "assumed",
-    create_env_reaches_exec => "T-028 env.create_env_in_exec; per-exec env: assumed",
+    create_env_reaches_exec => "observed on msb 0.7.6 (create-time env visible in exec); per-exec env: assumed",
     stdin_reaches_exec => "assumed (SDK stdin_bytes)",
-    file_mount_is_read_only => "T-028 mount_file.readonly",
-    root_disk_survives_restart_not_remove => "T-028 restart.pre_hook_state (files persist)",
-    owned_disk_survives_restart_not_remove => "T-028 owned_disk.write, restart.owned_disk_kept, owned_disk.gone_with_sandbox",
-    named_volume_survives_restart_and_remove => "T-028 volume.write_repo, restart/recreate.volume_marker, volume.survives_remove, volume.reattach_plain_named",
-    volume_capacity_reads_back => "T-028 volume.capacity_readback; duplicate create: assumed",
-    second_attach_is_refused_naming_the_holder => "T-028 volume.second_attach_refused + second_attach_leftover; holder named by puddle (ADR 0006 point 8)",
-    failed_create_leaves_a_stale_dir_unless_fixed => "T-028 volume.wrong_size_error + wrong_size_leftover, lifecycle L4",
+    file_mount_is_read_only => "observed on msb 0.7.6 (a file mount is read-only)",
+    root_disk_survives_restart_not_remove => "observed on msb 0.7.6 (root disk files persist across restart)",
+    owned_disk_survives_restart_not_remove => "observed on msb 0.7.6 (owned disk kept across restart, gone with the sandbox)",
+    named_volume_survives_restart_and_remove => "observed on msb 0.7.6 (volume data kept across restart, recreate and remove; reattach by name)",
+    volume_capacity_reads_back => "observed on msb 0.7.6 (volume capacity reads back); duplicate create: assumed",
+    second_attach_is_refused_naming_the_holder => "observed on msb 0.7.6 (second attach refused, leaving a Stopped record); holder named by puddle (ADR 0006 point 8)",
+    failed_create_leaves_a_stale_dir_unless_fixed => "observed on msb 0.7.6 (a wrong-size volume error leaves a stale directory)",
     missing_volume_fails_create => "assumed",
-    ssh_server_speaks_first => "T-028 ssh.serve_connection_exec (banner part; full SSH exec is T-114's VM test)",
-    routes_and_no_network_are_accepted => "T-028 net.* (spec accepted; guest network behaviour is T-106's VM test)",
-    memory_change_applies_at_next_start => "T-106 (the memory setting: modify().memory().next_start() on msb)",
+    ssh_server_speaks_first => "observed on msb 0.7.6 (SSH banner); full SSH exec is covered by the VM tests",
+    routes_and_no_network_are_accepted => "observed on msb 0.7.6 (network spec accepted); guest network behaviour is covered by the VM tests",
+    memory_change_applies_at_next_start => "the memory setting: modify().memory().next_start() on msb, checked by the VM tests",
 }
 
 /// Awaits a runtime call with [`STEP_TIMEOUT`] and turns its error into a case failure.
@@ -744,7 +744,10 @@ async fn failed_create_leaves_a_stale_dir_unless_fixed<R: Runtime>(c: &Case<'_, 
     if caps.stale_dir_fixed {
         check!(!stale, "stale dir left although stale_dir_fixed");
     } else {
-        check!(stale, "no stale dir although T-039 is unfixed");
+        check!(
+            stale,
+            "no stale dir although the upstream stale-directory bug is unfixed"
+        );
         let err = fails("create on a blocked name", rt.create(sized(256))).await?;
         check!(
             matches!(err, ComputeError::StaleDir { .. }),

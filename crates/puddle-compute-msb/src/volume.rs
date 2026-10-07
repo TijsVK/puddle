@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Named volumes: who holds one, and the catalog view as [`VolumeInfo`].
 //!
-//! msb's own refusal of a second attach doesn't name the holder (T-028), so puddle works it out:
+//! msb's own refusal of a second attach doesn't name the holder, so puddle works it out:
 //! the holder is the running sandbox whose configuration mounts the volume (ADR 0006 point 8).
 
 use std::collections::BTreeMap;

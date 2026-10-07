@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-upstream"
-description = "Upstream company proxy: discovery (WinINet, WinHTTP PAC/WPAD, policy, env), authentication (Basic, SSPI Negotiate and NTLM) and the chained connect (W2)"
+description = "Upstream company proxy: discovery (WinINet, WinHTTP PAC/WPAD, policy, env), authentication (Basic, SSPI Negotiate and NTLM) and the chained connect"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

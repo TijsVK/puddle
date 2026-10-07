@@ -9,7 +9,7 @@ use puddle_types::ValidationError;
 use serde::{Deserialize, Serialize};
 
 /// How long browser VS Code keeps a session's extension host after its window disconnected
-/// (`--reconnection-grace-time`, D-43 (1)), in whole seconds.
+/// (`--reconnection-grace-time`), in whole seconds.
 ///
 /// ```
 /// use puddle_settings::ReconnectionGrace;
@@ -25,7 +25,7 @@ impl ReconnectionGrace {
     pub const MIN: ReconnectionGrace = ReconnectionGrace(30);
     /// Longest accepted grace: one day.
     pub const MAX: ReconnectionGrace = ReconnectionGrace(24 * 60 * 60);
-    /// puddle's default: 300 s (D-43 (1)).
+    /// puddle's default: 300 s.
     pub const DEFAULT: ReconnectionGrace = ReconnectionGrace(300);
 
     /// Checks `secs` and wraps it.
@@ -84,7 +84,7 @@ impl From<ReconnectionGrace> for u32 {
     }
 }
 
-/// What happens when a page in a sandbox window reads the clipboard programmatically (D-46 (2)).
+/// What happens when a page in a sandbox window reads the clipboard programmatically.
 ///
 /// The default asks once per sandbox; the answer is stored as that sandbox's override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]

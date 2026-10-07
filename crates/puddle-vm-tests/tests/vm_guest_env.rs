@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! T-109's VM bar (tier K): with puddle's boot-time proxy config (`puddle-guest-env`) in a tools
+//! The VM bar for the guest proxy config (tier K): with puddle's boot-time proxy config (`puddle-guest-env`) in a tools
 //! image, each tool by name reaches a local fixture through the proxy route.
 //!
 //! The guest's proxy listener is played by a fixture in the guest on the agent's address
@@ -9,10 +9,10 @@
 //! default network only for installing the tools first.
 //!
 //! The config goes in the way the boot hook would apply it: the files written as root with their
-//! modes, the env given to each exec. Until the boot hook runs in VMs (T-106), the files are
+//! modes, the env given to each exec. Until the boot hook runs in VMs, the files are
 //! written by this test; the content is exactly `guest_proxy_config`'s.
 //!
-//! Tools that still fail are listed in [`KNOWN_GAPS`] (capture gaps for W2): the test fails when
+//! Tools that still fail are listed in [`KNOWN_GAPS`] (capture gaps in the proxy): the test fails when
 //! a tool outside the list fails, and also when a listed one starts working, so the list stays
 //! true.
 #![expect(

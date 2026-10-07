@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Stream kinds: what a yamux stream that isn't a proxied connection carries.
 //!
-//! One vsock route carries everything (a smaller surface than a route per feature, T-020 C-5).
+//! One vsock route carries everything (a smaller surface than a route per feature).
 //! A proxied connection starts with its HTTP request line; every other stream starts with a
 //! preamble line `\0puddle-<kind>/<version>\n`. The leading `0x00` can't start an HTTP request
 //! line, so the first byte tells the two apart.
@@ -9,7 +9,7 @@
 //! | Kind | Opened by | State |
 //! |---|---|---|
 //! | `control` v1 | agent | served: [`crate::AgentMessage`] lines, guest → host |
-//! | `connect` | agent | reserved: `puddle-agent connect` (ssh `ProxyCommand`, T-021) |
+//! | `connect` | agent | reserved: `puddle-agent connect` (ssh `ProxyCommand`) |
 //! | `ssh-agent` | agent | reserved: filtered SSH agent / signing |
 //! | `host-control` | host | reserved: [`crate::control::HostMessage`] lines, host → guest |
 //!

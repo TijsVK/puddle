@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! HO-1 at the SSH endpoint (Windows): a bridge running under a restricted token (another
+//! The SSH endpoint (Windows): a bridge running under a restricted token (another
 //! process of the same user that dropped its user SID, e.g. a sandboxed browser or a low-rights
 //! helper) is refused, with a message that says why; the same token with the user SID gets in.
 #![cfg(windows)]

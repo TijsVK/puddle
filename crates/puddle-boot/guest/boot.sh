@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# puddle's boot hook (design from T-028, T-108). puddle runs it as root through the runtime's
+# puddle's boot hook. puddle runs it as root through the runtime's
 # exec after every create and every start, and serves no SSH or exec to anyone until it exits 0.
 #
 #   /bin/sh /puddle/boot.sh [ENTRYPOINT CMD...] < plan
@@ -106,7 +106,7 @@ say "sysctls set"
 
 # --- 3. Files, applied in plan order ----------------------------------------------------------
 # Two kinds: puddle_file writes a whole file puddle owns; puddle_merge sets only puddle's keys in
-# a file that belongs to the user (T-097), through the agent binary's `merge-file`, which parses
+# a file that belongs to the user, through the agent binary's `merge-file`, which parses
 # the file (this script can't) and leaves one it can't parse untouched.
 GIT_INCLUDE=
 MERGE_TOOL=
@@ -244,7 +244,7 @@ while read -r dir cmd; do
 done <"$RUN/triggers"
 
 # Provider steps: scripts the plan itself wrote, run at every boot in plan order, after the
-# triggers so they see the updated system CA store (T-110 merges the image's CA bundle here).
+# triggers so they see the updated system CA store (a step can merge the image's CA bundle here).
 while IFS= read -r step; do
     [ -n "$step" ] || continue
     out=$(/bin/sh "$ROOT$step" </dev/null 2>&1) || die "step $step failed: $out"
@@ -278,7 +278,7 @@ if [ -n "$AGENT" ]; then
     say "agent listening on 127.0.0.1:$AGENT_PORT"
 fi
 
-# --- 5. Extension steps: every boot.d/*.sh next to this script, in name order (T-020 C-3) ------
+# --- 5. Extension steps: every boot.d/*.sh next to this script, in name order ------
 # Later features add a step file (NN-name.sh, idempotent) instead of editing this script. A
 # failing step fails the boot like any other step.
 for step in "$HERE"/boot.d/*.sh; do

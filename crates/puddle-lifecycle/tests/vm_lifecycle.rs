@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Shutdown and reconcile on real microVMs (T-113 bars K and W).
+//! Shutdown and reconcile on real microVMs (tiers K and W).
 //!
 //! The "puddle" under test is this test binary itself, started again in the role of a host
 //! (test `vm_role_host`): it goes through [`puddle_lifecycle::supervise`], boots one sandbox,
@@ -191,7 +191,7 @@ async fn host_worker() -> i32 {
     if !report.all_stopped() {
         return 3;
     }
-    // Every sandbox got its trim before the stop (the T-113 bar), not only a stop.
+    // Every sandbox got its trim before the stop (the bar for this test), not only a stop.
     if report
         .sandboxes
         .iter()
@@ -481,7 +481,7 @@ async fn vm_console_close_stops_the_sandboxes_10_of_10() {
     // A pseudoconsole, not a console window: the hosted runner's console windows are
     // pseudoconsoles already and ignore WM_CLOSE (class `PseudoConsoleWindow`), and closing a
     // pseudoconsole is what Windows Terminal does when a tab closes. Both send
-    // CTRL_CLOSE_EVENT; the classic conhost window's X button is an L case (T-120).
+    // CTRL_CLOSE_EVENT; the classic conhost window's X button is an L case.
     Box::pin(graceful_rounds(
         "l2",
         Host::spawn_in_pty,
