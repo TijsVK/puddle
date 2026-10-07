@@ -784,8 +784,9 @@ test.describe("the network tab", () => {
   }) => {
     await openDetail(page, backend, "docs-site", "network");
     const rows = page.locator("li.req");
+    // The heading shows before the requests are read: count only once a row is there.
+    await expect(rows.first()).toBeVisible();
     const n = await rows.count();
-    expect(n).toBeGreaterThan(0);
     const total = await pendingCount(request, backend);
     await rows
       .first()
@@ -996,8 +997,10 @@ test.describe("keyboard only", () => {
 });
 
 test.describe("accessibility", () => {
+  // One scan costs about a second in WebKit and the whole walk used to be one test, close to
+  // its 30 s limit on a loaded host: each stop is a test of its own, so none is near it.
   for (const scheme of ["light", "dark"] as const) {
-    test(`axe finds nothing in ${scheme}: list, dialogs and every tab`, async ({
+    test(`axe finds nothing in ${scheme}: list, dialogs and failures`, async ({
       page,
       backend,
     }) => {
@@ -1033,25 +1036,19 @@ test.describe("accessibility", () => {
         .click();
       await expect(card(page, "data-tools").getByRole("alert")).toBeVisible();
       expect(await axeViolations(page), "failure and toast").toEqual([]);
+      expect(await csp()).toEqual([]);
+    });
 
+    test(`axe finds nothing in ${scheme}: the overview with a notice and the delete dialog`, async ({
+      page,
+      backend,
+    }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      const csp = await watchCsp(page);
       await openDetail(page, backend, "web-shop");
       await backend.control.script("oom");
       await expect(page.getByRole("alert")).toBeVisible();
       expect(await axeViolations(page), "overview with the notice").toEqual([]);
-      for (const tab of [
-        "network",
-        "environment",
-        "shell-init",
-        "ports",
-        "settings",
-      ]) {
-        await page.goto(`/workspaces/web-shop/${tab}`);
-        await expect(
-          page.getByRole("heading", { level: 1, name: "web-shop" }),
-        ).toBeVisible();
-        await expect(page.getByText("Loading")).toHaveCount(0);
-        expect(await axeViolations(page), tab).toEqual([]);
-      }
 
       await page.goto("/workspaces/data-tools");
       await expect(
@@ -1064,6 +1061,33 @@ test.describe("accessibility", () => {
       await page.keyboard.press("Escape");
       expect(await csp()).toEqual([]);
     });
+
+    for (const tab of [
+      "network",
+      "environment",
+      "shell-init",
+      "ports",
+      "settings",
+    ]) {
+      test(`axe finds nothing in ${scheme}: the ${tab} tab`, async ({
+        page,
+        backend,
+      }) => {
+        await page.emulateMedia({ colorScheme: scheme });
+        const csp = await watchCsp(page);
+        // The notice is up when the tab opens, as it is in use.
+        await openDetail(page, backend, "web-shop");
+        await backend.control.script("oom");
+        await expect(page.getByRole("alert")).toBeVisible();
+        await page.goto(`/workspaces/web-shop/${tab}`);
+        await expect(
+          page.getByRole("heading", { level: 1, name: "web-shop" }),
+        ).toBeVisible();
+        await expect(page.getByText("Loading")).toHaveCount(0);
+        expect(await axeViolations(page), tab).toEqual([]);
+        expect(await csp()).toEqual([]);
+      });
+    }
   }
 
   test("the delete dialog with a long list passes axe too", async ({
