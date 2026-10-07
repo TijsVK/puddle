@@ -6,7 +6,7 @@
 //! wire types; only what sits behind the API is fake. When a later task puts a new service behind
 //! the API, its fake is built in `Fixture::build_state`, and a field in [`Scenario`] seeds it
 //! (workspaces are the first: [`WorkspaceSeed`]); new events need nothing here (an
-//! [`Event`](puddle_types::Event) in JSON
+//! [`Event`] in JSON
 //! is a step).
 //!
 //! The fixture is for tests and development only. It listens on `127.0.0.1`, keeps nothing on
