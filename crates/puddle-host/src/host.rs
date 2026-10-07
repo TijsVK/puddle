@@ -283,6 +283,16 @@ struct Background {
 /// Aborts its task when dropped, so a forwarder never outlives the host.
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
 
+impl AbortOnDrop {
+    /// Announces each new network epoch of `discovery` on `events`.
+    fn forwarding(discovery: &Discovery, events: &Arc<EventHub>) -> Self {
+        Self(forward_network_changes(
+            discovery,
+            events.clone() as Arc<dyn EventSink>,
+        ))
+    }
+}
+
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.0.abort();
@@ -374,12 +384,7 @@ impl<R: Runtime + Clone> Host<R> {
         // sandbox proxy and the pull proxy alike.
         let egress = Egress::build(&config, &options, &settings, &endpoints, &store, &events);
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
-        // What the network-health screen reads: what discovery, the sign-in log, the company
-        // roots read above and the pull proxy know.
-        let network_health = Arc::new(
-            HostNetworkHealth::new(discovery.clone(), clock.clone()).with_chain(egress.chain),
-        );
-        network_health.set_roots(Arc::new(roots.clone()));
+        let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);
         let pull_url = pull.proxy_url();
         // Image pulls are puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
         let pull = pull
@@ -396,11 +401,7 @@ impl<R: Runtime + Clone> Host<R> {
                 layout: &config.layout,
                 guest_share: paths.guest_share(),
                 pull_proxy: pull_url,
-                registry_roots: roots
-                    .certificates()
-                    .iter()
-                    .map(puddle_certs::SyncedCert::pem)
-                    .collect(),
+                registry_roots: pem_of(&roots),
                 log_level: config.runtime_log_level.clone(),
             })
             .await?;
@@ -422,10 +423,7 @@ impl<R: Runtime + Clone> Host<R> {
         steps.push(Step::PullProxyServing);
         let sweeper = Sweeper::spawn(store.clone(), DEFAULT_SWEEP_PERIOD);
         let watching = discovery.watch();
-        let network_events = AbortOnDrop(forward_network_changes(
-            &discovery,
-            events.clone() as Arc<dyn EventSink>,
-        ));
+        let network_events = AbortOnDrop::forwarding(&discovery, &events);
         steps.push(Step::BackgroundStarted);
 
         let lifecycle = Arc::new(Lifecycle::new(runtime.clone(), config.shutdown.clone()));
@@ -614,6 +612,30 @@ fn open_state(
         book,
         stored,
     })
+}
+
+/// The company roots as PEM, for the runtime's registry client.
+fn pem_of(roots: &CorporateRoots) -> Vec<String> {
+    roots
+        .certificates()
+        .iter()
+        .map(puddle_certs::SyncedCert::pem)
+        .collect()
+}
+
+/// What the network-health screen reads: what discovery, the sign-in log of `chain` and the
+/// company roots know. The pull proxy reports itself once it serves.
+fn network_health_of(
+    chain: &Arc<Chain>,
+    discovery: &Arc<Discovery>,
+    clock: &Arc<SystemClock>,
+    roots: &CorporateRoots,
+) -> Arc<HostNetworkHealth> {
+    let health = Arc::new(
+        HostNetworkHealth::new(discovery.clone(), clock.clone()).with_chain(chain.clone()),
+    );
+    health.set_roots(Arc::new(roots.clone()));
+    health
 }
 
 /// The way out through the company network, shared by the sandbox proxy and the pull proxy.
