@@ -108,13 +108,9 @@ async fn transfer(client: &mut Client, host: &str, mib: usize) -> Duration {
         while left > 0 {
             let n = left.min(chunk.len());
             write.write_all(chunk.split_at(n).0).await.unwrap();
-            if left.is_multiple_of(16 * MIB) {
-                eprintln!("  left {} MiB", left / MIB);
-            }
             left -= n;
         }
         write.flush().await.unwrap();
-        eprintln!("  upload done {:?}", started.elapsed());
     };
     let (response, ()) = tokio::join!(read_response(&mut read, "POST"), upload);
     let response = response.unwrap();
