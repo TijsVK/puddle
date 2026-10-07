@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Test doubles (feature `testing`). Never use them in product code: [`AnyAddress`] connects
 //! anywhere, [`StaticPolicy`] keeps its rules in memory, and [`CollectingConnectionLog`] keeps
-//! the audit in memory.
+//! the audit in memory, [`StaticResolver`] and [`StaticRecords`] have fixed answers.
 
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
+
+use puddle_agent_proto::resolve::{Record, RecordType};
 
 use puddle_types::{
     ConnectionEvent, ConnectionLog, Decision, DomainName, EgressRequest, Host, PatternKind,
@@ -15,6 +18,7 @@ use puddle_types::{
 };
 
 use crate::destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver};
+use crate::records::{RecordError, RecordResolver, Records};
 
 /// A [`Policy`] with exact-host rules in memory: allowed hosts pass, denied hosts are refused, and
 /// anything else becomes a pending item (deduplicated per sandbox, host and port) until
@@ -259,6 +263,7 @@ impl AddressCheck for AnyAddress {
 #[derive(Debug, Default)]
 pub struct StaticResolver {
     names: Mutex<HashMap<String, Vec<IpAddr>>>,
+    lookups: AtomicU64,
 }
 
 impl StaticResolver {
@@ -277,6 +282,12 @@ impl StaticResolver {
             .insert(name.to_owned(), addrs.to_vec());
         self
     }
+
+    /// How many names were looked up so far (found or not).
+    #[must_use]
+    pub fn lookups(&self) -> u64 {
+        self.lookups.load(Ordering::SeqCst)
+    }
 }
 
 impl Resolver for StaticResolver {
@@ -285,6 +296,7 @@ impl Resolver for StaticResolver {
         name: &'a DomainName,
         port: u16,
     ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
+        self.lookups.fetch_add(1, Ordering::SeqCst);
         let found = self
             .names
             .lock()
@@ -299,6 +311,61 @@ impl Resolver for StaticResolver {
                         .collect()
                 })
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such name"))
+        })
+    }
+}
+
+/// A [`RecordResolver`] with fixed answers; names it doesn't know are `NXDOMAIN`.
+#[derive(Debug, Default)]
+pub struct StaticRecords {
+    records: Mutex<HashMap<(String, RecordType), Vec<Record>>>,
+    lookups: AtomicU64,
+}
+
+impl StaticRecords {
+    /// No records.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Makes `rtype` of `name` hold `records`.
+    #[must_use]
+    pub fn with(self, name: &str, rtype: RecordType, records: Vec<Record>) -> Self {
+        self.records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert((name.to_owned(), rtype), records);
+        self
+    }
+
+    /// How many lookups were made so far.
+    #[must_use]
+    pub fn lookups(&self) -> u64 {
+        self.lookups.load(Ordering::SeqCst)
+    }
+}
+
+impl RecordResolver for StaticRecords {
+    fn records<'a>(
+        &'a self,
+        fqdn: &'a str,
+        rtype: RecordType,
+    ) -> BoxFuture<'a, Result<Records, RecordError>> {
+        self.lookups.fetch_add(1, Ordering::SeqCst);
+        let table = self.records.lock().unwrap_or_else(PoisonError::into_inner);
+        let found = table.get(&(fqdn.to_owned(), rtype)).cloned();
+        let name_known = table.keys().any(|(name, _)| name == fqdn);
+        drop(table);
+        Box::pin(async move {
+            match found {
+                Some(records) => Ok(Records {
+                    records,
+                    ttl: Duration::from_secs(30),
+                }),
+                None if name_known => Err(RecordError::NoData),
+                None => Err(RecordError::NoSuchName),
+            }
         })
     }
 }

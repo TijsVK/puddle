@@ -10,6 +10,7 @@ use tokio_yamux::{Control, Session};
 use super::*;
 use crate::control::PREAMBLE;
 use crate::kind::StreamKind;
+use crate::resolve::{self, RecordType};
 use crate::yamux::client_config;
 
 const WAIT: Duration = Duration::from_secs(5);
@@ -32,6 +33,15 @@ impl StreamHandler for Echo {
         if stream.read_to_end(&mut buf).await.is_ok() {
             let _ = stream.write_all(&buf).await;
             let _ = stream.shutdown().await;
+        }
+    }
+
+    async fn resolve(&self, query: ResolveQuery) -> ResolveAnswer {
+        if query.name == "slow.example" {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+        ResolveAnswer::NoSuchName {
+            ttl: u32::try_from(query.name.len()).unwrap(),
         }
     }
 }
@@ -360,4 +370,119 @@ fn rate_limit_refills_at_its_rate_up_to_the_burst() {
 fn guest_text_for_logs_is_cut_and_cleaned() {
     assert_eq!(clean("a\u{7}b", 10), "a?b");
     assert_eq!(clean(&"v".repeat(100), MAX_VERSION_CHARS).len(), 64);
+}
+
+async fn lookup(h: &mut Harness, name: &str) -> ResolveAnswer {
+    let stream = h.control.open_stream().await.unwrap();
+    resolve::ask(stream, &ResolveQuery::new(name, RecordType::A), WAIT)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_resolve_stream_gets_the_handlers_answer_and_a_clean_close() {
+    let mut h = start();
+    assert_eq!(
+        lookup(&mut h, "example.com").await,
+        ResolveAnswer::NoSuchName { ttl: 11 }
+    );
+    // A second lookup on the same session works: each lookup has its own stream.
+    assert_eq!(
+        lookup(&mut h, "a.example").await,
+        ResolveAnswer::NoSuchName { ttl: 9 }
+    );
+    h.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_resolve_stream_with_a_bad_query_is_closed_without_an_answer() {
+    let mut h = start();
+    for bytes in [
+        &b"\0puddle-resolve/1\nnot json\n"[..],
+        b"\0puddle-resolve/1\n{\"name\":\"x\",\"type\":\"AAAA\"}\n",
+    ] {
+        let mut s = h.control.open_stream().await.unwrap();
+        s.write_all(bytes).await.unwrap();
+        let mut back = Vec::new();
+        assert!(s.read_to_end(&mut back).await.is_err() || back.is_empty());
+    }
+    let mut s = h.control.open_stream().await.unwrap();
+    s.write_all(StreamKind::Resolve.preamble()).await.unwrap();
+    s.write_all(&vec![b'x'; resolve::MAX_QUERY_LINE + 1])
+        .await
+        .unwrap();
+    let mut back = Vec::new();
+    assert!(s.read_to_end(&mut back).await.is_err() || back.is_empty());
+    h.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_handler_without_a_name_policy_answers_unavailable() {
+    struct Silent;
+    impl StreamHandler for Silent {
+        async fn handle(&self, _stream: GuestStream) {}
+    }
+    let (guest, host) = tokio::io::duplex(1 << 20);
+    let server = tokio::spawn(serve_session(
+        host,
+        name(),
+        Arc::new(puddle_types::NullSink),
+        Arc::new(Silent),
+        HostConfig::default(),
+    ));
+    let mut client = Session::new_client(guest, client_config());
+    let mut control = client.control();
+    let _driver = tokio::spawn(async move { while client.next().await.is_some() {} });
+    let stream = control.open_stream().await.unwrap();
+    let answer = resolve::ask(
+        stream,
+        &ResolveQuery::new("example.com", RecordType::A),
+        WAIT,
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, ResolveAnswer::Unavailable);
+    control.close().await;
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lookup_that_takes_too_long_is_answered_unavailable() {
+    let mut h = start_with(HostConfig {
+        resolve_timeout: Duration::from_secs(2),
+        ..HostConfig::default()
+    });
+    assert_eq!(
+        lookup(&mut h, "slow.example").await,
+        ResolveAnswer::Unavailable
+    );
+    h.close().await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn lookups_over_the_per_session_limit_are_answered_unavailable() {
+    let mut h = start_with(HostConfig {
+        max_resolves: 2,
+        resolve_timeout: Duration::from_secs(30),
+        ..HostConfig::default()
+    });
+    let mut slow = Vec::new();
+    for _ in 0..2 {
+        let mut s = h.control.open_stream().await.unwrap();
+        let q = ResolveQuery::new("slow.example", RecordType::A)
+            .to_line()
+            .unwrap();
+        s.write_all(&[StreamKind::Resolve.preamble(), &q].concat())
+            .await
+            .unwrap();
+        slow.push(s);
+    }
+    // Let the host take both permits.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        lookup(&mut h, "third.example").await,
+        ResolveAnswer::Unavailable
+    );
+    drop(slow);
+    h.close().await.unwrap();
 }

@@ -12,6 +12,7 @@ publish.workspace = true
 
 [dependencies]
 base64 = { workspace = true }
+hickory-resolver = { workspace = true }
 getrandom = { workspace = true }
 puddle-agent-proto = { workspace = true }
 puddle-ipc = { workspace = true }
@@ -19,6 +20,7 @@ puddle-netpolicy = { workspace = true }
 puddle-types = { workspace = true }
 puddle-upstream = { workspace = true }
 subtle = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing = { workspace = true }
 
@@ -28,6 +30,7 @@ testing = []
 
 [dev-dependencies]
 base64 = { workspace = true }
+hickory-resolver = { workspace = true }
 futures-util = { workspace = true }
 proptest = { workspace = true }
 puddle-proxy = { path = ".", features = ["testing"] }
