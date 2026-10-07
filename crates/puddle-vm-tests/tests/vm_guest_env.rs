@@ -473,10 +473,11 @@ async fn setup_step(sb: &Sandbox, name: &str, script: &str) {
     )
     .await;
     let secs = started.elapsed().as_secs_f32();
-    let out = match out {
-        Ok(Ok(out)) => out,
-        other => panic!("setup step '{name}' did not finish in {secs:.1} s: {other:?}"),
-    };
+    assert!(
+        matches!(out, Ok(Ok(_))),
+        "setup step '{name}' did not finish in {secs:.1} s: {out:?}",
+    );
+    let out = out.unwrap().unwrap();
     let text = out.stdout().unwrap_or_default();
     eprintln!(
         "setup step '{name}': {secs:.1} s, exit {}\n{}",
@@ -488,8 +489,8 @@ async fn setup_step(sb: &Sandbox, name: &str, script: &str) {
 
 /// The last `n` lines of `text`.
 fn tail(text: &str, n: usize) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    lines[lines.len().saturating_sub(n)..].join("\n")
+    let skip = text.lines().count().saturating_sub(n);
+    text.lines().skip(skip).collect::<Vec<_>>().join("\n")
 }
 
 struct Outcome {
