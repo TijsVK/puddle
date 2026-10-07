@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { documentTitle, NAV, sectionFor } from "./nav.ts";
 
 describe("nav", () => {
-  it("has the five sections of D-73, in order", () => {
+  it("has the five top-level sections, in order", () => {
     expect(NAV.map((n) => n.label)).toEqual([
       "Inbox",
       "Workspaces",

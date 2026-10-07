@@ -12,7 +12,7 @@ const SHIPPED = join(root, ".svelte-kit", "shipped-packages.json");
 const NOTICES = join(root, "THIRD-PARTY-NOTICES.txt");
 const OVERRIDES = join(root, "licence-overrides.json");
 
-/** SPDX ids accepted for shipped code (fonts add OFL-1.1 when they are bundled, D-69). */
+/** SPDX ids accepted for shipped code (fonts add OFL-1.1 when they are bundled). */
 export const ALLOWED = new Set([
   "MIT",
   "ISC",

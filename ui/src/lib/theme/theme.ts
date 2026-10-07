@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Light/dark: follow the OS by default, with a stored override (D-70). The choice is a per-viewer
+// Light/dark: follow the OS by default, with a stored override. The choice is a per-viewer
 // convenience kept in localStorage; every access is guarded because storage can be unavailable.
 
 export type ThemeChoice = "system" | "light" | "dark";

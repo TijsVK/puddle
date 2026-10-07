@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
- * Design tokens: neutral, restyled by changing this file only (D-69 picks the final look in
- * T-182). Components use these custom properties and never a literal colour.
+ * Design tokens: neutral, restyled by changing this file only (the final look is still open).
+ * Components use these custom properties and never a literal colour.
  *
  * Light and dark come from one declaration each via light-dark(); `color-scheme` follows the OS
  * unless the user overrides it (data-theme="light" | "dark" on <html>, see theme.ts).
