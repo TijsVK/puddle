@@ -646,7 +646,15 @@ test.describe("keyboard only", () => {
   }) => {
     await backend.control.step({ do: "history", count: 600 });
     await openActivity(page, backend);
+    // A key goes to whatever has focus when it arrives, and a scroll needs a laid-out area taller
+    // than its view: check both before the key, so a miss names the cause.
+    await expect
+      .poll(() =>
+        region(page).evaluate((el) => el.scrollHeight - el.clientHeight),
+      )
+      .toBeGreaterThan(100);
     await region(page).focus();
+    await expect(region(page)).toBeFocused();
     await page.keyboard.press("PageDown");
     await expect
       .poll(() => region(page).evaluate((el) => el.scrollTop))
