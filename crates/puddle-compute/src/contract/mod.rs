@@ -568,7 +568,11 @@ mod tests {
                     assert!(CASES.contains(&name), "{}: no case {name}", c.check);
                 }
                 Coverage::Elsewhere { file, test } => {
-                    assert!(file.ends_with(".rs") && !test.is_empty(), "{}", c.check);
+                    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("..")
+                        .join(file);
+                    assert!(path.is_file(), "{}: no file {file}", c.check);
+                    assert!(!test.is_empty(), "{}: no description", c.check);
                 }
             }
         }
