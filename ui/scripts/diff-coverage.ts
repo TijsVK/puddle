@@ -174,8 +174,19 @@ export function judge(
   return report;
 }
 
+/** The environment without the variables a git hook exports, which would override `cwd`. */
+export function cleanGitEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const k of ["GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_PREFIX"])
+    delete out[k];
+  return out;
+}
+
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, {
+    env: cleanGitEnv(),
     cwd,
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,

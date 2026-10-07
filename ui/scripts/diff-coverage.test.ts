@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  cleanGitEnv,
   judge,
   parseDiff,
   parseExclusions,
@@ -129,7 +130,8 @@ describe("run on a real git repository", () => {
   function repo(): string {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "diff-coverage-")));
     dirs.push(dir);
-    const g = (...a: string[]) => execFileSync("git", a, { cwd: dir });
+    const g = (...a: string[]) =>
+      execFileSync("git", a, { cwd: dir, env: cleanGitEnv() });
     g("init", "-q");
     g("config", "user.email", "t@example.com");
     g("config", "user.name", "t");
@@ -176,5 +178,17 @@ describe("run on a real git repository", () => {
     const dir = repo();
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(run(opts(join(dir, "nope.info")), dir)).toBe(1);
+  });
+});
+
+describe("cleanGitEnv", () => {
+  it("drops the variables a git hook exports and keeps the rest", () => {
+    const env = cleanGitEnv({
+      GIT_DIR: "x",
+      GIT_INDEX_FILE: "y",
+      GIT_WORK_TREE: "z",
+      PATH: "p",
+    });
+    expect(env).toEqual({ PATH: "p" });
   });
 });
