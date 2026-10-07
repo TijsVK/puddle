@@ -3,6 +3,7 @@
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
 #   fmt, typos, spdx, shellcheck, platform-literals, standalone, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
+#   coverage-ratchet, diff-coverage,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast  = fmt typos spdx shellcheck platform-literals standalone   (pre-commit hook)
 #   all   = fast clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage
@@ -11,12 +12,15 @@
 # the Playwright browsers: `cd ui && npx playwright install --with-deps chromium webkit`.
 # Set CARGO to run every Cargo command through a wrapper, e.g. CARGO=mbx for the shared build
 # cache (docs/STANDARDS.md, "Shared build cache"); unset, it runs plain cargo.
-# Coverage thresholds live here (docs/STANDARDS.md, "Coverage"); raise them, never lower them
-# without the owner's OK.
+# Coverage (docs/STANDARDS.md, "Coverage"): the floors live here, the ratchet baseline in
+# scripts/coverage-baseline.json; raise them, never lower them without the owner's OK. A change's
+# added lines must also be covered (gates `coverage` for Rust, `ui` for the UI, `diff-coverage` by hand);
+# DIFF_BASE names the commit to measure from (CI sets it to the PR or push base), else the merge base
+# with origin/develop.
 set -eu
 
-COV_LINES=85
-COV_REGIONS=80
+COV_LINES=92
+COV_REGIONS=90
 # Unset it so the wrapper itself (mbx looks up `$CARGO` to find Cargo) doesn't call itself.
 cargo="${CARGO:-cargo}"
 unset CARGO
@@ -32,6 +36,34 @@ if [ "$(uname -s)" = Linux ] && [ -z "${CI:-}" ] && ! pkg-config --exists webkit
     echo "note: libwebkit2gtk-4.1-dev is not installed; skipping puddle-app in the Linux gates" \
         "(sudo apt install libwebkit2gtk-4.1-dev). CI builds and tests it." >&2
 fi
+
+# Prints the commit a change is measured from for the diff-coverage gate: $DIFF_BASE if it
+# resolves, else the merge base with origin/develop. Prints nothing when neither exists.
+diff_base() {
+    if [ -n "${DIFF_BASE:-}" ] && git cat-file -e "${DIFF_BASE}^{commit}" 2>/dev/null; then
+        echo "$DIFF_BASE"
+    elif git rev-parse --verify -q origin/develop >/dev/null; then
+        git merge-base HEAD origin/develop
+    fi
+}
+
+# Runs the diff-coverage script for one language: $1 label, $2 lcov file, $3 extensions, then
+# extra arguments. Needs a base; without one it skips locally and fails in CI (CI set).
+diff_coverage() {
+    label=$1 lcov=$2 exts=$3
+    shift 3
+    base=$(diff_base)
+    if [ -z "$base" ]; then
+        if [ -n "${CI:-}" ]; then
+            echo "$label: no base commit to measure the diff from (fetch-depth, DIFF_BASE)" >&2
+            return 1
+        fi
+        echo "note: no origin/develop to measure from; skipping $label" >&2
+        return 0
+    fi
+    node ui/scripts/diff-coverage.ts --base "$base" --lcov "$lcov" --exts "$exts" \
+        --exclusions scripts/diff-coverage-exclusions.txt --label "$label" "$@"
+}
 
 # Installs the UI's npm packages from the lock file, once per run.
 ui_installed=
@@ -121,6 +153,8 @@ run_gate() {
         # coverage thresholds in ui/vite.config.ts, then the production build.
         ui_install
         (cd ui && npm run format:check && npm run lint && npm run check && npm test)
+        # vitest's lcov paths are relative to ui/; the exclusion file's paths are repository-relative.
+        diff_coverage "diff-coverage (ui)" ui/coverage/lcov.info .ts,.svelte --prefix ui/
         ui_build
         ;;
     ui-licences)
@@ -160,13 +194,35 @@ run_gate() {
         # shellcheck disable=SC2086
         RUSTDOCFLAGS="-D warnings" "$cargo" doc --workspace $skip_app --no-deps --all-features --locked
         ;;
-    coverage)
+    coverage | coverage-ratchet)
+        # The tests with coverage, then the ratchet (floors above, baseline committed) and the
+        # diff-coverage gate on the lcov report. `coverage-ratchet` is the same run; either raises
+        # scripts/coverage-baseline.json when coverage went up (not in CI), for you to commit.
+        ui_install
+        target=${CARGO_TARGET_DIR:-target}
         # shellcheck disable=SC2086
         "$cargo" llvm-cov nextest --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}" \
-            --fail-under-lines "$COV_LINES" --fail-under-regions "$COV_REGIONS" \
-            --lcov --output-path "${CARGO_TARGET_DIR:-target}/lcov.info"
+            --lcov --output-path "$target/lcov.info"
         "$cargo" llvm-cov report --summary-only
+        "$cargo" llvm-cov report --json --summary-only --output-path "$target/coverage-summary.json"
+        ratchet="--summary $target/coverage-summary.json --baseline scripts/coverage-baseline.json"
+        ratchet="$ratchet --floor-lines $COV_LINES --floor-regions $COV_REGIONS"
+        [ -n "${CI:-}" ] || ratchet="$ratchet --write"
+        base=$(diff_base)
+        if [ -n "$base" ] && git cat-file -e "$base:scripts/coverage-baseline.json" 2>/dev/null; then
+            git show "$base:scripts/coverage-baseline.json" >"$target/coverage-baseline.previous.json"
+            ratchet="$ratchet --previous $target/coverage-baseline.previous.json"
+        fi
+        # shellcheck disable=SC2086
+        node ui/scripts/coverage-ratchet.ts $ratchet
+        diff_coverage "diff-coverage (rust)" "$target/lcov.info" .rs
+        ;;
+    diff-coverage)
+        # By hand, after `coverage` and `ui` ran: both reports against the base. Untracked new
+        # files are invisible to git diff; `git add -N <file>` first.
+        diff_coverage "diff-coverage (rust)" "${CARGO_TARGET_DIR:-target}/lcov.info" .rs
+        diff_coverage "diff-coverage (ui)" ui/coverage/lcov.info .ts,.svelte --prefix ui/
         ;;
     *)
         echo "unknown gate: $1" >&2

@@ -239,15 +239,37 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 ## 9. Coverage
 
-- Measured by `cargo llvm-cov nextest` over the whole workspace on Linux, in every CI run.
-- **Gate: lines ≥ 85 %, regions ≥ 80 %** (workspace totals, `scripts/check.sh`). The thresholds
-  only go up; lowering one needs the owner's OK.
+- Measured by `cargo llvm-cov nextest` over the whole workspace on Linux, in every CI run; the UI by
+  vitest's v8 coverage (`npm test`).
+- **Gate: lines ≥ 92 %, regions ≥ 90 %** (workspace totals, floors in `scripts/check.sh`), and a
+  **ratchet**: coverage may not fall below `scripts/coverage-baseline.json`, the best value reached so far
+  (rounded down to 0.1). The floors and the baseline only go up; lowering either needs the owner's OK, and
+  a change that lowers the committed baseline fails the gate unless `COVERAGE_BASELINE_LOWER_OK=1` is set
+  (put the owner's OK in the commit message).
+- **Raising the baseline is automatic.** A local `scripts/check.sh coverage` (the pre-push hook runs it)
+  rewrites the baseline when coverage rose; commit the changed file with your change. CI never writes it,
+  it only compares and tells you when the baseline is behind. If two branches raise it, take the higher
+  value when merging. The ratchet reads two totals: a drop in one crate hidden by a gain elsewhere passes
+  it, which is what the diff gate is for.
+- **Diff coverage: every line a change adds or changes must be executed by a test.** Rust lines are checked
+  against the llvm-cov lcov report (gate `coverage`), TypeScript and Svelte lines against vitest's lcov
+  report (gate `ui`); `scripts/check.sh diff-coverage` re-runs both on existing reports. The change is the
+  working tree against a base commit: locally the merge base with `origin/develop`, in CI the PR's base or
+  the push's previous head (`DIFF_BASE`). Tool: `ui/scripts/diff-coverage.ts` (own code, no dependency;
+  tests beside it).
+  A line that legitimately can't run in CI goes in `scripts/diff-coverage-exclusions.txt`:
+  `path glob | text in the line, or * | reason`, one reason per entry, reviewed like code.
+  What it can't see: lines with no coverage data (comments, declarations, code compiled out of the Linux
+  run such as `cfg(windows)` lines), files absent from the report (listed as "not measured", never
+  failed), branch or region detail inside a covered line, and whether a covered line is asserted.
+  A pass means "a test ran it".
 - **Expectation above the gate:** security-sensitive modules (§5) aim for ≥ 95 % lines, and every
   branch of a decision (allow/deny/pending, each toggle) has a test. A change that lowers a
   crate's coverage says why in the commit.
 - Code that can't run in CI (Windows-only code on Linux, VM paths) is covered by its own tier
-  (Windows job, L3/L4), not excluded. Exclusions from the report (`--ignore-filename-regex`) only
-  for generated code, listed in `scripts/check.sh` with a comment.
+  (Windows job, L3/L4), not excluded from the report. Exclusions from the report
+  (`--ignore-filename-regex`) only for generated code, listed in `scripts/check.sh` with a comment;
+  exclusions from the diff gate are the file above.
 
 ## 10. CI
 

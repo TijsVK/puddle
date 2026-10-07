@@ -39,6 +39,8 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the UI diff-coverage gate needs the base commit
       - name: anything new since the last green run?
         id: changed
         shell: bash
@@ -88,6 +90,8 @@ jobs:
       - name: UI (format, lint, types, unit and component tests with coverage, build)
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash
+        env:
+          DIFF_BASE: ${{ github.event.pull_request.base.sha }}
         run: scripts/check.sh ui
       - name: UI end-to-end (Playwright on the installed Edge, axe)
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}

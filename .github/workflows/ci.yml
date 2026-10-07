@@ -29,6 +29,9 @@ env:
   # the msb SDK (puddle-vm-tests) stay small enough for the runner's disk (full debug info filled
   # it: `ld terminated with signal 7 [Bus error]`).
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # The commit the diff-coverage gate measures from: the PR's base, or the push's previous head
+  # (empty or unknown, e.g. a new branch or a manual run: scripts/check.sh uses the merge base with origin/develop).
+  DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
 
 jobs:
   linux:
@@ -37,6 +40,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the diff-coverage gate needs the base commit
       - name: Free disk space (preinstalled SDKs this job doesn't use)
         run: |
           df -h /

@@ -1,0 +1,6 @@
+# Lines the diff-coverage gate accepts although a coverage run measured them as never executed.
+# One entry per line: path glob | text the added line contains (or * for every such line in the file) | reason.
+# `*` matches within a directory, `**` across directories. Reviewed like code: say why a test can't
+# reach it. Code that runs only on another OS or in a VM is covered by that tier (docs/STANDARDS.md,
+# "Coverage"), so list it here, with that tier named in the reason, rather than leaving it unexplained.
+# A new entry needs a reason a reviewer accepts; stale entries are reported by the gate.
