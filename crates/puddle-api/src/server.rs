@@ -28,6 +28,7 @@ use crate::routes::{AppState, api_router};
 use crate::settings::SettingsRepo;
 use crate::token::{ApiToken, ConnectionInfo};
 use crate::ui::{UiAssets, UiService};
+use crate::workspaces::{NoWorkspaces, WorkspaceService};
 
 /// Largest request body (the biggest real one, a settings document, is well under 4 KiB).
 const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -99,6 +100,9 @@ pub struct Services {
     pub events: Arc<EventHub>,
     /// The clock consents are stamped with.
     pub clock: Arc<dyn Clock>,
+    /// The workspaces resource. [`Services::new`] starts with [`NoWorkspaces`], which answers
+    /// 503; set the real one with [`Services::with_workspaces`].
+    pub workspaces: Arc<dyn WorkspaceService>,
 }
 
 impl Services {
@@ -115,7 +119,15 @@ impl Services {
             settings,
             events,
             clock,
+            workspaces: Arc::new(NoWorkspaces),
         }
+    }
+
+    /// These services with this workspaces implementation.
+    #[must_use]
+    pub fn with_workspaces(mut self, workspaces: Arc<dyn WorkspaceService>) -> Self {
+        self.workspaces = workspaces;
+        self
     }
 }
 
@@ -169,6 +181,7 @@ impl ApiServer {
             settings_lock: Arc::new(Mutex::new(())),
             events: services.events,
             clock: services.clock,
+            workspaces: services.workspaces,
             shutdown,
         };
         let ui = config.ui.clone().map(UiService::new);

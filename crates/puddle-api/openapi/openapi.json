@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "paths": {
     "/api/audit": {
@@ -1666,6 +1666,818 @@
           }
         }
       }
+    },
+    "/api/workspaces": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Every workspace.",
+        "operationId": "list_workspaces",
+        "responses": {
+          "200": {
+            "description": "the workspaces",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Creates a workspace: its disk, then a clone of the repository. Answers 202; follow it with\n`workspace_progress` events.",
+        "operationId": "create_workspace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewWorkspaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "creation started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the name is taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid name, repository URL (including SSH remotes), image or memory",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "workspaces are not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "One workspace.",
+        "operationId": "get_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Deletes a stopped workspace, its disk included. The body must confirm. The service checks\nagain first and refuses (409) unless the fresh check has the `fingerprint` the user saw, or\nis clean when none is sent. Answers 202.",
+        "operationId": "delete_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteWorkspaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "delete accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "running, busy, or changed since it was checked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/attach": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Opens a running workspace in VS Code: on the desktop (puddle opens it) or in the browser\n(the response has the URL, the caller opens it).",
+        "operationId": "attach_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "what was done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "not running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/delete-check": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "What deleting the workspace would lose: uncommitted changes, unpushed commits, stashes and\ndata outside any checkout. Can take a while (it looks inside the workspace).",
+        "operationId": "delete_check",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteCheck"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/reclaim": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Gives the disk space the workspace freed back to the host. Answers 202.",
+        "operationId": "reclaim_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "reclaim accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/start": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Starts a workspace that is down. Answers 202.",
+        "operationId": "start_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "start accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already running or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/stop": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Stops a running workspace. Answers 202.",
+        "operationId": "stop_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "stop accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "not running or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1695,6 +2507,57 @@
           "message": {
             "type": "string",
             "description": "Human-readable, lower case, no trailing period. Never contains a token."
+          }
+        }
+      },
+      "AttachMode": {
+        "type": "string",
+        "description": "How to open the workspace in an editor.",
+        "enum": [
+          "desktop",
+          "browser"
+        ]
+      },
+      "AttachRequest": {
+        "type": "object",
+        "description": "`POST /api/workspaces/{id}/attach`.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/AttachMode",
+            "description": "Where to open it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AttachResponse": {
+        "type": "object",
+        "description": "What an attach did.",
+        "required": [
+          "opened",
+          "url",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why nothing was opened, when that is not an error (for example VS Code is not\ninstalled)."
+          },
+          "opened": {
+            "type": "boolean",
+            "description": "Whether puddle opened an editor itself (desktop mode, when it worked)."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the browser editor is, in browser mode; the caller opens it."
           }
         }
       },
@@ -1936,6 +2799,83 @@
         },
         "additionalProperties": false
       },
+      "DeleteCheck": {
+        "type": "object",
+        "description": "`GET /api/workspaces/{id}/delete-check`: what deleting the workspace would lose. Text comes\nfrom the guest: escape it when rendering.",
+        "required": [
+          "workspace",
+          "clean",
+          "repos",
+          "other",
+          "errors",
+          "removes_sandbox",
+          "fingerprint"
+        ],
+        "properties": {
+          "clean": {
+            "type": "boolean",
+            "description": "Whether deleting loses nothing the check can see."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What could not be checked. Anything here makes `clean` false."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "Identifies exactly this report: send it back in the delete request, which is refused if\nthe workspace has changed since."
+          },
+          "other": {
+            "$ref": "#/components/schemas/FindingList",
+            "description": "Data outside any checkout."
+          },
+          "removes_sandbox": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SandboxName",
+                "description": "The stopped sandbox that is removed together with the workspace."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoFindings"
+            },
+            "description": "Every checkout, clean or not."
+          },
+          "workspace": {
+            "type": "string",
+            "description": "The workspace's id."
+          }
+        }
+      },
+      "DeleteWorkspaceRequest": {
+        "type": "object",
+        "description": "`DELETE /api/workspaces/{id}`.",
+        "required": [
+          "confirm"
+        ],
+        "properties": {
+          "confirm": {
+            "type": "boolean",
+            "description": "Must be `true`: the user confirmed."
+          },
+          "fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `fingerprint` of the delete check the user saw. Left out or `null` means \"I saw\nnothing to lose\": the delete goes ahead only if a fresh check is clean."
+          }
+        },
+        "additionalProperties": false
+      },
       "Effect": {
         "type": "string",
         "description": "Allow or deny.",
@@ -2029,6 +2969,7 @@
           "not_found",
           "conflict",
           "newer_settings",
+          "unavailable",
           "internal"
         ]
       },
@@ -2090,9 +3031,65 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A workspace operation (create, start, stop, reclaim, delete) moved on. An operation ends\nwith one event whose step is [`WorkspaceStep::Done`] or [`WorkspaceStep::Failed`].",
+            "required": [
+              "sandbox",
+              "step",
+              "detail",
+              "type"
+            ],
+            "properties": {
+              "detail": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "More about the step, or why it failed; `null` when there is nothing to add. It can\nquote tool output: escape it when rendering."
+              },
+              "sandbox": {
+                "$ref": "#/components/schemas/SandboxName",
+                "description": "The workspace's sandbox."
+              },
+              "step": {
+                "$ref": "#/components/schemas/WorkspaceStep",
+                "description": "What it is doing now."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_progress"
+                ]
+              }
+            }
           }
         ],
         "description": "Something the user should hear about. Serialised as one internally tagged enum\n(`{\"type\":\"oom_kill\",...}`, ADR 0002).\n\nMost events are about one sandbox and carry a `sandbox` field; global ones (crash report\nwaiting, consent needed, network change, ...) carry none, and [`Event::sandbox`] returns\n`None` for them."
+      },
+      "FindingList": {
+        "type": "object",
+        "description": "A bounded list of lines from the unsaved-work check.",
+        "required": [
+          "items",
+          "more"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The first items."
+          },
+          "more": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many more there are.",
+            "minimum": 0
+          }
+        }
       },
       "GlobalSettingsRequest": {
         "type": "object",
@@ -2292,6 +3289,42 @@
         },
         "additionalProperties": false
       },
+      "NewWorkspaceRequest": {
+        "type": "object",
+        "description": "`POST /api/workspaces`.",
+        "required": [
+          "name",
+          "repo_url"
+        ],
+        "properties": {
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The image to boot; left out or `null` is the default devcontainer image."
+          },
+          "memory_mib": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Memory in MiB (256 to 1048576); left out or `null` is the default.",
+            "maximum": 1048576,
+            "minimum": 256
+          },
+          "name": {
+            "$ref": "#/components/schemas/SandboxName",
+            "description": "The workspace's name, which is also its sandbox's name."
+          },
+          "repo_url": {
+            "type": "string",
+            "description": "The repository to clone, as an `https://` URL without credentials. SSH remotes\n(`git@host:path`, `ssh://`) are refused with a message saying so."
+          }
+        },
+        "additionalProperties": false
+      },
       "PatternKind": {
         "type": "string",
         "description": "How a rule's pattern matches.",
@@ -2413,6 +3446,39 @@
           "denied",
           "expired"
         ]
+      },
+      "RepoFindings": {
+        "type": "object",
+        "description": "What one checkout holds that is not on a remote.",
+        "required": [
+          "dir",
+          "clean",
+          "uncommitted",
+          "unpushed",
+          "stashes"
+        ],
+        "properties": {
+          "clean": {
+            "type": "boolean",
+            "description": "Whether nothing in it would be lost."
+          },
+          "dir": {
+            "type": "string",
+            "description": "The checkout's directory in the workspace."
+          },
+          "stashes": {
+            "$ref": "#/components/schemas/FindingList",
+            "description": "Stashes."
+          },
+          "uncommitted": {
+            "$ref": "#/components/schemas/FindingList",
+            "description": "Uncommitted changes and untracked files (`git status --porcelain` lines)."
+          },
+          "unpushed": {
+            "$ref": "#/components/schemas/FindingList",
+            "description": "Commits on no remote branch (`<hash> <subject>`)."
+          }
+        }
       },
       "ResolvedBool": {
         "type": "object",
@@ -2803,6 +3869,131 @@
           }
         },
         "additionalProperties": false
+      },
+      "Workspace": {
+        "type": "object",
+        "description": "A workspace: a repository checkout on its own disk, and the sandbox that runs it.",
+        "required": [
+          "id",
+          "name",
+          "repo_url",
+          "image",
+          "memory_mib",
+          "status",
+          "busy",
+          "created_at",
+          "disk_size_mib",
+          "disk_used_mib",
+          "first_connect_notice_due"
+        ],
+        "properties": {
+          "busy": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceOperation",
+                "description": "The operation in progress; `null` when idle."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms it was created.",
+            "minimum": 0
+          },
+          "disk_size_mib": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The disk's size in MiB: the most the workspace can hold.",
+            "minimum": 0
+          },
+          "disk_used_mib": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "What the disk holds in MiB; `null` when not known.",
+            "minimum": 0
+          },
+          "first_connect_notice_due": {
+            "type": "boolean",
+            "description": "Whether the first-connect notice has to be shown before the first desktop attach. A\nsuccessful desktop attach clears it."
+          },
+          "id": {
+            "type": "string",
+            "description": "The id used in paths. Today it is the workspace's name."
+          },
+          "image": {
+            "type": "string",
+            "description": "The image its sandbox boots."
+          },
+          "memory_mib": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Memory in MiB, applied at the next start.",
+            "minimum": 0
+          },
+          "name": {
+            "$ref": "#/components/schemas/SandboxName",
+            "description": "The name of the sandbox that runs it; events and per-sandbox settings use this name."
+          },
+          "repo_url": {
+            "type": "string",
+            "description": "The HTTPS URL it was cloned from."
+          },
+          "status": {
+            "$ref": "#/components/schemas/SandboxStatus",
+            "description": "The sandbox's state."
+          }
+        }
+      },
+      "WorkspaceList": {
+        "type": "object",
+        "description": "`GET /api/workspaces`.",
+        "required": [
+          "workspaces"
+        ],
+        "properties": {
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Workspace"
+            },
+            "description": "Every workspace, ordered by id."
+          }
+        }
+      },
+      "WorkspaceOperation": {
+        "type": "string",
+        "description": "The long operation a workspace is in the middle of; progress comes as\n`workspace_progress` events.",
+        "enum": [
+          "creating",
+          "starting",
+          "stopping",
+          "reclaiming",
+          "deleting"
+        ]
+      },
+      "WorkspaceStep": {
+        "type": "string",
+        "description": "Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.",
+        "enum": [
+          "preparing_volume",
+          "pulling_image",
+          "cloning",
+          "starting",
+          "syncing",
+          "checking",
+          "reclaiming",
+          "stopping",
+          "removing",
+          "done",
+          "failed"
+        ]
       }
     },
     "securitySchemes": {
@@ -2845,6 +4036,10 @@
     {
       "name": "consents",
       "description": "What the user agreed to"
+    },
+    {
+      "name": "workspaces",
+      "description": "Workspaces: repository checkouts with their own disk and sandbox"
     }
   ]
 }

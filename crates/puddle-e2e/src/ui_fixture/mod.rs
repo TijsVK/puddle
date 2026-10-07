@@ -4,8 +4,9 @@
 //!
 //! A UI test therefore exercises the real Host/Origin/token guard, error bodies, SSE framing and
 //! wire types; only what sits behind the API is fake. When a later task puts a new service behind
-//! the API (workspaces, say), its fake is built in `Fixture::build_state`, and a field in
-//! [`Scenario`] seeds it; new events need nothing here (an [`Event`](puddle_types::Event) in JSON
+//! the API, its fake is built in `Fixture::build_state`, and a field in [`Scenario`] seeds it
+//! (workspaces are the first: [`WorkspaceSeed`]); new events need nothing here (an
+//! [`Event`](puddle_types::Event) in JSON
 //! is a step).
 //!
 //! The fixture is for tests and development only. It listens on `127.0.0.1`, keeps nothing on
@@ -22,13 +23,14 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, ConnectionInfo, EventHub, MemorySettings, RunningApi, Services,
-    SettingsRepo,
+    ApiConfig, ApiServer, ApiToken, ConnectionInfo, EventHub, FakeLauncher, FakeWorkspaces,
+    Launcher, Listing, MemorySettings, Operation, RepoFindings, RepoUrl, RunningApi, Services,
+    SettingsRepo, Unsaved, WorkspaceRecord,
 };
 use puddle_store::{Actor, Clock, Limits, ManualClock, NewRule, Pattern, Scope, Store};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, EventSink,
-    Host, SandboxName, SuffixAllows,
+    Host, ImageRef, MemoryMib, SandboxName, SandboxStatus, SuffixAllows, WorkspaceId,
 };
 use tokio::sync::Mutex;
 
@@ -37,7 +39,8 @@ pub mod control;
 pub mod scenario;
 
 pub use scenario::{
-    ConnectionSeed, DecisionSeed, EffectSeed, RequestSeed, RuleSeed, Scenario, SettingsSeed, Step,
+    ConnectionSeed, DecisionSeed, EffectSeed, RepoSeed, RequestSeed, RuleSeed, Scenario,
+    SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
@@ -106,6 +109,7 @@ struct State {
     clock: Arc<ManualClock>,
     events: Arc<EventHub>,
     settings: Arc<MemorySettings>,
+    workspaces: FakeWorkspaces,
     api: Option<RunningApi>,
 }
 
@@ -150,11 +154,18 @@ impl Fixture {
         );
         let events = Arc::new(EventHub::default());
         let settings = Arc::new(MemorySettings::default());
+        let workspaces = FakeWorkspaces::with_options(
+            events.clone(),
+            clock.clone() as Arc<dyn Clock>,
+            Arc::new(FakeLauncher::new()) as Arc<dyn Launcher>,
+            Duration::from_millis(scenario.workspace_step_delay_ms),
+        );
         let state = State {
             store,
             clock,
             events,
             settings,
+            workspaces,
             api: None,
         };
         state.seed(scenario)?;
@@ -172,7 +183,8 @@ impl Fixture {
                 state.settings.clone() as Arc<dyn SettingsRepo>,
                 state.events.clone(),
                 state.clock.clone() as Arc<dyn Clock>,
-            );
+            )
+            .with_workspaces(Arc::new(state.workspaces.clone()));
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
                 self.token.clone(),
@@ -413,6 +425,9 @@ impl State {
         for connection in &scenario.connections {
             self.connection(connection, start)?;
         }
+        for workspace in &scenario.workspaces {
+            self.workspace(workspace, start)?;
+        }
         if let Some(global) = &scenario.settings.global {
             self.settings
                 .save_global(global.clone())
@@ -473,7 +488,70 @@ impl State {
             }
             Step::Rule(rule) => self.add_rule(rule, now)?,
             Step::Connection(connection) => self.connection(connection, now)?,
+            Step::HoldWorkspaces => self.workspaces.hold(),
+            Step::ReleaseWorkspaces => self.workspaces.release(),
+            Step::FailWorkspace { operation, reason } => self.workspaces.fail_next(
+                match operation {
+                    WorkspaceOperationSeed::Create => Operation::Creating,
+                    WorkspaceOperationSeed::Start => Operation::Starting,
+                    WorkspaceOperationSeed::Stop => Operation::Stopping,
+                    WorkspaceOperationSeed::Reclaim => Operation::Reclaiming,
+                    WorkspaceOperationSeed::Delete => Operation::Deleting,
+                },
+                reason.clone(),
+            ),
         }
+        Ok(())
+    }
+
+    fn workspace(&self, seed: &WorkspaceSeed, now: u64) -> Result<(), String> {
+        let name = sandbox(&seed.name)?;
+        let id = WorkspaceId::new(&seed.name)
+            .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
+        let repo_url = RepoUrl::parse(&seed.repo_url)
+            .map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
+        let mut record = WorkspaceRecord::new(id, name, repo_url.as_str());
+        if let Some(image) = &seed.image {
+            record.image = ImageRef::new(image)
+                .map_err(|err| format!("workspace {:?}: {err}", seed.name))?
+                .as_str()
+                .to_owned();
+        }
+        if let Some(mib) = seed.memory_mib {
+            record.memory =
+                MemoryMib::new(mib).map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
+        }
+        record.status = match seed.status {
+            StatusSeed::Created => SandboxStatus::Created,
+            StatusSeed::Running => SandboxStatus::Running,
+            StatusSeed::Stopped => SandboxStatus::Stopped,
+            StatusSeed::Crashed => SandboxStatus::Crashed,
+        };
+        record.created_at = now.saturating_sub(seed.ago_ms);
+        record.disk_used_mib = seed.disk_used_mib;
+        record.first_connect_notice_due = seed.first_connect_notice_due;
+        let list = |items: &[String]| Listing {
+            items: items.to_vec(),
+            more: 0,
+        };
+        self.workspaces.seed(
+            record,
+            Unsaved {
+                repos: seed
+                    .unsaved
+                    .repos
+                    .iter()
+                    .map(|r| RepoFindings {
+                        dir: r.dir.clone(),
+                        uncommitted: list(&r.uncommitted),
+                        unpushed: list(&r.unpushed),
+                        stashes: list(&r.stashes),
+                    })
+                    .collect(),
+                other: list(&seed.unsaved.other),
+                errors: seed.unsaved.errors.clone(),
+            },
+        );
         Ok(())
     }
 

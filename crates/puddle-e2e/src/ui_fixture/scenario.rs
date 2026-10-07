@@ -43,6 +43,14 @@ pub struct Scenario {
     /// Extra `connection` audit records (allowed traffic, blocks) that open nothing.
     #[serde(default)]
     pub connections: Vec<ConnectionSeed>,
+    /// Workspaces that exist at start, with the state they are in.
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceSeed>,
+    /// How long the fake workspace service pauses between the steps of an operation (create,
+    /// start, ...), in ms. Zero (the default) runs them back to back; tests that need to look
+    /// at the busy state use the `hold_workspaces` step instead.
+    #[serde(default)]
+    pub workspace_step_delay_ms: u64,
     /// Settings documents kept as given.
     #[serde(default)]
     pub settings: SettingsSeed,
@@ -86,6 +94,104 @@ pub enum EffectSeed {
     Allow,
     /// Refuse.
     Deny,
+}
+
+/// A workspace that exists at start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceSeed {
+    /// The name (also the id).
+    pub name: String,
+    /// The repository, an `https://` URL.
+    pub repo_url: String,
+    /// The image; the default image when left out.
+    #[serde(default)]
+    pub image: Option<String>,
+    /// Memory in MiB; the default when left out.
+    #[serde(default)]
+    pub memory_mib: Option<u32>,
+    /// Its state; `stopped` when left out.
+    #[serde(default)]
+    pub status: StatusSeed,
+    /// Created this long before now (ms).
+    #[serde(default)]
+    pub ago_ms: u64,
+    /// What the disk holds, in MiB.
+    #[serde(default)]
+    pub disk_used_mib: Option<u64>,
+    /// Whether the first-connect notice is still due; `true` when left out.
+    #[serde(default = "yes")]
+    pub first_connect_notice_due: bool,
+    /// What deleting it would lose; nothing when left out.
+    #[serde(default)]
+    pub unsaved: UnsavedSeed,
+}
+
+const fn yes() -> bool {
+    true
+}
+
+/// A workspace's state at start.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StatusSeed {
+    /// Created, never started.
+    Created,
+    /// Running.
+    Running,
+    /// Stopped.
+    #[default]
+    Stopped,
+    /// Ended without a stop.
+    Crashed,
+}
+
+/// What the delete check finds in a workspace.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnsavedSeed {
+    /// Per checkout.
+    #[serde(default)]
+    pub repos: Vec<RepoSeed>,
+    /// Data outside any checkout.
+    #[serde(default)]
+    pub other: Vec<String>,
+    /// What the check could not read.
+    #[serde(default)]
+    pub errors: Vec<String>,
+}
+
+/// One checkout's findings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoSeed {
+    /// The directory.
+    pub dir: String,
+    /// `git status --porcelain` lines.
+    #[serde(default)]
+    pub uncommitted: Vec<String>,
+    /// `<hash> <subject>` lines.
+    #[serde(default)]
+    pub unpushed: Vec<String>,
+    /// `git stash list` lines.
+    #[serde(default)]
+    pub stashes: Vec<String>,
+}
+
+/// A long workspace operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceOperationSeed {
+    /// Create.
+    Create,
+    /// Start.
+    Start,
+    /// Stop.
+    Stop,
+    /// Reclaim space.
+    Reclaim,
+    /// Delete.
+    Delete,
 }
 
 /// A workspace asking for `host:port`.
@@ -199,6 +305,17 @@ pub enum Step {
     Spread {
         /// How many requests.
         count: u64,
+    },
+    /// Holds every workspace operation before its next step, so the busy state stays put.
+    HoldWorkspaces,
+    /// Lets held workspace operations go on.
+    ReleaseWorkspaces,
+    /// Makes the next operation of this kind fail after its steps (once).
+    FailWorkspace {
+        /// Which operation.
+        operation: WorkspaceOperationSeed,
+        /// The reason the failed event carries.
+        reason: String,
     },
     /// Creates a rule.
     Rule(RuleSeed),

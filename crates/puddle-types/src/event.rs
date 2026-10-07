@@ -90,9 +90,51 @@ pub enum Event {
         /// The killed process's name (`comm`), cleaned by [`Event::oom_kill`].
         process: String,
     },
+    /// A workspace operation (create, start, stop, reclaim, delete) moved on. An operation ends
+    /// with one event whose step is [`WorkspaceStep::Done`] or [`WorkspaceStep::Failed`].
+    WorkspaceProgress {
+        /// The workspace's sandbox.
+        sandbox: SandboxName,
+        /// What it is doing now.
+        step: WorkspaceStep,
+        /// More about the step, or why it failed; `null` when there is nothing to add. It can
+        /// quote tool output: escape it when rendering.
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
+        detail: Option<String>,
+    },
     /// A global event, standing in for the real ones until the first lands.
     #[cfg(test)]
     TestGlobal,
+}
+
+/// Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub enum WorkspaceStep {
+    /// Creating the workspace's disk volume.
+    PreparingVolume,
+    /// Pulling the workspace's image.
+    PullingImage,
+    /// Cloning the repository.
+    Cloning,
+    /// Booting the workspace's virtual machine.
+    Starting,
+    /// Bringing the checkouts in line with the volume after a boot.
+    Syncing,
+    /// Looking for work that is not on a remote.
+    Checking,
+    /// Giving freed disk space back to the host.
+    Reclaiming,
+    /// Shutting the virtual machine down.
+    Stopping,
+    /// Removing the volume and the sandbox.
+    Removing,
+    /// The operation finished.
+    Done,
+    /// The operation failed; `detail` says why.
+    Failed,
 }
 
 impl Event {
@@ -128,7 +170,9 @@ impl Event {
     #[must_use]
     pub fn sandbox(&self) -> Option<&SandboxName> {
         match self {
-            Self::StatusChanged { sandbox, .. } | Self::OomKill { sandbox, .. } => Some(sandbox),
+            Self::StatusChanged { sandbox, .. }
+            | Self::OomKill { sandbox, .. }
+            | Self::WorkspaceProgress { sandbox, .. } => Some(sandbox),
             #[cfg(test)]
             Self::TestGlobal => None,
         }
@@ -259,6 +303,47 @@ mod tests {
         assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), s);
         assert_eq!(s.sandbox(), Some(&name()));
         assert_eq!(e.sandbox(), Some(&name()));
+    }
+
+    #[test]
+    fn workspace_progress_is_per_sandbox_and_always_carries_detail() {
+        let steps = [
+            (WorkspaceStep::PreparingVolume, "preparing_volume"),
+            (WorkspaceStep::PullingImage, "pulling_image"),
+            (WorkspaceStep::Cloning, "cloning"),
+            (WorkspaceStep::Starting, "starting"),
+            (WorkspaceStep::Syncing, "syncing"),
+            (WorkspaceStep::Checking, "checking"),
+            (WorkspaceStep::Reclaiming, "reclaiming"),
+            (WorkspaceStep::Stopping, "stopping"),
+            (WorkspaceStep::Removing, "removing"),
+            (WorkspaceStep::Done, "done"),
+            (WorkspaceStep::Failed, "failed"),
+        ];
+        for (step, text) in steps {
+            let e = Event::WorkspaceProgress {
+                sandbox: name(),
+                step,
+                detail: None,
+            };
+            let json = serde_json::to_string(&e).unwrap();
+            assert_eq!(
+                json,
+                format!(
+                    r#"{{"type":"workspace_progress","sandbox":"box","step":"{text}","detail":null}}"#
+                )
+            );
+            assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), e);
+            assert_eq!(e.sandbox(), Some(&name()));
+        }
+        let with_detail: Event = serde_json::from_str(
+            r#"{"type":"workspace_progress","sandbox":"box","step":"failed","detail":"disk full"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            with_detail,
+            Event::WorkspaceProgress { detail: Some(ref d), .. } if d == "disk full"
+        ));
     }
 
     #[test]

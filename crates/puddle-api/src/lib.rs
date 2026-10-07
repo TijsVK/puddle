@@ -48,6 +48,7 @@ mod auth;
 mod error;
 mod events;
 mod extract;
+mod fake_workspaces;
 mod openapi;
 mod routes;
 mod server;
@@ -55,9 +56,11 @@ mod settings;
 mod token;
 mod ui;
 pub mod wire;
+mod workspaces;
 
 pub use error::{ApiErrorBody, ErrorCode};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
+pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
 pub use openapi::{API_VERSION, openapi, openapi_json};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
@@ -65,3 +68,8 @@ pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};
 #[cfg(feature = "embedded-ui")]
 pub use ui::EmbeddedUi;
 pub use ui::{UiAssets, UiFile};
+pub use workspaces::{
+    AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, LaunchError, Launcher,
+    Listing, MAX_REPO_URL_LEN, NewWorkspace, NoWorkspaces, Operation, RepoFindings, RepoUrl,
+    WorkspaceError, WorkspaceRecord, WorkspaceService,
+};

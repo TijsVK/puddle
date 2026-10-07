@@ -11,13 +11,13 @@ use tokio::net::TcpStream;
 use crate::common::{Api, STEP, start};
 
 /// An open event stream and what has been read from it so far.
-struct Stream {
+pub(crate) struct Stream {
     tcp: TcpStream,
-    buf: String,
+    pub(crate) buf: String,
 }
 
 impl Stream {
-    async fn open(api: &Api, query: &str) -> Self {
+    pub(crate) async fn open(api: &Api, query: &str) -> Self {
         let mut tcp = TcpStream::connect(api.addr).await.unwrap();
         let request = format!(
             "GET /api/events{query} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nAccept: text/event-stream\r\n\r\n",
@@ -49,7 +49,7 @@ impl Stream {
         s
     }
 
-    async fn read_until(&mut self, done: impl Fn(&str) -> bool) {
+    pub(crate) async fn read_until(&mut self, done: impl Fn(&str) -> bool) {
         let mut chunk = [0u8; 4096];
         tokio::time::timeout(STEP, async {
             while !done(&self.buf) {
@@ -63,7 +63,7 @@ impl Stream {
     }
 
     /// The JSON of every `data:` line read so far.
-    fn data(&self) -> Vec<Value> {
+    pub(crate) fn data(&self) -> Vec<Value> {
         self.buf
             .lines()
             .filter_map(|l| l.strip_prefix("data: "))

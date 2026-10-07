@@ -11,8 +11,9 @@
 
 mod common;
 
-mod events;
+pub(crate) mod events;
 mod guard;
 mod routes;
 mod settings;
 mod ui;
+mod workspaces;

@@ -11,6 +11,7 @@ use utoipa_axum::routes;
 
 use crate::events::EventHub;
 use crate::settings::SettingsRepo;
+use crate::workspaces::WorkspaceService;
 
 mod audit;
 mod events;
@@ -18,6 +19,7 @@ mod meta;
 mod pending;
 mod rules;
 mod settings;
+mod workspaces;
 
 /// What the handlers share.
 #[derive(Clone)]
@@ -28,6 +30,7 @@ pub(crate) struct AppState {
     pub(crate) settings_lock: Arc<Mutex<()>>,
     pub(crate) events: Arc<EventHub>,
     pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) workspaces: Arc<dyn WorkspaceService>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }
@@ -51,4 +54,17 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(settings::get_sandbox, settings::put_sandbox))
         .routes(routes!(settings::get_consents))
         .routes(routes!(settings::put_consent))
+        .routes(routes!(
+            workspaces::list_workspaces,
+            workspaces::create_workspace
+        ))
+        .routes(routes!(
+            workspaces::get_workspace,
+            workspaces::delete_workspace
+        ))
+        .routes(routes!(workspaces::start_workspace))
+        .routes(routes!(workspaces::stop_workspace))
+        .routes(routes!(workspaces::reclaim_workspace))
+        .routes(routes!(workspaces::delete_check))
+        .routes(routes!(workspaces::attach_workspace))
 }

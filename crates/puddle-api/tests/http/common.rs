@@ -8,7 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, RunningApi, Services, SettingsRepo,
+    ApiConfig, ApiServer, ApiToken, EventHub, FakeLauncher, FakeWorkspaces, Launcher,
+    MemorySettings, RunningApi, Services, SettingsRepo,
 };
 use puddle_store::{Limits, ManualClock, Store};
 use puddle_types::{EgressRequest, Host, PendingId, SandboxName, SuffixAllows};
@@ -30,6 +31,8 @@ pub(crate) struct Api {
     pub(crate) events: Arc<EventHub>,
     pub(crate) settings: Arc<MemorySettings>,
     pub(crate) clock: Arc<ManualClock>,
+    pub(crate) workspaces: FakeWorkspaces,
+    pub(crate) launcher: Arc<FakeLauncher>,
 }
 
 pub(crate) async fn start() -> Api {
@@ -37,23 +40,41 @@ pub(crate) async fn start() -> Api {
 }
 
 pub(crate) async fn start_with(config: ApiConfig) -> Api {
+    start_inner(config, true).await
+}
+
+/// An API whose services have no workspaces implementation (what `Services::new` gives).
+pub(crate) async fn start_without_workspaces() -> Api {
+    start_inner(ApiConfig::default(), false).await
+}
+
+async fn start_inner(config: ApiConfig, with_workspaces: bool) -> Api {
     let clock = Arc::new(ManualClock::new(START_MS));
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     let events = Arc::new(EventHub::default());
     let settings = Arc::new(MemorySettings::default());
+    let launcher = Arc::new(FakeLauncher::new());
+    let workspaces = FakeWorkspaces::with_options(
+        events.clone(),
+        clock.clone(),
+        launcher.clone() as Arc<dyn Launcher>,
+        Duration::ZERO,
+    );
     let token = ApiToken::generate().unwrap();
-    let server = ApiServer::bind(
-        config,
-        token.clone(),
-        Services::new(
-            store.clone(),
-            settings.clone() as Arc<dyn SettingsRepo>,
-            events.clone(),
-            clock.clone(),
-        ),
-    )
-    .await
-    .unwrap();
+    let services = Services::new(
+        store.clone(),
+        settings.clone() as Arc<dyn SettingsRepo>,
+        events.clone(),
+        clock.clone(),
+    );
+    let services = if with_workspaces {
+        services.with_workspaces(Arc::new(workspaces.clone()))
+    } else {
+        services
+    };
+    let server = ApiServer::bind(config, token.clone(), services)
+        .await
+        .unwrap();
     let addr = server.local_addr();
     let running = server.spawn();
     Api {
@@ -64,6 +85,8 @@ pub(crate) async fn start_with(config: ApiConfig) -> Api {
         events,
         settings,
         clock,
+        workspaces,
+        launcher,
     }
 }
 

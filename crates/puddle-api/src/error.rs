@@ -10,6 +10,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::settings::SettingsRepoError;
+use crate::workspaces::WorkspaceError;
 
 /// What went wrong, as a stable code a client can switch on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
@@ -36,6 +37,8 @@ pub enum ErrorCode {
     Conflict,
     /// The stored settings were written by a newer puddle and can't be changed by this one (409).
     NewerSettings,
+    /// The feature isn't available in this build or state (503).
+    Unavailable,
     /// puddle failed; the details are in its log (500).
     Internal,
 }
@@ -148,6 +151,20 @@ impl From<SettingsError> for ApiError {
     }
 }
 
+impl From<WorkspaceError> for ApiError {
+    fn from(err: WorkspaceError) -> Self {
+        match err {
+            WorkspaceError::NotFound(m) => Self::not_found(m),
+            WorkspaceError::Conflict(m) => Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, m),
+            WorkspaceError::Invalid(m) => Self::invalid(m),
+            WorkspaceError::Unavailable(m) => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
+            }
+            WorkspaceError::Internal(m) => Self::internal(&m),
+        }
+    }
+}
+
 impl From<SettingsRepoError> for ApiError {
     fn from(err: SettingsRepoError) -> Self {
         Self::internal(&err)
@@ -211,6 +228,43 @@ mod tests {
         assert_eq!(other.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let repo = ApiError::from(SettingsRepoError::new("disk full"));
         assert_eq!(repo.code(), ErrorCode::Internal);
+    }
+
+    #[test]
+    fn workspace_errors_map_to_client_statuses() {
+        let cases = [
+            (
+                WorkspaceError::NotFound("x".into()),
+                StatusCode::NOT_FOUND,
+                ErrorCode::NotFound,
+            ),
+            (
+                WorkspaceError::Conflict("x".into()),
+                StatusCode::CONFLICT,
+                ErrorCode::Conflict,
+            ),
+            (
+                WorkspaceError::Invalid("x".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorCode::Invalid,
+            ),
+            (
+                WorkspaceError::Unavailable("x".into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::Unavailable,
+            ),
+            (
+                WorkspaceError::Internal("disk path /secret".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorCode::Internal,
+            ),
+        ];
+        for (err, status, code) in cases {
+            let api = ApiError::from(err);
+            assert_eq!(api.status(), status);
+            assert_eq!(api.code(), code);
+            assert!(!api.body.message.contains("secret"));
+        }
     }
 
     #[tokio::test]

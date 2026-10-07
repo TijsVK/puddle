@@ -24,6 +24,13 @@ use utoipa::ToSchema;
 
 use crate::error::ApiError;
 
+mod workspaces;
+
+pub use workspaces::{
+    AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,
+    NewWorkspaceRequest, RepoFindings, Workspace, WorkspaceList, WorkspaceOperation,
+};
+
 // ---------------------------------------------------------------------------------------------
 // Service
 

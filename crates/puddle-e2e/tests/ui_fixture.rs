@@ -188,6 +188,8 @@ async fn the_same_scenario_gives_byte_identical_responses() {
         "/api/rules",
         "/api/audit?limit=500",
         "/api/sandboxes/web-shop/suppression",
+        "/api/workspaces",
+        "/api/workspaces/docs-site/delete-check",
     ];
     let a = start("lived-in").await;
     let b = start("lived-in").await;
@@ -482,4 +484,136 @@ async fn the_connection_file_is_written_for_the_dev_proxy_and_playwright() {
     fixture.restart().await.unwrap();
     let again: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(again, written);
+}
+
+#[tokio::test]
+async fn seeded_workspaces_are_listed_with_what_deleting_them_would_lose() {
+    let run = start("lived-in").await;
+    let list = run.get("/api/workspaces").await.json();
+    let rows = list["workspaces"].as_array().unwrap();
+    let names: Vec<_> = rows.iter().map(|w| w["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["data-tools", "docs-site", "web-shop"]);
+    let status = |name: &str| {
+        rows.iter().find(|w| w["name"] == name).unwrap()["status"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(status("web-shop"), "running");
+    assert_eq!(status("docs-site"), "stopped");
+    assert_eq!(status("data-tools"), "created");
+    let docs = rows.iter().find(|w| w["name"] == "docs-site").unwrap();
+    assert_eq!(docs["memory_mib"], 4096);
+    assert_eq!(docs["first_connect_notice_due"], true);
+
+    let check = run
+        .get("/api/workspaces/docs-site/delete-check")
+        .await
+        .json();
+    assert_eq!(check["clean"], false);
+    assert_eq!(
+        check["repos"][0]["unpushed"]["items"][0],
+        "3f2a9c1 Rewrite the intro"
+    );
+    assert_eq!(check["other"]["items"][0], "scratch");
+    let clean = run
+        .get("/api/workspaces/web-shop/delete-check")
+        .await
+        .json();
+    assert_eq!(clean["clean"], true);
+
+    let empty = start("empty").await;
+    assert_eq!(
+        empty.get("/api/workspaces").await.json(),
+        json!({"workspaces": []})
+    );
+}
+
+#[tokio::test]
+async fn scripted_steps_hold_and_fail_workspace_operations() {
+    let run = start("empty").await;
+    let mut stream = run.events().await;
+    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
+    let step = |body: Value| {
+        let run = &run;
+        async move { run.control("POST", "/control/step", Some(&body)).await }
+    };
+    assert_eq!(step(json!({"do": "hold_workspaces"})).await.status, 204);
+    let created = run
+        .api(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({"name": "demo", "repo_url": "https://github.com/acme/demo.git"})),
+        )
+        .await;
+    assert_eq!(created.status, 202, "{}", created.body);
+    assert_eq!(
+        run.get("/api/workspaces/demo").await.json()["busy"],
+        "creating"
+    );
+    assert_eq!(step(json!({"do": "release_workspaces"})).await.status, 204);
+    read_until(&mut stream, |s| s.contains("\"step\":\"done\"")).await;
+    assert_eq!(
+        run.get("/api/workspaces/demo").await.json()["busy"],
+        Value::Null
+    );
+
+    let fail =
+        json!({"do": "fail_workspace", "operation": "start", "reason": "the VM did not boot"});
+    assert_eq!(step(fail).await.status, 204);
+    let started = run
+        .api("POST", "/api/workspaces/demo/start", Some(&json!({})))
+        .await;
+    assert_eq!(started.status, 202);
+    let seen = read_until(&mut stream, |s| s.contains("did not boot")).await;
+    assert!(seen.contains("\"step\":\"failed\""), "{seen}");
+    assert_eq!(
+        run.get("/api/workspaces/demo").await.json()["status"],
+        "crashed"
+    );
+    for operation in ["create", "stop", "reclaim", "delete"] {
+        let body = json!({"do": "fail_workspace", "operation": operation, "reason": "x"});
+        assert_eq!(step(body).await.status, 204, "{operation}");
+    }
+}
+
+#[tokio::test]
+async fn a_scenario_with_a_bad_workspace_fails_to_start() {
+    let cases = [
+        (
+            json!({"name": "A_b", "repo_url": "https://x.test/a"}),
+            "A_b",
+        ),
+        (
+            json!({"name": "a", "repo_url": "git@x.test:a/b"}),
+            "SSH remotes",
+        ),
+        (
+            json!({"name": "a", "repo_url": "https://x.test/a", "memory_mib": 1}),
+            "memory",
+        ),
+        (
+            json!({"name": "a", "repo_url": "https://x.test/a", "image": "bad image"}),
+            "image",
+        ),
+    ];
+    for (workspace, wants) in cases {
+        let scenario: Scenario =
+            serde_json::from_value(json!({"workspaces": [workspace]})).unwrap();
+        let err = Fixture::start(FixtureOptions {
+            port: 0,
+            connection_file: None,
+            scenario,
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(err.contains(wants), "{wants}: {err}");
+    }
+    assert!(
+        serde_json::from_value::<Scenario>(
+            json!({"workspaces": [{"name": "a", "repo_url": "https://x.test/a", "typo": 1}]})
+        )
+        .is_err()
+    );
 }

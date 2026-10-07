@@ -1,5 +1,41 @@
 {
   "name": "lived-in",
+  "workspaces": [
+    {
+      "name": "web-shop",
+      "repo_url": "https://github.com/acme/web-shop.git",
+      "status": "running",
+      "ago_ms": 1209600000,
+      "disk_used_mib": 6144,
+      "first_connect_notice_due": false
+    },
+    {
+      "name": "docs-site",
+      "repo_url": "https://github.com/acme/docs-site.git",
+      "memory_mib": 4096,
+      "status": "stopped",
+      "ago_ms": 604800000,
+      "disk_used_mib": 1536,
+      "unsaved": {
+        "repos": [
+          {
+            "dir": "docs-site",
+            "uncommitted": [" M content/intro.md", "?? drafts/launch.md"],
+            "unpushed": ["3f2a9c1 Rewrite the intro"],
+            "stashes": ["stash@{0}: WIP on main: 91d7e44 Add search"]
+          }
+        ],
+        "other": ["scratch"]
+      }
+    },
+    {
+      "name": "data-tools",
+      "repo_url": "https://github.com/acme/data-tools.git",
+      "status": "created",
+      "ago_ms": 3600000,
+      "disk_used_mib": 128
+    }
+  ],
   "rules": [
     { "effect": "allow", "pattern": "registry.npmjs.org", "ago_ms": 864000000 },
     { "effect": "allow", "pattern": ".github.com", "ago_ms": 864000000 },

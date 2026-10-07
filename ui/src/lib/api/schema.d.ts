@@ -304,6 +304,140 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every workspace. */
+        get: operations["list_workspaces"];
+        put?: never;
+        /**
+         * Creates a workspace: its disk, then a clone of the repository. Answers 202; follow it with
+         *     `workspace_progress` events.
+         */
+        post: operations["create_workspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One workspace. */
+        get: operations["get_workspace"];
+        put?: never;
+        post?: never;
+        /**
+         * Deletes a stopped workspace, its disk included. The body must confirm. The service checks
+         *     again first and refuses (409) unless the fresh check has the `fingerprint` the user saw, or
+         *     is clean when none is sent. Answers 202.
+         */
+        delete: operations["delete_workspace"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Opens a running workspace in VS Code: on the desktop (puddle opens it) or in the browser
+         *     (the response has the URL, the caller opens it).
+         */
+        post: operations["attach_workspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/delete-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What deleting the workspace would lose: uncommitted changes, unpushed commits, stashes and
+         *     data outside any checkout. Can take a while (it looks inside the workspace).
+         */
+        get: operations["delete_check"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/reclaim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Gives the disk space the workspace freed back to the host. Answers 202. */
+        post: operations["reclaim_workspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Starts a workspace that is down. Answers 202. */
+        post: operations["start_workspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stops a running workspace. Answers 202. */
+        post: operations["stop_workspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -319,6 +453,28 @@ export interface components {
             error: components["schemas"]["ErrorCode"];
             /** @description Human-readable, lower case, no trailing period. Never contains a token. */
             message: string;
+        };
+        /**
+         * @description How to open the workspace in an editor.
+         * @enum {string}
+         */
+        AttachMode: "desktop" | "browser";
+        /** @description `POST /api/workspaces/{id}/attach`. */
+        AttachRequest: {
+            /** @description Where to open it. */
+            mode: components["schemas"]["AttachMode"];
+        };
+        /** @description What an attach did. */
+        AttachResponse: {
+            /**
+             * @description Why nothing was opened, when that is not an error (for example VS Code is not
+             *     installed).
+             */
+            message: string | null;
+            /** @description Whether puddle opened an editor itself (desktop mode, when it worked). */
+            opened: boolean;
+            /** @description Where the browser editor is, in browser mode; the caller opens it. */
+            url: string | null;
         };
         /** @description One audit record. */
         AuditEntry: {
@@ -427,6 +583,38 @@ export interface components {
             suffix?: string | null;
         };
         /**
+         * @description `GET /api/workspaces/{id}/delete-check`: what deleting the workspace would lose. Text comes
+         *     from the guest: escape it when rendering.
+         */
+        DeleteCheck: {
+            /** @description Whether deleting loses nothing the check can see. */
+            clean: boolean;
+            /** @description What could not be checked. Anything here makes `clean` false. */
+            errors: string[];
+            /**
+             * @description Identifies exactly this report: send it back in the delete request, which is refused if
+             *     the workspace has changed since.
+             */
+            fingerprint: string;
+            /** @description Data outside any checkout. */
+            other: components["schemas"]["FindingList"];
+            removes_sandbox: components["schemas"]["SandboxName"] | null;
+            /** @description Every checkout, clean or not. */
+            repos: components["schemas"]["RepoFindings"][];
+            /** @description The workspace's id. */
+            workspace: string;
+        };
+        /** @description `DELETE /api/workspaces/{id}`. */
+        DeleteWorkspaceRequest: {
+            /** @description Must be `true`: the user confirmed. */
+            confirm: boolean;
+            /**
+             * @description The `fingerprint` of the delete check the user saw. Left out or `null` means "I saw
+             *     nothing to lose": the delete goes ahead only if a fresh check is clean.
+             */
+            fingerprint?: string | null;
+        };
+        /**
          * @description Allow or deny.
          * @enum {string}
          */
@@ -463,7 +651,7 @@ export interface components {
          * @description What went wrong, as a stable code a client can switch on.
          * @enum {string}
          */
-        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "newer_settings" | "internal";
+        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "newer_settings" | "unavailable" | "internal";
         /**
          * @description Something the user should hear about. Serialised as one internally tagged enum
          *     (`{"type":"oom_kill",...}`, ADR 0002).
@@ -491,6 +679,28 @@ export interface components {
             sandbox: components["schemas"]["SandboxName"];
             /** @enum {string} */
             type: "oom_kill";
+        } | {
+            /**
+             * @description More about the step, or why it failed; `null` when there is nothing to add. It can
+             *     quote tool output: escape it when rendering.
+             */
+            detail: string | null;
+            /** @description The workspace's sandbox. */
+            sandbox: components["schemas"]["SandboxName"];
+            /** @description What it is doing now. */
+            step: components["schemas"]["WorkspaceStep"];
+            /** @enum {string} */
+            type: "workspace_progress";
+        };
+        /** @description A bounded list of lines from the unsaved-work check. */
+        FindingList: {
+            /** @description The first items. */
+            items: string[];
+            /**
+             * Format: int64
+             * @description How many more there are.
+             */
+            more: number;
         };
         /** @description New global settings. Replaces every value listed here; unknown stored fields are kept. */
         GlobalSettingsRequest: {
@@ -573,6 +783,23 @@ export interface components {
             /** @description Global or one sandbox. */
             scope: components["schemas"]["RuleScope"];
         };
+        /** @description `POST /api/workspaces`. */
+        NewWorkspaceRequest: {
+            /** @description The image to boot; left out or `null` is the default devcontainer image. */
+            image?: string | null;
+            /**
+             * Format: int32
+             * @description Memory in MiB (256 to 1048576); left out or `null` is the default.
+             */
+            memory_mib?: number | null;
+            /** @description The workspace's name, which is also its sandbox's name. */
+            name: components["schemas"]["SandboxName"];
+            /**
+             * @description The repository to clone, as an `https://` URL without credentials. SSH remotes
+             *     (`git@host:path`, `ssh://`) are refused with a message saying so.
+             */
+            repo_url: string;
+        };
         /**
          * @description How a rule's pattern matches.
          * @enum {string}
@@ -636,6 +863,19 @@ export interface components {
          * @enum {string}
          */
         PendingState: "requested" | "allowed" | "denied" | "expired";
+        /** @description What one checkout holds that is not on a remote. */
+        RepoFindings: {
+            /** @description Whether nothing in it would be lost. */
+            clean: boolean;
+            /** @description The checkout's directory in the workspace. */
+            dir: string;
+            /** @description Stashes. */
+            stashes: components["schemas"]["FindingList"];
+            /** @description Uncommitted changes and untracked files (`git status --porcelain` lines). */
+            uncommitted: components["schemas"]["FindingList"];
+            /** @description Commits on no remote branch (`<hash> <subject>`). */
+            unpushed: components["schemas"]["FindingList"];
+        };
         /** @description An effective on/off value and where it came from. */
         ResolvedBool: {
             /** @description Where it came from. */
@@ -795,6 +1035,61 @@ export interface components {
             /** @description Whether the server may send Microsoft telemetry (default off). */
             telemetry: boolean | null;
         };
+        /** @description A workspace: a repository checkout on its own disk, and the sandbox that runs it. */
+        Workspace: {
+            busy: components["schemas"]["WorkspaceOperation"] | null;
+            /**
+             * Format: int64
+             * @description Epoch ms it was created.
+             */
+            created_at: number;
+            /**
+             * Format: int64
+             * @description The disk's size in MiB: the most the workspace can hold.
+             */
+            disk_size_mib: number;
+            /**
+             * Format: int64
+             * @description What the disk holds in MiB; `null` when not known.
+             */
+            disk_used_mib: number | null;
+            /**
+             * @description Whether the first-connect notice has to be shown before the first desktop attach. A
+             *     successful desktop attach clears it.
+             */
+            first_connect_notice_due: boolean;
+            /** @description The id used in paths. Today it is the workspace's name. */
+            id: string;
+            /** @description The image its sandbox boots. */
+            image: string;
+            /**
+             * Format: int32
+             * @description Memory in MiB, applied at the next start.
+             */
+            memory_mib: number;
+            /** @description The name of the sandbox that runs it; events and per-sandbox settings use this name. */
+            name: components["schemas"]["SandboxName"];
+            /** @description The HTTPS URL it was cloned from. */
+            repo_url: string;
+            /** @description The sandbox's state. */
+            status: components["schemas"]["SandboxStatus"];
+        };
+        /** @description `GET /api/workspaces`. */
+        WorkspaceList: {
+            /** @description Every workspace, ordered by id. */
+            workspaces: components["schemas"]["Workspace"][];
+        };
+        /**
+         * @description The long operation a workspace is in the middle of; progress comes as
+         *     `workspace_progress` events.
+         * @enum {string}
+         */
+        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "deleting";
+        /**
+         * @description Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
+         * @enum {string}
+         */
+        WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "stopping" | "removing" | "done" | "failed";
     };
     responses: never;
     parameters: never;
@@ -2168,6 +2463,687 @@ export interface operations {
             };
             /** @description a value out of range */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_workspaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the workspaces */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewWorkspaceRequest"];
+            };
+        };
+        responses: {
+            /** @description creation started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the name is taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description invalid name, repository URL (including SSH remotes), image or memory */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description workspaces are not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the workspace */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteWorkspaceRequest"];
+            };
+        };
+        responses: {
+            /** @description delete accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description running, busy, or changed since it was checked */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not confirmed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    attach_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachRequest"];
+            };
+        };
+        responses: {
+            /** @description what was done */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachResponse"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteCheck"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    reclaim_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description reclaim accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description busy */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    start_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description start accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description already running or busy */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    stop_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description stop accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not running or busy */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
                 headers: {
                     [name: string]: unknown;
                 };
