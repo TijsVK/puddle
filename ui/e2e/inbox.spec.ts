@@ -640,6 +640,24 @@ test.describe("accessibility", () => {
     });
   }
 
+  test("the options cover the chevrons of the rows beside them completely, not all but a sliver", async ({
+    page,
+    backend,
+  }) => {
+    await ask(backend, "shop", "a.axe.example.com");
+    await ask(backend, "shop", "b.axe.example.com");
+    await openInbox(page, backend);
+    const dialog = await openOptions(rowFor(page, "a.axe.example.com"), page);
+    const edge = (await dialog.boundingBox())!;
+    const right = edge.x + edge.width;
+    for (const chevron of await page.locator("[data-more]").all()) {
+      const box = (await chevron.boundingBox())!;
+      expect(right, "the dialog's right edge").toBeGreaterThanOrEqual(
+        box.x + box.width + 2,
+      );
+    }
+  });
+
   test("the buttons are at least 24 by 24 CSS pixels (WCAG 2.5.8)", async ({
     page,
     backend,

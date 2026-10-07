@@ -65,11 +65,16 @@
   }}
 >
   <Popover.Portal>
+    <!-- It hangs over the rows beside it. Its right edge sits 4px past the chevron column, in the
+         gap before Deny: flush with the chevrons it would leave a sub-pixel strip of the chevron
+         of the row above or below uncovered (the browser rounds the two edges differently), and
+         that strip counts as a target under 24px (WCAG 2.5.8). -->
     <Popover.Content
       class="options"
       role="dialog"
       align="end"
       sideOffset={6}
+      alignOffset={-4}
       customAnchor={anchor}
       aria-label="Choices for {target.host}"
       onInteractOutside={(event) => {

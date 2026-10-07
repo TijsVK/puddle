@@ -31,6 +31,12 @@ test.beforeEach(async ({ backend }) => {
   await backend.control.reset("lived-in");
 });
 
+// The page clock keeps running, and "in 3 hours" floors: on a slow machine a seeded expiry
+// exactly 3 hours ahead reads "in 2 hours" a second after the page opened. A test that reads a
+// seeded expiry starts the page clock this much behind the API's. (Not for a rule the page
+// itself creates: it computes the expiry from its own clock, which then has to match the API's.)
+const SEEDED_EXPIRY_HEAD_ROOM = 60_000;
+
 const rowFor = (page: Page, pattern: string, workspace?: string): Locator =>
   page
     .locator("tbody tr", {
@@ -42,8 +48,12 @@ const rowFor = (page: Page, pattern: string, workspace?: string): Locator =>
     })
     .filter(workspace ? { hasText: workspace } : {});
 
-async function openRules(page: Page, backend: Backend): Promise<void> {
-  await backend.installClock(page);
+async function openRules(
+  page: Page,
+  backend: Backend,
+  behindMs = 0,
+): Promise<void> {
+  await backend.installClock(page, behindMs);
   await backend.signIn(page);
   await page.goto("/rules");
   await expect(
@@ -60,7 +70,7 @@ test.describe("the list", () => {
     page,
     backend,
   }) => {
-    await openRules(page, backend);
+    await openRules(page, backend, SEEDED_EXPIRY_HEAD_ROOM);
     await expect(page.getByText(/most specific rule wins/i)).toBeVisible();
     const global = rowFor(page, "registry.npmjs.org");
     await expect(global).toContainText("Allow");
@@ -84,7 +94,7 @@ test.describe("the list", () => {
     page,
     backend,
   }) => {
-    await openRules(page, backend);
+    await openRules(page, backend, SEEDED_EXPIRY_HEAD_ROOM);
     const row = rowFor(page, "api.example.com");
     // The page clock starts at the fixture's now but keeps running, and the formatter truncates, so a
     // slow start reads "in 2 hours" for a rule that has 3 hours less a moment left.

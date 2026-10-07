@@ -44,7 +44,13 @@ export async function axeViolations(page: Page) {
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
   return results.violations.map(
-    (v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`,
+    (v) =>
+      `${v.id}: ${v.nodes
+        .map(
+          (n) =>
+            `${n.target.join(" ")} (${(n.any[0]?.message ?? n.failureSummary ?? "").replace(/\s+/g, " ")})`,
+        )
+        .join(", ")}`,
   );
 }
 

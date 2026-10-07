@@ -37,8 +37,12 @@ export interface Backend {
   control: Control;
   /** Hands the page the token, as the desktop shell's init script does. */
   signIn(page: Page): Promise<void>;
-  /** Installs Playwright's fake clock at the fixture's time, so relative times agree. */
-  installClock(page: Page): Promise<void>;
+  /**
+   * Installs Playwright's fake clock at the fixture's time, so relative times agree. The clock
+   * then runs on, so a page that loads slowly reads "in 2 hours" for an expiry set 3 hours
+   * ahead; `behindMs` starts it that much earlier, so such a label holds for that long.
+   */
+  installClock(page: Page, behindMs?: number): Promise<void>;
 }
 
 /** A backend from the files `puddle-ui-fixture --connection-file <file>` wrote. */
@@ -102,8 +106,10 @@ export function backendFromFile(connectionFile: string): Backend {
         };
       }, token);
     },
-    async installClock(page) {
-      await page.clock.install({ time: (await control.state()).now_ms });
+    async installClock(page, behindMs = 0) {
+      await page.clock.install({
+        time: (await control.state()).now_ms - behindMs,
+      });
     },
   };
 }
