@@ -162,8 +162,13 @@ impl Squid {
             assert!(status.success(), "docker run failed");
             Stop::Container(name)
         } else {
+            let bin = bin.unwrap();
+            assert!(
+                std::path::Path::new(&bin).is_file(),
+                "PUDDLE_SQUID_BIN={bin:?} is not a file: install Squid or fix the path"
+            );
             let log = fs::File::create(dir.path().join("squid.stderr")).unwrap();
-            let child = Command::new(bin.unwrap())
+            let child = Command::new(bin)
                 .arg("-f")
                 .arg(dir.path().join("squid.conf"))
                 .args(["-N", "-Y", "-C"])

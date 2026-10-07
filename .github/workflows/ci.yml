@@ -128,6 +128,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/check.sh doc
       - name: Squid for the upstream-chaining e2e (Basic-auth company proxy)
+        # Like the gates around it, runs after an earlier red step: skipped, the e2e fails on a missing binary.
+        if: ${{ !cancelled() }}
         run: |
           sudo apt-get install -y --no-install-recommends squid
           # The package starts its own daemon; the test runs its own Squid on a free port.
