@@ -325,7 +325,7 @@ mod tests {
         // Negative control: a pipe with Windows' default DACL (what the PoC had) lets the same
         // restricted client open it for reading, so the tests above can tell the difference.
         let path = format!(
-            r"\\.\pipe\puddle-t105-control-{}",
+            r"\\.\pipe\puddle-control-{}",
             crate::name::random_name::<16>().unwrap()
         );
         let _server = ServerOptions::new()

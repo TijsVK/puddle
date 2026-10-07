@@ -67,7 +67,7 @@ async fn runtime() -> (MsbRuntime, Settings) {
 
 /// A run-prefixed name, used for the workspace and its sandbox.
 fn names(settings: &Settings, tag: &str) -> (WorkspaceId, SandboxName) {
-    let n = format!("{}-t112-{tag}", settings.prefix);
+    let n = format!("{}-wsvol-{tag}", settings.prefix);
     (WorkspaceId::new(&n).unwrap(), SandboxName::new(&n).unwrap())
 }
 
@@ -124,7 +124,7 @@ impl Boot {
         let plan = if agent { builder } else { builder.no_agent() }
             .build()
             .unwrap();
-        let dir = rt.config().guest_share.join(format!("t112-{tag}"));
+        let dir = rt.config().guest_share.join(format!("wsvol-{tag}"));
         let mounts = write_assets(&dir).unwrap();
         // Mounted even for a plan that starts no agent: it is the merge tool for the Machine
         // settings.

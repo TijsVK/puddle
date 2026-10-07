@@ -259,12 +259,12 @@ async fn absolute_form_goes_through_the_company_proxy() {
 async fn a_407_from_the_company_proxy_is_answered_with_the_configured_credentials() {
     let server = echo().await;
     let proxy = FakeProxy::start(Behaviour::Basic {
-        user: "t165".into(),
+        user: "alice".into(),
         password: "CANARY-s3cret".into(),
     })
     .await;
     proxy.resolve_name("site.test", server.addr);
-    let (up, _) = upstream(vec![via(&proxy)], basic("t165", "CANARY-s3cret"));
+    let (up, _) = upstream(vec![via(&proxy)], basic("alice", "CANARY-s3cret"));
     let rig = Rig::new(StaticResolver::new().with("site.test", &[LOCAL]), up, None);
     rig.policy.allow(&host("site.test"));
     let mut guest = rig.guest().await;
@@ -631,12 +631,12 @@ async fn pull_connect(rig: &PullRig, target: &str) -> (String, tokio::net::TcpSt
 async fn pulls_go_through_the_company_proxy_with_basic_auth_and_unknown_names_resolve_there() {
     let server = echo().await;
     let proxy = FakeProxy::start(Behaviour::Basic {
-        user: "t165".into(),
+        user: "alice".into(),
         password: "s3cret".into(),
     })
     .await;
     proxy.resolve_name("registry.corp.test", server.addr);
-    let (up, _) = upstream(vec![via(&proxy)], basic("t165", "s3cret"));
+    let (up, _) = upstream(vec![via(&proxy)], basic("alice", "s3cret"));
     // The registry name is unknown to this host's resolver: only the company proxy has it.
     let rig = pull_rig(StaticResolver::new(), up);
     let target = format!("registry.corp.test:{}", server.addr.port());
@@ -702,11 +702,11 @@ async fn pulls_fall_back_from_a_dead_proxy_to_direct_with_a_checked_address() {
 #[tokio::test]
 async fn plain_http_pulls_carry_the_proxy_credential_not_the_pull_token() {
     let proxy = FakeProxy::start(Behaviour::Basic {
-        user: "t165".into(),
+        user: "alice".into(),
         password: "s3cret".into(),
     })
     .await;
-    let (up, _) = upstream(vec![via(&proxy)], basic("t165", "s3cret"));
+    let (up, _) = upstream(vec![via(&proxy)], basic("alice", "s3cret"));
     let rig = pull_rig(StaticResolver::new().with("mirror.test", &[LOCAL]), up);
     let (head, mut stream) = pull_support::send(
         rig.route.local_addr(),
@@ -730,5 +730,5 @@ async fn plain_http_pulls_carry_the_proxy_credential_not_the_pull_token() {
         .unwrap();
     let sent = get.proxy_authorization.unwrap();
     assert_ne!(sent, format!("Basic {}", rig.credentials));
-    assert_eq!(sent, format!("Basic {}", BASE64.encode("t165:s3cret")));
+    assert_eq!(sent, format!("Basic {}", BASE64.encode("alice:s3cret")));
 }

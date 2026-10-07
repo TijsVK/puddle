@@ -265,7 +265,7 @@ fn config(home: &std::path::Path, proxy_url: &str) -> MsbConfig {
 }
 
 /// Set on the re-run of this binary that only prints its environment.
-const DUMP_ENV: &str = "PUDDLE_T144_DUMP_ENV";
+const DUMP_ENV: &str = "PUDDLE_PULL_DUMP_ENV";
 const ENV_BEGIN: &str = "<<<ENV-BEGIN>>>";
 const ENV_END: &str = "<<<ENV-END>>>";
 const TEST_NAME: &str = "image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots";

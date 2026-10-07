@@ -47,7 +47,7 @@ impl Drop for TempDir {
 }
 
 pub fn sandbox() -> SandboxName {
-    SandboxName::new("t111").unwrap()
+    SandboxName::new("agent").unwrap()
 }
 
 pub struct Rig {

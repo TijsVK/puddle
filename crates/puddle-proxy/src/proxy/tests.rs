@@ -652,7 +652,7 @@ mod guard {
     }
 
     #[tokio::test]
-    async fn d37_toggle_on_unlisted_local_destination_goes_to_approval_not_through() {
+    async fn toggle_on_unlisted_local_destination_goes_to_approval_not_through() {
         let policy = Arc::new(StaticPolicy::new());
         let resolver = StaticResolver::new().with("nas.lan.example", &[ip("192.168.1.20")]);
         let p = guarded(policy.clone(), resolver, all_on());
@@ -674,7 +674,7 @@ mod guard {
     }
 
     #[tokio::test]
-    async fn d37_toggle_on_and_exactly_allowed_local_destination_is_allowed() {
+    async fn toggle_on_and_exactly_allowed_local_destination_is_allowed() {
         let policy = Arc::new(StaticPolicy::new());
         for h in ["10.1.2.3", "nas.lan.example", "localhost"] {
             policy.allow(&host(h));
@@ -698,7 +698,7 @@ mod guard {
     }
 
     #[tokio::test]
-    async fn d37_toggle_off_allowed_local_destination_is_blocked_naming_the_toggle() {
+    async fn toggle_off_allowed_local_destination_is_blocked_naming_the_toggle() {
         let policy = Arc::new(StaticPolicy::new());
         policy.allow(&host("10.1.2.3"));
         let p = guarded(
@@ -718,7 +718,7 @@ mod guard {
     }
 
     #[tokio::test]
-    async fn d44_wildcard_allow_does_not_reach_a_local_address_with_the_setting_off() {
+    async fn wildcard_allow_does_not_reach_a_local_address_with_the_setting_off() {
         let policy = Arc::new(StaticPolicy::new());
         // StaticPolicy answers "suffix match" per host, standing in for a `.nip.example` rule.
         for h in ["nas.nip.example", "both.nip.example", "pub.nip.example"] {
@@ -773,7 +773,7 @@ mod guard {
     }
 
     #[tokio::test]
-    async fn d44_exact_ip_rule_admits_the_local_address_of_a_wildcard_name() {
+    async fn exact_ip_rule_admits_the_local_address_of_a_wildcard_name() {
         let policy = Arc::new(StaticPolicy::new());
         for h in [
             "nas.nip.example",
@@ -870,7 +870,7 @@ mod guard {
     }
 
     #[tokio::test]
-    async fn d44_failed_or_missing_ip_lookup_admits_nothing() {
+    async fn failed_or_missing_ip_lookup_admits_nothing() {
         let resolver = || StaticResolver::new().with("nas.nip.example", &[ip("192.168.1.20")]);
         // `lookup` errors: an IP deny can't be ruled out, so the request fails closed (R-27),
         // and nothing goes pending.
@@ -899,7 +899,7 @@ mod guard {
     }
 
     #[tokio::test]
-    async fn d26_puddle_endpoints_are_blocked_whatever_the_toggles_and_rules_say() {
+    async fn puddle_endpoints_are_blocked_whatever_the_toggles_and_rules_say() {
         let endpoints = PuddleEndpoints::new();
         let _api = endpoints.register(SocketAddr::new(ip("127.0.0.1"), 443), EndpointKind::Api);
         let policy = Arc::new(StaticPolicy::new());

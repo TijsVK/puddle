@@ -199,12 +199,12 @@ mod tests {
 
     #[test]
     fn basic_answers_a_basic_challenge_once() {
-        let auth = BasicAuth::new().with_default(Credentials::new("t165", "s3cret"));
+        let auth = BasicAuth::new().with_default(Credentials::new("alice", "s3cret"));
         let mut session = auth.begin(&proxy(1), &["Basic"]).unwrap().unwrap();
-        // base64("t165:s3cret")
+        // base64("alice:s3cret")
         assert_eq!(
             session.step(Some("Basic realm=\"x\"")).unwrap(),
-            AuthStep::Authorization("Basic dDE2NTpzM2NyZXQ=".into())
+            AuthStep::Authorization("Basic YWxpY2U6czNjcmV0".into())
         );
         assert!(matches!(
             session.step(Some("Basic realm=\"x\"")),

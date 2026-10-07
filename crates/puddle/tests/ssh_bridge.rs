@@ -32,7 +32,7 @@ fn without_an_endpoint_it_is_a_usage_error() {
 #[test]
 fn a_missing_endpoint_fails_with_a_message_on_stderr() {
     let gone = if cfg!(windows) {
-        r"\\.\pipe\puddle-t114-nothing-listens-here".to_owned()
+        r"\\.\pipe\puddle-ssh-nothing-listens-here".to_owned()
     } else {
         let dir = tempfile::tempdir().unwrap();
         dir.path().join("gone.sock").display().to_string()
@@ -124,7 +124,7 @@ mod openssh {
 
     async fn keygen(path: &Path) {
         let st = Command::new("ssh-keygen")
-            .args(["-q", "-t", "ed25519", "-N", "", "-C", "t114", "-f"])
+            .args(["-q", "-t", "ed25519", "-N", "", "-C", "puddle-test", "-f"])
             .arg(path)
             .status()
             .await

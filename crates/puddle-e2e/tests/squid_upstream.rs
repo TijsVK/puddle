@@ -41,7 +41,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-const USER: &str = "t165";
+const USER: &str = "alice";
 const PASSWORD: &str = "lab-only-pw-7Qx2";
 
 /// A running Squid; stopped on drop.
@@ -123,7 +123,7 @@ impl Squid {
             format!(
                 "http_port 127.0.0.1:{port}\n\
                  auth_param basic program /bin/sh {helper}\n\
-                 auth_param basic realm puddle-t165-lab\n\
+                 auth_param basic realm puddle-upstream-lab\n\
                  auth_param basic children 2\n\
                  acl authed proxy_auth REQUIRED\n\
                  acl SSL_ports port {origin_port}\n\
@@ -151,7 +151,7 @@ impl Squid {
         )
         .unwrap();
         let stop = if let Some(image) = image {
-            let name = format!("puddle-t165-squid-{port}");
+            let name = format!("puddle-squid-{port}");
             let status = Command::new("docker")
                 .args(["run", "-d", "--name", &name, "--network", "host", "-v"])
                 .arg(format!("{}:/lab", dir.path().display()))

@@ -12,7 +12,7 @@
 //! | [`Host`], [`DomainName`] | a normalised egress destination (the proxy normalises, everyone else validates) |
 //! | [`EgressRequest`], [`Decision`], [`Policy`] | what the proxy asks the rules engine and what it gets back |
 //! | [`ConnectionEvent`], [`ConnectionLog`] | one connection as the proxy reports it for the audit, and where it goes (the store) |
-//! | [`LocalCategory`] | the local-destination categories (D-1): one toggle each, classified by `puddle-netpolicy` |
+//! | [`LocalCategory`] | the local-destination categories (spec R-14): one toggle each, classified by `puddle-netpolicy` |
 //! | [`ValidationError`] | the one error every checked constructor returns |
 //!
 //! Every checked type validates in its constructor *and* when deserialised, so a value of the

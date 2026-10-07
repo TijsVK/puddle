@@ -109,7 +109,7 @@ fn test_root(tag: &str) -> TestCert {
     p.not_after = rcgen::date_time_ymd(2040, 1, 1);
     let key = rcgen::KeyPair::generate().unwrap();
     let der = p.self_signed(&key).unwrap().der().to_vec();
-    let file = std::env::temp_dir().join(format!("puddle-t110-{tag}-{nanos}.cer"));
+    let file = std::env::temp_dir().join(format!("puddle-root-sync-{tag}-{nanos}.cer"));
     std::fs::write(&file, &der).unwrap();
     let thumbprint = powershell(&format!(
         "(New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('{}')).Thumbprint",

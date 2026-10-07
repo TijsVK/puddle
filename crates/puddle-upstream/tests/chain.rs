@@ -153,12 +153,12 @@ async fn a_proxy_gets_nothing_when_there_is_no_name_and_no_checked_address() {
 async fn a_basic_407_is_answered_on_the_same_connection_then_sent_up_front() {
     let echo = start_echo().await;
     let proxy = FakeProxy::start(Behaviour::Basic {
-        user: "t165".into(),
+        user: "alice".into(),
         password: "s3cret".into(),
     })
     .await;
     proxy.resolve_name("a.test", echo.addr);
-    let chain = chain(vec![via(&proxy)], basic("t165", "s3cret"));
+    let chain = chain(vec![via(&proxy)], basic("alice", "s3cret"));
     let dest = https("a.test");
     let request = Request::new(&dest, Form::Tunnel, &[]).name_ok(true);
 
@@ -187,11 +187,11 @@ async fn a_basic_407_is_answered_on_the_same_connection_then_sent_up_front() {
 #[tokio::test]
 async fn a_wrong_password_is_one_attempt_not_a_loop() {
     let proxy = FakeProxy::start(Behaviour::Basic {
-        user: "t165".into(),
+        user: "alice".into(),
         password: "right".into(),
     })
     .await;
-    let chain = chain(vec![via(&proxy), Hop::Direct], basic("t165", "wrong"));
+    let chain = chain(vec![via(&proxy), Hop::Direct], basic("alice", "wrong"));
     let dest = https("a.test");
     let echo = start_echo().await;
     let checked = [echo.addr];
@@ -455,11 +455,11 @@ async fn an_ipv6_address_is_sent_with_brackets() {
 #[tokio::test]
 async fn absolute_form_probes_authenticates_and_carries_basic_on_each_request() {
     let proxy = FakeProxy::start(Behaviour::Basic {
-        user: "t165".into(),
+        user: "alice".into(),
         password: "s3cret".into(),
     })
     .await;
-    let chain = chain(vec![via(&proxy)], basic("t165", "s3cret"));
+    let chain = chain(vec![via(&proxy)], basic("alice", "s3cret"));
     let dest = http("plain.test");
     let mut connected = chain
         .connect(&Request::new(&dest, Form::Absolute, &[]).name_ok(true))

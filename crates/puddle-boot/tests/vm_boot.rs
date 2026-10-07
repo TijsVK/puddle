@@ -43,12 +43,12 @@ async fn runtime() -> (MsbRuntime, Settings) {
 /// Where a test writes its boot assets: under the guest-share root, the only place mounts may
 /// come from.
 fn assets_dir(rt: &MsbRuntime, tag: &str) -> PathBuf {
-    rt.config().guest_share.join(format!("t108-{tag}"))
+    rt.config().guest_share.join(format!("boot-{tag}"))
 }
 
 /// A run-prefixed sandbox name.
 fn sandbox_name(settings: &Settings, tag: &str) -> SandboxName {
-    SandboxName::new(&format!("{}-t108-{tag}", settings.prefix)).unwrap()
+    SandboxName::new(&format!("{}-boot-{tag}", settings.prefix)).unwrap()
 }
 
 /// The guest agent binary (the static build, `ci/build-agent.sh`), copied into `dir` so the

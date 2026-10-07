@@ -31,7 +31,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn files_are_created_exclusively_and_checks_pass_until_t093() {
+    fn files_are_created_exclusively_and_checks_pass_until_the_acl_check_exists() {
         let dir = tempfile::tempdir().unwrap();
         let sub = dir.path().join("a").join("b");
         create_dir(&sub).unwrap();

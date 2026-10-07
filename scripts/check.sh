@@ -78,7 +78,7 @@ run_gate() {
             exit 1
         fi
         ;;
-    standalone) scripts/check-standalone.sh ;;
+    standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh ;;
     clippy)
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" clippy --workspace $skip_app --all-targets --all-features --locked -- -D warnings
