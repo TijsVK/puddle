@@ -486,6 +486,10 @@ async fn a_websocket_over_http2_extended_connect_reaches_an_http11_server_as_an_
     // The rules judged the `GET` the server was sent, not the guest's extended `CONNECT`.
     let asked = injector.seen.lock().unwrap().clone();
     assert_eq!(asked, vec![("GET".to_owned(), "/chat".to_owned())]);
+    // The guest hangs up: the pipe ends and the connection is recorded.
+    drop(io);
+    client.close().await;
+    assert_eq!(rig.events(1).await.len(), 1);
 }
 
 #[tokio::test]
@@ -543,6 +547,11 @@ async fn a_websocket_over_http2_to_an_http2_server_is_passed_as_extended_connect
     let mut echo = [0_u8; 10];
     io.read_exact(&mut echo).await.unwrap();
     assert_eq!(&echo, b"through h2");
+    // The guest hangs up: the pipe ends and the connection is recorded.
+    drop(io);
+    drop(response);
+    client.close().await;
+    assert_eq!(rig.events(1).await.len(), 1);
 }
 
 #[tokio::test]

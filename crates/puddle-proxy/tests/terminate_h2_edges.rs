@@ -45,6 +45,39 @@ async fn down_for_the_first_connection(target: SocketAddr) -> SocketAddr {
     addr
 }
 
+/// A TCP relay to `target` whose connections the test can cut: a server restarting, a load
+/// balancer dropping idle connections.
+struct Relay {
+    addr: SocketAddr,
+    connections: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+}
+
+impl Relay {
+    async fn to(target: SocketAddr) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let connections = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let kept = Arc::clone(&connections);
+        tokio::spawn(async move {
+            while let Ok((mut tcp, _)) = listener.accept().await {
+                let relay = tokio::spawn(async move {
+                    if let Ok(mut up) = tokio::net::TcpStream::connect(target).await {
+                        let _ = tokio::io::copy_bidirectional(&mut tcp, &mut up).await;
+                    }
+                });
+                kept.lock().unwrap().push(relay);
+            }
+        });
+        Self { addr, connections }
+    }
+
+    fn cut(&self) {
+        for relay in self.connections.lock().unwrap().drain(..) {
+            relay.abort();
+        }
+    }
+}
+
 fn h1_server_config(pki: &Pki) -> Arc<rustls::ServerConfig> {
     let mut config = Arc::into_inner(pki.server_config("bound.test", Flaw::None)).unwrap();
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
@@ -97,6 +130,21 @@ async fn an_http11_guest_gets_the_reason_and_the_connection_ends() {
     // A new connection is a new attempt, and the server is there.
     let mut again = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(again.get("bound.test", "/two").await.text(), "back");
+}
+
+#[tokio::test]
+async fn an_idle_http11_connection_the_network_dropped_is_replaced_for_the_next_stream() {
+    let pki = Pki::new();
+    let server = FakeServer::tls(h1_server_config(&pki), Arc::new(|_| Reply::ok("alive"))).await;
+    let relay = Relay::to(server.addr).await;
+    let rig = RigBuilder::new(&pki).name("bound.test", relay.addr).build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    assert_eq!(client.get("bound.test", "/one").await.text(), "alive");
+    relay.cut();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(client.get("bound.test", "/two").await.text(), "alive");
+    assert_eq!(server.accepted(), 2, "the dead connection was not reused");
 }
 
 #[tokio::test]
