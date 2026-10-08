@@ -1695,10 +1695,9 @@ async fn a_workspace_whose_volume_is_gone_can_be_deleted_without_a_check_in_a_sa
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn deleting_a_workspace_with_no_volume_also_removes_the_sandbox_record_the_runtime_still_has()
-{
+async fn deleting_a_workspace_with_no_volume_also_removes_the_sandbox_the_restart_kept() {
     let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
-    // The restart kept the stopped sandbox; nothing in the host's memory says it is acme's.
+    // The restart kept the stopped sandbox record.
     assert_eq!(rig.runtime.list().await.unwrap().len(), 1);
     let api = api(&host);
     let mut events = api.events().await;

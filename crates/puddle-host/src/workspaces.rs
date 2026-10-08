@@ -967,20 +967,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .delete(&inner.runtime, &record.id, &report.confirm())
             .await
             .map_err(|e| e.to_string())?;
-        if report.volume_missing {
-            // The registry forgets its sandbox on a restart, so a record the runtime still has
-            // for this workspace is found by name.
-            let sandbox = record.name.sandbox_name();
-            let listed = inner.runtime.list().await.map_err(|e| e.to_string())?;
-            if listed.iter().any(|s| s.name == sandbox.as_str()) {
-                inner
-                    .runtime
-                    .remove(&sandbox)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                inner.workspaces.sandbox_removed(&sandbox);
-            }
-        }
         self.quiesce(&record.name, true).await;
         Ok(())
     }

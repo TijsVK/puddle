@@ -1108,3 +1108,21 @@ async fn a_returned_volume_that_cannot_be_checked_stops_the_delete_with_the_chec
     assert!(matches!(err, WorkspaceError::Check { .. }), "{err}");
     assert!(rt.volume(&id.volume_name()).await.unwrap().is_some());
 }
+
+#[tokio::test]
+async fn a_workspace_with_no_volume_and_no_sandbox_is_deleted_with_nothing_left_to_remove() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    sb.stop().await.unwrap();
+    drop(sb);
+    rt.remove(&name("box")).await.unwrap();
+    w.sandbox_removed(&name("box"));
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+
+    let report = w.check_delete(&rt, &id).await.unwrap();
+    assert_eq!(report.removes_sandbox, None);
+    let deleted = w.delete(&rt, &id, &report.confirm()).await.unwrap();
+    assert_eq!(deleted.removed_sandbox, None);
+}
