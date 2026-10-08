@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use microsandbox::sandbox::{SandboxConfig, VolumeMount};
 use microsandbox::volume::VolumeHandle;
-use puddle_compute::{DiskSize, VolumeInfo};
+use puddle_compute::{ComputeError, DiskSize, VolumeInfo};
 use puddle_types::WorkspaceStatus;
 
 /// One sandbox as the holder lookup needs it.
@@ -33,6 +33,45 @@ pub(crate) fn named_volumes(config: &SandboxConfig) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+/// The named volumes of the sandbox `name`, from its stored configuration. A configuration that
+/// cannot be read is an error: reading it as "no volumes" would let a second writer attach a
+/// volume that is in use.
+pub(crate) fn mounted_volumes<E: std::fmt::Display>(
+    name: &str,
+    config: Result<SandboxConfig, E>,
+) -> Result<Vec<String>, ComputeError> {
+    match config {
+        Ok(c) => Ok(named_volumes(&c)),
+        Err(e) => Err(crate::error::runtime(
+            "read the sandbox configuration",
+            &format!(
+                "the configuration stored for sandbox `{name}` in msb's database cannot be read ({e}), \
+                 so its volumes are unknown and the single-writer check cannot run; remove the \
+                 sandbox (its volumes are kept) and create it again"
+            ),
+        )),
+    }
+}
+
+/// `name` as a [`Mounter`]. A sandbox that is down holds nothing, so an unreadable configuration
+/// only matters (and fails) for one that is up or coming up.
+pub(crate) fn mounter<E: std::fmt::Display>(
+    name: &str,
+    status: WorkspaceStatus,
+    config: Result<SandboxConfig, E>,
+) -> Result<Mounter, ComputeError> {
+    let volumes = if status.is_down() {
+        config.map(|c| named_volumes(&c)).unwrap_or_default()
+    } else {
+        mounted_volumes(name, config)?
+    };
+    Ok(Mounter {
+        name: name.to_owned(),
+        status,
+        volumes,
+    })
 }
 
 /// Volume name → the running sandbox that holds it. With two running holders (which msb
@@ -113,6 +152,44 @@ mod tests {
         assert_eq!(size_mib(None, Some(7)), DiskSize::mib(7));
         assert_eq!(size_mib(None, None), DiskSize::mib(0));
         assert_eq!(size_mib(Some(u64::MAX), None), DiskSize::mib(u32::MAX));
+    }
+
+    fn bad_config() -> Result<SandboxConfig, String> {
+        Err("missing field `spec`".to_owned())
+    }
+
+    #[test]
+    fn an_unreadable_config_of_a_running_sandbox_is_an_error_naming_it() {
+        for status in [WorkspaceStatus::Running, WorkspaceStatus::Starting] {
+            let err = mounter("ws-a", status, bad_config())
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("`ws-a`"), "{err}");
+            assert!(err.contains("missing field `spec`"), "{err}");
+            assert!(err.contains("remove the sandbox"), "{err}");
+        }
+    }
+
+    #[test]
+    fn an_unreadable_config_of_a_stopped_sandbox_holds_nothing() {
+        let m = mounter("ws-a", WorkspaceStatus::Stopped, bad_config()).unwrap();
+        assert!(m.volumes.is_empty());
+    }
+
+    #[test]
+    fn mounted_volumes_fail_on_an_unreadable_config() {
+        let err = mounted_volumes("ws-a", bad_config())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("`ws-a`") && err.contains("single-writer"),
+            "{err}"
+        );
+        assert!(
+            mounted_volumes("ws-a", Ok::<_, String>(SandboxConfig::default()))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

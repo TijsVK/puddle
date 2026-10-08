@@ -18,7 +18,7 @@ use puddle_types::{ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus
 
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
-use crate::volume::{Mounter, holders, info, named_volumes};
+use crate::volume::{Mounter, holders, info, mounted_volumes, mounter};
 use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, spec};
 
 struct Inner {
@@ -158,16 +158,12 @@ impl MsbRuntime {
 
     /// Volume name → the running sandbox that holds it.
     async fn volume_holders(&self) -> Result<BTreeMap<String, String>, ComputeError> {
-        let mounters: Vec<Mounter> = self
+        let mounters = self
             .records()
             .await?
             .iter()
-            .map(|h| Mounter {
-                name: h.name().to_owned(),
-                status: status(h.status_snapshot()),
-                volumes: h.config().map(|c| named_volumes(&c)).unwrap_or_default(),
-            })
-            .collect();
+            .map(|h| mounter(h.name(), status(h.status_snapshot()), h.config()))
+            .collect::<Result<Vec<Mounter>, ComputeError>>()?;
         Ok(holders(&mounters))
     }
 
@@ -408,13 +404,11 @@ impl Runtime for MsbRuntime {
                     status: current,
                 });
             }
-            let mounts: Vec<(String, Option<u32>)> = record
-                .config()
-                .map(|c| named_volumes(&c))
-                .unwrap_or_default()
-                .into_iter()
-                .map(|v| (v, None))
-                .collect();
+            let mounts: Vec<(String, Option<u32>)> =
+                mounted_volumes(name.as_str(), record.config())?
+                    .into_iter()
+                    .map(|v| (v, None))
+                    .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
             match self.sdk(Sandbox::start(name.as_str())).await {
                 Ok(sdk) => self.handle_for(name, sdk).await,
@@ -515,11 +509,9 @@ impl Runtime for MsbRuntime {
     fn stale_dirs(&self) -> impl Future<Output = Result<Vec<String>, ComputeError>> + Send {
         Box::pin(async move {
             let dirs = match std::fs::read_dir(&self.inner.sandboxes_dir) {
-                Ok(entries) => entries
-                    .filter_map(Result::ok)
-                    .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-                    .filter_map(|e| e.file_name().into_string().ok())
-                    .collect::<BTreeSet<String>>(),
+                Ok(entries) => dir_names(entries.map(|e| {
+                    e.and_then(|e| Ok((e.file_name(), e.file_type().map(|t| t.is_dir()))))
+                }))?,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeSet::new(),
                 Err(e) => return Err(runtime("list stale dirs", &e)),
             };
@@ -640,6 +632,29 @@ impl Runtime for MsbRuntime {
     }
 }
 
+/// The directory names among `entries` (name, whether it is a directory). An entry that cannot be
+/// read or whose name is not UTF-8 is an error: leaving it out would hide it from the stale-dir
+/// listing, and a directory nobody lists is never cleaned up.
+fn dir_names(
+    entries: impl Iterator<Item = std::io::Result<(std::ffi::OsString, std::io::Result<bool>)>>,
+) -> Result<BTreeSet<String>, ComputeError> {
+    let mut out = BTreeSet::new();
+    for entry in entries {
+        let (name, is_dir) = entry.map_err(|e| runtime("list stale dirs", &e))?;
+        if !is_dir.map_err(|e| runtime("list stale dirs", &e))? {
+            continue;
+        }
+        let name = name.into_string().map_err(|n| {
+            runtime(
+                "list stale dirs",
+                &format!("a sandbox directory has a name that is not UTF-8: {n:?}"),
+            )
+        })?;
+        out.insert(name);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -676,6 +691,34 @@ mod tests {
         assert_eq!(tail, "--- a.log\nello\n--- b.log\n6789\n");
         assert_eq!(log_tail(&dir.join("missing"), 4), "");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn dir_names_keep_directories_and_fail_on_what_they_cannot_read() {
+        use std::ffi::OsString;
+        let ok = |n: &str, dir: bool| Ok((OsString::from(n), Ok(dir)));
+        let names = dir_names(vec![ok("a", true), ok("file", false), ok("b", true)].into_iter());
+        assert_eq!(names.unwrap().into_iter().collect::<Vec<_>>(), ["a", "b"]);
+
+        let denied = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let entry_err = dir_names(vec![ok("a", true), Err(denied())].into_iter());
+        assert!(
+            entry_err
+                .unwrap_err()
+                .to_string()
+                .contains("list stale dirs")
+        );
+        let type_err = dir_names(vec![Ok((OsString::from("a"), Err(denied())))].into_iter());
+        assert!(type_err.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dir_names_refuse_a_name_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = std::ffi::OsString::from_vec(vec![0x66, 0xff]);
+        let err = dir_names(std::iter::once(Ok((bad, Ok(true))))).unwrap_err();
+        assert!(err.to_string().contains("not UTF-8"), "{err}");
     }
 
     #[test]
