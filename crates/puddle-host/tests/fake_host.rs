@@ -887,6 +887,33 @@ async fn a_create_that_needs_the_default_memory_is_refused_while_the_settings_ar
     host.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_memory_size_that_is_not_valid_stops_the_start_and_names_the_way_out() {
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(
+        data.join("workspaces.json"),
+        json!({"version": 1, "workspaces": [{
+            "id": "acme", "name": "acme", "repo_url": REPO, "image": "img",
+            "memory_mib": 1, "created_at": 0, "disk_size_mib": 64
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let err = Host::start(
+        prepared,
+        &FakeFactory::new(&rig.runtime, &rig.log),
+        HostOptions::default(),
+    )
+    .await
+    .unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("workspace acme"), "{message}");
+    assert!(message.contains("workspaces.json"), "{message}");
+}
+
 fn api_for(host: &Host<FakeRuntime>) -> Api {
     api(host)
 }

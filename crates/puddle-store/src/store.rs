@@ -1513,11 +1513,8 @@ mod tests {
         assert_eq!(store.rules(), Vec::<Rule>::new());
     }
 
-    fn corrupt_table(err: &StoreError) -> &'static str {
-        match err {
-            StoreError::Corrupt { table, .. } => table,
-            other => panic!("expected Corrupt, got {other}"),
-        }
+    fn is_corrupt(err: &StoreError, in_table: &str) -> bool {
+        matches!(err, StoreError::Corrupt { table, .. } if *table == in_table)
     }
 
     #[test]
@@ -1531,7 +1528,7 @@ mod tests {
             slug,
         );
         let err = sets::note_built_in_changes(&mut conn, clock.now_ms()).unwrap_err();
-        assert_eq!(corrupt_table(&err), "builtin_sets_seen");
+        assert!(is_corrupt(&err, "builtin_sets_seen"), "{err}");
         assert!(err.to_string().contains(slug), "{err}");
         assert_eq!(
             audit_count(&conn),
@@ -1563,7 +1560,7 @@ mod tests {
             slug,
         );
         let err = store.rule_sets().unwrap_err();
-        assert_eq!(corrupt_table(&err), "builtin_sets_seen");
+        assert!(is_corrupt(&err, "builtin_sets_seen"), "{err}");
     }
 
     #[test]
@@ -1573,7 +1570,7 @@ mod tests {
             .execute("UPDATE audit_size SET bytes = -1 WHERE id = 1", [])
             .unwrap();
         let err = store.audit_bytes().unwrap_err();
-        assert_eq!(corrupt_table(&err), "audit_size");
+        assert!(is_corrupt(&err, "audit_size"), "{err}");
     }
 
     #[test]

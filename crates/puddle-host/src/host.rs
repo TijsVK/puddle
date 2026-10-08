@@ -790,3 +790,43 @@ async fn reconcile_with<R: Runtime>(
         .collect();
     Ok((report, status))
 }
+
+#[cfg(test)]
+mod tests {
+    use puddle_api::MemorySettings;
+    use puddle_settings::WorkspaceSettings;
+    use puddle_types::LocalCategory;
+    use serde_json::json;
+
+    use super::*;
+
+    fn name() -> WorkspaceName {
+        WorkspaceName::new("acme").unwrap()
+    }
+
+    #[test]
+    fn local_access_follows_the_settings_when_they_can_be_read() {
+        let repo = MemorySettings::default();
+        let mut own = WorkspaceSettings::default();
+        own.overrides.local_toggles.private = Some(true);
+        repo.save_workspace(&name(), own.to_document()).unwrap();
+        let access = local_access(&repo, &name());
+        assert!(access.is_on(LocalCategory::Private));
+        assert!(!access.is_on(LocalCategory::Loopback));
+    }
+
+    #[test]
+    fn damaged_settings_block_every_local_destination_and_say_why() {
+        let repo = MemorySettings::default();
+        repo.save_global(json!("not an object")).unwrap();
+        assert_eq!(local_access(&repo, &name()), LocalAccess::NONE);
+        let reason = local_access_checked(&repo, &name()).unwrap_err();
+        assert!(reason.contains("global settings are not valid"), "{reason}");
+
+        let repo = MemorySettings::default();
+        repo.save_workspace(&name(), json!([1])).unwrap();
+        assert_eq!(local_access(&repo, &name()), LocalAccess::NONE);
+        let reason = local_access_checked(&repo, &name()).unwrap_err();
+        assert!(reason.contains("workspace acme"), "{reason}");
+    }
+}

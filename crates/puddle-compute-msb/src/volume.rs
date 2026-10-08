@@ -183,6 +183,22 @@ mod tests {
     }
 
     #[test]
+    fn a_readable_config_of_a_stopped_sandbox_keeps_its_volumes() {
+        let mut config = SandboxConfig::default();
+        config.spec.mounts = vec![VolumeMount::Named {
+            name: "ws-a".into(),
+            guest: "/w".into(),
+            create: None,
+            options: microsandbox::sandbox::MountOptions::default(),
+            stat_virtualization: microsandbox::sandbox::StatVirtualization::Strict,
+            host_permissions: microsandbox::sandbox::HostPermissions::Private,
+            follow_root_symlinks: false,
+        }];
+        let m = mounter("s", WorkspaceStatus::Stopped, Ok::<_, String>(config)).unwrap();
+        assert_eq!(m.volumes, ["ws-a"]);
+    }
+
+    #[test]
     fn mounted_volumes_fail_on_an_unreadable_config() {
         let err = mounted_volumes("ws-a", bad_config())
             .unwrap_err()

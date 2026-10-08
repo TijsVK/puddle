@@ -56,13 +56,7 @@ async fn direct_ssh_of(state: &AppState, records: &[WorkspaceRecord]) -> Vec<Dir
         let repo = settings.as_ref();
         let global = match crate::routes::settings::load_global(repo) {
             Ok(global) => global,
-            Err(e) => {
-                let reason = e.reason().to_owned();
-                return Ok(names
-                    .iter()
-                    .map(|_| DirectSsh::unreadable(&reason))
-                    .collect());
-            }
+            Err(e) => return Ok(all_unreadable(names.len(), e.reason())),
         };
         Ok(names
             .iter()
@@ -82,24 +76,27 @@ async fn direct_ssh_of(state: &AppState, records: &[WorkspaceRecord]) -> Vec<Dir
     .await;
     match loaded {
         Ok(all) => all,
-        Err(e) => records
-            .iter()
-            .map(|_| DirectSsh::unreadable(e.reason()))
-            .collect(),
+        Err(e) => all_unreadable(records.len(), e.reason()),
     }
+}
+
+fn all_unreadable(count: usize, reason: &str) -> Vec<DirectSsh> {
+    (0..count).map(|_| DirectSsh::unreadable(reason)).collect()
+}
+
+/// `direct_ssh_of` for one record.
+async fn direct_ssh_of_one(state: &AppState, record: &WorkspaceRecord) -> DirectSsh {
+    let mut all = direct_ssh_of(state, std::slice::from_ref(record)).await;
+    all.pop().unwrap_or(DirectSsh {
+        on: false,
+        unreadable: None,
+    })
 }
 
 /// Whether direct SSH is on for one workspace; the error says why it cannot be known.
 async fn direct_ssh_on(state: &AppState, record: WorkspaceRecord) -> Result<bool, String> {
-    let one = direct_ssh_of(state, &[record]).await.pop();
-    match one {
-        Some(DirectSsh {
-            unreadable: Some(reason),
-            ..
-        }) => Err(reason),
-        Some(DirectSsh { on, .. }) => Ok(on),
-        None => Ok(false),
-    }
+    let d = direct_ssh_of_one(state, &record).await;
+    d.unreadable.map_or(Ok(d.on), Err)
 }
 
 /// The workspaces as the API shows them.
@@ -114,13 +111,7 @@ async fn views(state: &AppState, records: Vec<WorkspaceRecord>) -> Vec<Workspace
 
 /// One workspace as the API shows it.
 async fn view(state: &AppState, record: WorkspaceRecord) -> Workspace {
-    let d = direct_ssh_of(state, std::slice::from_ref(&record))
-        .await
-        .pop()
-        .unwrap_or(DirectSsh {
-            on: false,
-            unreadable: None,
-        });
+    let d = direct_ssh_of_one(state, &record).await;
     Workspace::new(record, d.on).with_settings_error(d.unreadable)
 }
 

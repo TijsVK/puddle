@@ -68,6 +68,12 @@ mod tests {
     }
 
     #[test]
+    fn the_unreadable_repo_still_accepts_saves() {
+        Unreadable.save_global(json!({})).unwrap();
+        Unreadable.save_workspace(&a(), json!({})).unwrap();
+    }
+
+    #[test]
     fn a_missing_document_is_the_defaults() {
         let repo = MemorySettings::default();
         assert_eq!(global(&repo).unwrap(), GlobalSettings::default());
