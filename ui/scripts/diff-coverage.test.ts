@@ -128,7 +128,11 @@ describe("run on a real git repository", () => {
   });
 
   function repo(): string {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "diff-coverage-")));
+    // `.native` expands Windows 8.3 short names (RUNNER~1), which git reports in long form; the
+    // JS realpath leaves them short, so the lcov paths would fall outside the repository.
+    const dir = realpathSync.native(
+      mkdtempSync(join(tmpdir(), "diff-coverage-")),
+    );
     dirs.push(dir);
     const g = (...a: string[]) =>
       execFileSync("git", a, { cwd: dir, env: cleanGitEnv() });
@@ -159,8 +163,12 @@ describe("run on a real git repository", () => {
       join(dir, "l.info"),
       `SF:${dir}/src/a.rs\nDA:2,1\nDA:3,1\nDA:4,5\nend_of_record\n`,
     );
-    vi.spyOn(console, "log").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
     expect(run(opts(join(dir, "l.info")), dir)).toBe(0);
+    // A report whose paths miss the repository also exits 0, as "not measured"; rule that out.
+    const out = log.mock.calls.flat().join("\n");
+    expect(out).not.toContain("not measured");
+    expect(out).toContain("2 changed executable line(s) covered");
   });
 
   it("fails and names the file and line when one added line never ran", () => {
