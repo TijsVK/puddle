@@ -41,7 +41,7 @@ pub(crate) fn make_owner_only(paths: &HostPaths) -> Result<(), HostError> {
     if !changed.is_empty() {
         tracing::warn!(
             changed = %changed.join("; "),
-            "made puddle's data folder owner-only"
+            "made puddle's data folder owner-only (access for other accounts removed)"
         );
     }
     Ok(())
