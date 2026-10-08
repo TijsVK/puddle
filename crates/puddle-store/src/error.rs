@@ -26,7 +26,7 @@ pub enum StoreError {
     /// A stored row doesn't parse (edited by hand, or a bug).
     #[error("stored {table} row {id} is invalid: {reason}")]
     Corrupt {
-        /// `rules` or `pending`.
+        /// The table, such as `rules` or `pending`.
         table: &'static str,
         /// The row id.
         id: i64,

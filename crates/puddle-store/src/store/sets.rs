@@ -155,17 +155,19 @@ pub(super) fn load_index(conn: &Connection) -> Result<RuleIndex, StoreError> {
 }
 
 fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
-    let mut stmt = conn.prepare("SELECT rule_set, workspace_id, enabled FROM rule_set_switches")?;
+    let mut stmt =
+        conn.prepare("SELECT rowid, rule_set, workspace_id, enabled FROM rule_set_switches")?;
     let rows = stmt.query_map([], |row| {
         Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, Option<String>>(1)?,
-            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, i64>(3)?,
         ))
     })?;
     let mut switches = Switches::default();
     for row in rows {
-        let (set, workspace, enabled) = row?;
+        let (rowid, set, workspace, enabled) = row?;
         // A switch of a built-in set this version no longer ships is kept but means nothing.
         let Some(set) = parse_rule_set(&set) else {
             continue;
@@ -173,7 +175,12 @@ fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
         let workspace = match workspace {
             Some(name) => match WorkspaceName::new(&name) {
                 Ok(name) => Some(name),
-                Err(_) => continue,
+                // A name this version can't parse is skipped like a set or reason it doesn't
+                // know (R-37: such rows are ignored); the log keeps it from being silent.
+                Err(e) => {
+                    tracing::warn!(rowid, workspace = %name, error = %e, "rule set switch for a workspace name this version can't read; ignored");
+                    continue;
+                }
             },
             None => None,
         };
@@ -219,11 +226,11 @@ pub(super) fn note_built_in_changes(conn: &mut Connection, now: u64) -> Result<(
             .iter()
             .map(ToString::to_string)
             .collect();
-        let stored: Option<String> = tx
+        let stored: Option<(i64, String)> = tx
             .query_row(
-                "SELECT entries FROM builtin_sets_seen WHERE slug = ?1",
+                "SELECT rowid, entries FROM builtin_sets_seen WHERE slug = ?1",
                 [set.slug],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
         let json = serde_json::to_string(&current).map_err(crate::audit::AuditError::from)?;
@@ -234,8 +241,15 @@ pub(super) fn note_built_in_changes(conn: &mut Connection, now: u64) -> Result<(
                     params![set.slug, json],
                 )?;
             }
-            Some(stored) => {
-                let before: BTreeSet<String> = serde_json::from_str(&stored).unwrap_or_default();
+            Some((rowid, stored)) => {
+                // Reading damage as "no entries" would audit every pattern of the set as added.
+                let before: BTreeSet<String> = serde_json::from_str(&stored).map_err(|e| {
+                    super::corrupt(
+                        "builtin_sets_seen",
+                        rowid,
+                        format!("entries of {}: {e}", set.slug),
+                    )
+                })?;
                 if before == current {
                     continue;
                 }
@@ -388,14 +402,17 @@ impl Store {
         let mut out = Vec::new();
         for set in BUILT_IN_SETS {
             let id = RuleSetId::BuiltIn(set.slug);
-            let changed_at: Option<i64> = conn
+            let changed_at: Option<(i64, Option<i64>)> = conn
                 .query_row(
-                    "SELECT changed_at FROM builtin_sets_seen WHERE slug = ?1",
+                    "SELECT rowid, changed_at FROM builtin_sets_seen WHERE slug = ?1",
                     [set.slug],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
-                .optional()?
-                .flatten();
+                .optional()?;
+            let changed_at = match changed_at {
+                Some((rowid, Some(t))) => Some(stored_ts("builtin_sets_seen", rowid, t)?),
+                _ => None,
+            };
             out.push(RuleSetInfo {
                 id,
                 name: set.name.to_owned(),
@@ -414,7 +431,7 @@ impl Store {
                         expires_at: None,
                     })
                     .collect(),
-                changed_at: changed_at.and_then(|t| u64::try_from(t).ok()),
+                changed_at,
                 created_at: None,
             });
         }

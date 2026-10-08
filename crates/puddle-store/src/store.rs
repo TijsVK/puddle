@@ -1094,7 +1094,8 @@ fn audit_bytes(conn: &Connection) -> Result<u64, StoreError> {
     let bytes: i64 = conn.query_row("SELECT bytes FROM audit_size WHERE id = 1", [], |row| {
         row.get(0)
     })?;
-    Ok(u64::try_from(bytes).unwrap_or(0))
+    // A negative size read as 0 would keep the audit-size cap from ever firing.
+    u64::try_from(bytes).map_err(|_| corrupt("audit_size", 1, "negative byte count"))
 }
 
 fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
@@ -1510,6 +1511,69 @@ mod tests {
         );
         // The bad row also blocks reloading the rule set, so no change commits on top of it.
         assert_eq!(store.rules(), Vec::<Rule>::new());
+    }
+
+    fn corrupt_table(err: &StoreError) -> &'static str {
+        match err {
+            StoreError::Corrupt { table, .. } => table,
+            other => panic!("expected Corrupt, got {other}"),
+        }
+    }
+
+    #[test]
+    fn damaged_built_in_snapshots_are_corrupt_not_empty() {
+        let (clock, store) = store();
+        let slug = crate::catalogue::BUILT_IN_SETS[0].slug;
+        let mut conn = lock(&store.conn);
+        conn_exec(
+            &conn,
+            "UPDATE builtin_sets_seen SET entries = 'not json' WHERE slug = ?1",
+            slug,
+        );
+        let err = sets::note_built_in_changes(&mut conn, clock.now_ms()).unwrap_err();
+        assert_eq!(corrupt_table(&err), "builtin_sets_seen");
+        assert!(err.to_string().contains(slug), "{err}");
+        assert_eq!(
+            audit_count(&conn),
+            0,
+            "nothing was audited as added from the damage"
+        );
+    }
+
+    fn conn_exec(conn: &Connection, sql: &str, slug: &str) {
+        conn.execute(sql, [slug]).unwrap();
+    }
+
+    fn audit_count(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT count(*) FROM audit WHERE type = 'rule_set_changed'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_negative_changed_at_is_corrupt_not_never_changed() {
+        let (_, store) = store();
+        let slug = crate::catalogue::BUILT_IN_SETS[0].slug;
+        conn_exec(
+            &lock(&store.conn),
+            "UPDATE builtin_sets_seen SET changed_at = -5 WHERE slug = ?1",
+            slug,
+        );
+        let err = store.rule_sets().unwrap_err();
+        assert_eq!(corrupt_table(&err), "builtin_sets_seen");
+    }
+
+    #[test]
+    fn a_negative_audit_size_is_corrupt_not_zero() {
+        let (_, store) = store();
+        lock(&store.conn)
+            .execute("UPDATE audit_size SET bytes = -1 WHERE id = 1", [])
+            .unwrap();
+        let err = store.audit_bytes().unwrap_err();
+        assert_eq!(corrupt_table(&err), "audit_size");
     }
 
     #[test]
