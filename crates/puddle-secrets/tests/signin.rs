@@ -96,9 +96,9 @@ async fn gh_that_shows_no_usable_code_is_reported_not_guessed() {
         .begin(&gh_spec())
         .await
         .unwrap_err();
-    assert_eq!(err, SignInError::NoPrompt(Tool::Gh));
+    assert_eq!(err, SignInError::NoPrompt(Tool::Gh, String::new()));
 
-    // An address on another host is not shown to the user.
+    // An address on another host is not shown to the user; what gh said last is the reason given.
     let fakes = Fakes::new();
     let elsewhere = fakes.install(
         "gh",
@@ -108,7 +108,28 @@ async fn gh_that_shows_no_usable_code_is_reported_not_guessed() {
         .begin(&gh_spec())
         .await
         .unwrap_err();
-    assert_eq!(err, SignInError::NoPrompt(Tool::Gh));
+    let SignInError::NoPrompt(Tool::Gh, last) = err else {
+        panic!("{err:?}");
+    };
+    assert!(last.contains("evil.example"), "{last}");
+}
+
+#[tokio::test]
+async fn gh_that_fails_says_what_it_said_last() {
+    let fakes = Fakes::new();
+    // The last line has colour codes, which must not reach a message.
+    let failing = fakes.install(
+        "gh",
+        "[auth login]\nstderr=error connecting to github.com\\n\u{1b}[31mx509: certificate signed by unknown authority\u{1b}[0m\\n\nexit=1\n",
+    );
+    let err = SignIns::new(ToolPaths::new(Some(failing), None))
+        .begin(&gh_spec())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "gh did not show a sign-in code: [31mx509: certificate signed by unknown authority[0m"
+    );
 }
 
 #[tokio::test]
@@ -164,15 +185,64 @@ async fn git_sign_in_lets_the_helper_open_its_window_then_keeps_the_answer() {
 }
 
 #[tokio::test]
-async fn git_sign_in_does_not_keep_an_answer_for_another_target() {
+async fn git_sign_in_does_not_keep_an_answer_for_another_target_and_says_so() {
     let fakes = Fakes::new();
     let git = fakes.install(
         "git",
         "[credential fill]\nstdout=protocol=https\\nhost=github.com\\npath=other\\nusername=me\\npassword=x\\n\n",
     );
     let signin = SignIns::new(ToolPaths::new(None, Some(git.clone())));
-    signin.begin(&git_spec()).await.unwrap();
-    let log = wait_for(&git, "ARGS credential approve").await;
+    let err = signin.begin(&git_spec()).await.unwrap_err();
+    assert_eq!(
+        err,
+        SignInError::Ended(
+            Tool::Git,
+            "the helper answered for another host or path".into()
+        )
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let log = Fakes::log(&git);
     assert!(log.contains("credential fill"), "{log}");
     assert!(!log.contains("credential approve"), "{log}");
+    // Nothing is left open: asking again starts again.
+    signin.begin(&git_spec()).await.unwrap_err();
+    assert_eq!(Fakes::log(&git).matches("credential fill").count(), 2);
+}
+
+#[tokio::test]
+async fn git_that_ends_at_once_without_an_answer_is_reported() {
+    let fakes = Fakes::new();
+    let git = fakes.install("git", "[credential fill]\nexit=1\n");
+    let err = SignIns::new(ToolPaths::new(None, Some(git)))
+        .begin(&git_spec())
+        .await
+        .unwrap_err();
+    assert_eq!(err, SignInError::Ended(Tool::Git, String::new()));
+    assert_eq!(err.to_string(), "git ended without signing in");
+}
+
+#[tokio::test]
+async fn git_that_is_still_running_after_the_early_wait_is_taken_to_wait_on_the_user() {
+    let fakes = Fakes::new();
+    let git = fakes.install(
+        "git",
+        &format!(
+            "[credential fill]\nsleep_ms=700\nstdout=protocol=https\\nhost=dev.azure.com\\npath=acme\\nusername=me\\npassword={CANARY}\\n\n\
+             [credential approve]\nexit=0\n"
+        ),
+    );
+    let signin = SignIns::new(ToolPaths::new(None, Some(git.clone())))
+        .with_early_wait(Duration::from_millis(150));
+    assert_eq!(
+        signin.begin(&git_spec()).await.unwrap(),
+        SignInStart::default()
+    );
+    // The window is still open: a second click returns the same answer and starts nothing.
+    assert_eq!(
+        signin.begin(&git_spec()).await.unwrap(),
+        SignInStart::default()
+    );
+    assert_eq!(Fakes::log(&git).matches("credential fill").count(), 1);
+    let log = wait_for(&git, "ARGS credential approve").await;
+    assert!(log.contains("ARGS credential approve"), "{log}");
 }

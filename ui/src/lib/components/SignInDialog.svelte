@@ -92,8 +92,9 @@
       <p class="code" data-testid="sign-in-code">{start.code}</p>
     {:else}
       <p>
-        Finish signing in in the window that opened. If none opened, close this
-        and try again.
+        puddle asked Git Credential Manager to open its sign-in window. Finish
+        signing in there; Git Credential Manager keeps the result, as it does
+        for Git itself. If no window appears, close this and try again.
       </p>
     {/if}
     <p class="hint" role="status">

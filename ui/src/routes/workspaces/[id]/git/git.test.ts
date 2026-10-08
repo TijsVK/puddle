@@ -218,6 +218,31 @@ describe("identities on a workspace", () => {
     expect(screen.getByText(/No identity yet/)).toBeInTheDocument();
   });
 
+  it("says when the workspace's own address could not be read, so nothing was listed or chosen", async () => {
+    workspaces.list = [
+      workspace("odd", { repo_url: "https://example.com/a/b/c" }),
+    ];
+    api.git["odd"] = { ids: [], repos: [], push: true, pull: false };
+    url.id = "odd";
+    render(Page);
+    expect(
+      await screen.findByText(
+        /couldn't read this workspace's repository address/,
+      ),
+    ).toHaveTextContent("listed no repository and chose no identity");
+    expect(
+      screen.getByText(/not a repository address puddle can read/),
+    ).toBeInTheDocument();
+    // Adding something makes the line go away: it only describes an empty start.
+    api.git["odd"]!.repos = [repoRow(1)];
+    cleanup();
+    render(Page);
+    await screen.findByRole("table");
+    expect(
+      screen.queryByText(/couldn't read this workspace's repository address/),
+    ).toBeNull();
+  });
+
   it("says when there is nothing to add", async () => {
     api.identities = [];
     await mount();

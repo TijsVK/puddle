@@ -86,7 +86,9 @@ describe("the sign-in dialog", () => {
   it("tells a helper-window sign-in from a code sign-in", () => {
     mount({ start: { code: null, url: null } });
     expect(
-      screen.getByText(/Finish signing in in the window that opened/),
+      screen.getByText(
+        /asked Git Credential Manager to open its sign-in window/,
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("sign-in-code")).toBeNull();
   });

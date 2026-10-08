@@ -29,6 +29,28 @@ const SIGN_IN_WINDOW: Duration = Duration::from_mins(5);
 /// How long `gh` gets to print its code and address.
 const PROMPT_WAIT: Duration = Duration::from_secs(15);
 
+/// How long a Git credential sign-in is watched for an early failure (no helper that can ask, a
+/// helper that answered for something else) before it is taken to be waiting on the user.
+const EARLY_WAIT: Duration = Duration::from_secs(2);
+
+/// What a line of a tool's output may carry into an error message: no control characters, bounded.
+fn clean_line(line: &str) -> String {
+    line.chars()
+        .filter(|c| !c.is_control())
+        .take(200)
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+fn detail(text: &str) -> String {
+    if text.is_empty() {
+        String::new()
+    } else {
+        format!(": {text}")
+    }
+}
+
 /// What the user needs to finish a sign-in that puddle started.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SignInStart {
@@ -45,9 +67,14 @@ pub enum SignInError {
     /// A pasted token has nothing to sign in to; paste a new one.
     #[error("a pasted token has nothing to sign in to")]
     NothingToSignIn,
-    /// The tool started but did not show a code and an address in time.
-    #[error("{} did not show a sign-in code", .0.name())]
-    NoPrompt(Tool),
+    /// The tool started but did not show a code and an address in time; the second field is the
+    /// last line it printed, when it printed one.
+    #[error("{} did not show a sign-in code{}", .0.name(), detail(.1))]
+    NoPrompt(Tool, String),
+    /// The tool ended at once without a sign-in (no credential helper that can ask, or one that
+    /// answered for another host or path); the second field says what it was, when known.
+    #[error("{} ended without signing in{}", .0.name(), detail(.1))]
+    Ended(Tool, String),
     /// The tool could not be started.
     #[error(transparent)]
     Source(#[from] SourceError),
@@ -60,6 +87,7 @@ type Open = Arc<Mutex<HashMap<SourceSpec, SignInStart>>>;
 pub struct SignIns {
     tools: ToolPaths,
     window: Duration,
+    early_wait: Duration,
     open: Open,
     /// One `begin` at a time, so two clicks cannot start two tools.
     gate: tokio::sync::Mutex<()>,
@@ -72,6 +100,7 @@ impl SignIns {
         Self {
             tools,
             window: SIGN_IN_WINDOW,
+            early_wait: EARLY_WAIT,
             open: Open::default(),
             gate: tokio::sync::Mutex::new(()),
         }
@@ -81,6 +110,13 @@ impl SignIns {
     #[must_use]
     pub fn with_window(mut self, window: Duration) -> Self {
         self.window = window;
+        self
+    }
+
+    /// The same, watching a Git credential sign-in for an early failure for `wait` (the default is two seconds).
+    #[must_use]
+    pub fn with_early_wait(mut self, wait: Duration) -> Self {
+        self.early_wait = wait;
         self
     }
 
@@ -104,7 +140,10 @@ impl SignIns {
                 host,
                 path,
                 username,
-            } => self.git_credential(spec, host, path, username.as_ref()),
+            } => {
+                self.git_credential(spec, host, path, username.as_ref())
+                    .await
+            }
             SourceSpec::Stored { .. } => Err(SignInError::NothingToSignIn),
         }
     }
@@ -138,9 +177,10 @@ impl SignIns {
             .stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|err| spawn_error(Tool::Gh, &err))?;
         let Some(stderr) = child.stderr.take() else {
-            return Err(SignInError::NoPrompt(Tool::Gh));
+            return Err(SignInError::NoPrompt(Tool::Gh, String::new()));
         };
         let mut lines = BufReader::new(stderr).lines();
+        let mut last = String::new();
         let shown = tokio::time::timeout(PROMPT_WAIT, async {
             let (mut code, mut url) = (None, None);
             while let Ok(Some(line)) = lines.next_line().await {
@@ -152,12 +192,17 @@ impl SignIns {
                 if code.is_some() && url.is_some() {
                     return Some(SignInStart { code, url });
                 }
+                let cleaned = clean_line(&line);
+                if !cleaned.is_empty() {
+                    last = cleaned;
+                }
             }
             None
         })
         .await;
         let Ok(Some(start)) = shown else {
-            return Err(SignInError::NoPrompt(Tool::Gh));
+            // What the tool said last is the cause (a proxy, no route, a bad host), when it said anything.
+            return Err(SignInError::NoPrompt(Tool::Gh, last));
         };
         // The tool keeps running until the user finishes at the address, or the window ends;
         // dropping the child then ends one that is still waiting.
@@ -174,8 +219,10 @@ impl SignIns {
 
     /// `git credential fill` with Git Credential Manager allowed to open its window; an answer
     /// for the right target is then handed to `git credential approve`, as Git does after a
-    /// working sign-in, so the helper keeps it.
-    fn git_credential(
+    /// working sign-in, so the helper keeps it. A tool that ends at once without an answer (no
+    /// helper that can ask) is reported; one still running after the early wait is taken to be
+    /// waiting on the user.
+    async fn git_credential(
         &self,
         spec: &SourceSpec,
         host: &HostName,
@@ -193,6 +240,7 @@ impl SignIns {
         }
         input.push('\n');
         let start = SignInStart::default();
+        let (tell, told) = tokio::sync::oneshot::channel::<Result<(), String>>();
         self.open_while(spec, &start, async move {
             let args = ["-c", "credential.useHttpPath=true", "credential", "fill"];
             let answer = run_with(
@@ -204,10 +252,23 @@ impl SignIns {
                 window,
             )
             .await;
-            let Ok(answer) = answer else { return };
-            let right_target = std::str::from_utf8(&answer.stdout)
-                .is_ok_and(|text| parse_fill(text, &host, &path, username.as_ref()).is_ok());
-            if answer.success && right_target {
+            let outcome = match &answer {
+                Err(err) => Err(err.to_string()),
+                Ok(answer) if !answer.success => Err(String::new()),
+                Ok(answer) => {
+                    let right_target = std::str::from_utf8(&answer.stdout).is_ok_and(|text| {
+                        parse_fill(text, &host, &path, username.as_ref()).is_ok()
+                    });
+                    if right_target {
+                        Ok(())
+                    } else {
+                        Err("the helper answered for another host or path".to_owned())
+                    }
+                }
+            };
+            let signed_in = outcome.is_ok();
+            let _ = tell.send(outcome);
+            if let (true, Ok(answer)) = (signed_in, &answer) {
                 let _ = run_with(
                     Prompts::Never,
                     Tool::Git,
@@ -219,6 +280,9 @@ impl SignIns {
                 .await;
             }
         });
+        if let Ok(Ok(Err(why))) = tokio::time::timeout(self.early_wait, told).await {
+            return Err(SignInError::Ended(Tool::Git, why));
+        }
         Ok(start)
     }
 }

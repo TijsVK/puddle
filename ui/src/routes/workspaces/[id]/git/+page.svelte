@@ -154,6 +154,12 @@
       covers the repository's owner. When a repository's remotes match several
       identities, the first one here is the commit author.
     </p>
+    {#if own && !own.ok && git.identities.length === 0 && git.repos.length === 0}
+      <p class="warn" role="status">
+        puddle couldn't read this workspace's repository address, so it listed
+        no repository and chose no identity. {own.message} Add them here.
+      </p>
+    {/if}
     {#if uncovered}
       <p class="warn" role="status">
         No identity here covers {uncovered.host}/{uncovered.owner}, so a private

@@ -94,19 +94,22 @@ impl CredentialService for NoCredentials {
 }
 
 fn sign_in_error(err: SignInError) -> CredentialsError {
+    let said = err.to_string();
     match err {
         SignInError::NothingToSignIn => CredentialsError::Invalid(
             "a pasted token has nothing to sign in to; paste a new one".into(),
         ),
-        SignInError::NoPrompt(tool) => CredentialsError::Unavailable(format!(
-            "{} did not show a sign-in code; try again, or sign in from a terminal",
-            tool.name()
+        SignInError::NoPrompt(..) => {
+            CredentialsError::Unavailable(format!("{said}; try again, or sign in from a terminal"))
+        }
+        SignInError::Ended(..) => CredentialsError::Unavailable(format!(
+            "{said}; Git Credential Manager is what signs in here, so check that Git can run it"
         )),
         SignInError::Source(err) => {
             CredentialsError::Unavailable(crate::wire::source_problem(&err))
         }
         // `SignInError` grows with the Azure CLI.
-        other => CredentialsError::Unavailable(other.to_string()),
+        _ => CredentialsError::Unavailable(said),
     }
 }
 
@@ -339,5 +342,36 @@ impl CredentialService for FakeCredentials {
             state.sign_ins.push(source);
             Ok(state.sign_in.clone())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use puddle_secrets::Tool;
+
+    use super::*;
+
+    #[test]
+    fn a_sign_in_that_could_not_start_says_what_happened_and_what_to_try() {
+        let said = |err| match sign_in_error(err) {
+            CredentialsError::Unavailable(m) | CredentialsError::Invalid(m) => m,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            said(SignInError::NoPrompt(
+                Tool::Gh,
+                "x509: unknown authority".into()
+            )),
+            "gh did not show a sign-in code: x509: unknown authority; try again, or sign in from a terminal"
+        );
+        assert_eq!(
+            said(SignInError::Ended(Tool::Git, String::new())),
+            "git ended without signing in; Git Credential Manager is what signs in here, so check that Git can run it"
+        );
+        assert_eq!(
+            said(SignInError::Source(SourceError::ToolMissing(Tool::Gh))),
+            "gh is not installed or not on PATH"
+        );
+        assert!(said(SignInError::NothingToSignIn).starts_with("a pasted token has nothing"));
     }
 }
