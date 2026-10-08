@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! A `401` from the real server is replaced by the injector's own answer when the injector chose
-//! the request's credential (it added one, or had none to add), and only then: any other `401`
-//! is the server's answer like every other. Both HTTP versions.
+//! A `401` from the real server is replaced by the injector's own answer when the injector added
+//! the request's credential, and only then: any other `401` is the server's answer like every
+//! other. Both HTTP versions.
 #![expect(
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
@@ -115,25 +115,6 @@ async fn a_request_the_server_accepts_is_not_touched_by_the_401_watch() {
 }
 
 #[tokio::test]
-async fn a_401_for_a_request_the_injector_had_no_credential_for_becomes_the_injectors_refusal() {
-    let (server, rig, _) =
-        h1_rig(Box::new(|| InjectDecision::PassThroughGuarded(rejected()))).await;
-    let mut guest = rig.guest().await;
-    let mut client = guest.tls("bound.test:443", None).await.unwrap();
-    let answer = client
-        .get("bound.test", "/acme/private.git/info/refs")
-        .await;
-    assert_eq!(answer.status, 403);
-    assert_eq!(
-        answer.header("x-puddle-blocked"),
-        Some("credential_rejected")
-    );
-    assert_eq!(server.recorded()[0].header("authorization"), None);
-    let events = rig.events(1).await;
-    assert!(!events[0].injected);
-}
-
-#[tokio::test]
 async fn any_other_401_is_the_servers_answer_unchanged() {
     for decision in [
         (|| InjectDecision::PassThrough) as fn() -> InjectDecision,
@@ -202,12 +183,7 @@ async fn over_http2_a_401_for_an_added_credential_becomes_the_injectors_refusal_
 }
 
 #[tokio::test]
-async fn over_http2_a_401_with_no_credential_to_add_is_replaced_and_any_other_401_is_not() {
-    let (_server, rig) = h2_rig(Box::new(|| InjectDecision::PassThroughGuarded(rejected()))).await;
-    let mut guest = rig.guest().await;
-    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
-    assert_eq!(client.get("bound.test", "/x").await.status, 403);
-
+async fn over_http2_a_401_to_a_request_puddle_added_nothing_to_is_the_servers_own() {
     let (_server, rig) = h2_rig(Box::new(|| InjectDecision::PassThrough)).await;
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;

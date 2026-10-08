@@ -143,12 +143,12 @@ impl Injection {
     }
 }
 
-/// What to answer the guest when the real server answers a request with `401`, for a request the
-/// injector chose the credential for: it added one ([`Injection::on_unauthorized`]) or had none
-/// to add ([`InjectDecision::PassThroughGuarded`]). The proxy calls it when the `401` arrives and
-/// sends the refusal it returns instead of the server's answer, so the guest's tool never prompts
-/// for a password the workspace does not hold. A request that carried the guest's own
-/// credentials is never given one: the server's `401` is the tool's to handle.
+/// What to answer the guest when the real server answers a request with `401`, for a request
+/// whose credential the injector added ([`Injection::on_unauthorized`]). The proxy calls it when
+/// the `401` arrives and sends the refusal it returns instead of the server's answer: the guest
+/// could not do anything with that `401`, because the credential it rejects is one the workspace
+/// does not hold. Any other request, one that carried the guest's own credentials included, gets
+/// the server's `401` as it is: it is the tool's to handle.
 #[derive(Clone)]
 pub struct Unauthorized(Arc<dyn Fn() -> InjectRefusal + Send + Sync>);
 
@@ -250,10 +250,6 @@ pub enum InjectDecision {
     Inject(Injection),
     /// Forward it as the guest sent it (no credential applies to it).
     PassThrough,
-    /// Forward it as the guest sent it, but if the real server answers `401`, send the guest
-    /// this instead: the injector is responsible for the credentials of this request and has
-    /// none to add.
-    PassThroughGuarded(Unauthorized),
     /// Answer the guest with this error; nothing is sent upstream.
     Refuse(InjectRefusal),
 }
@@ -275,10 +271,6 @@ impl InjectDecision {
             Self::PassThrough => Ok(Forwarding {
                 injection: None,
                 unauthorized: None,
-            }),
-            Self::PassThroughGuarded(unauthorized) => Ok(Forwarding {
-                injection: None,
-                unauthorized: Some(unauthorized),
             }),
             Self::Refuse(refusal) => Err(refusal),
         }

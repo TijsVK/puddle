@@ -324,12 +324,8 @@ proptest! {
         prop_assert!(mine.len() <= 1, "{case:?}: {mine:?}");
         let shown = format!("{decision:?}");
         prop_assert!(!shown.contains("CANARY"), "{case:?}: {shown}");
-        if let InjectDecision::PassThroughGuarded(unauthorized) = &decision {
-            let guard = format!("{:?}", unauthorized.refusal());
-            prop_assert!(!guard.contains("CANARY"), "{}", guard);
-        }
 
-        // 2. The workspace's own header is never replaced or answered: no injection, no guard.
+        // 2. The workspace's own header is never replaced: no injection.
         if case.own_header {
             prop_assert!(
                 matches!(
@@ -390,7 +386,7 @@ fn the_generated_requests_reach_every_kind_of_answer() {
     let rt = runtime();
     let mut runner = TestRunner::deterministic();
     let strategy = case();
-    let (mut injected, mut refused, mut guarded, mut passed) = (0, 0, 0, 0);
+    let (mut injected, mut refused, mut passed) = (0, 0, 0);
     let mut codes = std::collections::BTreeSet::new();
     for _ in 0..2000 {
         let case = strategy.new_tree(&mut runner).unwrap().current();
@@ -412,7 +408,6 @@ fn the_generated_requests_reach_every_kind_of_answer() {
             case.body.map(str::as_bytes),
         )) {
             InjectDecision::Inject(_) => injected += 1,
-            InjectDecision::PassThroughGuarded(_) => guarded += 1,
             InjectDecision::Refuse(refusal) => {
                 refused += 1;
                 codes.insert(refusal.code());
@@ -421,7 +416,6 @@ fn the_generated_requests_reach_every_kind_of_answer() {
         }
     }
     assert!(injected > 300, "injected {injected}");
-    assert!(guarded > 50, "guarded {guarded}");
     assert!(passed > 100, "passed {passed}");
     assert!(refused > 100, "refused {refused}");
     for code in ["bad_git_path", "push_denied", "pull_denied"] {

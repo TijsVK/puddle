@@ -367,9 +367,12 @@ async fn a_path_that_names_a_repository_two_ways_is_refused_before_anything_else
 // Which identity.
 
 #[tokio::test]
-async fn a_request_no_identity_covers_goes_out_without_a_credential_and_its_401_is_ours() {
+async fn a_request_no_identity_covers_goes_out_as_the_workspace_sent_it() {
     let w = World::new();
     w.identity("Work", "github.com", &["acme"], false, "CANARY-WORK");
+    // The workspace may supply a token after the server's 401 (a credential helper, the
+    // address's user name and password), so the request is neither given a credential nor
+    // answered for.
     let decision = w
         .decide(
             "github.com",
@@ -378,14 +381,9 @@ async fn a_request_no_identity_covers_goes_out_without_a_credential_and_its_401_
             &[],
         )
         .await;
-    let InjectDecision::PassThroughGuarded(unauthorized) = decision else {
-        panic!("expected a guarded pass-through, got {decision:?}");
-    };
-    let refusal = unauthorized.refusal();
-    assert_eq!((refusal.status(), refusal.code()), (403, "no_identity"));
-    assert_eq!(
-        refusal.message(),
-        "no identity on this workspace covers github.com/someone; attach one in puddle"
+    assert!(
+        matches!(decision, InjectDecision::PassThrough),
+        "{decision:?}"
     );
     assert_eq!(w.credentials.reads(), 0);
     // A host no identity names at all.
@@ -397,7 +395,7 @@ async fn a_request_no_identity_covers_goes_out_without_a_credential_and_its_401_
             &[],
         )
         .await;
-    assert!(matches!(other, InjectDecision::PassThroughGuarded(_)));
+    assert!(matches!(other, InjectDecision::PassThrough));
 }
 
 #[tokio::test]
@@ -421,7 +419,7 @@ async fn an_identity_is_picked_by_owner_and_changes_apply_at_the_next_request() 
     assert!(matches!(
         w.decide("github.com", "GET", "/acme/x.git/info/refs", &[])
             .await,
-        InjectDecision::PassThroughGuarded(_)
+        InjectDecision::PassThrough
     ));
 }
 
@@ -521,7 +519,7 @@ async fn azure_devops_takes_a_pat_as_basic_an_entra_token_as_a_bearer_and_every_
             &[],
         )
         .await;
-    assert!(matches!(elsewhere, InjectDecision::PassThroughGuarded(_)));
+    assert!(matches!(elsewhere, InjectDecision::PassThrough));
 }
 
 // A source that cannot supply its secret.
@@ -742,10 +740,7 @@ async fn settings_a_test_changes_by_hand_apply_to_the_next_request() {
     git.only_push_listed = false;
     settings.set(git);
     let second = injector.decide(&context, &view).await;
-    assert!(
-        matches!(second, InjectDecision::PassThroughGuarded(_)),
-        "{second:?}"
-    );
+    assert!(matches!(second, InjectDecision::PassThrough), "{second:?}");
 }
 
 /// A source that answers one token and counts its reads, behind the real cache.

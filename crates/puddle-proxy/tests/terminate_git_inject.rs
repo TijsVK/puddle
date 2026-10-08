@@ -294,7 +294,7 @@ async fn a_401_to_the_credential_puddle_added_is_ours_forgets_the_token_and_asks
 }
 
 #[tokio::test]
-async fn a_401_for_a_repository_no_identity_covers_says_so_and_git_never_gets_to_prompt() {
+async fn a_request_no_identity_covers_goes_out_as_sent_and_its_401_is_the_servers_own() {
     let t = GitRig::new().await;
     // Detach both identities: nothing covers anything.
     for identity in t.world.store.identities().unwrap() {
@@ -304,19 +304,20 @@ async fn a_401_for_a_repository_no_identity_covers_says_so_and_git_never_gets_to
             .unwrap();
     }
     let mut guest = t.rig.guest().await;
-    let answer = get(
+    // A tool that has a token of its own sends it after this 401, so the 401 must reach it.
+    let private = get(
         &mut guest,
         "/acme/private.git/info/refs?service=git-upload-pack",
         None,
     )
     .await;
-    assert_eq!(answer.status, 403);
-    assert_eq!(answer.header("x-puddle-blocked"), Some("no_identity"));
-    assert_eq!(answer.header("www-authenticate"), None);
+    assert_eq!(private.status, 401);
     assert_eq!(
-        answer.text(),
-        "puddle: no identity on this workspace covers bound.test/acme; attach one in puddle\n"
+        private.header("www-authenticate"),
+        Some("Basic realm=\"fake git host\"")
     );
+    assert_eq!(private.header("x-puddle-blocked"), None);
+    assert_eq!(private.text(), "Authentication required");
     // A public repository still reads, with no credential.
     let public = get(
         &mut guest,
@@ -332,8 +333,13 @@ async fn a_401_for_a_repository_no_identity_covers_says_so_and_git_never_gets_to
             .all(|r| r.header("authorization").is_none())
     );
     let events = t.rig.events(2).await;
-    assert_eq!(events[0].reason, ConnectionReason::Refused("no_identity"));
-    assert!(!events[0].injected);
+    assert!(
+        events
+            .iter()
+            .all(|e| e.reason == ConnectionReason::Rule && !e.injected)
+    );
+    assert_eq!(t.raised(), []);
+    assert_eq!(t.world.credentials.reads(), 0);
 }
 
 #[tokio::test]

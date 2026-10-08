@@ -11,10 +11,9 @@
 //! 3. A request that carries its own `Authorization` goes out as it is: never replaced, never
 //!    dropped, and a `401` to it is the server's answer.
 //! 4. Otherwise the identity that covers the repository's owner supplies the credential. No
-//!    covering identity: the request goes out without one, and a `401` to it becomes a `403` that
-//!    says so, so Git never asks for a password the workspace does not have. A source that cannot
-//!    supply the secret: `502` and a sign-in notice. A `401` to the credential puddle added
-//!    becomes a `403` as well.
+//!    covering identity: the request goes out without one and the server's `401` is its answer. A
+//!    source that cannot supply the secret: `502` and a sign-in notice. A `401` to the credential
+//!    puddle added becomes a `403`: the workspace holds no credential to answer it with.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -97,7 +96,7 @@ impl GitInjector {
                     400,
                     "bad_git_path",
                     format!(
-                        "this request names a Git repository in a way puddle cannot read safely ({why}); nothing was sent to {host}"
+                        "this request names a Git repository in a way puddle cannot read safely ({why}); nothing was sent to {host}. Use the repository's plain address"
                     ),
                 );
             }
@@ -131,20 +130,10 @@ impl GitInjector {
             CredentialChoice::Covered {
                 identity, binding, ..
             } => self.inject(identity, binding, &path).await,
-            CredentialChoice::Uncovered => {
-                let what = path.describe();
-                let owner = format!("{}/{}", path.host, path.owner);
-                tracing::debug!(workspace = %self.workspace, repo = %what, "no identity covers this repository");
-                InjectDecision::PassThroughGuarded(Unauthorized::new(move || {
-                    InjectRefusal::new(
-                        403,
-                        "no_identity",
-                        format!(
-                            "no identity on this workspace covers {owner}; attach one in puddle"
-                        ),
-                    )
-                }))
-            }
+            // No identity covers it: it goes out as the workspace sent it, so a token the workspace
+            // supplies after the server's `401` (a credential helper, `.netrc`, the address's user
+            // name and password) is used as it would be without puddle.
+            CredentialChoice::Uncovered => InjectDecision::PassThrough,
             CredentialChoice::Ambiguous(ids) => {
                 let labels = git
                     .identities

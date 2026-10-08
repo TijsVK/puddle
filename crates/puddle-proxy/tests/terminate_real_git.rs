@@ -246,7 +246,8 @@ async fn a_refused_fetch_is_readable_when_the_pull_list_is_on() {
 }
 
 #[tokio::test]
-async fn a_private_repository_no_identity_covers_says_so_and_git_does_not_ask_for_a_password() {
+async fn a_repository_no_identity_covers_works_with_the_token_git_has_and_fails_as_it_would_without_one()
+ {
     let Some(git) = Git::new().await else { return };
     for identity in git.t.world.store.identities().unwrap() {
         git.t
@@ -255,21 +256,30 @@ async fn a_private_repository_no_identity_covers_says_so_and_git_does_not_ask_fo
             .detach_identity(&git.t.world.workspace, identity.id)
             .unwrap();
     }
+    // Without a token: git's own error for a private repository, no word from puddle.
     let ran = git
         .run(&["ls-remote", "https://bound.test/acme/private.git"])
         .await;
     assert!(!ran.ok);
+    assert!(!ran.stderr.contains("puddle"), "{}", ran.stderr);
     assert!(
-        ran.stderr
-            .contains("remote: puddle: no identity on this workspace covers bound.test/acme; attach one in puddle"),
+        ran.stderr.contains("terminal prompts disabled"),
         "{}",
         ran.stderr
     );
-    assert!(
-        !ran.stderr.contains("Username") && !ran.stderr.contains("terminal prompts"),
-        "{}",
-        ran.stderr
-    );
+    // With the token in the address, which git sends only after the host's 401 (a credential
+    // helper or `.netrc` is the same): that 401 has to reach git.
+    let ran = git
+        .run(&[
+            "ls-remote",
+            &format!("https://x-access-token:{WORK}@bound.test/acme/private.git"),
+        ])
+        .await;
+    assert!(ran.ok, "{}", ran.stderr);
+    let seen = git.t.server.recorded();
+    assert_eq!(seen.len(), 3, "the first run's 401, then 401 and a retry");
+    assert_eq!(seen[1].header("authorization"), None);
+    assert_eq!(seen[2].headers_named("authorization"), [token_basic(WORK)]);
 }
 
 #[tokio::test]
