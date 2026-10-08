@@ -52,3 +52,4 @@ crates/puddle-fs/src/private/unix.rs | Err(err) => return Err(err), | a metadata
 crates/puddle-fs/src/private/unix.rs | Err(CheckError::Io(err)) => Err(err), | the permission read of a file just opened failing; not reproducible in a test
 crates/puddle-host/src/data_folder.rs | Err(err) => return Err(refuse(&store, &err)), | creating the database file failing for a reason other than it existing (disk full, permission); not reproducible without a failing file system
 crates/puddle-host/src/data_folder.rs | changed = %changed.join("; "), | a field of the one log line; the line is only evaluated with a tracing subscriber installed, and tests install none
+crates/puddle-secrets/src/keyring_store.rs | * | the OS credential store exists on a desktop session or the Windows job, not on the Linux gate host; `the_os_store_round_trips_a_test_owned_entry` runs there against a test-owned entry and skips where no store exists
