@@ -29,6 +29,7 @@ export function report(over: Partial<NetworkHealth> = {}): NetworkHealth {
       certificates: [],
       skipped: [],
       unreadable_stores: [],
+      left_out_of_tls: [],
     },
     pull_proxy: { active: true, via_upstream: true },
     routes: [],

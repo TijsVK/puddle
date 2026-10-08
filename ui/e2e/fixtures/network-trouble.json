@@ -41,7 +41,8 @@
       "intermediates": 0,
       "certificates": [],
       "skipped": [],
-      "unreadable_stores": ["LocalMachine\\Root\\.GroupPolicy: access denied"]
+      "unreadable_stores": ["LocalMachine\\Root\\.GroupPolicy: access denied"],
+      "left_out_of_tls": []
     },
     "pull_proxy": {
       "active": true,

@@ -167,6 +167,7 @@ describe("network health page", () => {
         { subject: "Old", fingerprint: "ee".repeat(32), reason: "expired" },
       ],
       unreadable_stores: ["LM\\Root: access denied"],
+      left_out_of_tls: [],
     };
     r.pull_proxy = { active: false, via_upstream: false };
     store.report = r;

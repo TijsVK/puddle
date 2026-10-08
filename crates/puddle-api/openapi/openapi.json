@@ -8592,7 +8592,8 @@
           "intermediates",
           "certificates",
           "skipped",
-          "unreadable_stores"
+          "unreadable_stores",
+          "left_out_of_tls"
         ],
         "properties": {
           "certificates": {

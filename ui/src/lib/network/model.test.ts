@@ -155,9 +155,6 @@ describe("findings", () => {
     expect(findings(r)[0]?.title).toBe(
       "puddle can't use 2 company certificates when it checks the servers it adds your credentials for.",
     );
-    // An older host that does not send the list has nothing to report.
-    delete r.roots.left_out_of_tls;
-    expect(ids(r)).toEqual([]);
   });
 
   it("lists notes after problems: dead proxies, unread roots, skipped roots, pull proxy", () => {

@@ -204,7 +204,7 @@ export function findings(report: NetworkHealth): Finding[] {
       fix: "Expired certificates are left out on purpose. If one you rely on is listed, ask IT for a renewed one.",
     });
   }
-  const leftOut = roots.left_out_of_tls ?? [];
+  const leftOut = roots.left_out_of_tls;
   if (leftOut.length > 0) {
     out.push({
       id: "roots-left-out-of-tls",
