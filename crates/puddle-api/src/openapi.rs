@@ -12,7 +12,7 @@ use crate::routes::{AppState, api_router};
 
 /// The contract's version. Bump the minor version for additive changes and the major version
 /// for anything a generated client would break on.
-pub const API_VERSION: &str = "0.5.0";
+pub const API_VERSION: &str = "0.5.1";
 
 /// The security scheme's name in the spec.
 const BEARER: &str = "bearer";
@@ -46,6 +46,7 @@ const BEARER: &str = "bearer";
         (name = "settings", description = "Global and per-workspace settings"),
         (name = "consents", description = "What the user agreed to"),
         (name = "network", description = "How puddle reaches the internet: proxy, sign-in, company roots"),
+        (name = "identities", description = "Git identities (author and credentials) and each workspace's identities, repository table and push and pull switches"),
         (name = "workspaces", description = "Workspaces: repository checkouts with their own disk and sandbox")
     )
 )]
@@ -163,7 +164,7 @@ mod tests {
                 assert!(op["tags"].as_array().is_some_and(|t| !t.is_empty()));
             }
         }
-        assert_eq!(count, 34, "operations in the spec");
+        assert_eq!(count, 49, "operations in the spec");
     }
 
     /// ADR 0002: responses always carry every field (`null`, never absent), so the generated

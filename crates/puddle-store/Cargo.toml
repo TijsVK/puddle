@@ -12,6 +12,7 @@ publish.workspace = true
 
 [dependencies]
 psl = { workspace = true }
+puddle-secrets = { workspace = true }
 puddle-types = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }

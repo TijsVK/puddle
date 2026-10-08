@@ -36,6 +36,9 @@ pub enum ErrorCode {
     NotFound,
     /// The request conflicts with the current state, e.g. an already decided request (409).
     Conflict,
+    /// Two identities on one workspace cover the same owner or both cover the rest of a host
+    /// (409); the message names both.
+    IdentityCollision,
     /// The stored settings were written by a newer puddle and can't be changed by this one (409).
     NewerSettings,
     /// The feature isn't available in this build or state (503).
@@ -128,13 +131,26 @@ impl From<StoreError> for ApiError {
             StoreError::UnknownPending(_)
             | StoreError::UnknownRule(_)
             | StoreError::UnknownRuleSet(_) => Self::not_found(err.to_string()),
-            StoreError::PendingNotOpen { .. } | StoreError::RuleSetOff { .. } => {
+            StoreError::UnknownIdentity(_) | StoreError::UnknownRepo(_) => {
+                Self::not_found(err.to_string())
+            }
+            StoreError::IdentityCollision(_) => Self::new(
+                StatusCode::CONFLICT,
+                ErrorCode::IdentityCollision,
+                err.to_string(),
+            ),
+            StoreError::PendingNotOpen { .. }
+            | StoreError::RuleSetOff { .. }
+            | StoreError::IdentityLabelTaken(_)
+            | StoreError::IdentityAttached { .. }
+            | StoreError::RepoListed(_) => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, err.to_string())
             }
             StoreError::Pattern(_)
             | StoreError::ExpiryNotInFuture
             | StoreError::NotSwitchable
-            | StoreError::RuleSetName(_) => Self::invalid(err.to_string()),
+            | StoreError::RuleSetName(_)
+            | StoreError::IdentityInvalid(_) => Self::invalid(err.to_string()),
             _ => Self::internal(&err),
         }
     }
@@ -237,6 +253,24 @@ mod tests {
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
             (StoreError::SystemActor, StatusCode::INTERNAL_SERVER_ERROR),
+            (
+                StoreError::UnknownIdentity(puddle_store::IdentityId(1)),
+                StatusCode::NOT_FOUND,
+            ),
+            (StoreError::UnknownRepo(1), StatusCode::NOT_FOUND),
+            (
+                StoreError::IdentityInvalid("x".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                StoreError::IdentityLabelTaken("x".into()),
+                StatusCode::CONFLICT,
+            ),
+            (
+                StoreError::IdentityAttached { label: "x".into() },
+                StatusCode::CONFLICT,
+            ),
+            (StoreError::RepoListed("x".into()), StatusCode::CONFLICT),
         ];
         for (err, status) in cases {
             assert_eq!(ApiError::from(err).status(), status);

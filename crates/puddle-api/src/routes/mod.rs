@@ -16,6 +16,7 @@ use crate::workspaces::WorkspaceService;
 
 mod audit;
 mod events;
+mod identities;
 mod meta;
 mod network_health;
 mod pending;
@@ -84,4 +85,27 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::reclaim_workspace))
         .routes(routes!(workspaces::delete_check))
         .routes(routes!(workspaces::attach_workspace))
+        .routes(routes!(
+            identities::list_identities,
+            identities::create_identity
+        ))
+        .routes(routes!(identities::reorder_identities))
+        .routes(routes!(
+            identities::get_identity,
+            identities::update_identity,
+            identities::delete_identity
+        ))
+        .routes(routes!(identities::set_default_identity))
+        .routes(routes!(identities::get_workspace_git))
+        .routes(routes!(
+            identities::set_workspace_identities,
+            identities::attach_identity
+        ))
+        .routes(routes!(identities::detach_identity))
+        .routes(routes!(identities::set_git_switches))
+        .routes(routes!(identities::add_git_repo))
+        .routes(routes!(
+            identities::set_git_repo,
+            identities::remove_git_repo
+        ))
 }

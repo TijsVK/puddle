@@ -23,10 +23,17 @@ use utoipa::ToSchema;
 
 use crate::error::ApiError;
 
+mod identities;
 mod network_health;
 mod rule_sets;
 mod workspaces;
 
+pub use identities::{
+    AttachIdentityRequest, CredentialCoverage, CredentialSource, GitRepoRequest, GitRepoToggles,
+    GitRepoView, GitSwitchesRequest, IdentityAuthor, IdentityCredential, IdentityDeleted,
+    IdentityList, IdentityOrderRequest, IdentityRequest, IdentitySigning, IdentityView,
+    WorkspaceGitView, WorkspaceIdentitiesRequest,
+};
 pub use network_health::{
     DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyReport, PullProxyReport,
     RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt, SignInReport, SignInResult,

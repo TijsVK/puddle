@@ -151,6 +151,15 @@ pub enum Event {
     },
     /// Rules were created, changed, deleted or expired. Global: every subscriber gets it.
     RulesChanged {},
+    /// The list of identities, their order, the default or an identity's author or credentials
+    /// changed. Carries no data: refetch `GET /api/identities`.
+    IdentitiesChanged {},
+    /// A workspace's identities, repository table or "only listed" switches changed (also when an
+    /// identity it has changed). Refetch `GET /api/workspaces/{id}/git`.
+    WorkspaceGitChanged {
+        /// The workspace.
+        workspace: WorkspaceName,
+    },
     /// New audit records were committed. `id` is the newest record's id, so a client that holds
     /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit,
     /// not per record. Global: every subscriber gets it.
@@ -270,11 +279,13 @@ impl Event {
             | Self::WorkspaceProgress { workspace, .. }
             | Self::PendingUpdated { workspace, .. }
             | Self::PendingClosed { workspace, .. }
-            | Self::SuppressionChanged { workspace, .. } => Some(workspace),
+            | Self::SuppressionChanged { workspace, .. }
+            | Self::WorkspaceGitChanged { workspace } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
-            Self::RulesChanged {} | Self::AuditAppended { .. } | Self::NetworkChanged { .. } => {
-                None
-            }
+            Self::RulesChanged {}
+            | Self::IdentitiesChanged {}
+            | Self::AuditAppended { .. }
+            | Self::NetworkChanged { .. } => None,
         }
     }
 }
@@ -518,6 +529,18 @@ mod tests {
             ),
             (Event::RulesChanged {}, r#"{"type":"rules_changed"}"#, None),
             (
+                Event::IdentitiesChanged {},
+                r#"{"type":"identities_changed"}"#,
+                None,
+            ),
+            (
+                Event::WorkspaceGitChanged {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                },
+                r#"{"type":"workspace_git_changed","workspace":"box"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
+            ),
+            (
                 Event::AuditAppended { id: 99 },
                 r#"{"type":"audit_appended","id":99}"#,
                 None,
@@ -588,6 +611,8 @@ mod tests {
                 "pending_closed",
                 "suppression_changed",
                 "rules_changed",
+                "identities_changed",
+                "workspace_git_changed",
                 "audit_appended",
                 "network_changed"
             ]

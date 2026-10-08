@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -237,6 +237,52 @@ CREATE INDEX rules_expiry ON rules (expires_at) WHERE expires_at IS NOT NULL;
 CREATE INDEX rules_set ON rules (set_id) WHERE set_id IS NOT NULL;
 ";
 
+const V5: &str = r"
+-- Git identities: an author and credential references (never a secret), several per workspace.
+CREATE TABLE identities (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    label       TEXT    NOT NULL COLLATE NOCASE UNIQUE,
+    author_name TEXT    NOT NULL,
+    author_email TEXT   NOT NULL,
+    credentials TEXT    NOT NULL,
+    signing     TEXT    NOT NULL DEFAULT 'none' CHECK (signing IN ('none')),
+    position    INTEGER NOT NULL,
+    is_default  INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    created_at  INTEGER NOT NULL,
+    changed_at  INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX identities_one_default ON identities (is_default) WHERE is_default = 1;
+
+-- The identities a workspace has, in its order.
+CREATE TABLE workspace_identities (
+    workspace_id TEXT    NOT NULL,
+    identity_id  INTEGER NOT NULL REFERENCES identities (id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, identity_id)
+) STRICT;
+CREATE UNIQUE INDEX workspace_identities_order ON workspace_identities (workspace_id, position);
+
+-- The two switches; no row means the defaults (push list on, pull list off).
+CREATE TABLE workspace_git (
+    workspace_id     TEXT PRIMARY KEY,
+    only_push_listed INTEGER NOT NULL DEFAULT 1 CHECK (only_push_listed IN (0, 1)),
+    only_pull_listed INTEGER NOT NULL DEFAULT 0 CHECK (only_pull_listed IN (0, 1))
+) STRICT;
+
+-- The repository table: one row per repository with its Pull and Push toggles.
+CREATE TABLE workspace_repos (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT    NOT NULL,
+    host         TEXT    NOT NULL,
+    owner        TEXT    NOT NULL,
+    repo         TEXT    NOT NULL,
+    pull         INTEGER NOT NULL CHECK (pull IN (0, 1)),
+    push         INTEGER NOT NULL CHECK (push IN (0, 1)),
+    created_at   INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX workspace_repos_key ON workspace_repos (workspace_id, host, owner, repo);
+";
+
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.
 ///
 /// # Errors
@@ -375,7 +421,7 @@ mod tests {
         .unwrap();
         conn.pragma_update(None, "foreign_keys", true).unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), 3);
-        assert_eq!(version(&conn), 4);
+        assert_eq!(version(&conn), SCHEMA_VERSION);
         conn
     }
 
@@ -472,6 +518,57 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// A database from before identities: every row stays, the new tables start empty, and the
+    /// switches' defaults apply to a workspace that has no row.
+    #[test]
+    fn v5_adds_the_identity_tables_and_keeps_every_older_row() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_up_to(&mut conn, 4).unwrap();
+        conn.execute_batch(
+            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
+                VALUES ('global', 'exact', 'a.example', 'allow', 1, 'cli');
+             INSERT INTO pending (workspace_id, host, port, first_seen, last_seen)
+                VALUES ('box', 'x.example', 443, 1, 1);",
+        )
+        .unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 4);
+        assert_eq!(version(&conn), 5);
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT count(*) FROM rules"), 1);
+        assert_eq!(count("SELECT count(*) FROM pending"), 1);
+        for table in [
+            "identities",
+            "workspace_identities",
+            "workspace_git",
+            "workspace_repos",
+        ] {
+            assert_eq!(
+                count(&format!("SELECT count(*) FROM {table}")),
+                0,
+                "{table}"
+            );
+        }
+        conn.execute(
+            "INSERT INTO workspace_git (workspace_id) VALUES ('box')",
+            [],
+        )
+        .unwrap();
+        let switches: (i64, i64) = conn
+            .query_row(
+                "SELECT only_push_listed, only_pull_listed FROM workspace_git",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(switches, (1, 0), "push list on, pull list off");
+        // One default at most, and a workspace's order has no gaps in its key.
+        let add = "INSERT INTO identities (label, author_name, author_email, credentials, position, is_default, created_at, changed_at)
+                   VALUES (?1, 'n', 'e@x', '[]', ?2, 1, 1, 1)";
+        conn.execute(add, ("a", 0)).unwrap();
+        assert!(conn.execute(add, ("b", 1)).is_err());
     }
 
     #[test]

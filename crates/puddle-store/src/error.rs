@@ -3,6 +3,8 @@
 
 use puddle_types::{PendingId, RuleId};
 
+use crate::identity::{Collision, IdentityId};
+
 use crate::audit::AuditError;
 use crate::pattern::PatternError;
 use crate::pending::PendingState;
@@ -73,6 +75,30 @@ pub enum StoreError {
         /// The workspace.
         workspace: String,
     },
+    /// No identity has this id.
+    #[error("no identity {0}")]
+    UnknownIdentity(IdentityId),
+    /// No repository row has this id on this workspace.
+    #[error("no repository row {0}")]
+    UnknownRepo(i64),
+    /// An identity, credential, author or repository was refused; the text says why.
+    #[error("{0}")]
+    IdentityInvalid(String),
+    /// Another identity has this label.
+    #[error("another identity is already called {0}")]
+    IdentityLabelTaken(String),
+    /// Two identities on one workspace cover the same owner or both cover the rest of a host.
+    #[error("{0}")]
+    IdentityCollision(Collision),
+    /// The identity is already on the workspace.
+    #[error("{label} is already on this workspace")]
+    IdentityAttached {
+        /// Its label.
+        label: String,
+    },
+    /// The repository is already in the workspace's table.
+    #[error("{0} is already in the repository table")]
+    RepoListed(String),
     /// An audit record couldn't be written.
     #[error(transparent)]
     Audit(#[from] AuditError),

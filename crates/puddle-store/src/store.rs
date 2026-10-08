@@ -33,6 +33,7 @@ use crate::ratelimit::TokenBucket;
 use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
 use crate::schema;
 
+mod identities;
 mod sets;
 
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
@@ -761,6 +762,12 @@ impl Store {
             )?;
             if !rules.is_empty() || switched > 0 {
                 fx.push(Event::RulesChanged {});
+            }
+            // Its identities and repository table go with it; the identities stay.
+            if identities::delete_workspace_rows(tx, workspace)? {
+                fx.push(Event::WorkspaceGitChanged {
+                    workspace: workspace.clone(),
+                });
             }
             Ok(WorkspaceDeletion {
                 rules_deleted: rules.len() as u64,

@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.5.0"
+    "version": "0.5.1"
   },
   "paths": {
     "/api/audit": {
@@ -491,6 +491,595 @@
           },
           "403": {
             "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/identities": {
+      "get": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Every identity, in your order.",
+        "operationId": "list_identities",
+        "responses": {
+          "200": {
+            "description": "the identities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Makes an identity, last in the order. The first one made is the default.",
+        "operationId": "create_identity",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "the new identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the label is taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a value refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/identities/order": {
+      "put": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Puts the identities in a new order; the body lists every identity once.",
+        "operationId": "reorder_identities",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the identities in the new order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not every identity exactly once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/identities/{id}": {
+      "get": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "One identity.",
+        "operationId": "get_identity",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "identity id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Replaces an identity's label, author and credentials. Refused with 409\n`identity_collision` when the new coverage meets another identity on a workspace that has both.",
+        "operationId": "update_identity",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "identity id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the label is taken, or the coverage collides on a workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a value refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Deletes an identity and takes it off every workspace; the answer lists them.",
+        "operationId": "delete_identity",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "identity id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the workspaces it left",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityDeleted"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/identities/{id}/default": {
+      "put": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Makes an identity the default.",
+        "operationId": "set_default_identity",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "identity id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such identity",
             "content": {
               "application/json": {
                 "schema": {
@@ -2703,6 +3292,781 @@
         }
       }
     },
+    "/api/workspaces/{id}/git": {
+      "get": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "A workspace's Git settings: identities in order, the repository table and the two switches.",
+        "operationId": "get_workspace_git",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceGitView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/git/repos": {
+      "post": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Adds a repository to the workspace's table.",
+        "operationId": "add_git_repo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitRepoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "the row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitRepoView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already in the table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not a repository name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/git/repos/{repo}": {
+      "put": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Sets a row's Pull and Push toggles.",
+        "operationId": "set_git_repo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "description": "row id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitRepoToggles"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitRepoView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace or row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Removes a row from the table.",
+        "operationId": "remove_git_repo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "description": "row id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "removed"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace or row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/git/switches": {
+      "put": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Sets \"only push to listed repos\" and \"only pull from listed repos\"; a switch left out stays.",
+        "operationId": "set_git_switches",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitSwitchesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceGitView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/identities": {
+      "put": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Replaces the workspace's ordered identity list. 409 `identity_collision` names both identities\nwhen two cover the same owner or both cover the rest of a host.",
+        "operationId": "set_workspace_identities",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceIdentitiesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceGitView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace or identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "two identities collide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "an identity listed twice",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Adds an identity to the workspace, last unless `position` says otherwise. 409\n`identity_collision` when it covers what another identity there covers.",
+        "operationId": "attach_identity",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachIdentityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceGitView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace or identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already on the workspace, or it collides",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/identities/{identity}": {
+      "delete": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Takes an identity off the workspace.",
+        "operationId": "detach_identity",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "identity",
+            "in": "path",
+            "description": "identity id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceGitView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace, or the identity is not on it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/reclaim": {
       "post": {
         "tags": [
@@ -3089,6 +4453,29 @@
           "message": {
             "type": "string",
             "description": "Human-readable, lower case, no trailing period. Never contains a token."
+          }
+        }
+      },
+      "AttachIdentityRequest": {
+        "type": "object",
+        "description": "Adds one identity to a workspace.",
+        "required": [
+          "identity"
+        ],
+        "properties": {
+          "identity": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The identity."
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Where in the order; omitted means last.",
+            "minimum": 0
           }
         }
       },
@@ -4306,6 +5693,123 @@
           }
         }
       },
+      "CredentialCoverage": {
+        "type": "object",
+        "description": "What a credential covers on its host.",
+        "required": [
+          "owners",
+          "rest_of_host"
+        ],
+        "properties": {
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Named owners and organisations (case does not matter; stored lower-case)."
+          },
+          "rest_of_host": {
+            "type": "boolean",
+            "description": "Every other owner on the host. At least one of the two must be set."
+          }
+        }
+      },
+      "CredentialSource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The token of a named, signed-in GitHub CLI account.",
+            "required": [
+              "host",
+              "account",
+              "kind"
+            ],
+            "properties": {
+              "account": {
+                "type": "string",
+                "description": "The account."
+              },
+              "host": {
+                "type": "string",
+                "description": "The GitHub host."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "gh"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Git Credential Manager (or the configured credential helper) asked for one URL.",
+            "required": [
+              "host",
+              "path",
+              "username",
+              "kind"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "The host."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "git_credential"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "description": "The URL path that selects the credential (`org`, `org/project`)."
+              },
+              "username": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "A GitHub account name, when the host has several."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A token the user pasted, kept in the OS credential store under puddle's own name.",
+            "required": [
+              "id",
+              "host",
+              "org",
+              "kind"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "The host the token is for."
+              },
+              "id": {
+                "type": "string",
+                "description": "The entry's id."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "stored"
+                ]
+              },
+              "org": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The organisation, for tokens that belong to one (Azure DevOps)."
+              }
+            }
+          }
+        ],
+        "description": "Where the host reads a credential's value. A closed list; there is no command-line source."
+      },
       "DeadProxy": {
         "type": "object",
         "description": "A proxy that did not answer and is tried last for a while.",
@@ -4568,6 +6072,7 @@
           "invalid",
           "not_found",
           "conflict",
+          "identity_collision",
           "newer_settings",
           "unavailable",
           "internal"
@@ -4814,6 +6319,41 @@
           },
           {
             "type": "object",
+            "description": "The list of identities, their order, the default or an identity's author or credentials\nchanged. Carries no data: refetch `GET /api/identities`.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "identities_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A workspace's identities, repository table or \"only listed\" switches changed (also when an\nidentity it has changed). Refetch `GET /api/workspaces/{id}/git`.",
+            "required": [
+              "workspace",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_git_changed"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "New audit records were committed. `id` is the newest record's id, so a client that holds\neverything up to `after` reads on with `GET /api/audit?after=`. One event per commit,\nnot per record. Global: every subscriber gets it.",
             "required": [
               "id",
@@ -4878,6 +6418,123 @@
             "format": "int64",
             "description": "How many more there are.",
             "minimum": 0
+          }
+        }
+      },
+      "GitRepoRequest": {
+        "type": "object",
+        "description": "Adds a repository to the table.",
+        "required": [
+          "host",
+          "owner",
+          "repo",
+          "pull",
+          "push"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The host (`github.com`)."
+          },
+          "owner": {
+            "type": "string",
+            "description": "The user or organisation."
+          },
+          "pull": {
+            "type": "boolean",
+            "description": "A fetch from it may go out."
+          },
+          "push": {
+            "type": "boolean",
+            "description": "A push to it may go out."
+          },
+          "repo": {
+            "type": "string",
+            "description": "`repo`, or `project/repo` on Azure DevOps; `.git` is dropped."
+          }
+        }
+      },
+      "GitRepoToggles": {
+        "type": "object",
+        "description": "A repository row's toggles.",
+        "required": [
+          "pull",
+          "push"
+        ],
+        "properties": {
+          "pull": {
+            "type": "boolean",
+            "description": "A fetch from it may go out."
+          },
+          "push": {
+            "type": "boolean",
+            "description": "A push to it may go out."
+          }
+        }
+      },
+      "GitRepoView": {
+        "type": "object",
+        "description": "One row of a workspace's repository table.",
+        "required": [
+          "id",
+          "host",
+          "owner",
+          "repo",
+          "pull",
+          "push",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms it was added.",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string",
+            "description": "The host, lower-case."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The row's number."
+          },
+          "owner": {
+            "type": "string",
+            "description": "The user or organisation, lower-case."
+          },
+          "pull": {
+            "type": "boolean",
+            "description": "A fetch from it may go out."
+          },
+          "push": {
+            "type": "boolean",
+            "description": "A push to it may go out."
+          },
+          "repo": {
+            "type": "string",
+            "description": "`repo`, or `project/repo` on Azure DevOps; lower-case, no `.git`."
+          }
+        }
+      },
+      "GitSwitchesRequest": {
+        "type": "object",
+        "description": "Sets either switch; a switch left out stays as it is.",
+        "properties": {
+          "only_pull_listed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "\"Only pull from listed repos\"."
+          },
+          "only_push_listed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "\"Only push to listed repos\"."
           }
         }
       },
@@ -4951,6 +6608,193 @@
           "version": {
             "type": "string",
             "description": "puddle's version."
+          }
+        }
+      },
+      "IdentityAuthor": {
+        "type": "object",
+        "description": "The name and email git writes into a commit.",
+        "required": [
+          "name",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "`user.email`."
+          },
+          "name": {
+            "type": "string",
+            "description": "`user.name`."
+          }
+        }
+      },
+      "IdentityCredential": {
+        "type": "object",
+        "description": "One credential of an identity.",
+        "required": [
+          "host",
+          "source",
+          "covers"
+        ],
+        "properties": {
+          "covers": {
+            "$ref": "#/components/schemas/CredentialCoverage",
+            "description": "What it covers."
+          },
+          "host": {
+            "type": "string",
+            "description": "The Git host (`github.com`, `dev.azure.com`)."
+          },
+          "source": {
+            "$ref": "#/components/schemas/CredentialSource",
+            "description": "Where its value comes from."
+          }
+        }
+      },
+      "IdentityDeleted": {
+        "type": "object",
+        "description": "What deleting an identity changed.",
+        "required": [
+          "detached_from"
+        ],
+        "properties": {
+          "detached_from": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceName"
+            },
+            "description": "The workspaces it was taken off."
+          }
+        }
+      },
+      "IdentityList": {
+        "type": "object",
+        "description": "Every identity, in your order.",
+        "required": [
+          "identities"
+        ],
+        "properties": {
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdentityView"
+            },
+            "description": "The identities."
+          }
+        }
+      },
+      "IdentityOrderRequest": {
+        "type": "object",
+        "description": "The order of the identities: every id once.",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "The ids, first to last."
+          }
+        }
+      },
+      "IdentityRequest": {
+        "type": "object",
+        "description": "Makes or replaces an identity.",
+        "required": [
+          "label",
+          "author",
+          "credentials"
+        ],
+        "properties": {
+          "author": {
+            "$ref": "#/components/schemas/IdentityAuthor",
+            "description": "The commit author."
+          },
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdentityCredential"
+            },
+            "description": "Its credentials. No two of one identity may cover the same place."
+          },
+          "label": {
+            "type": "string",
+            "description": "The name you see; unique whatever the case."
+          }
+        }
+      },
+      "IdentitySigning": {
+        "type": "string",
+        "description": "How an identity signs commits.",
+        "enum": [
+          "none"
+        ]
+      },
+      "IdentityView": {
+        "type": "object",
+        "description": "An identity.",
+        "required": [
+          "id",
+          "label",
+          "author",
+          "credentials",
+          "signing",
+          "is_default",
+          "workspaces",
+          "created_at",
+          "changed_at"
+        ],
+        "properties": {
+          "author": {
+            "$ref": "#/components/schemas/IdentityAuthor",
+            "description": "The commit author."
+          },
+          "changed_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms it last changed.",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms it was made.",
+            "minimum": 0
+          },
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdentityCredential"
+            },
+            "description": "Its credentials, as references."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its number."
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "Whether it is the default: what a new workspace gets when no identity covers its URL."
+          },
+          "label": {
+            "type": "string",
+            "description": "The name you see."
+          },
+          "signing": {
+            "$ref": "#/components/schemas/IdentitySigning",
+            "description": "How it signs."
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceName"
+            },
+            "description": "The workspaces it is on."
           }
         }
       },
@@ -6686,6 +8530,62 @@
           }
         }
       },
+      "WorkspaceGitView": {
+        "type": "object",
+        "description": "A workspace's Git settings.",
+        "required": [
+          "workspace",
+          "identities",
+          "repos",
+          "only_push_listed",
+          "only_pull_listed"
+        ],
+        "properties": {
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdentityView"
+            },
+            "description": "Its identities in order (the order breaks author ties; coverage picks the credential)."
+          },
+          "only_pull_listed": {
+            "type": "boolean",
+            "description": "Refuse a fetch from a repository not listed with Pull on (default off)."
+          },
+          "only_push_listed": {
+            "type": "boolean",
+            "description": "Refuse a push to a repository not listed with Push on (default on)."
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GitRepoView"
+            },
+            "description": "The repository table."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The workspace."
+          }
+        }
+      },
+      "WorkspaceIdentitiesRequest": {
+        "type": "object",
+        "description": "The identities a workspace has, replacing its list.",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "The ids in order."
+          }
+        }
+      },
       "WorkspaceList": {
         "type": "object",
         "description": "`GET /api/workspaces`.",
@@ -6839,6 +8739,10 @@
     {
       "name": "network",
       "description": "How puddle reaches the internet: proxy, sign-in, company roots"
+    },
+    {
+      "name": "identities",
+      "description": "Git identities (author and credentials) and each workspace's identities, repository table and push and pull switches"
     },
     {
       "name": "workspaces",

@@ -14,6 +14,7 @@ mod common;
 mod endpoints;
 pub(crate) mod events;
 mod guard;
+mod identities;
 mod network_health;
 mod routes;
 mod rule_sets;

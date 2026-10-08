@@ -103,6 +103,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every identity, in your order. */
+        get: operations["list_identities"];
+        put?: never;
+        /** Makes an identity, last in the order. The first one made is the default. */
+        post: operations["create_identity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identities/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Puts the identities in a new order; the body lists every identity once. */
+        put: operations["reorder_identities"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identities/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One identity. */
+        get: operations["get_identity"];
+        /**
+         * Replaces an identity's label, author and credentials. Refused with 409
+         *     `identity_collision` when the new coverage meets another identity on a workspace that has both.
+         */
+        put: operations["update_identity"];
+        post?: never;
+        /** Deletes an identity and takes it off every workspace; the answer lists them. */
+        delete: operations["delete_identity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identities/{id}/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Makes an identity the default. */
+        put: operations["set_default_identity"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/inbox": {
         parameters: {
             query?: never;
@@ -452,6 +526,116 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/git": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A workspace's Git settings: identities in order, the repository table and the two switches. */
+        get: operations["get_workspace_git"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/git/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adds a repository to the workspace's table. */
+        post: operations["add_git_repo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/git/repos/{repo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Sets a row's Pull and Push toggles. */
+        put: operations["set_git_repo"];
+        post?: never;
+        /** Removes a row from the table. */
+        delete: operations["remove_git_repo"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/git/switches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Sets "only push to listed repos" and "only pull from listed repos"; a switch left out stays. */
+        put: operations["set_git_switches"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replaces the workspace's ordered identity list. 409 `identity_collision` names both identities
+         *     when two cover the same owner or both cover the rest of a host.
+         */
+        put: operations["set_workspace_identities"];
+        /**
+         * Adds an identity to the workspace, last unless `position` says otherwise. 409
+         *     `identity_collision` when it covers what another identity there covers.
+         */
+        post: operations["attach_identity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/identities/{identity}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Takes an identity off the workspace. */
+        delete: operations["detach_identity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/reclaim": {
         parameters: {
             query?: never;
@@ -538,6 +722,19 @@ export interface components {
             error: components["schemas"]["ErrorCode"];
             /** @description Human-readable, lower case, no trailing period. Never contains a token. */
             message: string;
+        };
+        /** @description Adds one identity to a workspace. */
+        AttachIdentityRequest: {
+            /**
+             * Format: int64
+             * @description The identity.
+             */
+            identity: number;
+            /**
+             * Format: int32
+             * @description Where in the order; omitted means last.
+             */
+            position?: number | null;
         };
         /**
          * @description How to open the workspace in an editor.
@@ -1047,6 +1244,40 @@ export interface components {
             /** @description Microsoft's VS Code server and its licence terms. */
             vscode_server: components["schemas"]["Consent"];
         };
+        /** @description What a credential covers on its host. */
+        CredentialCoverage: {
+            /** @description Named owners and organisations (case does not matter; stored lower-case). */
+            owners: string[];
+            /** @description Every other owner on the host. At least one of the two must be set. */
+            rest_of_host: boolean;
+        };
+        /** @description Where the host reads a credential's value. A closed list; there is no command-line source. */
+        CredentialSource: {
+            /** @description The account. */
+            account: string;
+            /** @description The GitHub host. */
+            host: string;
+            /** @enum {string} */
+            kind: "gh";
+        } | {
+            /** @description The host. */
+            host: string;
+            /** @enum {string} */
+            kind: "git_credential";
+            /** @description The URL path that selects the credential (`org`, `org/project`). */
+            path: string;
+            /** @description A GitHub account name, when the host has several. */
+            username: string | null;
+        } | {
+            /** @description The host the token is for. */
+            host: string;
+            /** @description The entry's id. */
+            id: string;
+            /** @enum {string} */
+            kind: "stored";
+            /** @description The organisation, for tokens that belong to one (Azure DevOps). */
+            org: string | null;
+        };
         /** @description A proxy that did not answer and is tried last for a while. */
         DeadProxy: {
             /** @description `host:port`. */
@@ -1167,7 +1398,7 @@ export interface components {
          * @description What went wrong, as a stable code a client can switch on.
          * @enum {string}
          */
-        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "newer_settings" | "unavailable" | "internal";
+        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "unavailable" | "internal";
         /**
          * @description Something the user should hear about. Serialised as one internally tagged enum
          *     (`{"type":"oom_kill",...}`, ADR 0002).
@@ -1265,6 +1496,14 @@ export interface components {
             /** @enum {string} */
             type: "rules_changed";
         } | {
+            /** @enum {string} */
+            type: "identities_changed";
+        } | {
+            /** @enum {string} */
+            type: "workspace_git_changed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
             /**
              * Format: int64
              * @description The newest audit record's id.
@@ -1290,6 +1529,56 @@ export interface components {
              * @description How many more there are.
              */
             more: number;
+        };
+        /** @description Adds a repository to the table. */
+        GitRepoRequest: {
+            /** @description The host (`github.com`). */
+            host: string;
+            /** @description The user or organisation. */
+            owner: string;
+            /** @description A fetch from it may go out. */
+            pull: boolean;
+            /** @description A push to it may go out. */
+            push: boolean;
+            /** @description `repo`, or `project/repo` on Azure DevOps; `.git` is dropped. */
+            repo: string;
+        };
+        /** @description A repository row's toggles. */
+        GitRepoToggles: {
+            /** @description A fetch from it may go out. */
+            pull: boolean;
+            /** @description A push to it may go out. */
+            push: boolean;
+        };
+        /** @description One row of a workspace's repository table. */
+        GitRepoView: {
+            /**
+             * Format: int64
+             * @description Epoch ms it was added.
+             */
+            created_at: number;
+            /** @description The host, lower-case. */
+            host: string;
+            /**
+             * Format: int64
+             * @description The row's number.
+             */
+            id: number;
+            /** @description The user or organisation, lower-case. */
+            owner: string;
+            /** @description A fetch from it may go out. */
+            pull: boolean;
+            /** @description A push to it may go out. */
+            push: boolean;
+            /** @description `repo`, or `project/repo` on Azure DevOps; lower-case, no `.git`. */
+            repo: string;
+        };
+        /** @description Sets either switch; a switch left out stays as it is. */
+        GitSwitchesRequest: {
+            /** @description "Only pull from listed repos". */
+            only_pull_listed?: boolean | null;
+            /** @description "Only push to listed repos". */
+            only_push_listed?: boolean | null;
         };
         /** @description New global settings. Replaces every value listed here; unknown stored fields are kept. */
         GlobalSettingsRequest: {
@@ -1322,6 +1611,81 @@ export interface components {
             api_version: string;
             /** @description puddle's version. */
             version: string;
+        };
+        /** @description The name and email git writes into a commit. */
+        IdentityAuthor: {
+            /** @description `user.email`. */
+            email: string;
+            /** @description `user.name`. */
+            name: string;
+        };
+        /** @description One credential of an identity. */
+        IdentityCredential: {
+            /** @description What it covers. */
+            covers: components["schemas"]["CredentialCoverage"];
+            /** @description The Git host (`github.com`, `dev.azure.com`). */
+            host: string;
+            /** @description Where its value comes from. */
+            source: components["schemas"]["CredentialSource"];
+        };
+        /** @description What deleting an identity changed. */
+        IdentityDeleted: {
+            /** @description The workspaces it was taken off. */
+            detached_from: components["schemas"]["WorkspaceName"][];
+        };
+        /** @description Every identity, in your order. */
+        IdentityList: {
+            /** @description The identities. */
+            identities: components["schemas"]["IdentityView"][];
+        };
+        /** @description The order of the identities: every id once. */
+        IdentityOrderRequest: {
+            /** @description The ids, first to last. */
+            ids: number[];
+        };
+        /** @description Makes or replaces an identity. */
+        IdentityRequest: {
+            /** @description The commit author. */
+            author: components["schemas"]["IdentityAuthor"];
+            /** @description Its credentials. No two of one identity may cover the same place. */
+            credentials: components["schemas"]["IdentityCredential"][];
+            /** @description The name you see; unique whatever the case. */
+            label: string;
+        };
+        /**
+         * @description How an identity signs commits.
+         * @enum {string}
+         */
+        IdentitySigning: "none";
+        /** @description An identity. */
+        IdentityView: {
+            /** @description The commit author. */
+            author: components["schemas"]["IdentityAuthor"];
+            /**
+             * Format: int64
+             * @description Epoch ms it last changed.
+             */
+            changed_at: number;
+            /**
+             * Format: int64
+             * @description Epoch ms it was made.
+             */
+            created_at: number;
+            /** @description Its credentials, as references. */
+            credentials: components["schemas"]["IdentityCredential"][];
+            /**
+             * Format: int64
+             * @description Its number.
+             */
+            id: number;
+            /** @description Whether it is the default: what a new workspace gets when no identity covers its URL. */
+            is_default: boolean;
+            /** @description The name you see. */
+            label: string;
+            /** @description How it signs. */
+            signing: components["schemas"]["IdentitySigning"];
+            /** @description The workspaces it is on. */
+            workspaces: components["schemas"]["WorkspaceName"][];
         };
         /** @description The inbox: open requests grouped by registrable domain, most recent group first. */
         Inbox: {
@@ -2067,6 +2431,24 @@ export interface components {
             /** @description The workspace's state. */
             status: components["schemas"]["WorkspaceStatus"];
         };
+        /** @description A workspace's Git settings. */
+        WorkspaceGitView: {
+            /** @description Its identities in order (the order breaks author ties; coverage picks the credential). */
+            identities: components["schemas"]["IdentityView"][];
+            /** @description Refuse a fetch from a repository not listed with Pull on (default off). */
+            only_pull_listed: boolean;
+            /** @description Refuse a push to a repository not listed with Push on (default on). */
+            only_push_listed: boolean;
+            /** @description The repository table. */
+            repos: components["schemas"]["GitRepoView"][];
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        };
+        /** @description The identities a workspace has, replacing its list. */
+        WorkspaceIdentitiesRequest: {
+            /** @description The ids in order. */
+            ids: number[];
+        };
         /** @description `GET /api/workspaces`. */
         WorkspaceList: {
             /** @description Every workspace, ordered by id. */
@@ -2465,6 +2847,503 @@ export interface operations {
             };
             /** @description forbidden origin */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_identities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the identities */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_identity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityRequest"];
+            };
+        };
+        responses: {
+            /** @description the new identity */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the label is taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a value refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    reorder_identities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityOrderRequest"];
+            };
+        };
+        responses: {
+            /** @description the identities in the new order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not every identity exactly once */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_identity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description identity id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the identity */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such identity */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    update_identity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description identity id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityRequest"];
+            };
+        };
+        responses: {
+            /** @description the identity */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such identity */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the label is taken, or the coverage collides on a workspace */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a value refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_identity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description identity id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the workspaces it left */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityDeleted"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such identity */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    set_default_identity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description identity id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the identity */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such identity */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4299,6 +5178,619 @@ export interface operations {
                 };
             };
             /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_workspace_git: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceGitView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    add_git_repo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitRepoRequest"];
+            };
+        };
+        responses: {
+            /** @description the row */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepoView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description already in the table */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not a repository name */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    set_git_repo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description row id */
+                repo: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitRepoToggles"];
+            };
+        };
+        responses: {
+            /** @description the row */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepoView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace or row */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    remove_git_repo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description row id */
+                repo: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace or row */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    set_git_switches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitSwitchesRequest"];
+            };
+        };
+        responses: {
+            /** @description the settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceGitView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    set_workspace_identities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceIdentitiesRequest"];
+            };
+        };
+        responses: {
+            /** @description the settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceGitView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace or identity */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description two identities collide */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description an identity listed twice */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    attach_identity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachIdentityRequest"];
+            };
+        };
+        responses: {
+            /** @description the settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceGitView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace or identity */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description already on the workspace, or it collides */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    detach_identity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description identity id */
+                identity: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceGitView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace, or the identity is not on it */
             404: {
                 headers: {
                     [name: string]: unknown;

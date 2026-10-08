@@ -5830,6 +5830,7 @@ dependencies = [
  "puddle-certs",
  "puddle-fs",
  "puddle-netpolicy",
+ "puddle-secrets",
  "puddle-settings",
  "puddle-store",
  "puddle-types",
@@ -6175,6 +6176,7 @@ version = "0.0.0"
 dependencies = [
  "proptest",
  "psl",
+ "puddle-secrets",
  "puddle-types",
  "rusqlite",
  "serde",
