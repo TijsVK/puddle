@@ -1332,6 +1332,10 @@ async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
         rig.runtime
             .outlive_owner(&SandboxName::new("acme").unwrap())
     );
+    assert!(
+        !rig.runtime
+            .outlive_owner(&SandboxName::new("nobody").unwrap())
+    );
     let again = rig.start().await;
     assert_eq!(
         again.reconcile_report().stopped.len(),
