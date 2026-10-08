@@ -6150,8 +6150,10 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "memchr",
  "proptest",
  "prost",
+ "psl",
  "puddle-agent-proto",
  "puddle-ca",
  "puddle-ipc",
@@ -6171,6 +6173,7 @@ dependencies = [
  "tonic-prost",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]

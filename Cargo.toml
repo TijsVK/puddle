@@ -84,6 +84,8 @@ futures-util = { version = "0.3.31", default-features = false, features = ["std"
 libc = "0.2.172"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 getrandom = "0.4"
+# Fast substring search for the proxy's stand-in swap (already in the tree through regex and axum).
+memchr = "2.8"
 # The per-user data folder per OS; no own per-OS code for it.
 dirs = "7"
 windows-sys = "0.61"

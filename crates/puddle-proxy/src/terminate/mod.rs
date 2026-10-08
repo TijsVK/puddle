@@ -40,6 +40,9 @@
 //!   The [`Injector`] is asked only after the connection is verified. HTTP/2 to the server carries
 //!   every stream of an HTTP/2 guest; an HTTP/2 guest talking to an HTTP/1.1 server uses a small
 //!   pool of HTTP/1.1 connections owned by that guest connection.
+//! - **Stand-ins**: after the injector has decided, the workspace's [`StandIns`] are swapped for
+//!   their real values in the header values of the request, toward the hosts each is for, on both
+//!   HTTP versions.
 //! - **Responses**: framed by an HTTP client library, then rebuilt for the guest, trailers
 //!   included. Redirects are passed through, never followed.
 //! - **WebSocket**: HTTP/1.1 `Upgrade` and HTTP/2 extended `CONNECT` (RFC 8441) are checked and
@@ -55,6 +58,7 @@ pub(crate) mod request;
 mod response;
 mod session;
 mod set;
+mod stand_in;
 mod watch;
 mod ws;
 
@@ -70,6 +74,7 @@ pub use inject::{
 };
 pub(crate) use session::{Context, run};
 pub use set::{PatternError, TerminationSet};
+pub use stand_in::{StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
 
 /// Hosts puddle decrypts by default: GitHub and Azure DevOps, for git and Git LFS. Not
 /// `api.github.com` (the `gh` CLI and gists would become an exfiltration channel with a
@@ -93,6 +98,7 @@ pub struct Termination {
     set: TerminationSet,
     ca: Arc<WorkspaceCa>,
     injector: Arc<dyn Injector>,
+    stand_ins: Arc<StandIns>,
 }
 
 impl Termination {
@@ -111,7 +117,22 @@ impl Termination {
                 return Err(TerminationError::NotPermitted(name));
             }
         }
-        Ok(Self { set, ca, injector })
+        Ok(Self {
+            set,
+            ca,
+            injector,
+            stand_ins: Arc::new(StandIns::new()),
+        })
+    }
+
+    /// Swaps the workspace's `stand_ins` for their real values on terminated requests (see
+    /// [`StandIns`]). The registry stays the caller's to change while requests are served. Its
+    /// hosts ([`StandIns::hosts`]) must be among the hosts this termination decrypts, or a
+    /// connection to them is spliced and nothing is swapped.
+    #[must_use]
+    pub fn with_stand_ins(mut self, stand_ins: Arc<StandIns>) -> Self {
+        self.stand_ins = stand_ins;
+        self
     }
 
     /// The hosts that are decrypted.
@@ -126,6 +147,10 @@ impl Termination {
 
     pub(crate) fn injector(&self) -> &Arc<dyn Injector> {
         &self.injector
+    }
+
+    pub(crate) fn stand_ins(&self) -> &StandIns {
+        &self.stand_ins
     }
 }
 

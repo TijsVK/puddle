@@ -28,8 +28,9 @@
 //!    read, for the audit.
 //!    A `CONNECT` to a name a workspace has a [`Termination`] for, on port 443, is different: the
 //!    proxy answers the guest's TLS handshake itself with a leaf from the workspace's CA, parses
-//!    each request, asks the [`Injector`] what to do, and sends it over its own verified TLS
-//!    connection to the real server ([`Proxy::with_termination`], [`terminate`]).
+//!    each request, asks the [`Injector`] what to do, swaps the workspace's [`StandIns`] for their
+//!    real values in the headers, and sends it over its own verified TLS connection to the real
+//!    server ([`Proxy::with_termination`], [`terminate`]).
 //! 6. **Audit**: every request that got as far as a destination ends as one
 //!    [`puddle_types::ConnectionEvent`] (decision, reason, rule or pending row, address connected
 //!    to, method and path of a plain-HTTP request or of a tunnel's first HTTP request, bytes each
@@ -77,6 +78,7 @@ pub use route::Route;
 pub use terminate::{
     DEFAULT_TERMINATED_HOSTS, HeaderError, InjectContext, InjectDecision, InjectRefusal,
     InjectedHeader, Injection, Injector, NoInjection, PatternError, RequestView, SecretValue,
-    Termination, TerminationError, TerminationSet, TerminationSource, Terminations,
+    StandIn, StandInError, StandInOrigin, StandIns, Termination, TerminationError, TerminationSet,
+    TerminationSource, Terminations, secret_stand_in,
 };
 pub use upstream::Upstream;

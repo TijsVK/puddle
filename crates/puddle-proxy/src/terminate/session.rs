@@ -7,15 +7,16 @@ use std::sync::Arc;
 
 use http_body_util::BodyExt as _;
 use hyper::client::conn::http1::SendRequest;
-use puddle_types::{HttpRequestLine, WorkspaceName};
+use puddle_types::{Host, HttpRequestLine, WorkspaceName};
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 use super::body::{Abort, ChannelBody, pump};
 use super::guest::{ALPN_HTTP11, Prefixed, Proto, read_hello, server_config};
-use super::inject::{InjectContext, InjectDecision, RequestView};
+use super::inject::{InjectContext, InjectDecision, Injection, RequestView};
 use super::leg::{self, BoxError, Connected, H1Conn, UpBody};
 use super::request::{self, Parsed};
+use super::stand_in::Swapped;
 use super::{Termination, h2, response, ws};
 use crate::http::{self, HeadError};
 use crate::proxy::{ClientReader, Proxy, ProxyConfig, Refusal, refuse};
@@ -53,6 +54,10 @@ where
 
 /// What a connection did, for the audit record.
 #[derive(Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is one independent fact the connection record carries"
+)]
 pub(crate) struct Outcome {
     /// The first request's method and path (no query).
     pub(crate) http: Option<HttpRequestLine>,
@@ -60,6 +65,8 @@ pub(crate) struct Outcome {
     pub(crate) injected: bool,
     /// The binding that supplied it.
     pub(crate) binding_id: Option<String>,
+    /// A secret stand-in went to a host it is not for, and out unchanged.
+    pub(crate) placeholder_unbound: bool,
     /// The address first connected to.
     pub(crate) resolved_ip: Option<std::net::IpAddr>,
     /// The company-proxy hop that carried the first connection.
@@ -68,6 +75,22 @@ pub(crate) struct Outcome {
     pub(crate) sni_mismatch: bool,
     /// The guest's client refused the certificate (it does not trust the workspace's CA).
     pub(crate) certificate_refused: bool,
+}
+
+impl Outcome {
+    /// Notes what the stand-in swap did to a request: a swapped stand-in counts as an injected
+    /// credential (its id is the binding unless a binding already is), an unbound one raises the
+    /// flag.
+    pub(crate) fn record_stand_ins(&mut self, host: &Host, swapped: &Swapped) {
+        if !swapped.unbound.is_empty() {
+            tracing::info!(%host, stand_ins = ?swapped.unbound, "a stand-in went to a host it is not for, unchanged");
+        }
+        if let Some(id) = swapped.swapped.first() {
+            self.injected = true;
+            self.binding_id.get_or_insert_with(|| id.clone());
+        }
+        self.placeholder_unbound |= !swapped.unbound.is_empty();
+    }
 }
 
 /// What a terminated connection runs on.
@@ -336,13 +359,31 @@ where
             Ok(headers) => headers,
             Err(refusal) => return self.refuse(&refusal).await,
         };
-        if let Some(injection) = &injection {
+        let headers = self.add_credentials(headers, injection.as_ref());
+        self.exchange(&parsed, headers).await
+    }
+
+    /// Notes the injected credential for the audit, then swaps the workspace's stand-ins in
+    /// `headers` for their real values (the injected headers are left alone).
+    fn add_credentials(
+        &mut self,
+        mut headers: ::http::HeaderMap,
+        injection: Option<&Injection>,
+    ) -> ::http::HeaderMap {
+        if let Some(injection) = injection {
             self.outcome.injected = true;
             self.outcome
                 .binding_id
                 .get_or_insert_with(|| injection.binding_id().to_owned());
         }
-        self.exchange(&parsed, headers).await
+        let host = &self.cx.target.host;
+        let swapped = self
+            .cx
+            .termination
+            .stand_ins()
+            .swap(&mut headers, host, injection);
+        self.outcome.record_stand_ins(host, &swapped);
+        headers
     }
 
     /// Makes sure a verified upstream connection exists.

@@ -23,8 +23,8 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy};
 use puddle_proxy::{
     BoxFuture, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
-    Proxy, ProxyConfig, RequestView, Resolver, Route, SecretValue, Termination, TerminationSet,
-    Terminations,
+    Proxy, ProxyConfig, RequestView, Resolver, Route, SecretValue, StandIns, Termination,
+    TerminationSet, Terminations,
 };
 use puddle_types::{ConnectionEvent, DomainName, Host, NullSink, WorkspaceName};
 use puddle_upstream::TlsClient;
@@ -541,6 +541,8 @@ pub(crate) struct RigBuilder {
     pub(crate) names: Vec<(&'static str, SocketAddr)>,
     pub(crate) allow: Vec<&'static str>,
     pub(crate) upstream: Option<puddle_proxy::Upstream>,
+    /// The stand-ins of the first workspace, `box`, and of the second, `other`.
+    pub(crate) stand_ins: (Arc<StandIns>, Arc<StandIns>),
 }
 
 impl RigBuilder {
@@ -553,7 +555,20 @@ impl RigBuilder {
             names: Vec::new(),
             allow: vec!["bound.test"],
             upstream: None,
+            stand_ins: (Arc::new(StandIns::new()), Arc::new(StandIns::new())),
         }
+    }
+
+    /// Gives `box` this registry of stand-ins.
+    pub(crate) fn stand_ins(mut self, stand_ins: &Arc<StandIns>) -> Self {
+        self.stand_ins.0 = Arc::clone(stand_ins);
+        self
+    }
+
+    /// Gives `other` this registry of stand-ins.
+    pub(crate) fn other_stand_ins(mut self, stand_ins: &Arc<StandIns>) -> Self {
+        self.stand_ins.1 = Arc::clone(stand_ins);
+        self
     }
 
     pub(crate) fn name(mut self, name: &'static str, addr: SocketAddr) -> Self {
@@ -612,7 +627,8 @@ impl RigBuilder {
                 Arc::clone(&ca),
                 self.injector,
             )
-            .unwrap(),
+            .unwrap()
+            .with_stand_ins(self.stand_ins.0),
         );
         // A second workspace with its own CA for the same names (HO-4).
         let other_ca = workspace_ca("other", &self.bound);
@@ -623,7 +639,8 @@ impl RigBuilder {
                 Arc::clone(&other_ca),
                 Arc::new(puddle_proxy::NoInjection),
             )
-            .unwrap(),
+            .unwrap()
+            .with_stand_ins(self.stand_ins.1),
         );
         let mut proxy = Proxy::new(policy.clone(), Arc::new(NullSink))
             .with_connection_log(log.clone())

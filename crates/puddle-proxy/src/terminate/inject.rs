@@ -11,6 +11,7 @@ use std::fmt;
 
 use ::http::{HeaderName, HeaderValue};
 use puddle_types::{Host, WorkspaceName};
+use zeroize::Zeroize as _;
 
 use crate::destination::BoxFuture;
 
@@ -27,6 +28,12 @@ impl SecretValue {
 
     pub(crate) fn expose(&self) -> &str {
         &self.0
+    }
+}
+
+impl Drop for SecretValue {
+    fn drop(&mut self) {
+        self.0.zeroize();
     }
 }
 

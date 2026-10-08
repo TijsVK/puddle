@@ -105,6 +105,17 @@ impl TerminationSet {
         })
     }
 
+    /// The `base` of every `*.base` pattern, without the `*.`.
+    pub(crate) fn wildcard_bases(&self) -> impl Iterator<Item = &str> {
+        self.below.iter().map(String::as_str)
+    }
+
+    /// Adds every pattern of `other`.
+    pub fn extend(&mut self, other: &Self) {
+        self.exact.extend(other.exact.iter().cloned());
+        self.below.extend(other.below.iter().cloned());
+    }
+
     /// Whether the set has no pattern.
     #[must_use]
     pub fn is_empty(&self) -> bool {
