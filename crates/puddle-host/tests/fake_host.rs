@@ -1672,3 +1672,30 @@ async fn a_sandbox_record_the_list_does_not_name_is_removed_and_reported_but_its
     assert_eq!(volume_names(&rig).await, ["ws-lost"]);
     host.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_is_refused_when_the_runtime_cannot_say_whether_the_volume_exists() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    rig.runtime.inject(
+        puddle_compute::fake::Op::Volume,
+        puddle_compute::fake::Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "volume",
+            message: "volume lookup broke".into(),
+        }),
+    );
+
+    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    let message = reply.json()["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("ws-acme"), "{message}");
+    assert!(message.contains("volume lookup broke"), "{message}");
+    assert!(
+        api.get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    host.shutdown().await;
+}
