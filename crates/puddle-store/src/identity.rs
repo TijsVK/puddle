@@ -173,12 +173,6 @@ impl Coverage {
             rest_of_host,
         })
     }
-
-    /// Whether `owner` is named.
-    #[must_use]
-    pub fn names(&self, owner: &Owner) -> bool {
-        self.owners.contains(owner)
-    }
 }
 
 /// One credential of an identity: the host it is for, where its value comes from and what it
@@ -483,14 +477,13 @@ mod tests {
         let personal = identity(2, "Personal", vec![binding("github.com", &[], true)]);
         let both = [work, personal];
         for (owner, who, exact) in [("acme", 1, true), ("ACME-Labs", 1, true), ("me", 2, false)] {
-            match resolve(&both, "GitHub.com", owner) {
+            let got = match resolve(&both, "GitHub.com", owner) {
                 CredentialChoice::Covered {
                     identity, exact: e, ..
-                } => {
-                    assert_eq!((identity.id, e), (IdentityId(who), exact), "{owner}");
-                }
-                other => panic!("{owner}: {other:?}"),
-            }
+                } => Some((identity.id, e)),
+                _ => None,
+            };
+            assert_eq!(got, Some((IdentityId(who), exact)), "{owner}");
         }
         assert_eq!(
             resolve(&both, "dev.azure.com", "acme"),
@@ -568,6 +561,7 @@ mod tests {
     #[test]
     fn author_and_label_are_checked() {
         assert!(Author::new("Me", "me@example.com").is_ok());
+        assert!(Author::new(&"n".repeat(101), "me@example.com").is_err());
         for (name, email) in [
             ("", "a@b"),
             ("Me", "nobody"),
@@ -590,6 +584,11 @@ mod tests {
             binding("github.com", &["acme"], false),
         ];
         assert!(draft("x", twice).checked().is_err());
+        let apart = vec![
+            binding("github.com", &["acme"], false),
+            binding("github.com", &["other"], false),
+        ];
+        assert_eq!(draft("x", apart).checked().unwrap().credentials.len(), 2);
         let many = vec![binding("github.com", &["a"], false); MAX_CREDENTIALS + 1];
         assert!(draft("x", many).checked().is_err());
     }

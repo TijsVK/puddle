@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn gcm_azure_bindings() {
         let text = "acme:\n  (global) -> me@example.com\n  (local)  -> you@example.com\nother:\n  \
-                    (global) -> x\n  token=CANARY-z\nstray: junk\n  (global) -> orphan\n";
+                    (global) -> x\n  (system) -> sys\n  token=CANARY-z\nstray: junk\n  (global) -> orphan\n";
         let got = parse_gcm_azure(text);
         let pairs: Vec<_> = got
             .iter()

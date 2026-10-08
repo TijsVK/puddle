@@ -628,3 +628,86 @@ pub(super) fn delete_workspace_rows(
     }
     Ok(any > 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use puddle_secrets::{AccountName, HostName, SourceSpec};
+
+    use super::*;
+    use crate::clock::ManualClock;
+    use crate::identity::{Coverage, Owner};
+    use crate::store::Limits;
+
+    fn store() -> Store {
+        Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap()
+    }
+
+    fn made(store: &Store) -> IdentityId {
+        let host = HostName::new("github.com").unwrap();
+        let source = SourceSpec::Gh {
+            host: host.clone(),
+            account: AccountName::new("me").unwrap(),
+        };
+        let covers = Coverage::new([Owner::new("acme").unwrap()].into(), false).unwrap();
+        store
+            .create_identity(IdentityDraft {
+                label: "Work".into(),
+                author: Author::new("Me", "me@example.com").unwrap(),
+                credentials: vec![CredentialBinding::new(&host, source, covers).unwrap()],
+            })
+            .unwrap()
+            .id
+    }
+
+    /// A row edited by hand to something that does not parse is reported, never trusted.
+    #[test]
+    fn a_hand_edited_identity_row_is_reported_as_corrupt() {
+        let store = store();
+        let id = made(&store);
+        lock(&store.conn)
+            .execute("UPDATE identities SET credentials = 'not json'", [])
+            .unwrap();
+        assert!(matches!(
+            store.identity(id),
+            Err(StoreError::Corrupt {
+                table: "identities",
+                ..
+            })
+        ));
+        assert!(store.identities().is_err());
+    }
+
+    #[test]
+    fn a_hand_edited_repository_row_is_reported_as_corrupt() {
+        let store = store();
+        let ws = WorkspaceName::new("shop").unwrap();
+        lock(&store.conn)
+            .execute(
+                "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, created_at)
+                 VALUES ('shop', 'github.com', 'acme', 'a/../b', 1, 1, 1)",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.workspace_git(&ws),
+            Err(StoreError::Corrupt {
+                table: "workspace_repos",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn an_identity_listed_twice_is_refused() {
+        let store = store();
+        let id = made(&store);
+        let ws = WorkspaceName::new("shop").unwrap();
+        assert!(matches!(
+            store.set_workspace_identities(&ws, &[id, id]),
+            Err(StoreError::IdentityInvalid(_))
+        ));
+        assert_eq!(store.workspace_git(&ws).unwrap().identities.len(), 0);
+    }
+}

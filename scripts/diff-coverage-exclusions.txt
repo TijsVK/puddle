@@ -53,3 +53,12 @@ crates/puddle-fs/src/private/unix.rs | Err(CheckError::Io(err)) => Err(err), | t
 crates/puddle-host/src/data_folder.rs | Err(err) => return Err(refuse(&store, &err)), | creating the database file failing for a reason other than it existing (disk full, permission); not reproducible without a failing file system
 crates/puddle-host/src/data_folder.rs | changed = %changed.join("; "), | a field of the one log line; the line is only evaluated with a tracing subscriber installed, and tests install none
 crates/puddle-secrets/src/keyring_store.rs | * | the OS credential store exists on a desktop session or the Windows job, not on the Linux gate host; `the_os_store_round_trips_a_test_owned_entry` runs there against a test-owned entry and skips where no store exists
+crates/puddle-api/src/wire/identities.rs | _ => return None, | the arm for a source kind a newer puddle adds to the non-exhaustive enum; no such kind exists yet
+crates/puddle-store/src/store/identities.rs | )?; | the closing line of a statement that spans lines: the error branch of a SQLite failure inside a transaction; not reproducible against an in-memory database
+crates/puddle-store/src/store/identities.rs | other => return Err(corrupt(format!("unknown signing {other}"))), | the column has a CHECK that allows only none, so a database cannot hold another value
+crates/puddle-secrets/src/discovery.rs | return Vec::new(); | the two host names are literals that always parse; the guard exists only to avoid an unwrap
+crates/puddle-secrets/src/run.rs | Self::from_search_path(std::env::var_os("PATH").as_deref().unwrap_or_default()) | reads the test process's own PATH; the search itself is tested through from_search_path
+crates/puddle-secrets/src/run.rs | format!("{name}.exe") | the Windows spelling of a tool name; the Linux gate cannot run it, the Windows job does
+crates/puddle-secrets/src/run.rs | SourceError::ToolMissing(tool) | a tool that was found on PATH and is gone at spawn time; a race a test cannot stage
+crates/puddle-secrets/src/run.rs | Ok(Err(_)) => return Err(SourceError::CouldNotRun(tool)), | waiting on a child failing at the operating system level; not reproducible
+crates/puddle-secrets/src/sources.rs | _ => {} | a credential-helper answer line this code does not read (capabilities, extra fields) is ignored by design

@@ -70,3 +70,13 @@ impl SourceError {
         matches!(self, Self::NotSignedIn | Self::Timeout(_))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Tool;
+
+    #[test]
+    fn a_tool_is_named_the_way_the_user_knows_it() {
+        assert_eq!((Tool::Gh.name(), Tool::Git.name()), ("gh", "git"));
+    }
+}

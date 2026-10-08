@@ -336,4 +336,27 @@ mod tests {
         assert_eq!(value(&cache, &other).await.unwrap(), "v1");
         assert_eq!(value(&cache, &gh()).await.unwrap(), "v0");
     }
+
+    #[test]
+    fn each_kind_of_source_has_its_own_time_to_live() {
+        let ttls = Ttls::default();
+        let host = HostName::new("github.com").unwrap();
+        let gh = SourceSpec::Gh {
+            host: host.clone(),
+            account: AccountName::new("me").unwrap(),
+        };
+        let git = SourceSpec::GitCredential {
+            host: host.clone(),
+            path: crate::name::UrlPath::new("acme").unwrap(),
+            username: None,
+        };
+        let stored = SourceSpec::Stored {
+            id: StoredId::new("t1").unwrap(),
+            scope: TokenScope { host, org: None },
+        };
+        assert_eq!(ttls.for_spec(&gh), ttls.gh);
+        assert_eq!(ttls.for_spec(&git), ttls.git_credential);
+        assert_eq!(ttls.for_spec(&stored), ttls.stored);
+        assert_ne!(ttls.gh, ttls.git_credential);
+    }
 }

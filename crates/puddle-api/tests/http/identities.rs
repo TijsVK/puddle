@@ -130,6 +130,37 @@ async fn identities_are_made_listed_changed_ordered_and_deleted() {
 }
 
 #[tokio::test]
+async fn a_git_credential_source_comes_back_as_sent() {
+    let api = start().await;
+    let mut request = body("Azure", &["contoso"], false);
+    request["credentials"][0]["host"] = json!("dev.azure.com");
+    request["credentials"][0]["source"] = json!({
+        "kind": "git_credential",
+        "host": "dev.azure.com",
+        "path": "contoso",
+        "username": "me"
+    });
+    let made = api.send("POST", "/api/identities", Some(&request)).await;
+    assert_eq!(made.status, 201, "{}", made.body);
+    let source = &made.json()["credentials"][0]["source"];
+    assert_eq!(source["kind"], "git_credential");
+    assert_eq!(
+        (source["path"].clone(), source["username"].clone()),
+        (json!("contoso"), json!("me"))
+    );
+    // The optional field is `null`, never left out, when it was not sent.
+    request["credentials"][0]["source"]["username"] = Value::Null;
+    request["label"] = json!("Azure two");
+    request["credentials"][0]["covers"] = json!({"owners": ["fabrikam"], "rest_of_host": false});
+    let again = api
+        .send("POST", "/api/identities", Some(&request))
+        .await
+        .json();
+    assert_eq!(again["credentials"][0]["source"]["username"], Value::Null);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn bad_input_is_refused_and_no_command_source_exists() {
     let api = start().await;
     let mut cases = vec![
@@ -242,6 +273,16 @@ async fn attaching_colliding_identities_is_a_409_naming_both() {
         .status,
         409
     );
+    // A list without a clash replaces the old one; the clash list is refused below.
+    let swapped = api
+        .send(
+            "PUT",
+            "/api/workspaces/shop/identities",
+            Some(&json!({"ids": [work, rest]})),
+        )
+        .await;
+    assert_eq!(swapped.status, 200, "{}", swapped.body);
+    assert_eq!(swapped.json()["identities"][0]["id"], work);
     // Replacing the list is checked as a whole.
     let put = api
         .send(
