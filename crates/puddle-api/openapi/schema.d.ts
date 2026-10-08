@@ -1020,6 +1020,11 @@ export interface components {
              */
             pending_id: number | null;
             /**
+             * @description Whether a secret stand-in went to a host outside its hosts, unchanged. Records written
+             *     before it existed read as `false`.
+             */
+            placeholder_unbound: boolean;
+            /**
              * Format: int32
              * @description The requested port.
              */

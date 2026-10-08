@@ -74,6 +74,10 @@ pub struct ConnectionRecord {
     pub binding_id: Option<String>,
     /// Whether a credential was injected.
     pub injected: bool,
+    /// Whether a secret stand-in went to a host outside its hosts, unchanged. Absent in records
+    /// written before it existed.
+    #[serde(default)]
+    pub placeholder_unbound: bool,
     /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts.
     pub method: Option<String>,
     /// HTTP path without query string, where `method` is set.
@@ -108,6 +112,7 @@ impl ConnectionRecord {
             pending_id: event.pending_id.map(|id| id.0),
             binding_id: event.binding_id.clone(),
             injected: event.injected,
+            placeholder_unbound: event.placeholder_unbound,
             method,
             path,
             path_truncated: false,
@@ -143,6 +148,7 @@ impl ConnectionRecord {
             pending_id: None,
             binding_id: None,
             injected: false,
+            placeholder_unbound: false,
             method: None,
             path: None,
             path_truncated: false,
@@ -984,6 +990,30 @@ mod tests {
         );
     }
 
+    /// A line written before the flag existed reads as not flagged.
+    #[test]
+    fn a_connection_line_without_the_stand_in_flag_reads_as_not_flagged() {
+        let line = json!({"type": "connection", "ts": 9, "workspace_id": "sb-1",
+            "origin": "workspace", "host": "example.com", "port": 443, "resolved_ip": null,
+            "decision": "allow", "reason": "rule", "rule_id": 1, "pending_id": null,
+            "binding_id": null, "injected": false, "method": null, "path": null,
+            "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null});
+        let record: AuditRecord = serde_json::from_value(line).unwrap();
+        assert!(matches!(
+            record,
+            AuditRecord::Connection(ConnectionRecord {
+                placeholder_unbound: false,
+                ..
+            })
+        ));
+        let flagged = ConnectionRecord::from_event(1, &{
+            let mut event = event();
+            event.placeholder_unbound = true;
+            event
+        });
+        assert!(flagged.placeholder_unbound);
+    }
+
     #[test]
     fn r23_records_are_internally_tagged_snake_case_with_nulls_written() {
         for record in every_record() {
@@ -1056,6 +1086,7 @@ mod tests {
             "pending_id",
             "binding_id",
             "injected",
+            "placeholder_unbound",
             "method",
             "path",
             "path_truncated",

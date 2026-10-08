@@ -271,6 +271,11 @@ function connectionDetail(
     );
   }
   if (record.injected) parts.push("credential added");
+  if (record.placeholder_unbound) {
+    parts.push(
+      "secret stand-in went to a host it is not for (check the secret's hosts)",
+    );
+  }
   return parts.join(" · ");
 }
 

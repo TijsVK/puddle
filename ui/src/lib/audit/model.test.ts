@@ -213,6 +213,16 @@ describe("a record as a row", () => {
       "the tool in the workspace didn't accept puddle's certificate (it may keep its own list of trusted roots)",
     );
   });
+  it("flags a secret stand-in that went to a host it is not for", () => {
+    const view = row(
+      connection(1, { placeholder_unbound: true, method: "GET", path: "/x" })
+        .record,
+    );
+    expect(view.detail).toBe(
+      "GET /x · rule 1 · secret stand-in went to a host it is not for (check the secret's hosts)",
+    );
+    expect(row(connection(2, {}).record).detail).not.toContain("stand-in");
+  });
   it("shows puddle's own connections as puddle, with its own reason", () => {
     const view = row(
       connection(1, {

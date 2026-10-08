@@ -848,6 +848,11 @@ pub enum AuditRecord {
         binding_id: Option<String>,
         /// Whether a credential was injected.
         injected: bool,
+        /// Whether a secret stand-in went to a host outside its hosts, unchanged. Records written
+        /// before it existed read as `false`.
+        #[serde(default)]
+        #[schema(required = true)]
+        placeholder_unbound: bool,
         /// HTTP method, where the proxy saw the request in clear.
         #[schema(required = true)]
         method: Option<String>,
@@ -1028,6 +1033,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             pending_id,
             binding_id,
             injected,
+            placeholder_unbound,
             method,
             path,
             path_truncated,
@@ -1050,6 +1056,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             pending_id,
             binding_id,
             injected,
+            placeholder_unbound,
             method,
             path,
             path_truncated,
@@ -2563,7 +2570,8 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
             "decision": "allow", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
-            "pending_id": null, "binding_id": null, "injected": false, "method": "GET", "path": "/",
+            "pending_id": null, "binding_id": null, "injected": false, "placeholder_unbound": false,
+            "method": "GET", "path": "/",
             "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
         });
         let record: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();

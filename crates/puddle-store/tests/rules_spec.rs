@@ -22,7 +22,7 @@ use puddle_types::{
     ConnectionReason, Decision, EgressRequest, Host, HttpRequestLine, PatternKind, PendingId,
     PendingOutcome, Policy, RuleId, SuffixAllows, WorkspaceName,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const T0: u64 = 1_800_000_000_000;
 const DAY: u64 = 24 * 60 * 60 * 1000;
@@ -1061,6 +1061,24 @@ fn r25_no_secret_reaches_the_audit() {
     assert_eq!(record["path"], "/o/a");
     assert_eq!(record["binding_id"], "gh");
     assert_eq!(record["injected"], true);
+}
+
+#[test]
+fn r24_a_stand_in_sent_to_the_wrong_host_is_flagged_in_its_record_only() {
+    let (_, store) = fixture();
+    let mut flagged = connection("a");
+    flagged.placeholder_unbound = true;
+    store.record_connection(&flagged).unwrap();
+    store.record_connection(&connection("b")).unwrap();
+    let records = audit_of(&store, "connection");
+    let flags: Vec<_> = records
+        .iter()
+        .map(|r| (r["workspace_id"].clone(), r["placeholder_unbound"].clone()))
+        .collect();
+    assert_eq!(
+        flags,
+        [(json!("a"), json!(true)), (json!("b"), json!(false))]
+    );
 }
 
 #[test]

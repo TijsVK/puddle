@@ -5374,6 +5374,7 @@
               "pending_id",
               "binding_id",
               "injected",
+              "placeholder_unbound",
               "method",
               "path",
               "path_truncated",
@@ -5462,6 +5463,10 @@
                 ],
                 "format": "int64",
                 "description": "The pending request."
+              },
+              "placeholder_unbound": {
+                "type": "boolean",
+                "description": "Whether a secret stand-in went to a host outside its hosts, unchanged. Records written\nbefore it existed read as `false`."
               },
               "port": {
                 "type": [

@@ -31,6 +31,7 @@ export function connection(
       bytes_down: 0,
       count: null,
       injected: false,
+      placeholder_unbound: false,
       method: null,
       path: null,
       path_truncated: false,
