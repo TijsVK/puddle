@@ -87,6 +87,14 @@ jobs:
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash
         run: cargo test --doc --workspace --all-features --locked --no-fail-fast
+      # Windows runs this one gate of the Linux job too: it proves ci/fetch-gitleaks.sh and the
+      # gate work in Git Bash with the Windows release, where developers' pre-push hook runs.
+      - name: secret scanning (gitleaks, Windows release)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: bash
+        run: |
+          ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
+          PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
       - name: UI (format, lint, types, unit and component tests with coverage, build)
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: bash

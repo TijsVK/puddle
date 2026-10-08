@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, secrets, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast  = fmt typos spdx shellcheck hooks platform-literals standalone   (pre-commit hook)
-#   all   = fast git-env clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage
+#   all   = fast git-env secrets clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #           (pre-push hook, CI; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 # The ui gates need Node 24 (the UI's package-lock.json pins every npm package). ui-e2e also needs
 # the Playwright browsers: `cd ui && npx playwright install --with-deps chromium webkit`.
@@ -109,6 +109,11 @@ run_gate() {
         fi
         ;;
     standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh ;;
+    secrets)
+        # gitleaks over all history with the reviewed allowlist (.gitleaks.toml); needs the pinned
+        # gitleaks on PATH (ci/fetch-gitleaks.sh). Not in `fast`: it scans every commit.
+        scripts/check-secrets.sh --self-test && scripts/check-secrets.sh
+        ;;
     clippy)
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" clippy --workspace $skip_app --all-targets --all-features --locked -- -D warnings
@@ -240,7 +245,7 @@ run_gate() {
 for arg in "$@"; do
     case "$arg" in
     fast) for g in fmt typos spdx shellcheck hooks platform-literals standalone; do run_gate "$g"; done ;;
-    all) for g in fmt typos spdx shellcheck hooks platform-literals standalone git-env clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage; do run_gate "$g"; done ;;
+    all) for g in fmt typos spdx shellcheck hooks platform-literals standalone git-env secrets clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage; do run_gate "$g"; done ;;
     *) run_gate "$arg" ;;
     esac
 done

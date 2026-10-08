@@ -76,6 +76,10 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   `clang-cl` and uses the toolchain's `llvm-tools` as `llvm-lib`.
 - Gate tools: `cargo-nextest`, `cargo-llvm-cov`, `cargo-deny`, `typos-cli`, `cargo-xwin`, `shellcheck`, `cargo-about` (with `--features cli`) (versions pinned in
   `.github/workflows/ci.yml`; use the same or newer locally).
+- **gitleaks** for the `secrets` gate (secret scanning, below): the version is pinned with a SHA-256 per
+  platform in `ci/gitleaks.sha256` and the gate refuses any other. `ci/fetch-gitleaks.sh <dir on PATH>`
+  downloads, verifies and installs it (Linux, macOS, Git Bash on Windows). It is a Go binary, not a Cargo
+  or npm dependency, so `cargo deny` and the notices don't see it; it is MIT-licensed and only run, never shipped.
 - **Node** (22 or newer, CI uses 24) for one gate: `scripts/check.sh openapi` regenerates the API
   contract's TypeScript types with `openapi-typescript` (pinned in
   `crates/puddle-api/openapi/package-lock.json`) and compares them with the committed
@@ -171,6 +175,14 @@ the owner, then tagged `vX.Y.Z` on `main`.
   fail closed (deny on error), and add a hostile-guest test (§8) with the change.
 - **Secrets** (credentials, API tokens) are wrapped in a type whose `Debug`/`Display` redact
   (e.g. `secrecy::SecretString`), never logged, never in errors, never in test snapshots.
+- **Secret scanning:** `scripts/check.sh secrets` (pre-push and CI) runs gitleaks over every commit with
+  the default rules plus `.gitleaks.toml`. Test credentials are made-up values, kept recognisable
+  (`CANARY-<word>`, `user:puddle`), and need no special treatment unless a scanner flags them. A flagged
+  fake gets an allowlist entry that fits its exact path and value, with the reason in the entry; the
+  fixture itself stays as it is. The gate's self-test (`scripts/check-secrets.sh --self-test`) proves a
+  real-shaped token fails and a listed fake passes. External scanners (GitGuardian on the public
+  repository) may flag fakes the gate doesn't; dismiss those as false positives, don't rewrite the test.
+  A real secret that reached a commit is rotated first, then removed.
 
 ## 6. Error handling
 
@@ -203,7 +215,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
-| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, standalone (no planning-note references), rustdoc, API contract | `scripts/check.sh` | every push, every PR |
+| L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references), rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: by hand on any branch, nightly on `develop` |

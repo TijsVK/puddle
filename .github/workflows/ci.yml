@@ -102,6 +102,11 @@ jobs:
       - name: standalone (no planning-note references)
         if: ${{ !cancelled() }}
         run: scripts/check.sh standalone
+      - name: secret scanning (gitleaks, pinned and checksummed in ci/gitleaks.sha256)
+        if: ${{ !cancelled() }}
+        run: |
+          ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
+          PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
       - name: clippy (linux)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy

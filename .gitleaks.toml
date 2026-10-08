@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# gitleaks configuration for scripts/check.sh secrets (docs/STANDARDS.md, "Secret scanning").
+# The default rules stay on; the allowlist below is the reviewed list of fake test values in
+# this repository's history. An entry matches only when BOTH the file path and the exact matched
+# value fit, so a real secret in the same file still fails. Add an entry only for a value that
+# is made up on purpose, and say why. (A fixture that merely looks credential-shaped but isn't
+# flagged needs no entry.)
+title = "puddle"
+
+[extend]
+useDefault = true
+
+# Canary strings: test values that are recognisable on purpose, so a test can assert they never
+# reach a log, a response or the guest (CANARY-<word>, in integration tests only).
+[[allowlists]]
+description = "CANARY-* test values in crate integration tests"
+condition = "AND"
+paths = ['''^crates/[^/]+/tests/[^/]+\.rs$''']
+regexTarget = "match"
+regexes = ['''(?i)(password|token|secret)\W{0,4}CANARY-[A-Za-z0-9-]+''']
+
+# The Docker CLI config fixture in a VM test (an older revision of the line is in history):
+# "dXNlcjpwdWRkbGU=" is base64 of the made-up login "user:puddle".
+[[allowlists]]
+description = "base64 of the fake login user:puddle in the Docker config fixture"
+condition = "AND"
+paths = ['''^crates/puddle-boot/tests/vm_boot\.rs$''']
+regexTarget = "match"
+regexes = ['''auth\W{1,4}dXNlcjpwdWRkbGU=''']
