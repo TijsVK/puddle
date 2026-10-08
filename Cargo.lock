@@ -6085,6 +6085,7 @@ dependencies = [
  "puddle-vm-tests",
  "puddle-workspace",
  "rcgen",
+ "rusqlite",
  "rustls",
  "serde",
  "serde_json",
