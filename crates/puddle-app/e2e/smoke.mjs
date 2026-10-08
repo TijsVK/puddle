@@ -96,14 +96,16 @@ try {
   page = await connect(target.webSocketDebuggerUrl);
   const run = (body) => page.evaluate(`(async () => { ${body} })()`);
 
+  // The sidebar's sections (ui/src/lib/nav.ts): Workspaces, Inbox, Rules, Activity, Identities, Settings.
+  const SECTIONS = 6;
   let shell;
   for (let i = 0; i < 100; i++) {
     shell = await run(`return { origin: location.origin, title: document.title,
       links: document.querySelectorAll('nav[aria-label="Main"] a').length };`).catch(() => undefined);
-    if (shell && shell.links === 5) break;
+    if (shell && shell.links === SECTIONS) break;
     await sleep(400);
   }
-  check("the window shows the SPA from the in-process API", shell?.links === 5, JSON.stringify(shell));
+  check("the window shows the SPA from the in-process API", shell?.links === SECTIONS, JSON.stringify(shell));
   check("served from 127.0.0.1", /^http:\/\/127\.0\.0\.1:\d+$/.test(shell?.origin ?? ""), shell?.origin);
   check("title carries the app name", /puddle/.test(shell?.title ?? ""), shell?.title);
 
