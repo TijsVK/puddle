@@ -46,6 +46,7 @@
 
 mod auth;
 mod credentials;
+mod doctor;
 mod error;
 mod events;
 mod extract;
@@ -64,6 +65,7 @@ mod workspaces;
 pub use credentials::{
     Check, CredentialService, CredentialsError, FakeCredentials, HostCredentials, NoCredentials,
 };
+pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, RunChecks};
 pub use error::{ApiErrorBody, ErrorCode};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};

@@ -9,7 +9,8 @@
 use std::collections::BTreeMap;
 
 use puddle_api::wire::{
-    CredentialSource, FoundAccount, FoundVia, IdentityRequest, NetworkHealth, SignInStarted,
+    CredentialSource, DoctorReport, FoundAccount, FoundVia, IdentityRequest, NetworkHealth,
+    SignInStarted,
 };
 use puddle_types::Event;
 use serde::{Deserialize, Serialize};
@@ -68,6 +69,13 @@ pub struct Scenario {
     /// when left out. `generated_at` is replaced by the clock on every request.
     #[serde(default)]
     pub network_health: Option<NetworkHealth>,
+    /// What `GET /api/doctor` reports at start; a healthy machine when left out.
+    #[serde(default)]
+    pub doctor: Option<DoctorReport>,
+    /// Leaves the first-run flow still to run. Left out, the scenario starts as an install the
+    /// user has already been through, so the app opens on its start screen.
+    #[serde(default)]
+    pub first_run_open: bool,
     /// Named lists of steps; run one with `POST /control/script/{name}`.
     #[serde(default)]
     pub scripts: BTreeMap<String, Vec<Step>>,
@@ -410,6 +418,8 @@ pub enum Step {
         /// The accounts.
         accounts: Vec<FoundAccount>,
     },
+    /// Replaces what the system check reports from now on.
+    Doctor(Box<DoctorReport>),
     /// Creates a rule.
     Rule(RuleSeed),
     /// Writes a connection audit record.

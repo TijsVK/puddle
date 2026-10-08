@@ -24,15 +24,16 @@ use std::time::Duration;
 
 use puddle_api::wire::{FoundAccount, FoundVia};
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, EventHub, FakeCredentials,
-    FakeLauncher, FakeNetworkHealth, FakeWorkspaces, Launcher, Listing, MemorySettings,
-    NetworkHealthService, Operation, RepoFindings, RepoUrl, RunningApi, Services, SettingsRepo,
-    Unsaved, WorkspaceRecord,
+    ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DoctorService, EventHub,
+    FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakeWorkspaces, Launcher,
+    Listing, MemorySettings, NetworkHealthService, Operation, RepoFindings, RepoUrl, RunningApi,
+    Services, SettingsRepo, Unsaved, WorkspaceRecord,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
     SignInStart, SourceError, Tool,
 };
+use puddle_settings::GLOBAL_SCHEMA_VERSION;
 use puddle_store::{
     Actor, Clock, IdentityId, Limits, ManualClock, NewRule, Pattern, RepoRef, Scope, Store,
 };
@@ -54,7 +55,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 7] = [
+const BUILT_IN: [(&str, &str); 8] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -82,6 +83,10 @@ const BUILT_IN: [(&str, &str); 7] = [
     (
         "git-identities",
         include_str!("../../../../ui/e2e/fixtures/git-identities.json"),
+    ),
+    (
+        "first-run",
+        include_str!("../../../../ui/e2e/fixtures/first-run.json"),
     ),
 ];
 
@@ -138,6 +143,7 @@ struct State {
     workspaces: FakeWorkspaces,
     network: Arc<FakeNetworkHealth>,
     credentials: Arc<FakeCredentials>,
+    doctor: Arc<FakeDoctor>,
     api: Option<RunningApi>,
 }
 
@@ -192,6 +198,7 @@ impl Fixture {
         );
         let network = Arc::new(FakeNetworkHealth::new(clock.clone() as Arc<dyn Clock>));
         let credentials = Arc::new(FakeCredentials::new());
+        let doctor = Arc::new(FakeDoctor::new());
         let state = State {
             store,
             clock,
@@ -200,6 +207,7 @@ impl Fixture {
             workspaces,
             network,
             credentials,
+            doctor,
             api: None,
         };
         state.seed(scenario)?;
@@ -220,7 +228,8 @@ impl Fixture {
             )
             .with_workspaces(Arc::new(state.workspaces.clone()))
             .with_network_health(state.network.clone() as Arc<dyn NetworkHealthService>)
-            .with_credentials(state.credentials.clone() as Arc<dyn CredentialService>);
+            .with_credentials(state.credentials.clone() as Arc<dyn CredentialService>)
+            .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>);
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
                 self.token.clone(),
@@ -480,6 +489,12 @@ impl State {
         if let Some(report) = &scenario.network_health {
             self.network.set(report.clone());
         }
+        if let Some(report) = &scenario.doctor {
+            self.doctor.set(report.clone());
+        }
+        if !scenario.first_run_open {
+            self.finish_first_run(start)?;
+        }
         self.clock.set(start);
         Ok(())
     }
@@ -566,6 +581,7 @@ impl State {
             Step::CredentialsFound { accounts } => {
                 self.credentials.set_found(found(accounts, &[])?);
             }
+            Step::Doctor(report) => self.doctor.set((**report).clone()),
             Step::Rule(rule) => self.add_rule(rule, now)?,
             Step::Connection(connection) => self.connection(connection, now)?,
             Step::HoldWorkspaces => self.workspaces.hold(),
@@ -582,6 +598,26 @@ impl State {
             ),
         }
         Ok(())
+    }
+
+    /// Records in the global settings that the first-run flow has been through, keeping whatever
+    /// else the scenario put there.
+    fn finish_first_run(&self, at: u64) -> Result<(), String> {
+        let mut document = self
+            .settings
+            .load_global()
+            .map_err(|err| err.to_string())?
+            .unwrap_or_else(|| serde_json::json!({ "schema_version": GLOBAL_SCHEMA_VERSION }));
+        let Some(object) = document.as_object_mut() else {
+            return Err("the scenario's global settings are not an object".to_owned());
+        };
+        object.insert(
+            "first_run".to_owned(),
+            serde_json::json!({ "completed_at": at }),
+        );
+        self.settings
+            .save_global(document)
+            .map_err(|err| err.to_string())
     }
 
     fn workspace(&self, seed: &WorkspaceSeed, now: u64) -> Result<(), String> {

@@ -24,10 +24,11 @@ use tower_http::timeout::TimeoutLayer;
 
 use crate::auth::{Guard, guard};
 use crate::credentials::{CredentialService, NoCredentials};
+use crate::doctor::{DoctorService, NoDoctor};
 use crate::error::ApiError;
 use crate::events::EventHub;
 use crate::network_health::{NetworkHealthService, NoNetworkHealth};
-use crate::routes::{AppState, api_router};
+use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
 use crate::token::{ApiToken, ConnectionInfo};
 use crate::ui::{UiAssets, UiService};
@@ -35,6 +36,10 @@ use crate::workspaces::{NoWorkspaces, WorkspaceService};
 
 /// Largest request body (the biggest real one, a settings document, is well under 4 KiB).
 const MAX_BODY_BYTES: usize = 64 * 1024;
+
+/// How long the routes of [`slow_router`] may take: the system check's test boot (up to about 30
+/// s), and a few checks queued behind each other.
+const SLOW_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// How long a client may take to send a request's headers.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
@@ -115,6 +120,9 @@ pub struct Services {
     /// tokens, sign-ins. [`Services::new`] starts with [`NoCredentials`], which answers 503; set
     /// the real one with [`Services::with_credentials`].
     pub credentials: Arc<dyn CredentialService>,
+    /// The system check. [`Services::new`] starts with [`NoDoctor`], which answers 503; set the
+    /// real one with [`Services::with_doctor`].
+    pub doctor: Arc<dyn DoctorService>,
     /// The registry of puddle's own listeners that the workspace proxy's guard consults. The API
     /// registers its address here when it binds, so a workspace can't reach it even with the
     /// loopback toggle on. [`Services::new`] starts with an empty registry of its own; give the
@@ -139,6 +147,7 @@ impl Services {
             workspaces: Arc::new(NoWorkspaces),
             network_health: Arc::new(NoNetworkHealth),
             credentials: Arc::new(NoCredentials),
+            doctor: Arc::new(NoDoctor),
             endpoints: PuddleEndpoints::new(),
         }
     }
@@ -154,6 +163,13 @@ impl Services {
     #[must_use]
     pub fn with_credentials(mut self, credentials: Arc<dyn CredentialService>) -> Self {
         self.credentials = credentials;
+        self
+    }
+
+    /// These services with this system check.
+    #[must_use]
+    pub fn with_doctor(mut self, doctor: Arc<dyn DoctorService>) -> Self {
+        self.doctor = doctor;
         self
     }
 
@@ -229,6 +245,7 @@ impl ApiServer {
             workspaces: services.workspaces,
             network_health: services.network_health,
             credentials: services.credentials,
+            doctor: services.doctor,
             shutdown,
         };
         // System managed follows the stored setup from the first request on (rules spec R-41).
@@ -327,6 +344,7 @@ fn build_router(
     ui: Option<UiService>,
 ) -> Router {
     let (router, _spec) = api_router().split_for_parts();
+    let (slow, _spec) = slow_router().split_for_parts();
     router
         .route(
             "/api/openapi.json",
@@ -352,6 +370,10 @@ fn build_router(
             StatusCode::REQUEST_TIMEOUT,
             request_timeout,
         ))
+        .merge(slow.layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            SLOW_REQUEST_TIMEOUT,
+        )))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(axum::middleware::from_fn_with_state(guard_state, guard))
         .with_state(state)

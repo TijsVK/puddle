@@ -10,6 +10,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::credentials::CredentialsError;
+use crate::doctor::DoctorError;
 use crate::network_health::NetworkHealthError;
 use crate::settings::SettingsRepoError;
 use crate::workspaces::WorkspaceError;
@@ -222,6 +223,17 @@ impl From<CredentialsError> for ApiError {
     }
 }
 
+impl From<DoctorError> for ApiError {
+    fn from(err: DoctorError) -> Self {
+        match err {
+            DoctorError::Unavailable(m) => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
+            }
+            DoctorError::Crashed(_) => Self::internal(&err),
+        }
+    }
+}
+
 impl From<SettingsRepoError> for ApiError {
     fn from(err: SettingsRepoError) -> Self {
         Self::internal(&err)
@@ -356,6 +368,17 @@ mod tests {
             assert_eq!(api.code(), code);
             assert!(!api.body.message.contains("secret"));
         }
+    }
+
+    #[test]
+    fn doctor_errors_map_to_statuses_and_keep_internals_out_of_the_message() {
+        let missing = ApiError::from(DoctorError::Unavailable("not in this build".into()));
+        assert_eq!(missing.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(missing.code(), ErrorCode::Unavailable);
+        let crashed = ApiError::from(DoctorError::Crashed("panic at /secret/path".into()));
+        assert_eq!(crashed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(crashed.code(), ErrorCode::Internal);
+        assert!(!crashed.body.message.contains("secret"));
     }
 
     #[tokio::test]

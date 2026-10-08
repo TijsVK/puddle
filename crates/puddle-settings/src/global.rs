@@ -9,8 +9,8 @@ use serde_json::Value;
 use crate::document::{self, Document};
 use crate::migrate::{self, Migration};
 use crate::{
-    CloseBehaviour, Consents, DensityChoice, Loaded, ServerChoice, SettingsError, ThemeChoice,
-    WorkspaceLayer,
+    CloseBehaviour, Consents, DensityChoice, FirstRun, Loaded, ServerChoice, SettingsError,
+    ThemeChoice, WorkspaceLayer,
 };
 
 /// The current shape of [`GlobalSettings`] documents.
@@ -50,6 +50,9 @@ pub struct GlobalSettings {
     /// What the user agreed to or declined (per user, never per workspace).
     #[serde(default, skip_serializing_if = "Consents::is_empty")]
     pub consents: Consents,
+    /// Whether the first-run flow has been through (per user).
+    #[serde(default, skip_serializing_if = "FirstRun::is_empty")]
+    pub first_run: FirstRun,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -85,6 +88,7 @@ impl Document for GlobalSettings {
         document::push_unknown("vscode_server.", &self.vscode_server.extra, out);
         document::push_unknown("ui.", &self.ui.extra, out);
         self.consents.collect_unknown("consents.", out);
+        document::push_unknown("first_run.", &self.first_run.extra, out);
     }
 }
 
@@ -377,6 +381,35 @@ mod tests {
                 supported: 2
             }
         ));
+    }
+
+    #[test]
+    fn first_run_defaults_to_not_completed_and_round_trips() {
+        let loaded = GlobalSettings::from_document(json!({})).unwrap();
+        assert!(!loaded.settings.first_run.is_completed());
+        assert_eq!(
+            loaded.settings.to_document(),
+            json!({ "schema_version": 2 }),
+            "an unset flow is not written"
+        );
+
+        let doc =
+            json!({ "schema_version": 2, "first_run": { "completed_at": 1_700_000_000_000_u64 } });
+        let loaded = GlobalSettings::from_document(doc.clone()).unwrap();
+        assert!(loaded.settings.first_run.is_completed());
+        assert_eq!(
+            loaded.settings.first_run.completed_at,
+            Some(UnixMillis(1_700_000_000_000))
+        );
+        assert_eq!(loaded.settings.to_document(), doc);
+    }
+
+    #[test]
+    fn first_run_keeps_fields_it_does_not_know() {
+        let doc = json!({ "schema_version": 2, "first_run": { "completed_at": 5, "tour": "v2" } });
+        let loaded = GlobalSettings::from_document(doc.clone()).unwrap();
+        assert_eq!(loaded.unknown_fields, ["first_run.tour"]);
+        assert_eq!(loaded.settings.to_document(), doc);
     }
 
     #[test]

@@ -159,6 +159,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("network-trouble", 0, 0),
         ("volume-missing", 0, 0),
         ("git-identities", 0, 0),
+        ("first-run", 0, 0),
     ];
     for (name, pending, rules_min) in counts {
         let run = start(name).await;
@@ -183,7 +184,8 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "corporate-network",
             "network-trouble",
             "volume-missing",
-            "git-identities"
+            "git-identities",
+            "first-run"
         ]
     );
 }
@@ -889,4 +891,82 @@ async fn a_scenario_whose_workspace_names_an_identity_that_is_not_there_fails_to
     .err()
     .unwrap();
     assert!(err.contains("Ghost"), "{err}");
+}
+
+#[tokio::test]
+async fn only_the_first_run_scenario_still_has_the_first_run_flow_to_show() {
+    for name in ["default", "empty", "lived-in", "corporate-network"] {
+        let run = start(name).await;
+        let state = run.get("/api/first-run").await.json();
+        assert_eq!(state["completed"], true, "{name}: {state}");
+        assert_eq!(state["completed_at"], run.fixture.now_ms().await);
+        run.fixture.shutdown().await;
+    }
+    let run = start("first-run").await;
+    let state = run.get("/api/first-run").await.json();
+    assert_eq!(state["completed"], false, "{state}");
+    assert_eq!(state["completed_at"], Value::Null);
+    run.fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_scenario_keeps_the_settings_it_seeds_next_to_the_finished_flow() {
+    let text = json!({
+        "name": "themed",
+        "settings": {"global": {"schema_version": 2, "ui": {"theme": "dark"}}}
+    })
+    .to_string();
+    let run = start_scenario(serde_json::from_str(&text).unwrap()).await;
+    let settings = run.get("/api/settings").await.json();
+    assert_eq!(settings["ui"]["theme"], "dark");
+    assert_eq!(run.get("/api/first-run").await.json()["completed"], true);
+    run.fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_system_check_is_healthy_until_a_scenario_or_a_step_says_otherwise() {
+    let run = start("empty").await;
+    let healthy = run.get("/api/doctor").await;
+    assert_eq!(healthy.status, 200, "{}", healthy.body);
+    assert_eq!(healthy.json()["ok"], true);
+
+    let mut broken = healthy.json();
+    broken["ok"] = json!(false);
+    broken["checks"][1]["status"] = json!("fail");
+    broken["checks"][1]["summary"] = json!("KVM is missing");
+    let mut doctor_step = broken.clone();
+    doctor_step["do"] = json!("doctor");
+    let step = run
+        .control("POST", "/control/step", Some(&doctor_step))
+        .await;
+    assert_eq!(step.status, 204, "{}", step.body);
+    let after = run.get("/api/doctor").await.json();
+    assert_eq!(after["ok"], false);
+    assert_eq!(after["checks"][1]["summary"], "KVM is missing");
+
+    // A scenario can seed the report too, and a typo in it fails at start.
+    let seeded = json!({"name": "broken", "doctor": broken}).to_string();
+    let run2 = start_scenario(serde_json::from_str(&seeded).unwrap()).await;
+    assert_eq!(run2.get("/api/doctor").await.json()["ok"], false);
+    let mut typo = broken;
+    typo["oks"] = json!(true);
+    let err = serde_json::from_str::<Scenario>(&json!({"doctor": typo}).to_string())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("oks"), "{err}");
+}
+
+#[tokio::test]
+async fn a_scenario_whose_global_settings_are_not_an_object_fails_to_start() {
+    let scenario: Scenario =
+        serde_json::from_str(r#"{"name": "bad", "settings": {"global": []}}"#).unwrap();
+    let err = Fixture::start(FixtureOptions {
+        port: 0,
+        connection_file: None,
+        scenario,
+    })
+    .await
+    .err()
+    .expect("a start with unusable settings is refused");
+    assert!(err.contains("not an object"), "{err}");
 }

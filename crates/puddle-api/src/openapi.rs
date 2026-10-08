@@ -8,11 +8,11 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityRequirement
 use utoipa::openapi::{ContentBuilder, OpenApi, Ref, RefOr, Response, ResponseBuilder};
 use utoipa_axum::router::OpenApiRouter;
 
-use crate::routes::{AppState, api_router};
+use crate::routes::{AppState, api_router, slow_router};
 
 /// The contract's version. Bump the minor version for additive changes and the major version
 /// for anything a generated client would break on.
-pub const API_VERSION: &str = "0.6.0";
+pub const API_VERSION: &str = "0.7.0";
 
 /// The security scheme's name in the spec.
 const BEARER: &str = "bearer";
@@ -45,6 +45,8 @@ const BEARER: &str = "bearer";
         (name = "audit", description = "The audit log"),
         (name = "settings", description = "Global and per-workspace settings"),
         (name = "consents", description = "What the user agreed to"),
+        (name = "doctor", description = "The system check: what this computer needs to run workspaces, and the fix for what is missing"),
+        (name = "first-run", description = "Whether the first-run flow has been through"),
         (name = "network", description = "How puddle reaches the internet: proxy, sign-in, company roots"),
         (name = "identities", description = "Git identities (author and credentials) and each workspace's identities, repository table and push and pull switches"),
         (name = "workspaces", description = "Workspaces: repository checkouts with their own disk and sandbox")
@@ -57,6 +59,7 @@ struct ApiDoc;
 pub fn openapi() -> OpenApi {
     let mut doc = OpenApiRouter::<AppState>::with_openapi(ApiDoc::openapi())
         .merge(api_router())
+        .merge(slow_router())
         .into_openapi();
     API_VERSION.clone_into(&mut doc.info.version);
     doc.components
@@ -164,7 +167,7 @@ mod tests {
                 assert!(op["tags"].as_array().is_some_and(|t| !t.is_empty()));
             }
         }
-        assert_eq!(count, 54, "operations in the spec");
+        assert_eq!(count, 57, "operations in the spec");
     }
 
     /// ADR 0002: responses always carry every field (`null`, never absent), so the generated

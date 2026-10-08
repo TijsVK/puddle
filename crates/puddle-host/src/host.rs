@@ -35,6 +35,7 @@ use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 use url::Url;
 
 use crate::boot::BootKit;
+use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
 use crate::workspaces::{NoLauncher, Parts, known_ids};
 use crate::{HostConfig, HostError, HostWorkspaces, Platform};
@@ -451,6 +452,7 @@ impl<R: Runtime + Clone> Host<R> {
             .with_workspaces(Arc::new(service.clone()))
             .with_network_health(network_health)
             .with_credentials(Arc::new(HostCredentials::on_this_computer()))
+            .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
             .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
         let (info, url, api) = (served.info, served.url, served.api);

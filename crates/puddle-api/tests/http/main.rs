@@ -12,8 +12,10 @@
 mod common;
 
 mod credentials;
+mod doctor;
 mod endpoints;
 pub(crate) mod events;
+mod first_run;
 mod guard;
 mod identities;
 mod network_health;

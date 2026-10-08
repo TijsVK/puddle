@@ -12,6 +12,7 @@
 //! | [`Effective`], [`Resolved`], [`Source`] | the value a workspace gets and which level it came from |
 //! | [`Consent`], [`Consents`], [`ConsentKind`], [`TermsVersion`], [`UnixMillis`] | what the user agreed to or declined, when, and to which version of the terms |
 //! | [`UiPrefs`] | the window's theme, notification and close preferences |
+//! | [`FirstRun`] | whether the first-run flow has been through |
 //! | [`ReconnectionGrace`], [`ClipboardRead`], [`ServerChoice`], [`ThemeChoice`], [`DensityChoice`], [`CloseBehaviour`] | value types for single settings |
 //! | [`Loaded`], [`SettingsError`] | the result of reading a document |
 //!
@@ -59,6 +60,7 @@
 
 mod consent;
 mod document;
+mod first_run;
 mod global;
 mod layer;
 mod migrate;
@@ -68,6 +70,7 @@ mod workspace;
 
 pub use consent::{Consent, ConsentKind, Consents, TermsVersion, UnixMillis};
 pub use document::{Loaded, SettingsError};
+pub use first_run::FirstRun;
 pub use global::{GLOBAL_SCHEMA_VERSION, GlobalSettings, UiPrefs, VsCodeServer};
 pub use layer::{LocalToggles, WorkspaceLayer};
 pub use resolve::{Effective, EffectiveToggles, Resolved, Source, resolve};

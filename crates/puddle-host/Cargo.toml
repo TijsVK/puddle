@@ -22,6 +22,7 @@ puddle-ca = { workspace = true }
 puddle-certs = { workspace = true }
 puddle-compute = { workspace = true }
 puddle-compute-msb = { workspace = true }
+puddle-doctor = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-guest-env = { workspace = true }
 puddle-ipc = { workspace = true }

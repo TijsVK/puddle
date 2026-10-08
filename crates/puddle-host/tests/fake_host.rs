@@ -606,6 +606,49 @@ async fn the_network_health_report_is_the_hosts_own_and_follows_a_network_change
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_system_check_looks_at_the_runtime_folder_the_host_was_started_with() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+
+    assert_eq!(
+        api.request("GET", "/api/doctor?boot=false", None, false)
+            .await
+            .status,
+        401
+    );
+    // The rig's runtime folder holds no msb: the check says so, names the folder, and skips what
+    // needs a runtime. (The machine's own hypervisor check can come out either way.)
+    let reply = api.get("/api/doctor?boot=false").await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let report = reply.json();
+    assert_eq!(report["schema_version"], 1, "{report}");
+    assert_eq!(report["ok"], false, "{report}");
+    let check = |id: &str| {
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == id)
+            .unwrap_or_else(|| panic!("no {id} check in {report}"))
+            .clone()
+    };
+    let runtime = check("runtime");
+    assert_eq!(runtime["status"], "fail", "{runtime}");
+    assert_eq!(runtime["finding"], "runtime_missing", "{runtime}");
+    assert!(
+        runtime["summary"]
+            .as_str()
+            .unwrap()
+            .contains(&rig.dir.path().join("runtime").display().to_string()),
+        "{runtime}"
+    );
+    assert_eq!(check("launch")["status"], "skipped");
+    assert_eq!(check("test_boot")["status"], "skipped");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_failed_clone_leaves_nothing_behind() {
     let rig = Rig::new();
     rig.guest.fail_clone.store(true, Ordering::SeqCst);

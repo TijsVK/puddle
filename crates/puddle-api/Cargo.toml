@@ -23,6 +23,7 @@ getrandom = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 puddle-certs = { workspace = true }
+puddle-doctor = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-secrets = { workspace = true }

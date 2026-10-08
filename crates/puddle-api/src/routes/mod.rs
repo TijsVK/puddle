@@ -10,6 +10,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::credentials::CredentialService;
+use crate::doctor::DoctorService;
 use crate::events::EventHub;
 use crate::network_health::NetworkHealthService;
 use crate::settings::SettingsRepo;
@@ -17,7 +18,9 @@ use crate::workspaces::WorkspaceService;
 
 mod audit;
 mod credentials;
+mod doctor;
 mod events;
+mod first_run;
 mod identities;
 mod meta;
 mod network_health;
@@ -39,6 +42,7 @@ pub(crate) struct AppState {
     pub(crate) workspaces: Arc<dyn WorkspaceService>,
     pub(crate) network_health: Arc<dyn NetworkHealthService>,
     pub(crate) credentials: Arc<dyn CredentialService>,
+    pub(crate) doctor: Arc<dyn DoctorService>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }
@@ -75,6 +79,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(settings::get_consents))
         .routes(routes!(settings::put_consent))
+        .routes(routes!(first_run::get_first_run, first_run::put_first_run))
         .routes(routes!(
             workspaces::list_workspaces,
             workspaces::create_workspace
@@ -116,4 +121,10 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             identities::set_git_repo,
             identities::remove_git_repo
         ))
+}
+
+/// The routes that may take far longer than the rest (the system check boots a test machine), so
+/// they get their own, longer time limit.
+pub(crate) fn slow_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(doctor::doctor))
 }

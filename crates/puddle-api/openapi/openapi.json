@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.6.0"
+    "version": "0.7.0"
   },
   "paths": {
     "/api/audit": {
@@ -808,6 +808,98 @@
         }
       }
     },
+    "/api/doctor": {
+      "get": {
+        "tags": [
+          "doctor"
+        ],
+        "summary": "Checks this computer for what puddle needs (virtualization, the hypervisor, the bundled\nruntime, a test boot) and says the exact fix for each problem. It needs no administrator\nrights. With the test boot it takes a few seconds and up to about 30; checks that overlap run\none after another.",
+        "operationId": "doctor",
+        "parameters": [
+          {
+            "name": "boot",
+            "in": "query",
+            "description": "include the test boot of a tiny virtual machine, the slowest check (default true)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "what was found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoctorReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the system check is not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/events": {
       "get": {
         "tags": [
@@ -859,6 +951,156 @@
           },
           "403": {
             "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/first-run": {
+      "get": {
+        "tags": [
+          "first-run"
+        ],
+        "summary": "Whether the first-run flow has been through, and what its certificates step shows.",
+        "operationId": "get_first_run",
+        "responses": {
+          "200": {
+            "description": "the flow's state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FirstRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "settings written by a newer puddle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "first-run"
+        ],
+        "summary": "Records that the first-run flow was finished or skipped (`true`), or makes it run again at the\nnext start (`false`). Doing it twice keeps the first time.",
+        "operationId": "put_first_run",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FirstRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the flow's state after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FirstRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "settings written by a newer puddle",
             "content": {
               "application/json": {
                 "schema": {
@@ -6452,6 +6694,129 @@
           "compact"
         ]
       },
+      "DevCertificate": {
+        "type": "string",
+        "description": "What puddle knows about a development certificate on this computer (the ASP.NET one that\n`dotnet dev-certs` makes), for the one line the certificates step shows.",
+        "enum": [
+          "not_checked",
+          "reusing_existing"
+        ]
+      },
+      "DoctorCheck": {
+        "type": "object",
+        "description": "One line of the system check.",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "summary",
+          "finding",
+          "fix",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Raw evidence: an OS error, the runtime's last output lines; `null` when there is none."
+          },
+          "finding": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What a check that isn't ok found, as a stable `snake_case` code; `null` when ok."
+          },
+          "fix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The exact fix (for a failure) or what a limitation means (for a warning); `null` when\nthere is nothing to do."
+          },
+          "id": {
+            "type": "string",
+            "description": "Which check, as a stable `snake_case` code (`virtualization`, `hypervisor`, `runtime`,\n`test_boot`, ...). A newer puddle may add codes: show an unknown one by its title."
+          },
+          "status": {
+            "$ref": "#/components/schemas/DoctorStatus",
+            "description": "How it came out."
+          },
+          "summary": {
+            "type": "string",
+            "description": "One line: what was found."
+          },
+          "title": {
+            "type": "string",
+            "description": "The check's name for people."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DoctorReport": {
+        "type": "object",
+        "description": "What the system check found on this computer.",
+        "required": [
+          "schema_version",
+          "puddle_version",
+          "os",
+          "arch",
+          "ok",
+          "checks",
+          "elapsed_ms"
+        ],
+        "properties": {
+          "arch": {
+            "type": "string",
+            "description": "The CPU architecture."
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DoctorCheck"
+            },
+            "description": "The checks, in a fixed order."
+          },
+          "elapsed_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long the checks took, in milliseconds.",
+            "minimum": 0
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "`true` when no check failed."
+          },
+          "os": {
+            "type": "string",
+            "description": "`windows`, `linux`, `macos` or `other`."
+          },
+          "puddle_version": {
+            "type": "string",
+            "description": "The puddle version that ran the checks."
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The version of this layout (the command line's `--json` carries the same number).",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "DoctorStatus": {
+        "type": "string",
+        "description": "How one check came out.",
+        "enum": [
+          "ok",
+          "info",
+          "warn",
+          "fail",
+          "skipped"
+        ]
+      },
       "Effect": {
         "type": "string",
         "description": "Allow or deny.",
@@ -6962,6 +7327,49 @@
             "minimum": 0
           }
         }
+      },
+      "FirstRun": {
+        "type": "object",
+        "description": "Where the first-run flow stands.",
+        "required": [
+          "completed",
+          "completed_at",
+          "dev_certificate"
+        ],
+        "properties": {
+          "completed": {
+            "type": "boolean",
+            "description": "The flow has been finished or skipped, so the app opens on its start screen."
+          },
+          "completed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms of that; `null` while it still has to run.",
+            "minimum": 0
+          },
+          "dev_certificate": {
+            "$ref": "#/components/schemas/DevCertificate",
+            "description": "What the certificates step says about a development certificate."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FirstRunRequest": {
+        "type": "object",
+        "description": "Marks the first-run flow finished, or open again.",
+        "required": [
+          "completed"
+        ],
+        "properties": {
+          "completed": {
+            "type": "boolean",
+            "description": "`true` records that the flow was finished or skipped (the time of the first such call is\nkept); `false` makes it run again at the next start."
+          }
+        },
+        "additionalProperties": false
       },
       "FoundAccount": {
         "type": "object",
@@ -9471,6 +9879,14 @@
     {
       "name": "consents",
       "description": "What the user agreed to"
+    },
+    {
+      "name": "doctor",
+      "description": "The system check: what this computer needs to run workspaces, and the fix for what is missing"
+    },
+    {
+      "name": "first-run",
+      "description": "Whether the first-run flow has been through"
     },
     {
       "name": "network",

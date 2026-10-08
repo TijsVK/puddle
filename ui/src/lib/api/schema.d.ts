@@ -160,6 +160,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/doctor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Checks this computer for what puddle needs (virtualization, the hypervisor, the bundled
+         *     runtime, a test boot) and says the exact fix for each problem. It needs no administrator
+         *     rights. With the test boot it takes a few seconds and up to about 30; checks that overlap run
+         *     one after another.
+         */
+        get: operations["doctor"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events": {
         parameters: {
             query?: never;
@@ -175,6 +197,27 @@ export interface paths {
          */
         get: operations["events"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/first-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether the first-run flow has been through, and what its certificates step shows. */
+        get: operations["get_first_run"];
+        /**
+         * Records that the first-run flow was finished or skipped (`true`), or makes it run again at the
+         *     next start (`false`). Doing it twice keeps the first time.
+         */
+        put: operations["put_first_run"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1475,6 +1518,63 @@ export interface components {
          */
         DensityChoice: "comfortable" | "compact";
         /**
+         * @description What puddle knows about a development certificate on this computer (the ASP.NET one that
+         *     `dotnet dev-certs` makes), for the one line the certificates step shows.
+         * @enum {string}
+         */
+        DevCertificate: "not_checked" | "reusing_existing";
+        /** @description One line of the system check. */
+        DoctorCheck: {
+            /** @description Raw evidence: an OS error, the runtime's last output lines; `null` when there is none. */
+            detail: string | null;
+            /** @description What a check that isn't ok found, as a stable `snake_case` code; `null` when ok. */
+            finding: string | null;
+            /**
+             * @description The exact fix (for a failure) or what a limitation means (for a warning); `null` when
+             *     there is nothing to do.
+             */
+            fix: string | null;
+            /**
+             * @description Which check, as a stable `snake_case` code (`virtualization`, `hypervisor`, `runtime`,
+             *     `test_boot`, ...). A newer puddle may add codes: show an unknown one by its title.
+             */
+            id: string;
+            /** @description How it came out. */
+            status: components["schemas"]["DoctorStatus"];
+            /** @description One line: what was found. */
+            summary: string;
+            /** @description The check's name for people. */
+            title: string;
+        };
+        /** @description What the system check found on this computer. */
+        DoctorReport: {
+            /** @description The CPU architecture. */
+            arch: string;
+            /** @description The checks, in a fixed order. */
+            checks: components["schemas"]["DoctorCheck"][];
+            /**
+             * Format: int64
+             * @description How long the checks took, in milliseconds.
+             */
+            elapsed_ms: number;
+            /** @description `true` when no check failed. */
+            ok: boolean;
+            /** @description `windows`, `linux`, `macos` or `other`. */
+            os: string;
+            /** @description The puddle version that ran the checks. */
+            puddle_version: string;
+            /**
+             * Format: int32
+             * @description The version of this layout (the command line's `--json` carries the same number).
+             */
+            schema_version: number;
+        };
+        /**
+         * @description How one check came out.
+         * @enum {string}
+         */
+        DoctorStatus: "ok" | "info" | "warn" | "fail" | "skipped";
+        /**
          * @description Allow or deny.
          * @enum {string}
          */
@@ -1664,6 +1764,26 @@ export interface components {
              * @description How many more there are.
              */
             more: number;
+        };
+        /** @description Where the first-run flow stands. */
+        FirstRun: {
+            /** @description The flow has been finished or skipped, so the app opens on its start screen. */
+            completed: boolean;
+            /**
+             * Format: int64
+             * @description Epoch ms of that; `null` while it still has to run.
+             */
+            completed_at: number | null;
+            /** @description What the certificates step says about a development certificate. */
+            dev_certificate: components["schemas"]["DevCertificate"];
+        };
+        /** @description Marks the first-run flow finished, or open again. */
+        FirstRunRequest: {
+            /**
+             * @description `true` records that the flow was finished or skipped (the time of the first such call is
+             *     kept); `false` makes it run again at the next start.
+             */
+            completed: boolean;
         };
         /** @description An account that is already signed in on this computer. Names only. */
         FoundAccount: {
@@ -3337,6 +3457,83 @@ export interface operations {
             };
         };
     };
+    doctor: {
+        parameters: {
+            query?: {
+                /** @description include the test boot of a tiny virtual machine, the slowest check (default true) */
+                boot?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description what was found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DoctorReport"];
+                };
+            };
+            /** @description invalid query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the system check is not available in this build */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     events: {
         parameters: {
             query?: {
@@ -3378,6 +3575,140 @@ export interface operations {
             };
             /** @description forbidden origin */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_first_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the flow's state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirstRun"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description settings written by a newer puddle */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_first_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FirstRunRequest"];
+            };
+        };
+        responses: {
+            /** @description the flow's state after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirstRun"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description settings written by a newer puddle */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
