@@ -18,6 +18,10 @@
 #   upstream tag v<release> (superradcompany/microsandbox): the release archive for this host.
 # Works in Linux sh and in Git Bash on Windows. Network failures are retried (infrastructure) and each retry is printed; a checksum mismatch never is.
 set -eu
+# Run from a git hook, git exports GIT_DIR and friends; every git below (`clone`, `-C <src> rev-parse`)
+# would then act on the calling repository, not the checkout.
+# shellcheck disable=SC2046 # the list is words by design
+unset $(git rev-parse --local-env-vars 2>/dev/null || true)
 
 here=$(cd "$(dirname "$0")" && pwd)
 case "$#" in

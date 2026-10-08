@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast  = fmt typos spdx shellcheck hooks platform-literals standalone   (pre-commit hook)
-#   all   = fast clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage
+#   all   = fast git-env clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #           (pre-push hook, CI; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 # The ui gates need Node 24 (the UI's package-lock.json pins every npm package). ui-e2e also needs
 # the Playwright browsers: `cd ui && npx playwright install --with-deps chromium webkit`.
@@ -95,7 +95,8 @@ run_gate() {
         }
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
-    hooks) scripts/pre-push-test.sh ;;
+    hooks) scripts/pre-push-test.sh && ci/fetch-msb-test.sh ;;
+    git-env) scripts/git-env-test.sh ;;
     platform-literals)
         # The per-OS runtime file names live in puddle-runtime's table (platform.rs) and nowhere
         # else in the Rust code: a string literal naming msb or its firmware is a hard-coded OS.
@@ -239,7 +240,7 @@ run_gate() {
 for arg in "$@"; do
     case "$arg" in
     fast) for g in fmt typos spdx shellcheck hooks platform-literals standalone; do run_gate "$g"; done ;;
-    all) for g in fmt typos spdx shellcheck hooks platform-literals standalone clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage; do run_gate "$g"; done ;;
+    all) for g in fmt typos spdx shellcheck hooks platform-literals standalone git-env clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage; do run_gate "$g"; done ;;
     *) run_gate "$arg" ;;
     esac
 done

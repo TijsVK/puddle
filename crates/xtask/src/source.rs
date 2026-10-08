@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, XtaskError};
 use crate::inventory::{Inventory, shipped_packages};
-use crate::tools::{Cargo, Features, run};
+use crate::tools::{Cargo, Features, git_command, run};
 
 /// The fork's Windows msb asset (upstream's name, kept by the fork's release job).
 pub const MSB_ASSET: &str = "msb-windows-x86_64.exe";
@@ -182,7 +182,7 @@ impl GitHubSource {
         if !src.join("Cargo.toml").is_file() {
             std::fs::create_dir_all(&self.work)
                 .map_err(|e| XtaskError::io(format!("creating {}", self.work.display()), e))?;
-            run(Command::new("git")
+            run(git_command()
                 .args(["clone", "--quiet", "--depth", "1", "--branch", &self.tag])
                 .arg(format!("https://github.com/{}.git", self.fork))
                 .arg(&src))?;
@@ -191,11 +191,11 @@ impl GitHubSource {
     }
 
     fn firmware(src: &Path) -> Result<Firmware> {
-        let tree = run(Command::new("git").arg("-C").arg(src).args([
-            "ls-tree",
-            "HEAD",
-            LIBKRUNFW_SUBMODULE,
-        ]))?;
+        let tree =
+            run(git_command()
+                .arg("-C")
+                .arg(src)
+                .args(["ls-tree", "HEAD", LIBKRUNFW_SUBMODULE]))?;
         let commit = parse_submodule_commit(&tree)?;
         let modules = std::fs::read_to_string(src.join(".gitmodules"))
             .map_err(|e| XtaskError::io("reading .gitmodules", e))?;

@@ -9,6 +9,38 @@ use std::process::Command;
 use crate::error::{Result, XtaskError};
 use crate::inventory::{Inventory, Package, shipped_packages};
 
+/// The variables `git rev-parse --local-env-vars` lists: the ones that make git act on one
+/// particular repository. A git hook (pre-commit, pre-push) exports them, and a `git` started with
+/// them acts on the hook's repository whatever its working directory is.
+const GIT_LOCAL_ENV: [&str; 15] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
+
+/// `git` without the repository variables of the caller's environment (see [`GIT_LOCAL_ENV`]), so
+/// it acts on the repository its working directory or `-C` names, also when xtask runs from a hook.
+#[must_use]
+pub fn git_command() -> Command {
+    let mut cmd = Command::new("git");
+    for var in GIT_LOCAL_ENV {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
 /// Runs `command` and returns its stdout.
 ///
 /// # Errors
@@ -162,6 +194,21 @@ impl Cargo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_command_drops_every_repository_variable_git_lists() {
+        let listed = run(Command::new("git").args(["rev-parse", "--local-env-vars"])).unwrap();
+        let cmd = git_command();
+        let removed: BTreeSet<_> = cmd
+            .get_envs()
+            .filter(|(_, v)| v.is_none())
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect();
+        for var in listed.split_whitespace() {
+            assert!(removed.contains(var), "{var} is not stripped");
+        }
+        assert!(!removed.contains("PATH"));
+    }
 
     #[test]
     fn feature_args() {
