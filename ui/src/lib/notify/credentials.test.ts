@@ -53,6 +53,7 @@ describe("a credential that cannot be read", () => {
     api.identities = [identity(4)];
     await store.refresh();
     expect(notices.handle(signIn)).toBe(true);
+    await vi.waitFor(() => expect(center.items).toHaveLength(1));
     const notice = only();
     expect(notice).toMatchObject({
       key: "sign-in:gh account me on github.com",
@@ -64,15 +65,32 @@ describe("a credential that cannot be read", () => {
     expect(store.signedOutLines.has(signIn.source)).toBe(true);
   });
 
-  it("links to the list when no identity has that source, and replaces a repeat", () => {
+  it("reads the identities itself when no screen has, so the link is right on any page", async () => {
+    api.identities = [identity(4)];
+    notices.handle(signIn);
+    await vi.waitFor(() => expect(center.items).toHaveLength(1));
+    expect(only().link?.href).toBe("/identities/4");
+    expect(api.calls.filter((c) => c === "GET /api/identities")).toHaveLength(
+      1,
+    );
+    notices.handle(signIn);
+    await vi.waitFor(() => expect(api.calls.length).toBeGreaterThan(0));
+    expect(api.calls.filter((c) => c === "GET /api/identities")).toHaveLength(
+      1,
+    );
+  });
+
+  it("links to the list when no identity has that source, and replaces a repeat", async () => {
     notices.handle(signIn);
     notices.handle(signIn);
+    await vi.waitFor(() => expect(center.items).toHaveLength(1));
     expect(only().link?.href).toBe("/identities");
   });
 
   it("goes away when the credential reads again", async () => {
     const stop = notices.start();
     notices.handle(signIn);
+    await vi.waitFor(() => expect(center.items).toHaveLength(1));
     const cred = identity(4).credentials[0]!;
     api.identities = [identity(4)];
     await store.refresh();
@@ -188,9 +206,10 @@ describe("the watcher hands these events over", () => {
     const stop = watcher.start();
     source.emit(signIn);
     source.emit(denied("push"));
-    expect(center.items.map((n) => n.key)).toEqual([
-      "sign-in:gh account me on github.com",
+    await vi.waitFor(() => expect(center.items).toHaveLength(2));
+    expect(center.items.map((n) => n.key).sort()).toEqual([
       "git-denied:web:push:github.com/acme/billing",
+      "sign-in:gh account me on github.com",
     ]);
     await store.check(identity(4).credentials[0]!);
     expect(center.items.map((n) => n.key)).toEqual([

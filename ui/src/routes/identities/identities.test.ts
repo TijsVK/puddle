@@ -263,6 +263,29 @@ describe("the identities list", () => {
     );
   });
 
+  it("waits for the confirm dialog to finish closing before it moves focus", async () => {
+    render(Page);
+    await screen.findByText("Work");
+    await fireEvent.click(
+      within(row("Commits only")).getByRole("button", {
+        name: "Delete Commits only",
+      }),
+    );
+    const confirm = await screen.findByRole("alertdialog");
+    // A dialog that is slow to leave the page, as the real one is while it fades.
+    const lingering = document.createElement("div");
+    lingering.setAttribute("role", "dialog");
+    document.body.append(lingering);
+    setTimeout(() => lingering.remove(), 60);
+    await fireEvent.click(
+      within(confirm).getByRole("button", { name: "Delete Commits only" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 1 })).toHaveFocus(),
+    );
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
   it("deletes an identity nobody uses without naming workspaces", async () => {
     render(Page);
     await screen.findByText("Work");

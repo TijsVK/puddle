@@ -16,6 +16,8 @@ import type { Notifier } from "./notifier.ts";
 /** What the sign-in notice needs to know of the identities. */
 export interface IdentityLookup {
   bySource(description: string): { id: number } | undefined;
+  /** Reads the identities if no screen has yet, so a notice can link to the right one. */
+  ensureLoaded(): Promise<void>;
   /** Remembers that a workspace could not read this source, so the identity screens say "Sign in needed". */
   markSignedOut(description: string): void;
   onReadable(listener: (description: string) => void): () => void;
@@ -46,7 +48,7 @@ export class CredentialNotices {
   handle(raw: unknown): boolean {
     const event = asCredentialEvent(raw);
     if (!event) return false;
-    if (event.type === "credential_sign_in_needed") this.#signIn(event);
+    if (event.type === "credential_sign_in_needed") void this.#signIn(event);
     else this.#denied(event);
     return true;
   }
@@ -58,8 +60,9 @@ export class CredentialNotices {
     );
   }
 
-  #signIn(event: CredentialSignInNeeded): void {
+  async #signIn(event: CredentialSignInNeeded): Promise<void> {
     this.#identities.markSignedOut(event.source);
+    await this.#identities.ensureLoaded();
     const identity = this.#identities.bySource(event.source);
     this.#notifier.notify({
       key: signInKey(event.source),

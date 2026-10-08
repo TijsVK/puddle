@@ -86,6 +86,11 @@ export class IdentitiesStore {
     }
   }
 
+  /** Reads the identities when nothing has yet; a read that already worked is not repeated. */
+  async ensureLoaded(): Promise<void> {
+    if (this.status !== "ready") await this.refresh();
+  }
+
   byId(id: number): Identity | undefined {
     return this.identities.find((i) => i.id === id);
   }

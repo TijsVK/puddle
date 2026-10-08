@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdentitiesStore } from "#lib/stores/identities.svelte.ts";
@@ -134,6 +135,24 @@ describe("adding an identity", () => {
     );
     expect(onSaved).not.toHaveBeenCalled();
     expect(dialog()).toBeInTheDocument();
+  });
+
+  it("closes the credential editor without adding anything", async () => {
+    mount({ mode: "create" });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Add a credential" }),
+    );
+    const editor = await screen.findByRole("form", {
+      name: "Add a credential",
+    });
+    await fireEvent.click(
+      within(editor).getByRole("button", { name: "Cancel" }),
+    );
+    expect(screen.queryByRole("form", { name: "Add a credential" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Add a credential" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/None yet/)).toBeInTheDocument();
   });
 
   it("says an identity may have no credential yet", () => {

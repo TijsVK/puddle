@@ -9,6 +9,7 @@
     { "url": "https://dev.azure.com/contoso/_git/Api", "repo": ["dev.azure.com", "contoso", "api/api"] },
     { "url": "https://contoso.visualstudio.com/Platform/_git/Api", "repo": ["contoso.visualstudio.com", "contoso", "platform/api"] },
     { "url": "https://contoso.visualstudio.com/DefaultCollection/Platform/_git/Api", "repo": ["contoso.visualstudio.com", "contoso", "platform/api"] },
+    { "url": "https://contoso.visualstudio.com/Platform/Api", "repo": null },
     { "url": "http://github.com/acme/web-shop", "repo": null },
     { "url": "git@github.com:acme/web-shop.git", "repo": null },
     { "url": "https://me@github.com/acme/web-shop", "repo": null },

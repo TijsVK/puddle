@@ -205,6 +205,16 @@ describe("credentials", () => {
     expect(store.found?.accounts).toHaveLength(1);
   });
 
+  it("says the lookup failed when the host refuses it", async () => {
+    api.GET = (async () => ({
+      response: { status: 503 } as Response,
+    })) as never;
+    const store = make();
+    await store.loadFound();
+    expect(store.foundStatus).toBe("failed");
+    expect(store.found).toBeNull();
+  });
+
   it("tests a credential and remembers the answer by credential", async () => {
     const cred = credential();
     api.identities = [identity(1, { credentials: [cred] })];

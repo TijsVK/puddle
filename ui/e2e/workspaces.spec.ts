@@ -1087,6 +1087,7 @@ test.describe("accessibility", () => {
 
     for (const tab of [
       "network",
+      "git",
       "environment",
       "shell-init",
       "ports",

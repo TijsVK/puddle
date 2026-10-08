@@ -4,7 +4,6 @@
   import { page } from "$app/state";
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
-  import Toast from "#lib/components/Toast.svelte";
   import {
     coverageText,
     covering,
@@ -403,7 +402,6 @@
 {:else}
   <p class="muted">Loading Git settings&hellip;</p>
 {/if}
-<Toast />
 
 <style>
   section {

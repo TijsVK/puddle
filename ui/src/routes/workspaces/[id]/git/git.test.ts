@@ -175,6 +175,15 @@ describe("identities on a workspace", () => {
         screen.getByRole("button", { name: "Move Work up" }),
       ).toHaveFocus(),
     );
+    // Up again, from the second place.
+    await fireEvent.click(screen.getByRole("button", { name: "Move Work up" }));
+    await waitFor(() =>
+      expect(
+        idList()
+          .getAllByRole("listitem")
+          .map((li) => li.getAttribute("data-identity-id")),
+      ).toEqual(["1", "2"]),
+    );
     await fireEvent.click(
       screen.getByRole("button", { name: "Remove Personal from web-shop" }),
     );

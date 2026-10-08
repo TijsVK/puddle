@@ -164,6 +164,30 @@ describe("one identity", () => {
     expect(api.calls).toContain("POST /api/credentials/sign-in");
   });
 
+  it("checks the credential while the sign-in is open, says when it reads, and closes", async () => {
+    api.unreadable.add(WORK);
+    render(Page);
+    await screen.findByRole("heading", { level: 1, name: "Work" });
+    store.markSignedOut(WORK);
+    const signIn = await screen.findByRole("button", {
+      name: /^Sign in to gh/,
+    });
+    // Only the dialog's own wait is faked, so the screen's polling can be moved on.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await fireEvent.click(signIn);
+      expect(await screen.findByTestId("sign-in-code")).toHaveTextContent(
+        "ABCD-1234",
+      );
+      await vi.advanceTimersByTimeAsync(3100);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await screen.findByText("Signed in.")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
   it("says why a sign-in could not start", async () => {
     api.unreadable.add(WORK);
     render(Page);
