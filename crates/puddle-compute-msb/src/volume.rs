@@ -63,7 +63,13 @@ pub(crate) fn mounter<E: std::fmt::Display>(
     config: Result<SandboxConfig, E>,
 ) -> Result<Mounter, ComputeError> {
     let volumes = if status.is_down() {
-        config.map(|c| named_volumes(&c)).unwrap_or_default()
+        config.map_or_else(
+            |e| {
+                tracing::warn!(sandbox = name, error = %e, "the stored configuration of a stopped sandbox cannot be read; starting it will refuse");
+                Vec::new()
+            },
+            |c| named_volumes(&c),
+        )
     } else {
         mounted_volumes(name, config)?
     };

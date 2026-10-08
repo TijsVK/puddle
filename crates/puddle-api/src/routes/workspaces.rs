@@ -40,7 +40,7 @@ impl DirectSsh {
         Self {
             on: false,
             unreadable: Some(format!(
-                "the settings cannot be read ({reason}); direct SSH counts as off until they can"
+                "the settings cannot be read ({reason}); direct SSH counts as off and local destinations stay blocked until they can"
             )),
         }
     }

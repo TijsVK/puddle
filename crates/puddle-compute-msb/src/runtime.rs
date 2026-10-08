@@ -632,25 +632,28 @@ impl Runtime for MsbRuntime {
     }
 }
 
-/// The directory names among `entries` (name, whether it is a directory). An entry that cannot be
-/// read or whose name is not UTF-8 is an error: leaving it out would hide it from the stale-dir
-/// listing, and a directory nobody lists is never cleaned up.
+/// The directory names among `entries` (name, whether it is a directory). An entry that cannot
+/// be read is an error, since leaving it out would hide a possible stale directory; one that
+/// vanished meanwhile is skipped. A name that is not UTF-8 cannot be one of puddle's: it is listed
+/// lossily, so reconcile reports it as foreign instead of the whole listing failing.
 fn dir_names(
     entries: impl Iterator<Item = std::io::Result<(std::ffi::OsString, std::io::Result<bool>)>>,
 ) -> Result<BTreeSet<String>, ComputeError> {
+    let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
     let mut out = BTreeSet::new();
     for entry in entries {
-        let (name, is_dir) = entry.map_err(|e| runtime("list stale dirs", &e))?;
-        if !is_dir.map_err(|e| runtime("list stale dirs", &e))? {
-            continue;
+        let (name, is_dir) = match entry {
+            Ok(entry) => entry,
+            Err(e) if gone(&e) => continue,
+            Err(e) => return Err(runtime("list stale dirs", &e)),
+        };
+        match is_dir {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(e) if gone(&e) => continue,
+            Err(e) => return Err(runtime("list stale dirs", &e)),
         }
-        let name = name.into_string().map_err(|n| {
-            runtime(
-                "list stale dirs",
-                &format!("a sandbox directory has a name that is not UTF-8: {n:?}"),
-            )
-        })?;
-        out.insert(name);
+        out.insert(name.to_string_lossy().into_owned());
     }
     Ok(out)
 }
@@ -710,15 +713,27 @@ mod tests {
         );
         let type_err = dir_names(vec![Ok((OsString::from("a"), Err(denied())))].into_iter());
         assert!(type_err.is_err());
+
+        // An entry removed between listing and stat is not an error.
+        let vanished = || std::io::Error::from(std::io::ErrorKind::NotFound);
+        let names = dir_names(
+            vec![
+                ok("a", true),
+                Err(vanished()),
+                Ok((OsString::from("b"), Err(vanished()))),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(names.unwrap().into_iter().collect::<Vec<_>>(), ["a"]);
     }
 
     #[cfg(unix)]
     #[test]
-    fn dir_names_refuse_a_name_that_is_not_utf8() {
+    fn a_directory_name_that_is_not_utf8_is_listed_so_reconcile_can_call_it_foreign() {
         use std::os::unix::ffi::OsStringExt;
         let bad = std::ffi::OsString::from_vec(vec![0x66, 0xff]);
-        let err = dir_names(std::iter::once(Ok((bad, Ok(true))))).unwrap_err();
-        assert!(err.to_string().contains("not UTF-8"), "{err}");
+        let names = dir_names(std::iter::once(Ok((bad, Ok(true))))).unwrap();
+        assert_eq!(names.into_iter().collect::<Vec<_>>(), ["f\u{fffd}"]);
     }
 
     #[test]

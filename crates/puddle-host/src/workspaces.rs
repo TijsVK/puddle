@@ -240,7 +240,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             record.image = stored.image;
             record.memory = MemoryMib::new(stored.memory_mib).map_err(|e| HostError::State {
                 what: "the workspace list",
-                reason: format!("workspace {name} has an invalid memory size: {e}"),
+                reason: format!(
+                    "workspace {name} has an invalid memory size ({e}); fix it in workspaces.json in puddle's data folder, or remove that entry (its volume is kept)"
+                ),
             })?;
             record.created_at = stored.created_at;
             record.disk_size_mib = stored.disk_size_mib;
