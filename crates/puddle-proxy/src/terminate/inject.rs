@@ -159,7 +159,10 @@ impl Unauthorized {
         Self(Arc::new(answer))
     }
 
-    pub(crate) fn refusal(&self) -> InjectRefusal {
+    /// The refusal to answer with now. The proxy calls it when the server's `401` arrives; so may
+    /// a test.
+    #[must_use]
+    pub fn refusal(&self) -> InjectRefusal {
         (self.0)()
     }
 }

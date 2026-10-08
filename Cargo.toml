@@ -40,6 +40,7 @@ puddle-upstream = { path = "crates/puddle-upstream" }
 puddle-fs = { path = "crates/puddle-fs" }
 puddle-host = { path = "crates/puddle-host" }
 puddle-secrets = { path = "crates/puddle-secrets" }
+puddle-inject = { path = "crates/puddle-inject" }
 
 # External
 # msb SDK from puddle's fork, tag `v<release>-puddle.N`. The SDK and the bundled runtime

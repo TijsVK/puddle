@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-inject"
+description = "puddle's credential injector for Git hosts: reads the repository and the kind of access from the path, applies the workspace's push and pull lists, picks the identity that covers the repository and adds its credential"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64 = { workspace = true }
+puddle-proxy = { workspace = true }
+puddle-secrets = { workspace = true }
+puddle-store = { workspace = true }
+puddle-types = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tracing = { workspace = true }
+
+[features]
+# `testing`: in-memory settings and credential sources for tests (never in product code).
+testing = []
+
+[dev-dependencies]
+proptest = { workspace = true }
+puddle-inject = { path = ".", features = ["testing"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util", "time"] }
+
+[lints]
+workspace = true
