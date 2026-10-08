@@ -78,3 +78,9 @@ crates/puddle-secrets/src/signin.rs | return Err(SignInError::NoPrompt(Tool::Gh,
 crates/puddle-api/src/network_health.rs | _ => ProxyProblemKind::Other, | `ProxyProblemKind` is non-exhaustive in puddle-upstream; both kinds this version has are handled above, so no test can build another
 crates/puddle-upstream/src/tls.rs | rejected = rejected.len(), | a field of the one warning about roots the verifier cannot use; the line is only evaluated with a tracing subscriber installed, and the test for the roots (`roots_that_do_not_parse_are_skipped_and_listed_with_the_reason`) installs none
 crates/puddle-upstream/src/tls.rs | reasons = %reasons.join("; "), | same warning, same reason
+crates/puddle-fs/src/lock.rs | Err(TryLockError::Error(source)) => { | the OS refusing the lock call for a reason other than "held" (an unsupported file system) cannot be provoked in a test
+crates/puddle-fs/src/lock.rs | return Err(LockError::Io { | as above
+crates/puddle-fs/src/lock.rs | path: lock_path, | as above
+crates/puddle-fs/src/lock.rs | source, | as above
+crates/puddle-fs/src/lock.rs | }); | as above
+crates/puddle-fs/src/lock.rs | Err(e) => Err(e), | creating the lock file failing for a reason other than "exists" (permissions, disk full) cannot be provoked portably

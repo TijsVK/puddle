@@ -124,11 +124,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let first = DataLock::acquire(dir.path()).unwrap();
         let err = DataLock::acquire(dir.path()).unwrap_err();
-        let LockError::Held { holder, .. } = &err else {
-            panic!("{err}");
-        };
         // Same process here, so the note names this one.
-        assert_eq!(*holder, Some(std::process::id()));
+        assert!(
+            matches!(&err, LockError::Held { holder, .. } if *holder == Some(std::process::id())),
+            "{err}"
+        );
         assert!(
             err.to_string()
                 .contains(&format!("process ID {}", std::process::id())),
