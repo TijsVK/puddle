@@ -1311,15 +1311,11 @@ mod termination {
 
     fn terminating_proxy() -> Proxy {
         let set = TerminationSet::parse(["github.com", "*.visualstudio.com"]).unwrap();
-        let ca = Arc::new(
-            CaBuilder::new("test", set.name_constraints().unwrap())
-                .build()
-                .unwrap(),
-        );
+        let ca = Arc::new(CaBuilder::new("test").build().unwrap());
         let terminations = Arc::new(Terminations::new());
         terminations.insert(
             workspace(),
-            Termination::new(set, ca, Arc::new(NoInjection)).unwrap(),
+            Termination::new(set, ca, Arc::new(NoInjection)),
         );
         proxy(Arc::new(StaticPolicy::new()), StaticResolver::new())
             .with_termination(terminations, puddle_upstream::TlsClient::new([]).unwrap())

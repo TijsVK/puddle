@@ -10,8 +10,9 @@ use puddle_types::Host;
 /// every-name-below patterns (`*.visualstudio.com`). Anything else is spliced untouched.
 ///
 /// A pattern covers names *below* its suffix, never the suffix itself, and needs at least two
-/// labels (`*.com` is refused): the set is what the per-workspace certificate authority is allowed
-/// to certify, so a wide pattern would widen what puddle can impersonate.
+/// labels (`*.com` is refused): the set is the only limit on which names the per-workspace
+/// certificate authority signs a leaf for (the CA has no name constraint), so a wide pattern would
+/// widen what puddle impersonates.
 ///
 /// ```
 /// use puddle_proxy::TerminationSet;
@@ -121,30 +122,6 @@ impl TerminationSet {
     pub fn is_empty(&self) -> bool {
         self.exact.is_empty() && self.below.is_empty()
     }
-
-    /// The name constraints for the workspace's certificate authority: exactly this set (a name
-    /// and everything below it, per pattern), no IP addresses.
-    ///
-    /// # Errors
-    /// [`puddle_ca::CaError`] when the set is empty (a CA needs at least one name).
-    pub fn name_constraints(&self) -> Result<puddle_ca::NameConstraints, puddle_ca::CaError> {
-        self.dns_names()
-            .iter()
-            .try_fold(puddle_ca::NameConstraints::new(), |constraints, name| {
-                constraints.permit_dns(name)
-            })
-    }
-
-    /// The names a certificate authority must permit for this set: each exact name, and the
-    /// suffix of each pattern (X.509 name constraints cover a name and everything below it).
-    #[must_use]
-    pub fn dns_names(&self) -> Vec<String> {
-        self.exact
-            .iter()
-            .chain(self.below.iter())
-            .cloned()
-            .collect()
-    }
 }
 
 #[cfg(test)]
@@ -201,10 +178,12 @@ mod tests {
     }
 
     #[test]
-    fn patterns_are_normalised_and_listed_for_the_ca() {
+    fn patterns_are_normalised() {
         let set =
             TerminationSet::parse(["GitHub.com", "*.VisualStudio.com", "github.com"]).unwrap();
-        assert_eq!(set.dns_names(), ["github.com", "visualstudio.com"]);
+        assert!(set.contains(&host("github.com")));
+        assert!(set.contains(&host("org.visualstudio.com")));
+        assert_eq!(set.exact.len(), 1);
         assert!(!set.is_empty());
         assert!(TerminationSet::new().is_empty());
         assert!(!TerminationSet::new().contains(&host("github.com")));

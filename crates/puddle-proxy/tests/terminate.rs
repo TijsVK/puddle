@@ -98,6 +98,119 @@ async fn an_unbound_host_is_spliced_and_its_real_issuer_reaches_the_guest() {
     assert_eq!(bound.accepted(), 0);
 }
 
+/// What the guest sees for `name` when it trusts only the fake internet's root: it works only
+/// when the real server's own certificate reaches the guest (the connection is spliced).
+async fn spliced_with_its_real_issuer(rig: &terminate_support::Rig, pki: &Pki, name: &str) -> bool {
+    let mut guest = rig.guest().await;
+    guest
+        .tls_trusting(&format!("{name}:443"), std::slice::from_ref(&pki.root))
+        .await
+        .is_ok()
+}
+
+/// What the guest sees for `name` when it trusts only the workspace CA: it works only when the
+/// proxy terminated the connection with a leaf from that CA.
+async fn terminated_by_the_workspace_ca(rig: &terminate_support::Rig, name: &str) -> bool {
+    let mut guest = rig.guest().await;
+    guest.tls(&format!("{name}:443"), None).await.is_ok()
+}
+
+#[tokio::test]
+async fn a_host_added_while_the_workspace_runs_is_decrypted_on_the_next_connection() {
+    let pki = Pki::new();
+    let first = upstream(&pki, ok_handler()).await;
+    let later = FakeServer::tls(
+        pki.server_config("later.test", Flaw::None),
+        Arc::new(|_| Reply::ok("hello from later")),
+    )
+    .await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", first.addr)
+        .name("later.test", later.addr)
+        .allow(vec!["bound.test", "later.test"])
+        .build();
+    let trusted_before = rig.ca.certificate().clone();
+
+    // Not in the set yet: spliced, the guest sees the real issuer, nothing is added.
+    assert!(spliced_with_its_real_issuer(&rig, &pki, "later.test").await);
+    assert!(!terminated_by_the_workspace_ca(&rig, "later.test").await);
+    assert!(later.recorded().is_empty(), "nothing was decrypted yet");
+
+    // The same running workspace gets the host: the CA the guest trusts is the one it booted with.
+    rig.set_bound(&["bound.test", "later.test"]);
+    assert_eq!(rig.ca.certificate(), &trusted_before);
+    let mut guest = rig.guest().await;
+    let mut client = guest.tls("later.test:443", None).await.unwrap();
+    assert_eq!(
+        client.get("later.test", "/x").await.text(),
+        "hello from later"
+    );
+    let seen = later.recorded();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        seen[0].headers_named("authorization"),
+        [format!("Basic {CANARY}")]
+    );
+    // The host it already had is decrypted as before, and the real issuer no longer reaches the
+    // guest for the new one.
+    assert!(terminated_by_the_workspace_ca(&rig, "bound.test").await);
+    assert!(!spliced_with_its_real_issuer(&rig, &pki, "later.test").await);
+}
+
+#[tokio::test]
+async fn a_host_never_in_the_set_is_spliced_with_its_real_certificate_though_the_ca_could_sign_for_it()
+ {
+    let pki = Pki::new();
+    let bound = upstream(&pki, ok_handler()).await;
+    let other = FakeServer::tls(
+        pki.server_config("never.test", Flaw::None),
+        Arc::new(|_| Reply::ok("the real thing")),
+    )
+    .await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", bound.addr)
+        .name("never.test", other.addr)
+        .allow(vec!["bound.test", "never.test"])
+        .build();
+    // The CA has no name constraint: it would issue a leaf the guest's trust accepts for any
+    // name. What stops it is the decrypt set.
+    let forged = rig.ca.leaf("never.test").unwrap();
+    assert_eq!(forged.cert.len(), 1);
+
+    rig.set_bound(&["bound.test", "later.test"]);
+    assert!(spliced_with_its_real_issuer(&rig, &pki, "never.test").await);
+    assert!(!terminated_by_the_workspace_ca(&rig, "never.test").await);
+    let mut guest = rig.guest().await;
+    let mut client = guest
+        .tls_trusting("never.test:443", std::slice::from_ref(&pki.root))
+        .await
+        .unwrap();
+    assert_eq!(
+        client.get("never.test", "/x").await.text(),
+        "the real thing"
+    );
+    // What the real server saw is what the guest sent: no credential was added.
+    assert!(
+        other
+            .recorded()
+            .iter()
+            .all(|r| r.header("authorization").is_none())
+    );
+}
+
+#[tokio::test]
+async fn a_host_taken_out_of_the_set_is_spliced_on_the_next_connection() {
+    let pki = Pki::new();
+    let server = upstream(&pki, ok_handler()).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    assert!(terminated_by_the_workspace_ca(&rig, "bound.test").await);
+    rig.set_bound(&[]);
+    assert!(spliced_with_its_real_issuer(&rig, &pki, "bound.test").await);
+    assert!(!terminated_by_the_workspace_ca(&rig, "bound.test").await);
+}
+
 #[tokio::test]
 async fn a_bound_name_on_another_port_or_plain_is_spliced() {
     let pki = Pki::new();

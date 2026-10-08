@@ -520,16 +520,12 @@ pub(crate) fn workspace(name: &str) -> WorkspaceName {
     WorkspaceName::new(name).unwrap()
 }
 
-/// A workspace's CA for `names`.
-pub(crate) fn workspace_ca(name: &str, names: &[&str]) -> Arc<WorkspaceCa> {
-    let set = TerminationSet::parse(names.iter().copied()).unwrap();
+/// A workspace's CA.
+pub(crate) fn workspace_ca(name: &str) -> Arc<WorkspaceCa> {
     Arc::new(
-        CaBuilder::new(
-            &format!("puddle test CA ({name})"),
-            set.name_constraints().unwrap(),
-        )
-        .build()
-        .unwrap(),
+        CaBuilder::new(&format!("puddle test CA ({name})"))
+            .build()
+            .unwrap(),
     )
 }
 
@@ -618,7 +614,7 @@ impl RigBuilder {
         for (name, addr) in &self.names {
             resolver = resolver.with(name, *addr);
         }
-        let ca = workspace_ca("box", &self.bound);
+        let ca = workspace_ca("box");
         let terminations = Arc::new(Terminations::new());
         terminations.insert(
             workspace("box"),
@@ -627,11 +623,10 @@ impl RigBuilder {
                 Arc::clone(&ca),
                 self.injector,
             )
-            .unwrap()
             .with_stand_ins(self.stand_ins.0),
         );
         // A second workspace with its own CA for the same names (HO-4).
-        let other_ca = workspace_ca("other", &self.bound);
+        let other_ca = workspace_ca("other");
         terminations.insert(
             workspace("other"),
             Termination::new(
@@ -639,7 +634,6 @@ impl RigBuilder {
                 Arc::clone(&other_ca),
                 Arc::new(puddle_proxy::NoInjection),
             )
-            .unwrap()
             .with_stand_ins(self.stand_ins.1),
         );
         let mut proxy = Proxy::new(policy.clone(), Arc::new(NullSink))
@@ -647,7 +641,10 @@ impl RigBuilder {
             .with_resolver(Arc::new(resolver))
             .with_address_check(Arc::new(AnyAddress))
             .with_config(self.config)
-            .with_termination(terminations, self.tls.unwrap());
+            .with_termination(
+                Arc::clone(&terminations) as Arc<dyn puddle_proxy::TerminationSource>,
+                self.tls.unwrap(),
+            );
         if let Some(upstream) = self.upstream {
             proxy = proxy.with_upstream(upstream);
         }
@@ -663,6 +660,8 @@ impl RigBuilder {
             other_route,
             ca,
             other_ca,
+            terminations,
+            injector: self.injector,
             _roots: (root, other_root),
         }
     }
@@ -675,10 +674,25 @@ pub(crate) struct Rig {
     pub(crate) other_route: Route,
     pub(crate) ca: Arc<WorkspaceCa>,
     pub(crate) other_ca: Arc<WorkspaceCa>,
+    terminations: Arc<Terminations>,
+    injector: Arc<dyn Injector>,
     _roots: (IpcRoot, IpcRoot),
 }
 
 impl Rig {
+    /// Changes the hosts the running workspace `box` decrypts, keeping its CA and injector (the
+    /// guest's trust is unchanged): the next connection sees the new set.
+    pub(crate) fn set_bound(&self, bound: &[&str]) {
+        self.terminations.insert(
+            workspace("box"),
+            Termination::new(
+                TerminationSet::parse(bound.iter().copied()).unwrap(),
+                Arc::clone(&self.ca),
+                Arc::clone(&self.injector),
+            ),
+        );
+    }
+
     pub(crate) async fn guest(&self) -> Guest {
         Guest::connect(&self.route, Arc::clone(&self.ca)).await
     }

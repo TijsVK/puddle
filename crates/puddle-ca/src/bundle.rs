@@ -98,15 +98,10 @@ impl TrustBundle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CaBuilder, NameConstraints};
+    use crate::CaBuilder;
 
-    fn cert(host: &str) -> CaCertificate {
-        let constraints = NameConstraints::new().permit_dns(host).unwrap();
-        CaBuilder::new("puddle test CA", constraints)
-            .build()
-            .unwrap()
-            .certificate()
-            .clone()
+    fn cert(name: &str) -> CaCertificate {
+        CaBuilder::new(name).build().unwrap().certificate().clone()
     }
 
     #[test]
@@ -116,8 +111,8 @@ mod tests {
 
     #[test]
     fn each_ca_gets_its_own_file_and_all_share_the_bundle_file() {
-        let proxy = cert("github.com");
-        let dev = cert("localhost");
+        let proxy = cert("puddle proxy CA");
+        let dev = cert("puddle second CA");
         let bundle = TrustBundle::new()
             .with(proxy.clone())
             .with(dev.clone())

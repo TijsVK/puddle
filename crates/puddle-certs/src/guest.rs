@@ -163,7 +163,7 @@ fn fixed(p: &str, contents: Vec<u8>) -> GuestFile {
 mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
-    use puddle_ca::{CaBuilder, GUEST_BUNDLE_PATH, NameConstraints};
+    use puddle_ca::{CaBuilder, GUEST_BUNDLE_PATH};
 
     use super::*;
     use crate::store::{SOURCES, StoreSnapshot};
@@ -185,15 +185,12 @@ mod tests {
         CorporateRoots::select(&s, UNIX_EPOCH + Duration::from_hours(525_960))
     }
 
-    fn puddle_ca(host: &str) -> CaCertificate {
-        CaBuilder::new(
-            "puddle test CA",
-            NameConstraints::new().permit_dns(host).unwrap(),
-        )
-        .build()
-        .unwrap()
-        .certificate()
-        .clone()
+    fn puddle_ca() -> CaCertificate {
+        CaBuilder::new("puddle test CA")
+            .build()
+            .unwrap()
+            .certificate()
+            .clone()
     }
 
     fn text(files: &[GuestFile], p: &str) -> String {
@@ -204,7 +201,7 @@ mod tests {
     #[test]
     fn host_roots_and_puddle_cas_become_files_env_and_a_step() {
         let corp = corporate(&[root_der("Corp Root"), root_der("User Root")]);
-        let ca = puddle_ca("github.com");
+        let ca = puddle_ca();
         let trust = GuestTrust::new(&corp, &TrustBundle::new().with(ca.clone()));
         let files = trust.guest_files();
         let paths: Vec<&str> = files.iter().map(|f| f.path().as_str()).collect();
@@ -261,7 +258,7 @@ mod tests {
     fn only_puddle_cas_or_only_host_roots_still_sync() {
         let only_ca = GuestTrust::new(
             &CorporateRoots::default(),
-            &TrustBundle::new().with(puddle_ca("dev.azure.com")),
+            &TrustBundle::new().with(puddle_ca()),
         );
         assert!(only_ca.boot_step().is_some());
         assert_eq!(
@@ -288,7 +285,7 @@ mod tests {
     #[test]
     fn unchanged_inputs_give_byte_identical_files() {
         let ders = [root_der("A"), root_der("B")];
-        let ca = puddle_ca("github.com");
+        let ca = puddle_ca();
         let one = GuestTrust::new(&corporate(&ders), &TrustBundle::new().with(ca.clone()));
         let reversed = [ders[1].clone(), ders[0].clone()];
         let two = GuestTrust::new(&corporate(&reversed), &TrustBundle::new().with(ca));
@@ -298,7 +295,7 @@ mod tests {
 
     #[test]
     fn a_ca_present_on_both_sides_is_listed_once() {
-        let ca = puddle_ca("localhost");
+        let ca = puddle_ca();
         // The user also trusted puddle's CA in Windows (a dev CA).
         let corp = corporate(&[ca.der().to_vec(), root_der("Corp")]);
         let trust = GuestTrust::new(&corp, &TrustBundle::new().with(ca));

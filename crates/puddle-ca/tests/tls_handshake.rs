@@ -10,7 +10,7 @@
 use std::io::{Read, Write};
 use std::sync::Arc;
 
-use puddle_ca::{CaBuilder, NameConstraints, WorkspaceCa};
+use puddle_ca::{CaBuilder, WorkspaceCa};
 use rustls::pki_types::ServerName;
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
@@ -30,9 +30,8 @@ fn provider() -> Arc<rustls::crypto::CryptoProvider> {
 }
 
 fn workspace_ca() -> Arc<WorkspaceCa> {
-    let constraints = NameConstraints::new().permit_dns("github.com").unwrap();
     Arc::new(
-        CaBuilder::new("puddle proxy CA (workspace t)", constraints)
+        CaBuilder::new("puddle proxy CA (workspace t)")
             .build()
             .unwrap(),
     )
@@ -105,9 +104,18 @@ fn a_client_trusting_another_workspace_ca_refuses_the_leaf() {
 }
 
 #[test]
-fn a_host_outside_the_constraints_gets_no_certificate() {
+fn a_host_that_was_never_named_gets_a_certificate_the_client_accepts() {
+    // The CA has no name constraint: a host added to the decrypt set while the workspace runs
+    // verifies under the CA the guest already trusts.
     let ca = workspace_ca();
-    let err = handshake(Arc::clone(&ca), &ca, "example.com").unwrap_err();
+    let got = handshake(Arc::clone(&ca), &ca, "gitlab.example.org").unwrap();
+    assert_eq!(got, b"GET / HTTP/1.1\r\n\r\n");
+}
+
+#[test]
+fn an_address_gets_no_certificate() {
+    let ca = workspace_ca();
+    let err = handshake(Arc::clone(&ca), &ca, "140.82.112.3").unwrap_err();
     assert!(
         !matches!(err, rustls::Error::InvalidCertificate(_)),
         "{err:?}"

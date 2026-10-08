@@ -78,7 +78,7 @@ pub use route::Route;
 pub use terminate::{
     DEFAULT_TERMINATED_HOSTS, HeaderError, InjectContext, InjectDecision, InjectRefusal,
     InjectedHeader, Injection, Injector, NoInjection, PatternError, RequestView, SecretValue,
-    StandIn, StandInError, StandInOrigin, StandIns, Termination, TerminationError, TerminationSet,
+    StandIn, StandInError, StandInOrigin, StandIns, Termination, TerminationSet,
     TerminationSource, Terminations, secret_stand_in,
 };
 pub use upstream::Upstream;

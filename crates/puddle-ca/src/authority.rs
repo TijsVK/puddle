@@ -15,29 +15,32 @@ use rustls::pki_types::PrivateKeyDer;
 use rustls::sign::CertifiedKey;
 use time::OffsetDateTime;
 
-use crate::constraints::Host;
-use crate::{CaCertificate, CaError, NameConstraints};
+use crate::name::DnsName;
+use crate::{CaCertificate, CaError};
 
 /// X.520's upper bound for a common name.
 const MAX_COMMON_NAME: usize = 64;
 
-/// Settings for a new CA. The name constraints are an input, so every kind of puddle CA (the
-/// proxy CA now, a localhost-only dev CA later) is built the same way.
+/// Settings for a new CA.
+///
+/// The CA carries no name constraint: which hosts the proxy decrypts is decided by the
+/// workspace's decrypt set and never by what the guest's trust would verify, so a host added to
+/// the set while the workspace runs needs no new CA. It signs for DNS names only, never for an IP
+/// address.
 ///
 /// ```
-/// use puddle_ca::{CaBuilder, NameConstraints};
+/// use puddle_ca::CaBuilder;
 ///
-/// let constraints = NameConstraints::new().permit_dns("github.com")?;
-/// let ca = CaBuilder::new("puddle proxy CA (workspace demo)", constraints).build()?;
+/// let ca = CaBuilder::new("puddle proxy CA (workspace demo)").build()?;
 /// let leaf = ca.leaf("github.com")?;
 /// assert_eq!(leaf.cert.len(), 1);
-/// assert!(ca.leaf("example.com").is_err());
+/// assert!(ca.leaf("example.com").is_ok());
+/// assert!(ca.leaf("140.82.112.3").is_err());
 /// # Ok::<(), puddle_ca::CaError>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct CaBuilder {
     common_name: String,
-    constraints: NameConstraints,
     ca_validity: Duration,
     leaf_validity: Duration,
     backdate: Duration,
@@ -53,17 +56,15 @@ impl CaBuilder {
     /// Default backdating of `notBefore`: one day, for a guest clock that lags after the host
     /// slept.
     pub const DEFAULT_BACKDATE: Duration = Duration::from_hours(24);
-    /// Default number of cached leaves per CA. A guest can ask for any name below a bound host,
-    /// so the cache is bounded; the least recently used leaf goes first.
+    /// Default number of cached leaves per CA. The decrypt set can hold a pattern that covers
+    /// many names, so the cache is bounded; the least recently used leaf goes first.
     pub const DEFAULT_LEAF_CACHE_CAPACITY: usize = 256;
 
-    /// A CA named `common_name` (visible in the guest's trust store) that may certify only the
-    /// names in `constraints`.
+    /// A CA named `common_name`, which is visible in the guest's trust store.
     #[must_use]
-    pub fn new(common_name: &str, constraints: NameConstraints) -> Self {
+    pub fn new(common_name: &str) -> Self {
         Self {
             common_name: common_name.to_owned(),
-            constraints,
             ca_validity: Self::DEFAULT_CA_VALIDITY,
             leaf_validity: Self::DEFAULT_LEAF_VALIDITY,
             backdate: Self::DEFAULT_BACKDATE,
@@ -99,11 +100,11 @@ impl CaBuilder {
         self
     }
 
-    /// Generates the CA key (ECDSA P-256) and its self-signed, name-constrained certificate.
+    /// Generates the CA key (ECDSA P-256) and its self-signed certificate: `CA:TRUE` with a path
+    /// length of 0 (it signs leaves, never another CA), critical, and no name constraint.
     ///
     /// # Errors
     ///
-    /// [`CaError::NoPermittedNames`] when the constraints hold no DNS name,
     /// [`CaError::InvalidSetting`] for an empty or over-long common name, a zero validity, a leaf
     /// validity longer than the CA's, or a zero cache capacity, and [`CaError::Generate`] when key
     /// generation or signing fails.
@@ -112,9 +113,6 @@ impl CaBuilder {
     }
 
     pub(crate) fn build_at(self, now: OffsetDateTime) -> Result<WorkspaceCa, CaError> {
-        if !self.constraints.has_dns() {
-            return Err(CaError::NoPermittedNames);
-        }
         let invalid = |setting, reason| Err(CaError::InvalidSetting { setting, reason });
         if self.common_name.trim().is_empty() || self.common_name.len() > MAX_COMMON_NAME {
             return invalid("common name", "must be 1 to 64 bytes");
@@ -142,7 +140,6 @@ impl CaBuilder {
             .push(DnType::CommonName, self.common_name.as_str());
         params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
         params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-        params.name_constraints = Some(self.constraints.to_rcgen());
         params.not_before = not_before;
         params.not_after = not_after;
 
@@ -151,7 +148,6 @@ impl CaBuilder {
         Ok(WorkspaceCa {
             certificate: CaCertificate::new(&cert),
             issuer: Issuer::new(params, key),
-            constraints: self.constraints,
             not_before,
             not_after,
             leaf_validity: self.leaf_validity,
@@ -165,12 +161,12 @@ impl CaBuilder {
 /// One workspace's CA (never shared between workspaces), with the leaves it issued.
 ///
 /// The key stays inside: the type has no accessor for it and implements neither `Clone` nor
-/// serde's traits, and `Debug` prints only the certificate and constraints. A later dev CA that
-/// must hand its key to the guest is a separate type.
+/// serde's traits, and `Debug` prints only the expiry. The CA itself does not limit which names it
+/// signs for (the caller's decrypt set does, see [`CaBuilder`]); a dev CA that must hand its key
+/// to the guest would be a separate, name-constrained type.
 pub struct WorkspaceCa {
     certificate: CaCertificate,
     issuer: Issuer<'static, KeyPair>,
-    constraints: NameConstraints,
     not_before: OffsetDateTime,
     not_after: OffsetDateTime,
     leaf_validity: Duration,
@@ -182,7 +178,6 @@ pub struct WorkspaceCa {
 impl fmt::Debug for WorkspaceCa {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WorkspaceCa")
-            .field("constraints", &self.constraints)
             .field("not_after", &self.not_after)
             .finish_non_exhaustive()
     }
@@ -195,21 +190,17 @@ impl WorkspaceCa {
         &self.certificate
     }
 
-    /// The names this CA may certify.
-    #[must_use]
-    pub fn constraints(&self) -> &NameConstraints {
-        &self.constraints
-    }
-
-    /// A leaf certificate and signing key for `host` (a DNS name, or an IP address if the
-    /// constraints permit one), from the cache or newly issued. The chain holds the leaf only;
-    /// the guest has the CA as a trust anchor.
+    /// A leaf certificate and signing key for `host` (a DNS name), from the cache or newly
+    /// issued. The chain holds the leaf only; the guest has the CA as a trust anchor.
+    ///
+    /// Any DNS name gets a leaf: whether the proxy may decrypt `host` is the caller's decision
+    /// and must be made before this is called.
     ///
     /// # Errors
     ///
-    /// [`CaError::InvalidHost`] for a malformed host, [`CaError::NotPermitted`] for a host
-    /// outside the constraints, [`CaError::Expired`] once the CA has expired, and
-    /// [`CaError::Generate`] / [`CaError::LoadKey`] when issuing fails.
+    /// [`CaError::InvalidHost`] for anything but a plain DNS name (an IP address, a wildcard, a
+    /// port), [`CaError::Expired`] once the CA has expired, and [`CaError::Generate`] /
+    /// [`CaError::LoadKey`] when issuing fails.
     pub fn leaf(&self, host: &str) -> Result<Arc<CertifiedKey>, CaError> {
         self.leaf_at(host, OffsetDateTime::now_utc())
     }
@@ -219,14 +210,9 @@ impl WorkspaceCa {
         host: &str,
         now: OffsetDateTime,
     ) -> Result<Arc<CertifiedKey>, CaError> {
-        let parsed = Host::parse(host).ok_or_else(|| CaError::InvalidHost {
+        let parsed = DnsName::parse(host).ok_or_else(|| CaError::InvalidHost {
             host: host.to_owned(),
         })?;
-        if !self.constraints.permits_host(&parsed) {
-            return Err(CaError::NotPermitted {
-                host: parsed.to_string(),
-            });
-        }
         if now >= self.not_after {
             return Err(CaError::Expired);
         }
@@ -243,7 +229,7 @@ impl WorkspaceCa {
 
     fn issue(
         &self,
-        host: &Host,
+        host: &DnsName,
         now: OffsetDateTime,
     ) -> Result<(Arc<CertifiedKey>, OffsetDateTime), CaError> {
         let not_before =
@@ -258,12 +244,9 @@ impl WorkspaceCa {
         params
             .distinguished_name
             .push(DnType::CommonName, host.to_string());
-        params.subject_alt_names = vec![match host {
-            Host::Dns(name) => {
-                SanType::DnsName(name.as_str().try_into().map_err(CaError::Generate)?)
-            }
-            Host::Ip(addr) => SanType::IpAddress(*addr),
-        }];
+        params.subject_alt_names = vec![SanType::DnsName(
+            host.as_str().try_into().map_err(CaError::Generate)?,
+        )];
         params.is_ca = IsCa::ExplicitNoCa;
         params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
         params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
@@ -293,14 +276,6 @@ impl WorkspaceCa {
             .len()
     }
 
-    /// Signs arbitrary leaf parameters, bypassing the constraint check: only for tests that
-    /// prove the certificate's own constraints stop a wrongly issued leaf.
-    #[cfg(test)]
-    pub(crate) fn sign_unchecked(&self, params: &CertificateParams) -> rcgen::Certificate {
-        let key = KeyPair::generate().unwrap();
-        params.signed_by(&key, &self.issuer).unwrap()
-    }
-
     #[cfg(test)]
     pub(crate) fn key_der_for_test(&self) -> Vec<u8> {
         self.issuer.key().serialize_der()
@@ -316,7 +291,7 @@ fn checked_sub(t: OffsetDateTime, d: Duration) -> Option<OffsetDateTime> {
 }
 
 struct LeafCache {
-    entries: HashMap<Host, CachedLeaf>,
+    entries: HashMap<DnsName, CachedLeaf>,
     capacity: usize,
     clock: u64,
 }
@@ -341,7 +316,7 @@ impl LeafCache {
         self.clock
     }
 
-    fn get(&mut self, host: &Host, now: OffsetDateTime) -> Option<Arc<CertifiedKey>> {
+    fn get(&mut self, host: &DnsName, now: OffsetDateTime) -> Option<Arc<CertifiedKey>> {
         let tick = self.tick();
         let entry = self.entries.get_mut(host)?;
         if now >= entry.refresh_at {
@@ -351,7 +326,7 @@ impl LeafCache {
         Some(Arc::clone(&entry.leaf))
     }
 
-    fn insert(&mut self, host: Host, leaf: Arc<CertifiedKey>, refresh_at: OffsetDateTime) {
+    fn insert(&mut self, host: DnsName, leaf: Arc<CertifiedKey>, refresh_at: OffsetDateTime) {
         let last_used = self.tick();
         if !self.entries.contains_key(&host) && self.entries.len() >= self.capacity {
             let oldest = self
@@ -376,24 +351,14 @@ impl LeafCache {
 
 #[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
-
     use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
     use super::*;
 
     const HOUR: Duration = Duration::from_secs(3600);
 
-    fn github() -> NameConstraints {
-        NameConstraints::new()
-            .permit_dns("github.com")
-            .unwrap()
-            .permit_dns("dev.azure.com")
-            .unwrap()
-    }
-
-    fn ca(constraints: NameConstraints) -> WorkspaceCa {
-        CaBuilder::new("puddle proxy CA (workspace test)", constraints)
+    fn ca() -> WorkspaceCa {
+        CaBuilder::new("puddle proxy CA (workspace test)")
             .build()
             .unwrap()
     }
@@ -426,27 +391,18 @@ mod tests {
         ee.verify_is_valid_for_subject_name(&name)
     }
 
-    fn leaf_params(san: SanType) -> CertificateParams {
-        let mut params = CertificateParams::default();
-        params.distinguished_name = DistinguishedName::new();
-        params.subject_alt_names = vec![san];
-        params.is_ca = IsCa::ExplicitNoCa;
-        params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-        params.not_before = OffsetDateTime::now_utc() - time::Duration::hours(1);
-        params.not_after = OffsetDateTime::now_utc() + time::Duration::hours(1);
-        params
-    }
-
     #[test]
-    fn leaf_for_a_bound_host_verifies_under_the_ca() {
-        let ca = ca(github());
+    fn a_leaf_for_any_dns_name_verifies_under_the_ca() {
+        let ca = ca();
         let now = OffsetDateTime::now_utc();
         for host in [
             "github.com",
             "api.github.com",
             "dev.azure.com",
             "GitHub.com.",
+            "example.com",
+            "evilgithub.com",
+            "a.b.c.example.org",
         ] {
             let leaf = ca.leaf(host).unwrap();
             let expected = host.trim_end_matches('.').to_ascii_lowercase();
@@ -462,71 +418,18 @@ mod tests {
     }
 
     #[test]
-    fn leaf_for_a_permitted_ip_verifies_under_the_ca() {
-        let constraints = NameConstraints::new()
-            .permit_dns("localhost")
-            .unwrap()
-            .permit_ip("127.0.0.1".parse().unwrap(), 32)
-            .unwrap();
-        let ca = ca(constraints);
-        let leaf = ca.leaf("127.0.0.1").unwrap();
-        let now = OffsetDateTime::now_utc();
-        verify(
-            ca.certificate(),
-            leaf.end_entity_cert().unwrap(),
+    fn the_ca_refuses_what_is_not_a_dns_name() {
+        let ca = ca();
+        for bad in [
+            "",
+            "*.github.com",
+            "git hub.com",
+            "github.com:443",
+            "140.82.112.3",
             "127.0.0.1",
-            now,
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn name_constraints_reject_a_leaf_for_another_name() {
-        let ca = ca(github());
-        let now = OffsetDateTime::now_utc();
-        for other in [
-            "example.com",
-            "evilgithub.com",
-            "github.com.evil.example",
-            "azure.com",
+            "::1",
+            "[2606:50c0:8000::153]",
         ] {
-            let forged =
-                ca.sign_unchecked(&leaf_params(SanType::DnsName(other.try_into().unwrap())));
-            assert_eq!(
-                verify(ca.certificate(), forged.der(), other, now),
-                Err(webpki::Error::NameConstraintViolation),
-                "{other}"
-            );
-        }
-    }
-
-    #[test]
-    fn name_constraints_reject_ip_leaves_when_no_prefix_is_permitted() {
-        let ca = ca(github());
-        let now = OffsetDateTime::now_utc();
-        for addr in ["140.82.112.3", "127.0.0.1", "::1", "2606:50c0:8000::153"] {
-            let ip: IpAddr = addr.parse().unwrap();
-            let forged = ca.sign_unchecked(&leaf_params(SanType::IpAddress(ip)));
-            assert_eq!(
-                verify(ca.certificate(), forged.der(), addr, now),
-                Err(webpki::Error::NameConstraintViolation),
-                "{addr}"
-            );
-        }
-    }
-
-    #[test]
-    fn the_api_refuses_names_outside_the_constraints() {
-        let ca = ca(github());
-        assert!(matches!(
-            ca.leaf("example.com"),
-            Err(CaError::NotPermitted { host }) if host == "example.com"
-        ));
-        assert!(matches!(
-            ca.leaf("140.82.112.3"),
-            Err(CaError::NotPermitted { .. })
-        ));
-        for bad in ["", "*.github.com", "git hub.com", "github.com:443"] {
             assert!(
                 matches!(ca.leaf(bad), Err(CaError::InvalidHost { .. })),
                 "{bad:?}"
@@ -537,8 +440,8 @@ mod tests {
 
     #[test]
     fn a_leaf_from_one_workspace_does_not_verify_under_another() {
-        let a = ca(github());
-        let b = ca(github());
+        let a = ca();
+        let b = ca();
         assert_ne!(a.certificate(), b.certificate());
         let leaf = a.leaf("github.com").unwrap();
         let now = OffsetDateTime::now_utc();
@@ -555,7 +458,7 @@ mod tests {
 
     #[test]
     fn leaves_are_cached_per_host_and_reissued_before_they_expire() {
-        let ca = ca(github());
+        let ca = ca();
         let t0 = OffsetDateTime::now_utc();
         let first = ca.leaf_at("github.com", t0).unwrap();
         let again = ca
@@ -581,7 +484,7 @@ mod tests {
 
     #[test]
     fn the_cache_evicts_the_least_recently_used_leaf() {
-        let ca = CaBuilder::new("puddle test CA", github())
+        let ca = CaBuilder::new("puddle test CA")
             .leaf_cache_capacity(2)
             .build()
             .unwrap();
@@ -599,7 +502,7 @@ mod tests {
 
     #[test]
     fn leaf_validity_is_clamped_to_the_ca() {
-        let ca = CaBuilder::new("puddle test CA", github())
+        let ca = CaBuilder::new("puddle test CA")
             .ca_validity(10 * HOUR)
             .leaf_validity(10 * HOUR)
             .backdate(HOUR)
@@ -634,7 +537,7 @@ mod tests {
 
     #[test]
     fn backdating_covers_a_lagging_guest_clock() {
-        let ca = ca(github());
+        let ca = ca();
         let now = OffsetDateTime::now_utc();
         let leaf = ca.leaf_at("github.com", now).unwrap();
         let lagging = now - time::Duration::hours(12);
@@ -648,55 +551,57 @@ mod tests {
     }
 
     #[test]
-    fn builder_refuses_unsafe_or_meaningless_settings() {
+    fn builder_refuses_meaningless_settings() {
         let check = |builder: CaBuilder| builder.build().unwrap_err();
-        assert!(matches!(
-            check(CaBuilder::new("x", NameConstraints::new())),
-            CaError::NoPermittedNames
-        ));
-        let ip_only = NameConstraints::new()
-            .permit_ip("127.0.0.1".parse().unwrap(), 32)
-            .unwrap();
-        assert!(matches!(
-            check(CaBuilder::new("x", ip_only)),
-            CaError::NoPermittedNames
-        ));
         for builder in [
-            CaBuilder::new(" ", github()),
-            CaBuilder::new(&"n".repeat(65), github()),
-            CaBuilder::new("x", github()).ca_validity(Duration::ZERO),
-            CaBuilder::new("x", github()).leaf_validity(Duration::ZERO),
-            CaBuilder::new("x", github())
+            CaBuilder::new(" "),
+            CaBuilder::new(&"n".repeat(65)),
+            CaBuilder::new("x").ca_validity(Duration::ZERO),
+            CaBuilder::new("x").leaf_validity(Duration::ZERO),
+            CaBuilder::new("x")
                 .ca_validity(HOUR)
                 .leaf_validity(2 * HOUR),
-            CaBuilder::new("x", github()).leaf_cache_capacity(0),
-            CaBuilder::new("x", github()).ca_validity(Duration::MAX),
-            CaBuilder::new("x", github()).backdate(Duration::MAX),
+            CaBuilder::new("x").leaf_cache_capacity(0),
+            CaBuilder::new("x").ca_validity(Duration::MAX),
+            CaBuilder::new("x").backdate(Duration::MAX),
         ] {
             assert!(matches!(check(builder), CaError::InvalidSetting { .. }));
         }
     }
 
+    /// DER of an extension whose OID is `2.5.29.<last>`: `OBJECT IDENTIFIER` (06 03 55 1d <last>).
+    fn oid(last: u8) -> [u8; 5] {
+        [0x06, 0x03, 0x55, 0x1d, last]
+    }
+
     #[test]
-    fn the_ca_certificate_carries_critical_ca_and_name_constraints() {
-        let ca = ca(github());
+    fn the_ca_certificate_is_a_critical_ca_with_path_length_0_and_no_name_constraint() {
+        // Checked in the DER: rustls-webpki reads the name constraints of a trust anchor but not
+        // its path length, so a webpki chain test could not tell `pathLen 0` from none. OpenSSL,
+        // Go and Node enforce it.
+        let ca = ca();
         let der = ca.certificate().der().as_ref();
-        // basicConstraints and nameConstraints are both present and critical.
-        let basic = [0x06, 0x03, 0x55, 0x1d, 0x13, 0x01, 0x01, 0xff];
-        let names = [0x06, 0x03, 0x55, 0x1d, 0x1e, 0x01, 0x01, 0xff];
-        assert!(der.windows(basic.len()).any(|w| w == basic));
-        assert!(der.windows(names.len()).any(|w| w == names));
+        // basicConstraints, critical: `01 01 ff`, then the value `SEQUENCE { TRUE, INTEGER 0 }`.
+        let basic: Vec<u8> = oid(0x13)
+            .into_iter()
+            .chain([
+                0x01, 0x01, 0xff, 0x04, 0x08, 0x30, 0x06, 0x01, 0x01, 0xff, 0x02, 0x01, 0x00,
+            ])
+            .collect();
+        assert!(der.windows(basic.len()).any(|w| w == basic.as_slice()));
+        // nameConstraints (2.5.29.30) is nowhere in the certificate.
+        let names = oid(0x1e);
+        assert!(!der.windows(names.len()).any(|w| w == names));
         assert!(
             ca.certificate()
                 .pem()
                 .starts_with("-----BEGIN CERTIFICATE-----")
         );
-        assert!(ca.constraints().permits("github.com"));
     }
 
     #[test]
     fn no_key_material_leaves_the_ca() {
-        let ca = ca(github());
+        let ca = ca();
         // The private scalar inside the PKCS#8 `ECPrivateKey`: `version 1, OCTET STRING (32)`.
         let key = ca.key_der_for_test();
         let marker = [0x02, 0x01, 0x01, 0x04, 0x20];
@@ -709,7 +614,7 @@ mod tests {
             format!("{:?}", ca.certificate()).into_bytes(),
             ca.certificate().pem().as_bytes().to_vec(),
             ca.certificate().der().to_vec(),
-            format!("{:?}", ca.leaf("example.com").unwrap_err()).into_bytes(),
+            format!("{:?}", ca.leaf("1.2.3.4").unwrap_err()).into_bytes(),
             format!("{leaf:?}").into_bytes(),
         ];
         seen.extend(leaf.cert.iter().map(|c| c.to_vec()));

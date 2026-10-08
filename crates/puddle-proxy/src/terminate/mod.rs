@@ -5,7 +5,7 @@
 //! to each other and puddle sees only the name. A *bound* host is the exception, so that a
 //! credential can be added to the request without ever entering the workspace. For those hosts, and
 //! only those, the proxy is the TLS server the guest sees (with a certificate from the
-//! workspace's own name-constrained CA, `puddle-ca`) and a verifying TLS client to the real server.
+//! workspace's own CA, `puddle-ca`) and a verifying TLS client to the real server.
 //!
 //! A connection is terminated only when all of these hold; otherwise it is spliced exactly as
 //! before:
@@ -82,15 +82,6 @@ pub use stand_in::{StandIn, StandInError, StandInOrigin, StandIns, secret_stand_
 pub const DEFAULT_TERMINATED_HOSTS: [&str; 3] =
     ["github.com", "dev.azure.com", "*.visualstudio.com"];
 
-/// Why a [`Termination`] could not be made.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum TerminationError {
-    /// The CA's name constraints do not permit a name of the set, so it could never serve it.
-    #[error("the certificate authority does not permit {0:?}")]
-    NotPermitted(String),
-}
-
 /// What terminating one workspace's bound hosts needs: which hosts, the CA that certifies them for
 /// that workspace alone, and the injector that decides about credentials.
 #[derive(Debug)]
@@ -104,25 +95,18 @@ pub struct Termination {
 impl Termination {
     /// Terminates the hosts of `set`, certified by `ca`, with credentials decided by `injector`.
     ///
-    /// # Errors
-    /// [`TerminationError::NotPermitted`] when the CA's name constraints leave out a name of the
-    /// set.
-    pub fn new(
-        set: TerminationSet,
-        ca: Arc<WorkspaceCa>,
-        injector: Arc<dyn Injector>,
-    ) -> Result<Self, TerminationError> {
-        for name in set.dns_names() {
-            if !ca.constraints().permits(&name) {
-                return Err(TerminationError::NotPermitted(name));
-            }
-        }
-        Ok(Self {
+    /// The CA has no name constraint, so `set` is the only limit on which hosts get a leaf from
+    /// it; to change the set while a workspace runs, make a new `Termination` with the same CA
+    /// and [`Terminations::insert`] it (connections already open keep the old set; the next one
+    /// sees the new).
+    #[must_use]
+    pub fn new(set: TerminationSet, ca: Arc<WorkspaceCa>, injector: Arc<dyn Injector>) -> Self {
+        Self {
             set,
             ca,
             injector,
             stand_ins: Arc::new(StandIns::new()),
-        })
+        }
     }
 
     /// Swaps the workspace's `stand_ins` for their real values on terminated requests (see

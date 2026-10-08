@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use puddle_boot::{BOOT_SH, BootPlan, ENV_FILE_GUEST};
-use puddle_ca::{CaBuilder, CaCertificate, NameConstraints, TrustBundle};
+use puddle_ca::{CaBuilder, CaCertificate, TrustBundle};
 use puddle_certs::{
     BUNDLE_STEP_SH, CA_BUNDLE_PATH, CorporateRoots, EXTRA_CAS_PATH, GuestTrust, HOST_CA_DIR,
     SOURCES, StoreSnapshot,
@@ -203,14 +203,11 @@ fn root_pem(cn: &str) -> (Vec<u8>, String) {
 }
 
 fn puddle_ca() -> CaCertificate {
-    CaBuilder::new(
-        "puddle proxy CA (test)",
-        NameConstraints::new().permit_dns("github.com").unwrap(),
-    )
-    .build()
-    .unwrap()
-    .certificate()
-    .clone()
+    CaBuilder::new("puddle proxy CA (test)")
+        .build()
+        .unwrap()
+        .certificate()
+        .clone()
 }
 
 fn trust(host: &[&Vec<u8>], puddle: &[&CaCertificate]) -> GuestTrust {
