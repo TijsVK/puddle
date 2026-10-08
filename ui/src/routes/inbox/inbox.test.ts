@@ -161,6 +161,19 @@ describe("the inbox page", () => {
     expect(held()).toBeNull();
   });
 
+  it("lists the held-back workspaces by name", async () => {
+    inbox.add(request(1, { workspace: "zeta" as never }), "example.com");
+    inbox.add(request(2, { workspace: "alpha" as never }), "example.com");
+    inbox.suppression["zeta"] = { active: true, count: 2 };
+    inbox.suppression["alpha"] = { active: true, count: 3 };
+    await ready();
+    await vi.waitFor(() =>
+      expect(
+        [...document.querySelectorAll(".held .mono")].map((e) => e.textContent),
+      ).toEqual(["alpha", "zeta"]),
+    );
+  });
+
   it("updates live: a new row, an updated count, a closed row, without a refetch", async () => {
     seed();
     await ready();
