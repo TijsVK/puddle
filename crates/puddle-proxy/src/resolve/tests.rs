@@ -422,6 +422,66 @@ fn stuck_rig(
     (policy, stuck, Arc::new(proxy).handler(workspace()))
 }
 
+/// A resolver whose lookups fail with `kind`, as an OS resolver does.
+struct Failing(io::ErrorKind);
+
+impl Resolver for Failing {
+    fn resolve<'a>(
+        &'a self,
+        _name: &'a DomainName,
+        _port: u16,
+    ) -> BoxFuture<'a, io::Result<Vec<std::net::SocketAddr>>> {
+        let err = io::Error::new(self.0, "the resolver said so");
+        Box::pin(std::future::ready(Err(err)))
+    }
+}
+
+fn failing_handler(kind: io::ErrorKind, upstream: Option<Upstream>) -> WorkspaceHandler {
+    let policy = Arc::new(StaticPolicy::new());
+    policy.allow(&host("some.example"));
+    let mut proxy = Proxy::new(policy, Arc::new(NullSink))
+        .with_resolver(Arc::new(Failing(kind)))
+        .with_address_check(Arc::new(AnyAddress));
+    if let Some(upstream) = upstream {
+        proxy = proxy.with_upstream(upstream);
+    }
+    Arc::new(proxy).handler(workspace())
+}
+
+#[tokio::test]
+async fn a_lookup_that_failed_is_unavailable_not_a_cached_no_such_name() {
+    for kind in [
+        io::ErrorKind::TimedOut,
+        io::ErrorKind::ConnectionRefused,
+        io::ErrorKind::Other,
+    ] {
+        assert_eq!(
+            failing_handler(kind, None)
+                .resolve_name(a("some.example"))
+                .await,
+            ResolveAnswer::Unavailable,
+            "{kind:?}"
+        );
+    }
+    // The resolver saying the name does not exist is the one NXDOMAIN, cached for 20 s.
+    assert_eq!(
+        failing_handler(io::ErrorKind::NotFound, None)
+            .resolve_name(a("some.example"))
+            .await,
+        ResolveAnswer::NoSuchName { ttl: 20 }
+    );
+}
+
+#[tokio::test]
+async fn a_lookup_that_failed_is_left_to_the_company_proxy_when_one_is_in_the_route() {
+    assert_eq!(
+        failing_handler(io::ErrorKind::TimedOut, Some(company_proxy(true)))
+            .resolve_name(a("some.example"))
+            .await,
+        stand_in(StandInReason::ViaUpstream)
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_lookup_that_times_out_is_unavailable_or_left_to_the_company_proxy() {
     let config = ProxyConfig::default().with_lookup_limits(Duration::from_secs(1), 32);

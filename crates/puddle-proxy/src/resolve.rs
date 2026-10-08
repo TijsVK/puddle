@@ -178,7 +178,16 @@ async fn address_answer(
                 ttl: POSITIVE_TTL,
             }
         }
-        Ok(Ok(_) | Err(_)) => ResolveAnswer::NoSuchName { ttl: NEGATIVE_TTL },
+        Ok(Ok(_)) => ResolveAnswer::NoSuchName { ttl: NEGATIVE_TTL },
+        Ok(Err(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+            ResolveAnswer::NoSuchName { ttl: NEGATIVE_TTL }
+        }
+        // The lookup failed; that says nothing about the name, so the guest must not cache
+        // "no such name" for it.
+        Ok(Err(err)) => {
+            tracing::warn!(%workspace, host = %name, error = %err, "name lookup failed; answered unavailable");
+            ResolveAnswer::Unavailable
+        }
         Err(_) if proxy.company_proxy_may_resolve() => ResolveAnswer::StandIn {
             why: StandInReason::ViaUpstream,
             ttl: POSITIVE_TTL,

@@ -62,6 +62,11 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// Resolves a name the rules allowed. Tests fake it; [`SystemResolver`] uses the OS resolver.
 pub trait Resolver: Send + Sync {
     /// The addresses of `name`, with `port` filled in.
+    ///
+    /// # Errors
+    /// [`io::ErrorKind::NotFound`] when the name does not exist (NXDOMAIN, or no address of the
+    /// asked kind); any other error means the lookup itself failed (no resolver answered, the
+    /// network is down), which says nothing about the name.
     fn resolve<'a>(
         &'a self,
         name: &'a DomainName,
@@ -80,15 +85,90 @@ impl Resolver for SystemResolver {
         port: u16,
     ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
         Box::pin(async move {
-            let addrs = tokio::net::lookup_host((name.as_str(), port)).await?;
+            let addrs = tokio::net::lookup_host((name.as_str(), port))
+                .await
+                .map_err(name_error)?;
             Ok(addrs.collect())
         })
     }
 }
 
+/// `err` from `getaddrinfo`, with "the name does not exist" told apart from "the lookup failed":
+/// the first becomes [`io::ErrorKind::NotFound`] (the original text kept), the second is passed
+/// on. The standard library gives no error code for it on Unix, only the text of
+/// `gai_strerror`; Windows gives the Winsock code.
+fn name_error(err: io::Error) -> io::Error {
+    if says_no_such_name(&err) {
+        io::Error::new(io::ErrorKind::NotFound, err)
+    } else {
+        err
+    }
+}
+
+fn says_no_such_name(err: &io::Error) -> bool {
+    /// `WSAHOST_NOT_FOUND` and `WSANO_DATA`, the Winsock resolver's own "no such name" answers.
+    const WINSOCK: [i32; 2] = [11001, 11004];
+    /// What `gai_strerror` says for `EAI_NONAME` and `EAI_NODATA` in glibc, musl and the BSDs
+    /// (lower case).
+    const TEXTS: [&str; 6] = [
+        "name or service not known",
+        "no address associated with",
+        "name does not resolve",
+        "name has no usable address",
+        "nodename nor servname provided",
+        "hostname nor servname provided",
+    ];
+    if err
+        .raw_os_error()
+        .is_some_and(|code| WINSOCK.contains(&code))
+    {
+        return true;
+    }
+    let text = err.to_string().to_ascii_lowercase();
+    TEXTS.iter().any(|known| text.contains(known))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_that_does_not_exist_is_told_apart_from_a_lookup_that_failed() {
+        let gai =
+            |text: &str| io::Error::other(format!("failed to lookup address information: {text}"));
+        for missing in [
+            gai("Name or service not known"),
+            gai("No address associated with hostname"),
+            gai("Name does not resolve"),
+            gai("Name has no usable address"),
+            gai("nodename nor servname provided, or not known"),
+            io::Error::from_raw_os_error(11001),
+            io::Error::from_raw_os_error(11004),
+        ] {
+            let shown = missing.to_string();
+            assert_eq!(
+                name_error(missing).kind(),
+                io::ErrorKind::NotFound,
+                "{shown}"
+            );
+        }
+        for failed in [
+            gai("Temporary failure in name resolution"),
+            gai("Non-recoverable failure in name resolution"),
+            gai("Try again"),
+            io::Error::from_raw_os_error(11002),
+            io::Error::from(io::ErrorKind::TimedOut),
+        ] {
+            let shown = failed.to_string();
+            assert_ne!(
+                name_error(failed).kind(),
+                io::ErrorKind::NotFound,
+                "{shown}"
+            );
+        }
+        let kept = name_error(gai("Name or service not known")).to_string();
+        assert!(kept.contains("Name or service not known"), "{kept}");
+    }
 
     #[tokio::test]
     async fn the_system_resolver_resolves_localhost() {
