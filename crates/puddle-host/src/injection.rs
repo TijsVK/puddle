@@ -55,6 +55,9 @@ pub(crate) struct Injection {
     injector: Arc<dyn Injector>,
     store: Arc<Store>,
     running: Mutex<BTreeMap<WorkspaceName, Arc<WorkspaceCa>>>,
+    /// Held while a workspace's settings are read and what it decrypts is changed to match, so
+    /// the last change to run is the last one to read: a slow reader never puts back an old set.
+    syncing: Mutex<()>,
 }
 
 impl Injection {
@@ -68,6 +71,7 @@ impl Injection {
             injector,
             store,
             running: Mutex::new(BTreeMap::new()),
+            syncing: Mutex::new(()),
         }
     }
 
@@ -85,6 +89,7 @@ impl Injection {
     /// Makes `workspace`'s CA for this start and registers what it decrypts. A CA from an earlier
     /// start is replaced.
     pub(crate) fn begin(&self, workspace: &WorkspaceName) -> Result<Began, String> {
+        let _one_at_a_time = self.syncing.lock().unwrap_or_else(PoisonError::into_inner);
         let git = self.git(workspace)?;
         // The common name shows in the guest's trust store and in a tool's error message.
         let name: String = format!("puddle CA for {workspace}")
@@ -97,32 +102,44 @@ impl Injection {
                 .map_err(|e| format!("cannot make {workspace}'s certificate authority: {e}"))?,
         );
         let certificate = ca.certificate().clone();
+        // The registry and the list of running CAs change together, under the list's lock, so a
+        // `refresh` or an `end` never sees one without the other.
+        let mut running = self.running();
         self.terminations.insert(
             workspace.clone(),
             Termination::new(decrypt_set(&git), Arc::clone(&ca), self.injector.clone()),
         );
-        self.running().insert(workspace.clone(), ca);
+        running.insert(workspace.clone(), ca);
+        drop(running);
         Ok(Began { certificate, git })
     }
 
-    /// Recomputes what the running `workspace` decrypts from `git`; false when it has no CA (it is
-    /// not running, so the next start reads the settings itself).
-    pub(crate) fn refresh(&self, workspace: &WorkspaceName, git: &WorkspaceGit) -> bool {
-        let Some(ca) = self.running().get(workspace).cloned() else {
-            return false;
+    /// Reads the running `workspace`'s settings again and changes what it decrypts to match, with
+    /// the CA it has. `Ok(None)` when it has no CA (it is not running, so the next start reads the
+    /// settings itself); the settings otherwise.
+    pub(crate) fn resync(&self, workspace: &WorkspaceName) -> Result<Option<WorkspaceGit>, String> {
+        let _one_at_a_time = self.syncing.lock().unwrap_or_else(PoisonError::into_inner);
+        let git = self.git(workspace)?;
+        // Held until the registry is changed: an `end` in between would otherwise leave a CA
+        // registered for a sandbox that is gone.
+        let running = self.running();
+        let Some(ca) = running.get(workspace).cloned() else {
+            return Ok(None);
         };
         self.terminations.insert(
             workspace.clone(),
-            Termination::new(decrypt_set(git), ca, self.injector.clone()),
+            Termination::new(decrypt_set(&git), ca, self.injector.clone()),
         );
-        true
+        drop(running);
+        Ok(Some(git))
     }
 
     /// Drops `workspace`'s CA and what it decrypts. Connections already open keep what they have;
     /// the key is gone with the last of them.
     pub(crate) fn end(&self, workspace: &WorkspaceName) {
+        let mut running = self.running();
         self.terminations.remove(workspace);
-        self.running().remove(workspace);
+        running.remove(workspace);
     }
 
     /// What `workspace` decrypts and the CA that certifies it, while it runs.
@@ -251,7 +268,7 @@ mod tests {
         assert!(!decrypts(&terminations, &ws, "gitlab.com"));
 
         attach(&store, &ws, "ada", "gitlab.com");
-        assert!(injection.refresh(&ws, &injection.git(&ws).unwrap()));
+        assert!(injection.resync(&ws).unwrap().is_some());
         assert!(decrypts(&terminations, &ws, "gitlab.com"));
         // The CA the guest was given at boot is the one that still signs.
         let ca_after = terminations
@@ -274,7 +291,7 @@ mod tests {
         assert!(terminations.termination(&ws).is_none());
         assert_eq!(injection.running_workspaces(), []);
         // A change to a workspace that is not running touches nothing.
-        assert!(!injection.refresh(&ws, &injection.git(&ws).unwrap()));
+        assert!(injection.resync(&ws).unwrap().is_none());
         assert!(terminations.termination(&ws).is_none());
         injection.end(&ws);
     }

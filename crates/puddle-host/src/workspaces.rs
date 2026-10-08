@@ -720,15 +720,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         name: &WorkspaceName,
     ) -> Option<puddle_store::WorkspaceGit> {
-        let injection = &self.inner.injection;
-        let git = match injection.git(name) {
+        match self.inner.injection.resync(name) {
             Ok(git) => git,
             Err(reason) => {
                 tracing::warn!(workspace = %name, %reason, "what the workspace decrypts is not updated");
-                return None;
+                None
             }
-        };
-        injection.refresh(name, &git).then_some(git)
+        }
     }
 
     /// Runs the boot plan again in the running guest when its authors differ from what the guest

@@ -138,9 +138,8 @@ struct Guest {
     dirty: AtomicBool,
     fail_clone: AtomicBool,
     fail_boot: AtomicBool,
-    /// While set, the boot hook does not return (the exec waits), so a test can change things
-    /// while the guest boots.
-    hold_boot: AtomicBool,
+    /// Runs once, inside the next run of the boot hook: a change made while the guest boots.
+    during_boot: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// When set, the clone turns this path into a folder, so the next save of the workspace
     /// list fails (a stand-in for a full disk or a locked file).
     break_list_on_clone: Mutex<Option<PathBuf>>,
@@ -179,10 +178,9 @@ impl Guest {
             "boot" if self.fail_boot.load(Ordering::SeqCst) => {
                 ExecOutput::new(5, "", "boot.sh: no disk")
             }
-            "boot" if self.hold_boot.load(Ordering::SeqCst) => {
-                while self.hold_boot.load(Ordering::SeqCst) {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
+            "boot" if self.during_boot.lock().unwrap().is_some() => {
+                let change = self.during_boot.lock().unwrap().take().unwrap();
+                change();
                 ExecOutput::new(0, "puddle-boot: ready\n", "")
             }
             "boot" => ExecOutput::new(0, "puddle-boot: ready\n", ""),
@@ -2626,13 +2624,33 @@ async fn an_image_the_boot_plan_cannot_take_fails_the_start_and_leaves_nothing_b
     host.shutdown().await;
 }
 
-/// Lets a held boot go when dropped, so a failing test does not leave the hook waiting.
-struct Release<'a>(&'a AtomicBool);
-
-impl Drop for Release<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
-    }
+/// Makes the next run of the boot hook attach a new identity to `workspace`, as a user clicking
+/// while the guest boots would.
+fn attach_during_the_next_boot(rig: &Rig, host: &Host<FakeRuntime>, workspace: &str) {
+    let store = host.store().clone();
+    let workspace = name(workspace);
+    *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
+        let host = puddle_secrets::HostName::new("github.com").unwrap();
+        let credential = puddle_store::CredentialBinding::new(
+            &host,
+            puddle_secrets::SourceSpec::Gh {
+                host: host.clone(),
+                account: puddle_secrets::AccountName::new("me").unwrap(),
+            },
+            puddle_store::Coverage::new(std::collections::BTreeSet::new(), true).unwrap(),
+        )
+        .unwrap();
+        let identity = store
+            .create_identity(puddle_store::IdentityDraft {
+                label: "Ada".to_owned(),
+                author: puddle_store::Author::new("Ada", "ada@example.org").unwrap(),
+                credentials: vec![credential],
+            })
+            .unwrap();
+        // The first identity becomes the default, which a new workspace gets at its create; attach
+        // is idempotent for this test's purpose.
+        let _ = store.attach_identity(&workspace, identity.id, None);
+    }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2641,27 +2659,16 @@ async fn a_change_made_while_the_guest_boots_reaches_it_once_it_is_up() {
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
+    // No identity exists when the workspace is created, so its plan names no author.
+    attach_during_the_next_boot(&rig, &host, "acme");
+    create(&api, &mut events, "acme").await;
 
-    rig.guest.hold_boot.store(true, Ordering::SeqCst);
-    let _release = Release(&rig.guest.hold_boot);
-    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
-    assert_eq!(reply.status, 202, "{}", reply.body);
-    // The CA exists as soon as the boot began, and the identity is attached while the hook runs
-    // (made after the workspace: the first identity would be attached to it at the create).
-    eventually("the CA", || {
-        host.workspaces().termination(&name("acme")).is_some()
-    })
-    .await;
-    let identity = make_identity(&api, "Ada", "github.com", &[]).await;
-    attach(&api, "acme", identity).await;
-    eventually("the set follows", || decrypts(&host, "acme", "github.com")).await;
-    assert_eq!(rig.guest.boots(), 1);
-    rig.guest.hold_boot.store(false, Ordering::SeqCst);
-    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert_eq!(end["step"], "done", "{end}");
-
-    // The boot's plan was made before the identity: once up, the guest is brought in line.
+    // The set followed while the guest was booting, and once it was up the guest was brought in
+    // line with a second run of the hook.
+    assert!(decrypts(&host, "acme", "github.com"));
     rig.guest.boots_reach(2).await;
+    let first = rig.guest.plan_files(0);
+    assert!(!pem_of(&first, "/etc/puddle/gitconfig").contains("[user]"));
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     assert!(pem_of(&files, "/etc/puddle/gitconfig").contains("name = \"Ada\""));
     host.shutdown().await;
@@ -2678,21 +2685,11 @@ async fn a_change_made_while_a_stopped_workspace_starts_again_reaches_it_once_it
     events.until(ended("acme"), Duration::from_secs(20)).await;
     let booted = rig.guest.boots();
 
-    rig.guest.hold_boot.store(true, Ordering::SeqCst);
-    let _release = Release(&rig.guest.hold_boot);
+    attach_during_the_next_boot(&rig, &host, "acme");
     api.post("/api/workspaces/acme/start", "").await;
-    // The sandbox exists but its guest is not up: the set follows, the guest has to wait.
-    eventually("the CA", || {
-        host.workspaces().termination(&name("acme")).is_some()
-    })
-    .await;
-    let identity = make_identity(&api, "Ada", "github.com", &[]).await;
-    attach(&api, "acme", identity).await;
-    eventually("the set follows", || decrypts(&host, "acme", "github.com")).await;
-    assert_eq!(rig.guest.boots(), booted + 1);
-    rig.guest.hold_boot.store(false, Ordering::SeqCst);
     let end = events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(end["step"], "done", "{end}");
+    assert!(decrypts(&host, "acme", "github.com"));
     rig.guest.boots_reach(booted + 2).await;
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     assert!(pem_of(&files, "/etc/puddle/gitconfig").contains("name = \"Ada\""));
@@ -2705,19 +2702,14 @@ async fn settings_that_turn_unreadable_during_a_boot_do_not_fail_the_boot() {
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-
-    rig.guest.hold_boot.store(true, Ordering::SeqCst);
-    let _release = Release(&rig.guest.hold_boot);
-    api.post("/api/workspaces", &new_workspace("acme")).await;
-    eventually("the CA", || {
-        host.workspaces().termination(&name("acme")).is_some()
-    })
-    .await;
-    damage_database(&rig, &UNREADABLE_GIT_ROW.replace("{}", "acme"));
-    rig.guest.hold_boot.store(false, Ordering::SeqCst);
+    let db = rig.dir.path().join("data").join("puddle.db");
+    *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
+        let db = rusqlite::Connection::open(db).unwrap();
+        db.execute_batch(&UNREADABLE_GIT_ROW.replace("{}", "acme"))
+            .unwrap();
+    }));
     // The boot had what it needed; the workspace comes up with the settings it started with.
-    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert_eq!(end["step"], "done", "{end}");
+    create(&api, &mut events, "acme").await;
     assert!(host.workspaces().termination(&name("acme")).is_some());
     assert_eq!(rig.guest.boots(), 1);
     host.shutdown().await;
