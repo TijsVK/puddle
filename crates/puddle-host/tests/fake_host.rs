@@ -20,14 +20,14 @@ use std::time::Duration;
 use puddle_api::{LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord};
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime};
-use puddle_compute::{ExecOutput, ExecRequest, Runtime};
+use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
 use puddle_host::{
     GuestSettings, Host, HostConfig, HostError, HostOptions, HostPaths, PREPARE_STEPS, Platform,
     RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
 };
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
-use puddle_types::{SandboxName, WorkspaceId, WorkspaceName};
+use puddle_types::{Event, EventSink, ImageRef, SandboxName, WorkspaceId, WorkspaceName};
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
 use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH};
 use rustls::pki_types::pem::PemObject;
@@ -138,6 +138,9 @@ struct Guest {
     dirty: AtomicBool,
     fail_clone: AtomicBool,
     fail_boot: AtomicBool,
+    /// While set, the boot hook does not return (the exec waits), so a test can change things
+    /// while the guest boots.
+    hold_boot: AtomicBool,
     /// When set, the clone turns this path into a folder, so the next save of the workspace
     /// list fails (a stand-in for a full disk or a locked file).
     break_list_on_clone: Mutex<Option<PathBuf>>,
@@ -175,6 +178,12 @@ impl Guest {
         Some(match kind {
             "boot" if self.fail_boot.load(Ordering::SeqCst) => {
                 ExecOutput::new(5, "", "boot.sh: no disk")
+            }
+            "boot" if self.hold_boot.load(Ordering::SeqCst) => {
+                while self.hold_boot.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                ExecOutput::new(0, "puddle-boot: ready\n", "")
             }
             "boot" => ExecOutput::new(0, "puddle-boot: ready\n", ""),
             "locks" => ExecOutput::new(0, "D\n", ""),
@@ -2529,4 +2538,212 @@ async fn the_company_roots_go_into_the_clients_that_verify_decrypted_hosts() {
     let extra = pem_of(&files, "/etc/puddle/extra-cas.pem");
     assert_eq!(extra.matches("BEGIN CERTIFICATE").count(), 2, "{extra}");
     host.shutdown().await;
+}
+
+/// Opens the host's database next to it and runs `sql` (a row the store would never write).
+fn damage_database(rig: &Rig, sql: &str) {
+    let db = rusqlite::Connection::open(rig.dir.path().join("data").join("puddle.db")).unwrap();
+    db.execute_batch(sql).unwrap();
+}
+
+const UNREADABLE_GIT_ROW: &str = "INSERT INTO workspace_repos \
+    (workspace_id, host, owner, repo, pull, push, created_at) \
+    VALUES ('{}', 'github.com', 'acme', 'not a repo', 1, 1, 0)";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while_running() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    create(&api, &mut events, "beta").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    // acme's settings are damaged: its start says why and leaves no CA.
+    damage_database(&rig, &UNREADABLE_GIT_ROW.replace("{}", "acme"));
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end["detail"]
+            .as_str()
+            .unwrap()
+            .contains("cannot read acme's Git settings"),
+        "{end}"
+    );
+    assert!(host.workspaces().termination(&name("acme")).is_none());
+
+    // beta runs; its settings are damaged after the start: what it decrypts stays as it was.
+    let identity = make_identity(&api, "Ada", "github.com", &[]).await;
+    attach(&api, "beta", identity).await;
+    eventually("github.com decrypted", || {
+        decrypts(&host, "beta", "github.com")
+    })
+    .await;
+    damage_database(&rig, &UNREADABLE_GIT_ROW.replace("{}", "beta"));
+    host.events().emit(Event::WorkspaceGitChanged {
+        workspace: name("beta"),
+    });
+    // The next change is applied after the damaged one was looked at (events are handled in
+    // order), and beta's set did not lose what it had.
+    host.events().emit(Event::WorkspaceGitChanged {
+        workspace: name("beta"),
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(decrypts(&host, "beta", "github.com"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_image_the_boot_plan_cannot_take_fails_the_start_and_leaves_nothing_behind() {
+    let rig = Rig::new();
+    let odd = ImageRef::new("example.org/odd:1").unwrap();
+    rig.runtime.add_image(
+        &odd,
+        ImageConfig {
+            // A newline cannot be written into the guest's environment file.
+            env: vec![("PATH".to_owned(), "/bin\n/usr/bin".to_owned())],
+            ..ImageConfig::default()
+        },
+    );
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": "acme", "repo_url": REPO, "image": "example.org/odd:1"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(host.workspaces().termination(&name("acme")).is_none());
+    assert!(rig.runtime.list().await.unwrap().is_empty());
+    assert!(rig.runtime.list_volumes().await.unwrap().is_empty());
+    host.shutdown().await;
+}
+
+/// Lets a held boot go when dropped, so a failing test does not leave the hook waiting.
+struct Release<'a>(&'a AtomicBool);
+
+impl Drop for Release<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_made_while_the_guest_boots_reaches_it_once_it_is_up() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+
+    rig.guest.hold_boot.store(true, Ordering::SeqCst);
+    let _release = Release(&rig.guest.hold_boot);
+    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    // The CA exists as soon as the boot began, and the identity is attached while the hook runs
+    // (made after the workspace: the first identity would be attached to it at the create).
+    eventually("the CA", || {
+        host.workspaces().termination(&name("acme")).is_some()
+    })
+    .await;
+    let identity = make_identity(&api, "Ada", "github.com", &[]).await;
+    attach(&api, "acme", identity).await;
+    eventually("the set follows", || decrypts(&host, "acme", "github.com")).await;
+    assert_eq!(rig.guest.boots(), 1);
+    rig.guest.hold_boot.store(false, Ordering::SeqCst);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // The boot's plan was made before the identity: once up, the guest is brought in line.
+    rig.guest.boots_reach(2).await;
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(pem_of(&files, "/etc/puddle/gitconfig").contains("name = \"Ada\""));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_change_retries() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let booted = rig.guest.boots();
+    let ada = make_identity(&api, "Ada", "github.com", &[]).await;
+    let bob = make_identity(&api, "Bob", "gitlab.com", &[]).await;
+
+    rig.guest.fail_boot.store(true, Ordering::SeqCst);
+    attach(&api, "acme", ada).await;
+    rig.guest.boots_reach(booted + 1).await;
+    // What is decrypted followed anyway: only the guest's files could not be written.
+    eventually("github.com decrypted", || {
+        decrypts(&host, "acme", "github.com")
+    })
+    .await;
+
+    rig.guest.fail_boot.store(false, Ordering::SeqCst);
+    attach(&api, "acme", bob).await;
+    rig.guest.boots_reach(booted + 2).await;
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    let config = pem_of(&files, "/etc/puddle/gitconfig");
+    // Both identities are in the retry: the first change was never written.
+    assert!(config.contains("name = \"Ada\""), "{config}");
+    assert!(pem_of(&files, "/etc/puddle/git-author-1.gitconfig").contains("Bob"));
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn missed_events_are_made_up_for_by_looking_at_every_running_workspace_again() {
+    // One thread: the host's tasks cannot run while this test emits, so the follower falls
+    // behind the event buffer.
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let identity = make_identity(&api, "Ada", "github.com", &[]).await;
+    let before = rig.guest.boots();
+
+    let attached =
+        host.store()
+            .attach_identity(&name("acme"), puddle_store::IdentityId(identity), None);
+    attached.unwrap();
+    for _ in 0..4096 {
+        host.events().emit(Event::RulesChanged {});
+    }
+    eventually("the set follows", || decrypts(&host, "acme", "github.com")).await;
+    rig.guest.boots_reach(before + 1).await;
+    host.shutdown().await;
+}
+
+#[test]
+fn the_inputs_to_an_injector_print_without_what_they_hold() {
+    // Printed through the host's own factory type, as a user of the library sees it.
+    let seen = Arc::new(Mutex::new(String::new()));
+    let record = seen.clone();
+    let factory: puddle_host::InjectorFactory = Arc::new(move |inputs| {
+        *record.lock().unwrap() = format!("{inputs:?}");
+        Arc::new(MarkedInjector)
+    });
+    let rig = Rig::new();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+        let mut options = HostOptions::default();
+        options.injector = Some(factory);
+        let host = Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
+            .await
+            .unwrap();
+        host.shutdown().await;
+    });
+    assert_eq!(*seen.lock().unwrap(), "InjectorInputs { .. }");
 }

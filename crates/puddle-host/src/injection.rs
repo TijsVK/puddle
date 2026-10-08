@@ -349,4 +349,41 @@ mod tests {
         );
         task.abort();
     }
+
+    #[tokio::test]
+    async fn notices_over_the_buffer_lose_the_oldest_and_the_rest_still_arrive() {
+        let secrets = Arc::new(SecretCache::new(NotSignedIn(Mutex::new(0))));
+        let events = Arc::new(Events::default());
+        // The forwarder cannot run until this test awaits something that is not ready, so the
+        // notices pile up past the cache's buffer (16) and it must skip what was lost.
+        let task = forward_sign_in_needed(&secrets, events.clone());
+        for i in 0..40 {
+            let host = HostName::new(format!("host{i}.example")).unwrap();
+            let spec = SourceSpec::Gh {
+                host,
+                account: AccountName::new("me").unwrap(),
+            };
+            assert!(secrets.get(&spec).await.is_err());
+        }
+        for _ in 0..200 {
+            if events.0.lock().unwrap().len() >= 16 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let seen = events.0.lock().unwrap().len();
+        assert!((1..40).contains(&seen), "{seen} notices");
+        task.abort();
+    }
+
+    #[test]
+    fn the_inputs_print_without_what_they_hold() {
+        let store = store();
+        let secrets = Arc::new(SecretCache::new(Sources::new(
+            puddle_secrets::ToolPaths::resolve(),
+            Arc::new(puddle_secrets::MemoryStore::new()),
+        )));
+        let text = format!("{:?}", InjectorInputs { store, secrets });
+        assert_eq!(text, "InjectorInputs { .. }");
+    }
 }

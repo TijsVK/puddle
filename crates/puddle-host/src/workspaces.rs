@@ -616,8 +616,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             Err(e) => Err(e.clone()),
         };
-        let (plan, env, guest) = match config.and_then(|c| self.plan_guest(name, c)) {
-            Ok(ready) => ready,
+        let config = match config {
+            Ok(config) => config,
             Err(reason) => {
                 self.abort_attachment(attachment).await;
                 return Err(reason);
@@ -628,7 +628,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let route = match inner.kit.route(name) {
             Ok(route) => route,
             Err(reason) => {
-                inner.injection.end(name);
+                self.abort_attachment(attachment).await;
+                return Err(reason);
+            }
+        };
+        // The CA comes after the route: a start that fails here has nothing else to take back.
+        let (plan, env, guest) = match self.plan_guest(name, config) {
+            Ok(ready) => ready,
+            Err(reason) => {
+                route.shutdown().await;
                 self.abort_attachment(attachment).await;
                 return Err(reason);
             }

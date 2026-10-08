@@ -327,6 +327,8 @@ mod tests {
 
     #[test]
     fn many_owners_are_split_into_rules_and_too_many_rules_drop_the_lowest_priority() {
+        // With a subscriber the warning's fields are evaluated, as they are in a running host.
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let owners: Vec<String> = (0..20).map(|i| format!("org{i}")).collect();
         let refs: Vec<&str> = owners.iter().map(String::as_str).collect();
         // 20 owners x 2 globs = 40 globs: two rules, neither over the limit.
@@ -427,11 +429,8 @@ mod tests {
             for (i, url) in remotes.iter().enumerate() {
                 let name = format!("r{i}");
                 let out = git_in(root, repo.path(), &["remote", "add", &name, url]);
-                assert!(
-                    out.status.success(),
-                    "{}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                assert!(out.status.success(), "{stderr}");
             }
             let out = git_in(root, repo.path(), &["config", "user.email"]);
             out.status
