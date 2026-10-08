@@ -32,6 +32,17 @@ describe("judge", () => {
     expect(v).toEqual({ failures: [], raised: undefined });
   });
 
+  it("compares the value as printed, two decimals, so 93.6996 meets a 93.7 baseline", () => {
+    const v = judge(
+      { lines: 93.6996, regions: 90.4 },
+      { lines: 93.7, regions: 90.4 },
+      floor,
+      undefined,
+      false,
+    );
+    expect(v.failures).toEqual([]);
+  });
+
   it("fails below the baseline even when above the floor", () => {
     const v = judge(
       { lines: 93.0, regions: 90.5 },

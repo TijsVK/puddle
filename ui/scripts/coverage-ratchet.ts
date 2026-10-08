@@ -33,6 +33,8 @@ export function readTotals(json: string): Totals {
   return { lines: t["lines"].percent, regions: t["regions"].percent };
 }
 
+/** The value as printed (two decimals): what the gate compares, so a printed 93.70 meets a 93.7 baseline. */
+const shown = (n: number) => Math.round(n * 100) / 100;
 const down = (n: number) => Math.floor(n * 10 + 1e-9) / 10;
 
 export interface Verdict {
@@ -51,7 +53,7 @@ export function judge(
   const failures: string[] = [];
   for (const k of ["lines", "regions"] as const) {
     const need = Math.max(floor[k], baseline[k]);
-    if (measured[k] < need) {
+    if (shown(measured[k]) < need) {
       const why =
         baseline[k] > floor[k]
           ? `baseline ${baseline[k]}`
@@ -67,8 +69,8 @@ export function judge(
     }
   }
   const next = {
-    lines: Math.max(baseline.lines, down(measured.lines)),
-    regions: Math.max(baseline.regions, down(measured.regions)),
+    lines: Math.max(baseline.lines, down(shown(measured.lines))),
+    regions: Math.max(baseline.regions, down(shown(measured.regions))),
   };
   const raised =
     next.lines > baseline.lines || next.regions > baseline.regions
