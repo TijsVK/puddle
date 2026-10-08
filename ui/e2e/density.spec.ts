@@ -187,6 +187,8 @@ test.describe("visual baselines", () => {
         await expect(page).toHaveScreenshot(`${density}-${path.slice(1)}.png`, {
           animations: "disabled",
           caret: "hide",
+          // Absorbs anti-aliasing between machines; a spacing change moves far more pixels.
+          maxDiffPixelRatio: 0.01,
         });
       });
     }
