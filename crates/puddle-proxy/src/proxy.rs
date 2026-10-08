@@ -563,6 +563,9 @@ async fn relay(
         if done.sni_mismatch {
             event.decision = ConnectionDecision::Blocked;
             event.reason = ConnectionReason::SniMismatch;
+        } else if done.certificate_refused {
+            // Puddle blocked nothing: the rule's decision stands and the tool refused.
+            event.reason = ConnectionReason::GuestTlsRejected;
         }
         return event;
     }

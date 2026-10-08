@@ -194,6 +194,25 @@ describe("a record as a row", () => {
     );
     expect(odd.detail).toBe("PUT · because something_new");
   });
+  it("says when the tool in the workspace refused puddle's certificate, beside the rule that allowed it", () => {
+    const refused = row(
+      connection(1, {
+        decision: "allow",
+        reason: "guest_tls_rejected",
+        rule_id: 12,
+      }).record,
+    );
+    expect(refused.outcome).toEqual({ label: "Allowed", tone: "allow" });
+    expect(refused.detail).toBe(
+      "rule 12 · the tool in the workspace didn't accept puddle's certificate",
+    );
+    const withoutRule = row(
+      connection(2, { reason: "guest_tls_rejected", rule_id: null }).record,
+    );
+    expect(withoutRule.detail).toBe(
+      "the tool in the workspace didn't accept puddle's certificate",
+    );
+  });
   it("shows puddle's own connections as puddle, with its own reason", () => {
     const view = row(
       connection(1, {

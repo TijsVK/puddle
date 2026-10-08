@@ -65,7 +65,8 @@ impl fmt::Display for ConnectionOrigin {
 
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`,
-/// `local_address`), `policy_unavailable`, `puddle_request`, `sni_mismatch` or `suppressed`.
+/// `local_address`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`
+/// or `suppressed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectionReason {
@@ -82,6 +83,9 @@ pub enum ConnectionReason {
     /// A terminated TLS connection's client asked for a name other than the one it
     /// `CONNECT`ed to (or none): the handshake was refused and nothing went upstream.
     SniMismatch,
+    /// A terminated TLS connection's client refused puddle's certificate for the host (it does not
+    /// trust the workspace's CA). Nothing is blocked: the decision of the rule stands.
+    GuestTlsRejected,
     /// Summary of connection records over the per-workspace limit (R-26).
     Suppressed,
 }
@@ -95,6 +99,7 @@ impl fmt::Display for ConnectionReason {
             Self::PolicyUnavailable => f.write_str("policy_unavailable"),
             Self::PuddleRequest => f.write_str("puddle_request"),
             Self::SniMismatch => f.write_str("sni_mismatch"),
+            Self::GuestTlsRejected => f.write_str("guest_tls_rejected"),
             Self::Suppressed => f.write_str("suppressed"),
         }
     }
@@ -378,6 +383,7 @@ mod tests {
             ),
             (ConnectionReason::PolicyUnavailable, "policy_unavailable"),
             (ConnectionReason::SniMismatch, "sni_mismatch"),
+            (ConnectionReason::GuestTlsRejected, "guest_tls_rejected"),
             (ConnectionReason::Suppressed, "suppressed"),
         ];
         for (reason, text) in reasons {

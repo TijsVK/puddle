@@ -152,12 +152,13 @@ readable as JSONL (one record per line).
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `local_address`,
-  `policy_unavailable`, `suppressed`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`,
+  `policy_unavailable`, `sni_mismatch`, `guest_tls_rejected`, `suppressed`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `pending_id`, `binding_id`, `injected`,
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired`,
   `pending_suppressed` (`workspace_id`, `count`), `rule_created`, `rule_updated`, `rule_deleted`,
   `rule_expired` (with the full rule), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`), and
-  the rule set records of R-43.
+  the rule set records of R-43. On a decrypted host whose client refuses puddle's certificate (it does not
+  trust the workspace's CA) the decision stays what the rule said and the reason is `guest_tls_rejected`.
   The proxy writes one `connection` record per request whose destination it parsed, when the
   connection ends; a request refused before that (bad request, head too large or too slow, the
   workspace over its connection limit) has no destination and only goes to the log. `resolved_ip`

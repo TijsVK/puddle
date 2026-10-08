@@ -22,6 +22,8 @@
 //! - **Guest leg**: a rustls server offering only `http/1.1`, whose one certificate is the leaf
 //!   for the `CONNECT` host. A client that sends another name, an IP address or none gets a TLS
 //!   alert and the connection ends with the audit reason `sni_mismatch`; nothing is sent upstream.
+//!   A client that refuses the certificate (it does not trust the workspace's CA) is recorded with
+//!   the audit reason `guest_tls_rejected`; the rule's decision stands, since puddle blocked nothing.
 //! - **Requests**: read with the strict parser the plain-HTTP path uses, one at a time (a
 //!   pipelined request is decided on its own), and rebuilt before they are sent. A request for
 //!   another host (`Host`, or an absolute target) is `421`; an ambiguous one is `400`.
@@ -34,6 +36,7 @@
 
 mod body;
 mod guest;
+mod handshake;
 mod inject;
 pub(crate) mod request;
 mod response;

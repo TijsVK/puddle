@@ -180,6 +180,12 @@ const REASONS: Record<string, string> = {
   puddle_request: "puddle's own request",
 };
 
+/** Reasons that say something happened to an allowed connection, shown beside the rule. */
+const NOTES: Record<string, string> = {
+  guest_tls_rejected:
+    "the tool in the workspace didn't accept puddle's certificate",
+};
+
 const DECISIONS: Record<string, { label: string; tone: Tone }> = {
   allow: { label: "Allowed", tone: "allow" },
   deny: { label: "Denied", tone: "deny" },
@@ -253,10 +259,12 @@ function connectionDetail(
     parts.push(`${record.method} ${record.path ?? ""}`.trim());
   }
   const reason = REASONS[record.reason] ?? record.reason;
+  const note = NOTES[record.reason];
   const set = setLabel(record.rule_set);
   if (set !== null) parts.push(set);
   if (record.rule_id !== null) parts.push(`rule ${record.rule_id}`);
-  else if (set === null) parts.push(`because ${reason}`);
+  else if (set === null && note === undefined) parts.push(`because ${reason}`);
+  if (note !== undefined) parts.push(note);
   if (record.bytes_up > 0 || record.bytes_down > 0) {
     parts.push(
       `${bytesLabel(record.bytes_up)} up, ${bytesLabel(record.bytes_down)} down`,

@@ -46,6 +46,8 @@ pub(crate) struct Outcome {
     pub(crate) hop: Option<String>,
     /// The guest asked for a name other than the `CONNECT` host in its TLS handshake.
     pub(crate) sni_mismatch: bool,
+    /// The guest's client refused the certificate (it does not trust the workspace's CA).
+    pub(crate) certificate_refused: bool,
 }
 
 /// What a terminated connection runs on.
@@ -93,6 +95,9 @@ where
             outcome.sni_mismatch = mismatch.load(Ordering::Relaxed);
             if outcome.sni_mismatch {
                 tracing::info!(host = %cx.target.host, "TLS handshake refused: the client asked for another name");
+            } else if let Some(alert) = super::handshake::rejected_certificate(&err) {
+                outcome.certificate_refused = true;
+                tracing::info!(workspace = %cx.workspace, host = %cx.target.host, alert, "the client in the workspace did not accept puddle's certificate for this host");
             } else {
                 tracing::debug!(host = %cx.target.host, error = %err, "guest TLS handshake failed");
             }
