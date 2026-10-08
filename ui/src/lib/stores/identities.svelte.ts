@@ -119,6 +119,13 @@ export class IdentitiesStore {
     return sentence(error?.message ?? fallback);
   }
 
+  /** Puts an identity in the list: in place when a refresh already listed it, else last. */
+  #put(identity: Identity): void {
+    this.identities = this.identities.some((i) => i.id === identity.id)
+      ? this.identities.map((i) => (i.id === identity.id ? identity : i))
+      : [...this.identities, identity];
+  }
+
   /** Makes an identity, last in the order. */
   async create(request: IdentityRequest): Promise<Result<Identity>> {
     try {
@@ -131,7 +138,7 @@ export class IdentitiesStore {
           message: this.#refused(error, "puddle refused the identity"),
         };
       }
-      this.identities = [...this.identities, data];
+      this.#put(data);
       return { ok: true, value: data };
     } catch {
       return { ok: false, message: DOWN };

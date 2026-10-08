@@ -90,6 +90,22 @@ describe("changing identities", () => {
     expect(store.identities.map((i) => i.label)).toEqual(["Work"]);
   });
 
+  it("lists a new identity once when a refresh lands before the answer that made it", async () => {
+    const made = identity(7);
+    let answer: (value: unknown) => void = () => undefined;
+    const late = new Promise((resolve) => (answer = resolve));
+    const fake = {
+      GET: async () => ({ data: { identities: [made] } }),
+      POST: () => late,
+    };
+    const store = new IdentitiesStore({ api: fake as never, source });
+    const creating = store.create(request("Work"));
+    await store.refresh();
+    answer({ data: made });
+    await creating;
+    expect(store.identities.map((i) => i.id)).toEqual([7]);
+  });
+
   it("shows the host's refusal as a sentence", async () => {
     const store = make();
     await store.create(request("Work"));
