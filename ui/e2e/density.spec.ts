@@ -127,7 +127,9 @@ test.describe("the density setting", () => {
 
         const small = await page.evaluate(() => {
           const out: string[] = [];
-          const sel = "button, select, input:not([type=hidden]), [role=radio]";
+          // Native checkboxes are left to axe's spacing rule: they are small in both densities.
+          const sel =
+            "button, select, input:not([type=hidden], [type=checkbox], [type=radio]), [role=radio]";
           for (const el of document.querySelectorAll(sel)) {
             const r = el.getBoundingClientRect();
             if (r.width === 0 || r.height === 0) continue;
@@ -159,11 +161,18 @@ test.describe("visual baselines", () => {
     process.platform === "win32",
     "baselines exist for the Linux gate host only",
   );
-  test.use({ viewport: { width: 1280, height: 800 } });
+  test.use({
+    viewport: { width: 1280, height: 800 },
+    locale: "en-US",
+    timezoneId: "UTC",
+  });
 
   for (const density of DENSITIES) {
     for (const { path, heading } of SCREENS) {
       test(`${density}: ${path}`, async ({ page, backend }) => {
+        // Seeded data on every screen; the fixture clock is fixed, so times do not drift.
+        await backend.control.reset("lived-in");
+        await backend.installClock(page);
         await open(page, backend, "/settings");
         await setDensity(page, density);
         await page.goto(path);

@@ -31,6 +31,7 @@
   }
   :global(.theme-item) {
     flex: 1;
+    min-height: var(--target-min);
     padding: var(--space-1) var(--space-2);
     border: 0;
     border-radius: var(--radius-sm);

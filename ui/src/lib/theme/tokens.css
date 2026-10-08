@@ -47,8 +47,9 @@
   --radius-pill: 999px;
 
   --line-height: 1.5;
-  /* The smallest height and width of a button or field; compact stays above WCAG 2.2's 24px. */
+  /* The smallest height and width of a button or field; --target-min is WCAG 2.2's 24px floor, in both densities. */
   --control-size: 2rem;
+  --target-min: 1.5rem;
 
   --sidebar-width: 15rem;
   --focus-ring: 2px solid var(--color-focus);
