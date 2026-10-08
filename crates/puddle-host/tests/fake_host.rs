@@ -1797,6 +1797,7 @@ async fn host_with_listed_workspace_whose_volume_is_gone() -> (Rig, Host<FakeRun
     let mut events = api1.events().await;
     create(&api1, &mut events, "acme").await;
     host.shutdown().await;
+    drop(host);
     drop(events);
     rig.runtime
         .remove_volume(&WorkspaceId::new("acme").unwrap().volume_name())
