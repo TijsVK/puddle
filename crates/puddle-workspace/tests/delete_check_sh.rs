@@ -16,6 +16,9 @@ use puddle_compute::{DiskSize, ExecOutput, ExecRequest, Runtime, VolumeSpec};
 use puddle_types::WorkspaceId;
 use puddle_workspace::{DELETE_CHECK_SH, DeleteReport, Workspaces};
 
+mod common;
+use common::command;
+
 /// Shells the script must work under (the guest's `/bin/sh` is dash on Debian).
 fn shells() -> Vec<&'static str> {
     ["dash", "bash"]
@@ -27,18 +30,6 @@ fn shells() -> Vec<&'static str> {
                 .is_ok_and(|o| o.status.success())
         })
         .collect()
-}
-
-/// `program` without the caller's `GIT_*` variables: under a git hook (pre-push runs the tests)
-/// `GIT_DIR` points at puddle's own repository, and every command here would act on it.
-fn command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
-            cmd.env_remove(key);
-        }
-    }
-    cmd
 }
 
 /// Git for the fixture repositories, with auto maintenance off: newer git starts
@@ -284,4 +275,16 @@ async fn a_missing_volume_root_fails_closed() {
             .unwrap_err();
         assert!(err.to_string().contains("cannot enter"), "{shell}: {err}");
     }
+}
+
+/// The fixtures must not touch the repository a git hook points `GIT_DIR` at: `git init --bare`
+/// there turns that repository bare.
+#[test]
+fn fixtures_leave_the_repository_of_a_git_hook_alone() {
+    if common::is_hook_env_child() {
+        return;
+    }
+    common::assert_hook_env_leaves_the_repository_alone(
+        "fixtures_leave_the_repository_of_a_git_hook_alone",
+    );
 }

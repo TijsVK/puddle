@@ -17,6 +17,9 @@ use puddle_compute::{ExecOutput, ExecRequest, SandboxSpec};
 use puddle_types::{ImageRef, SandboxName, WorkspaceId};
 use puddle_workspace::{CLEAR_LOCKS_SH, LockReport, Workspaces};
 
+mod common;
+use common::command;
+
 fn shells() -> Vec<&'static str> {
     ["dash", "bash"]
         .into_iter()
@@ -27,18 +30,6 @@ fn shells() -> Vec<&'static str> {
                 .is_ok_and(|o| o.status.success())
         })
         .collect()
-}
-
-/// `program` without the caller's `GIT_*` variables (under a git hook `GIT_DIR` points at
-/// puddle's own repository).
-fn command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
-            cmd.env_remove(key);
-        }
-    }
-    cmd
 }
 
 /// Git for the fixture repositories. Auto maintenance is off: newer git starts
@@ -282,4 +273,16 @@ async fn an_empty_volume_and_a_second_run_are_fine() {
         assert_eq!(again.removed_count(), 0, "{shell}");
         assert_eq!(again.errors, Vec::<String>::new());
     }
+}
+
+/// The fixtures must not touch the repository a git hook points `GIT_DIR` at: `git init --bare`
+/// there turns that repository bare.
+#[test]
+fn fixtures_leave_the_repository_of_a_git_hook_alone() {
+    if common::is_hook_env_child() {
+        return;
+    }
+    common::assert_hook_env_leaves_the_repository_alone(
+        "fixtures_leave_the_repository_of_a_git_hook_alone",
+    );
 }

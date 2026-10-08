@@ -44,6 +44,9 @@ use puddle_workspace::{Layout, WorkspaceConfig, Workspaces};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+mod common;
+use common::git_command;
+
 /// The guest port puddle routes; the agent's default target.
 const ROUTE_PORT: u32 = 5000;
 /// The agent's listener in the guest.
@@ -222,18 +225,6 @@ async fn serve_files(root: PathBuf) -> SocketAddr {
         }
     });
     addr
-}
-
-/// `git` without the caller's `GIT_*` variables (under a git hook `GIT_DIR` would point at
-/// puddle's own repository).
-fn git_command() -> std::process::Command {
-    let mut cmd = std::process::Command::new("git");
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
-            cmd.env_remove(key);
-        }
-    }
-    cmd
 }
 
 fn host_git(dir: &Path, args: &[&str]) {

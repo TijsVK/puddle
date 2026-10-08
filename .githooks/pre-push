@@ -1,4 +1,9 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # All gates before each push, so develop stays green. Enable: git config core.hooksPath .githooks
-exec "$(git rev-parse --show-toplevel)/scripts/check.sh" all
+top=$(git rev-parse --show-toplevel)
+# git exports GIT_DIR and friends to hooks; left set, every git command a gate or a test runs
+# would act on this repository whatever its working directory (`git init --bare` in a temp dir
+# once turned this repository bare). The gates find the repository from their working directory.
+for var in $(git rev-parse --local-env-vars); do unset "$var"; done
+exec "$top/scripts/check.sh" all
