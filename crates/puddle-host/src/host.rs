@@ -386,7 +386,6 @@ impl<R: Runtime + Clone> Host<R> {
             roots,
             mut steps,
         } = prepared;
-        let paths = config.paths.clone();
 
         // Store, settings and the event hub.
         let events = Arc::new(EventHub::default());
@@ -396,7 +395,7 @@ impl<R: Runtime + Clone> Host<R> {
             settings,
             book,
             stored,
-        } = open_state(&paths, &events, &clock)?;
+        } = open_state(&config.paths, &events, &clock)?;
         steps.push(Step::StoreOpened);
 
         // The way out: the company network (discovery, sign-in as the user, then Basic) for the
@@ -411,14 +410,14 @@ impl<R: Runtime + Clone> Host<R> {
             .with_connection_log(store.clone());
         steps.push(Step::UpstreamBuilt);
 
-        let kit = BootKit::new(&paths.guest_share(), &config.guest, proxy, &roots)?;
+        let kit = BootKit::new(&config.paths.guest_share(), &config.guest, proxy, &roots)?;
         steps.push(Step::GuestFilesReady);
 
         // The runtime, with image pulls through the pull proxy and the corporate roots trusted.
         let runtime = factory
             .open(RuntimeInputs {
                 layout: &config.layout,
-                guest_share: paths.guest_share(),
+                guest_share: config.paths.guest_share(),
                 pull_proxy: pull_url,
                 registry_roots: pem_of(&roots),
                 log_level: config.runtime_log_level.clone(),
@@ -470,20 +469,19 @@ impl<R: Runtime + Clone> Host<R> {
             .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
             .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
-        let (info, url, api) = (served.info, served.url, served.api);
         steps.push(Step::ApiServing);
-        tracing::info!(%url, "puddle is up");
+        tracing::info!(url = %served.url, "puddle is up");
 
         Ok(Self {
-            info,
-            url,
+            info: served.info,
+            url: served.url,
             events,
             store,
             endpoints,
             workspaces: service,
             lifecycle,
             grace: config.operations_grace,
-            api: AsyncMutex::new(Some(api)),
+            api: AsyncMutex::new(Some(served.api)),
             background: AsyncMutex::new(Some(Background {
                 sweeper,
                 pull,
