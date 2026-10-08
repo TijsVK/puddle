@@ -26,8 +26,8 @@ pub const AGENT_GUEST: &str = "/puddle/puddle-agent";
 /// The guest directory with puddle's read-only mounts. The plan may not write below it.
 pub const MOUNT_DIR_GUEST: &str = "/puddle";
 
-/// A guest path from one of this crate's constants.
-pub(crate) fn guest_path(path: &'static str) -> GuestPath {
+/// A guest path from one of this crate's constants (or a constant directory and a number).
+pub(crate) fn guest_path(path: &str) -> GuestPath {
     // Only ever called with the constants above, which a unit test checks are valid.
     GuestPath::new(path).unwrap_or_else(|_| unreachable_guest_path(path))
 }

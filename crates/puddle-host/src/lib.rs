@@ -25,12 +25,15 @@
 #![deny(unsafe_code)]
 
 mod boot;
+mod changes;
 mod config;
 mod data_folder;
 mod doctor;
 mod error;
 mod files;
+mod git_hosts;
 mod host;
+mod injection;
 mod paths;
 mod platform;
 mod process_env;
@@ -44,6 +47,7 @@ pub use host::{
     Host, HostOptions, HostShutdown, MsbFactory, PREPARE_STEPS, Prepared, RuntimeFactory,
     RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
 };
+pub use injection::{InjectorFactory, InjectorInputs};
 pub use paths::HostPaths;
 pub use platform::{Platform, SystemPlatform};
 pub use workspaces::{HostWorkspaces, NoLauncher};

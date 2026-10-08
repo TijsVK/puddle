@@ -29,6 +29,16 @@ pub const ENV_FILE_GUEST: &str = "/etc/profile.d/01-puddle-env.sh";
 /// puddle's git settings, included from `/etc/gitconfig`.
 pub const GIT_CONFIG_GUEST: &str = "/etc/puddle/gitconfig";
 
+/// The directory of the per-rule author files [`GitAuthorRule`] writes, next to
+/// [`GIT_CONFIG_GUEST`] (which includes them by relative path).
+pub const GIT_AUTHOR_DIR_GUEST: &str = "/etc/puddle";
+
+/// The most author rules a plan holds.
+pub const MAX_GIT_AUTHOR_RULES: usize = 64;
+
+/// The most remote globs one author rule holds.
+pub const MAX_GIT_AUTHOR_GLOBS: usize = 32;
+
 /// When a file below this directory changes, the hook runs `update-ca-certificates`; when none
 /// did, it skips it (it costs 0.6–0.9 s per boot).
 pub const CA_DIR_GUEST: &str = "/usr/local/share/ca-certificates";
@@ -74,6 +84,12 @@ pub enum PlanError {
     GitIdentity {
         /// `user.name` or `user.email`.
         field: &'static str,
+        /// What is wrong.
+        reason: &'static str,
+    },
+    /// An author rule can't be written to a git config file.
+    #[error("git author rule {reason}")]
+    GitAuthorRule {
         /// What is wrong.
         reason: &'static str,
     },
@@ -145,6 +161,62 @@ impl GitIdentity {
     }
 }
 
+/// An author for the repositories that have a remote matching one of `globs`: git's
+/// `includeIf "hasconfig:remote.*.url:<glob>"`. The match is on any remote of the repository, is
+/// case-sensitive, and `pushurl` is ignored.
+///
+/// Rules go into the plan in git's order of precedence: when a repository matches several, the
+/// one written **last** wins, whatever the order of its remotes. The caller orders them, lowest
+/// priority first. The author is a convenience for the user's commits, not a security control:
+/// the guest can set any `user.email` in a repository.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitAuthorRule {
+    globs: Vec<String>,
+    author: GitIdentity,
+}
+
+impl GitAuthorRule {
+    /// Checks and wraps a rule.
+    ///
+    /// # Errors
+    ///
+    /// [`PlanError::GitAuthorRule`] when there is no glob, too many, or one is empty, too long or
+    /// holds a control character, a quote or a backslash (nothing a remote glob needs).
+    pub fn new(globs: Vec<String>, author: GitIdentity) -> Result<Self, PlanError> {
+        let bad = |reason| Err(PlanError::GitAuthorRule { reason });
+        if globs.is_empty() {
+            return bad("has no remote glob");
+        }
+        if globs.len() > MAX_GIT_AUTHOR_GLOBS {
+            return bad("has too many remote globs");
+        }
+        for glob in &globs {
+            if glob.is_empty() || glob.len() > 1024 {
+                return bad("has an empty or over-long remote glob");
+            }
+            if glob
+                .chars()
+                .any(|c| c.is_control() || c == '"' || c == '\\')
+            {
+                return bad("has a remote glob with a control character, quote or backslash");
+            }
+        }
+        Ok(Self { globs, author })
+    }
+
+    /// The remote globs.
+    #[must_use]
+    pub fn globs(&self) -> &[String] {
+        &self.globs
+    }
+
+    /// The author.
+    #[must_use]
+    pub fn author(&self) -> &GitIdentity {
+        &self.author
+    }
+}
+
 /// Where the hook finds `puddle-agent` and the port it waits for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentConfig {
@@ -206,6 +278,7 @@ pub struct BootPlanBuilder {
     files: Vec<GuestFile>,
     steps: Vec<GuestPath>,
     git: Option<GitIdentity>,
+    git_rules: Vec<GitAuthorRule>,
     agent: Option<AgentConfig>,
 }
 
@@ -220,6 +293,7 @@ impl BootPlan {
             files: Vec::new(),
             steps: Vec::new(),
             git: None,
+            git_rules: Vec::new(),
             agent: Some(AgentConfig::default()),
         }
     }
@@ -370,9 +444,18 @@ impl BootPlanBuilder {
         self
     }
 
-    /// Sets `user.name` and `user.email` for the sandbox.
+    /// Sets `user.name` and `user.email` for the sandbox: the author of a repository no
+    /// [`GitAuthorRule`] matches.
     pub fn git_identity(mut self, identity: GitIdentity) -> Self {
         self.git = Some(identity);
+        self
+    }
+
+    /// Adds an author for the repositories whose remotes match the rule's globs. Rules are
+    /// written in the order added, and git lets the last matching one win, so add the lowest
+    /// priority first. At most [`MAX_GIT_AUTHOR_RULES`] fit in a plan.
+    pub fn git_author_rule(mut self, rule: GitAuthorRule) -> Self {
+        self.git_rules.push(rule);
         self
     }
 
@@ -397,7 +480,8 @@ impl BootPlanBuilder {
     /// - [`PlanError::ReservedPath`], [`PlanError::UnsafePath`]: a file path is unusable;
     /// - [`PlanError::ReservedEnv`]: an env name starts with `PUDDLE_`;
     /// - [`PlanError::ImageValue`]: the image's `PATH` or ENTRYPOINT/CMD holds a NUL or newline;
-    /// - [`PlanError::StepNotInPlan`]: a step names no file of the plan.
+    /// - [`PlanError::StepNotInPlan`]: a step names no file of the plan;
+    /// - [`PlanError::GitAuthorRule`]: more than [`MAX_GIT_AUTHOR_RULES`] author rules.
     pub fn build(self) -> Result<BootPlan, PlanError> {
         if let Some((name, _)) = self
             .env
@@ -422,7 +506,13 @@ impl BootPlanBuilder {
             ));
             entry_env.push(guest_path(PATH_FILE_GUEST));
         }
-        files.push(git_config(self.git.as_ref()));
+        if self.git_rules.len() > MAX_GIT_AUTHOR_RULES {
+            return Err(PlanError::GitAuthorRule {
+                reason: "has more rules than a plan holds",
+            });
+        }
+        files.push(git_config(self.git.as_ref(), &self.git_rules));
+        files.extend(git_author_files(&self.git_rules));
         let port = self.agent.as_ref().map_or(DEFAULT_AGENT_PORT, |a| a.port);
         files.push(machine_settings(port));
         files.extend(self.files);
@@ -504,22 +594,63 @@ fn env_file(env: &GuestEnv) -> GuestFile {
     GuestFile::new(guest_path(ENV_FILE_GUEST), text.into_bytes())
 }
 
+/// A quoted git config value.
+fn git_quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// A `[user]` section.
+fn git_user(id: &GitIdentity) -> String {
+    format!(
+        "[user]\n\tname = {}\n\temail = {}\n",
+        git_quote(&id.name),
+        git_quote(&id.email)
+    )
+}
+
+/// The file name of the author of rule number `n` (counted from 1), relative to
+/// [`GIT_CONFIG_GUEST`]'s directory.
+fn git_author_name(n: usize) -> String {
+    format!("git-author-{n}.gitconfig")
+}
+
 /// puddle's git settings: `core.fsync=committed` always (ADR 0006: no lost commits on a VM
-/// kill), the identity when set. Never a credential helper.
-fn git_config(identity: Option<&GitIdentity>) -> GuestFile {
-    let quote = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+/// kill), the identity when set, then one `includeIf` per remote glob of each author rule, in
+/// order (git lets the last match win), each pointing at that rule's author file. Never a
+/// credential helper.
+fn git_config(identity: Option<&GitIdentity>, rules: &[GitAuthorRule]) -> GuestFile {
     let mut text = String::from(GENERATED);
     text.push_str("[core]\n\tfsync = committed\n");
     if let Some(id) = identity {
-        text.extend([
-            "[user]\n\tname = ",
-            &quote(&id.name),
-            "\n\temail = ",
-            &quote(&id.email),
-            "\n",
-        ]);
+        text.push_str(&git_user(id));
+    }
+    for (i, rule) in rules.iter().enumerate() {
+        for glob in &rule.globs {
+            text.push_str(&format!(
+                "[includeIf \"hasconfig:remote.*.url:{glob}\"]\n\tpath = {}\n",
+                git_author_name(i + 1)
+            ));
+        }
     }
     GuestFile::new(guest_path(GIT_CONFIG_GUEST), text.into_bytes())
+}
+
+/// The author file of each rule: only a `[user]` section (an included file may not define
+/// remotes, and needs nothing else).
+fn git_author_files(rules: &[GitAuthorRule]) -> Vec<GuestFile> {
+    rules
+        .iter()
+        .enumerate()
+        .map(|(i, rule)| {
+            GuestFile::new(
+                guest_path(&format!(
+                    "{GIT_AUTHOR_DIR_GUEST}/{}",
+                    git_author_name(i + 1)
+                )),
+                format!("{GENERATED}{}", git_user(&rule.author)).into_bytes(),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -671,6 +802,102 @@ mod tests {
             let body = String::from_utf8_lossy(f.contents()).to_lowercase();
             assert!(!body.contains("credential"), "{}", f.path());
         }
+    }
+
+    fn author(name: &str) -> GitIdentity {
+        GitIdentity::new(name, &format!("{}@example.org", name.to_lowercase())).unwrap()
+    }
+
+    fn rule(globs: &[&str], name: &str) -> GitAuthorRule {
+        GitAuthorRule::new(
+            globs.iter().map(|g| (*g).to_owned()).collect(),
+            author(name),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn author_rules_become_include_if_blocks_in_order_each_with_its_own_file() {
+        let plan = BootPlan::builder(&ImageConfig::default())
+            .git_identity(author("Ada"))
+            .git_author_rule(rule(
+                &["https://github.com/**", "https://*@github.com/**"],
+                "Bob",
+            ))
+            .git_author_rule(rule(&["https://github.com/acme/**"], "Cy"))
+            .build()
+            .unwrap();
+        assert_eq!(
+            text(&plan, GIT_CONFIG_GUEST),
+            format!(
+                "{GENERATED}[core]\n\tfsync = committed\n\
+                 [user]\n\tname = \"Ada\"\n\temail = \"ada@example.org\"\n\
+                 [includeIf \"hasconfig:remote.*.url:https://github.com/**\"]\n\tpath = git-author-1.gitconfig\n\
+                 [includeIf \"hasconfig:remote.*.url:https://*@github.com/**\"]\n\tpath = git-author-1.gitconfig\n\
+                 [includeIf \"hasconfig:remote.*.url:https://github.com/acme/**\"]\n\tpath = git-author-2.gitconfig\n"
+            )
+        );
+        assert_eq!(
+            text(&plan, "/etc/puddle/git-author-1.gitconfig"),
+            format!("{GENERATED}[user]\n\tname = \"Bob\"\n\temail = \"bob@example.org\"\n")
+        );
+        assert!(text(&plan, "/etc/puddle/git-author-2.gitconfig").contains("\"Cy\""));
+        // No rule file without a rule, and still no credential helper anywhere.
+        let none = BootPlan::builder(&ImageConfig::default()).build().unwrap();
+        assert!(
+            none.files()
+                .iter()
+                .all(|f| !f.path().as_str().contains("git-author"))
+        );
+        for f in plan.files() {
+            let body = String::from_utf8_lossy(f.contents()).to_lowercase();
+            assert!(!body.contains("credential"), "{}", f.path());
+        }
+    }
+
+    #[test]
+    fn author_rules_are_checked() {
+        let a = author("Ada");
+        let globs = |n: usize| (0..n).map(|i| format!("https://h{i}.example/**")).collect();
+        for (bad, why) in [
+            (GitAuthorRule::new(vec![], a.clone()), "no remote glob"),
+            (
+                GitAuthorRule::new(globs(MAX_GIT_AUTHOR_GLOBS + 1), a.clone()),
+                "too many",
+            ),
+            (GitAuthorRule::new(vec![String::new()], a.clone()), "empty"),
+            (
+                GitAuthorRule::new(vec!["a".repeat(1025)], a.clone()),
+                "over-long",
+            ),
+            (
+                GitAuthorRule::new(vec!["a\nb".into()], a.clone()),
+                "control",
+            ),
+            (GitAuthorRule::new(vec!["a\"b".into()], a.clone()), "quote"),
+            (
+                GitAuthorRule::new(vec!["a\\b".into()], a.clone()),
+                "backslash",
+            ),
+        ] {
+            let err = bad.unwrap_err();
+            assert!(
+                matches!(err, PlanError::GitAuthorRule { .. }),
+                "{why}: {err}"
+            );
+            assert!(err.to_string().starts_with("git author rule "), "{err}");
+        }
+        let ok = GitAuthorRule::new(globs(MAX_GIT_AUTHOR_GLOBS), a).unwrap();
+        assert_eq!(ok.globs().len(), MAX_GIT_AUTHOR_GLOBS);
+        assert_eq!(ok.author(), &author("Ada"));
+        let mut builder = BootPlan::builder(&ImageConfig::default());
+        for _ in 0..=MAX_GIT_AUTHOR_RULES {
+            builder = builder.git_author_rule(rule(&["https://x.example/**"], "Ada"));
+        }
+        assert!(matches!(
+            builder.build().unwrap_err(),
+            PlanError::GitAuthorRule { .. }
+        ));
     }
 
     #[test]

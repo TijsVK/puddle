@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use puddle_boot::{BootHook, BootPlan, GitIdentity, with_boot_mounts, write_assets};
-use puddle_ca::TrustBundle;
+use puddle_ca::{CaCertificate, TrustBundle};
 use puddle_certs::{CorporateRoots, GuestTrust};
 use puddle_compute::{FileMount, ImageConfig, SandboxSpec, VsockRoute};
 use puddle_guest_env::{ProxySettings, guest_proxy_config};
@@ -14,6 +14,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::{Proxy, Route};
 use puddle_types::{GuestEnv, ImageRef, MemoryMib, WorkspaceName};
 
+use crate::git_hosts::Authors;
 use crate::{GuestSettings, HostError};
 
 /// The guest vsock port the agent connects to; the route of every sandbox listens behind it.
@@ -29,8 +30,17 @@ pub(crate) struct BootKit {
     hook: BootHook,
     assets: Vec<FileMount>,
     agent: PathBuf,
-    trust: GuestTrust,
+    roots: CorporateRoots,
     git: Option<GitIdentity>,
+}
+
+/// What differs from one sandbox to the next, besides the image: the CA the sandbox's guest
+/// trusts, and who commits.
+pub(crate) struct GuestInputs<'a> {
+    /// This start's CA certificate (public), added to the guest's trust bundle.
+    pub(crate) ca: &'a CaCertificate,
+    /// The commit authors: the fallback and the rules by remote.
+    pub(crate) authors: &'a Authors,
 }
 
 impl BootKit {
@@ -63,8 +73,7 @@ impl BootKit {
             hook: BootHook::new().with_timeout(guest.boot_timeout),
             assets,
             agent,
-            // No per-sandbox CA yet: credential injection is not built.
-            trust: GuestTrust::new(roots, &TrustBundle::new()),
+            roots: roots.clone(),
             git: guest.git_identity.clone(),
         })
     }
@@ -80,21 +89,31 @@ impl BootKit {
         Ok(self.proxy.serve_route(listener, workspace.clone()))
     }
 
-    /// The boot plan and the environment for a sandbox of `image`.
-    pub(crate) fn plan(&self, image: &ImageConfig) -> Result<(BootPlan, GuestEnv), String> {
+    /// The boot plan and the environment for a sandbox of `image`. The same inputs give the same
+    /// plan, so running it again in the running guest changes only what `guest` changed.
+    pub(crate) fn plan(
+        &self,
+        image: &ImageConfig,
+        guest: &GuestInputs<'_>,
+    ) -> Result<(BootPlan, GuestEnv), String> {
         let proxy =
             guest_proxy_config(&ProxySettings::default(), &image.env).map_err(|e| e.to_string())?;
+        let trust = GuestTrust::new(&self.roots, &TrustBundle::new().with(guest.ca.clone()));
         let mut env = proxy.env;
-        env.extend(&self.trust.env());
+        env.extend(&trust.env());
         let mut builder = BootPlan::builder(image)
             .env(&env)
             .files(proxy.files)
-            .files(self.trust.guest_files());
-        if let Some(step) = self.trust.boot_step() {
+            .files(trust.guest_files());
+        if let Some(step) = trust.boot_step() {
             builder = builder.step(step);
         }
-        if let Some(git) = &self.git {
-            builder = builder.git_identity(git.clone());
+        // The first identity's author, else the one the host was configured with.
+        if let Some(author) = guest.authors.fallback.as_ref().or(self.git.as_ref()) {
+            builder = builder.git_identity(author.clone());
+        }
+        for rule in &guest.authors.rules {
+            builder = builder.git_author_rule(rule.clone());
         }
         let plan = builder.build().map_err(|e| e.to_string())?;
         Ok((plan, env))

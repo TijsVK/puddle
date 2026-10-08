@@ -30,14 +30,15 @@ use puddle_api::{
     Operation, RepoFindings, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
-use puddle_compute::{ComputeError, DiskSize, Runtime};
+use puddle_ca::CaCertificate;
+use puddle_compute::{ComputeError, DiskSize, ImageConfig, Runtime};
 use puddle_lifecycle::Lifecycle;
 use puddle_proxy::Route;
 use puddle_settings::{WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
-    Event, EventSink, ImageRef, MemoryMib, WorkspaceId, WorkspaceName, WorkspaceStatus,
+    Event, EventSink, GuestEnv, ImageRef, MemoryMib, WorkspaceId, WorkspaceName, WorkspaceStatus,
     WorkspaceStep,
 };
 use puddle_workspace::{Findings, Layout, Workspaces};
@@ -45,8 +46,24 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::HostError;
-use crate::boot::BootKit;
+use crate::boot::{BootKit, GuestInputs};
 use crate::files::{Stored, WorkspaceBook};
+use crate::git_hosts::{Authors, authors};
+use crate::injection::Injection;
+
+impl<R: Runtime + Clone> crate::changes::GitChanges for HostWorkspaces<R> {
+    fn decrypt_changed(&self, workspace: &WorkspaceName) -> Option<puddle_store::WorkspaceGit> {
+        Self::decrypt_changed(self, workspace)
+    }
+
+    async fn rewrite_authors(&self, workspace: WorkspaceName, git: puddle_store::WorkspaceGit) {
+        Self::rewrite_authors(self, &workspace, &git).await;
+    }
+
+    async fn all_git_changed(&self) {
+        Self::all_git_changed(self).await;
+    }
+}
 
 /// A [`Launcher`] for a host with no desktop shell: every attach says so.
 #[derive(Debug, Default, Clone, Copy)]
@@ -76,6 +93,7 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) settings: Arc<dyn puddle_api::SettingsRepo>,
     pub(crate) launcher: Arc<dyn Launcher>,
     pub(crate) book: WorkspaceBook,
+    pub(crate) injection: Arc<Injection>,
 }
 
 struct Slot {
@@ -94,6 +112,17 @@ struct State {
     closed: bool,
 }
 
+/// What the running guest was set up with, kept to set it up again with one thing changed.
+#[derive(Clone)]
+struct GuestState {
+    /// The image's config, so a plan can be rebuilt without pulling.
+    image: ImageConfig,
+    /// This start's CA certificate.
+    ca: CaCertificate,
+    /// The commit authors the guest holds now.
+    authors: Authors,
+}
+
 /// What a sandbox owns while this process serves it.
 struct Live<R: Runtime> {
     /// The egress route baked into the sandbox's spec; it outlives stops.
@@ -102,6 +131,11 @@ struct Live<R: Runtime> {
     /// The booted sandbox, while it runs.
     gated: Option<Arc<GatedSandbox<R::Sandbox>>>,
     ssh: Option<SshEndpoint>,
+    /// What the running guest was given at boot; `None` while it does not run.
+    guest: Option<GuestState>,
+    /// Held while the running guest's author files are rewritten, so two changes never run the
+    /// boot hook at once.
+    rewrite: Arc<tokio::sync::Mutex<()>>,
 }
 
 struct Inner<R: Runtime + Clone> {
@@ -114,6 +148,7 @@ struct Inner<R: Runtime + Clone> {
     settings: Arc<dyn puddle_api::SettingsRepo>,
     launcher: Arc<dyn Launcher>,
     book: WorkspaceBook,
+    injection: Arc<Injection>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -271,6 +306,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 settings: parts.settings,
                 launcher: parts.launcher,
                 book: parts.book,
+                injection: parts.injection,
                 state: Mutex::new(State {
                     slots,
                     closed: false,
@@ -512,7 +548,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// The image config of `image`, pulling it if needed.
-    async fn image_config(&self, image: &ImageRef) -> Result<puddle_compute::ImageConfig, String> {
+    async fn image_config(&self, image: &ImageRef) -> Result<ImageConfig, String> {
         self.inner
             .runtime
             .pull_image(image)
@@ -573,7 +609,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             Err(e) => Err(e.clone()),
         };
-        let (plan, env) = match config.and_then(|c| inner.kit.plan(&c)) {
+        let (plan, env, guest) = match config.and_then(|c| self.plan_guest(name, c)) {
             Ok(ready) => ready,
             Err(reason) => {
                 self.abort_attachment(attachment).await;
@@ -585,6 +621,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let route = match inner.kit.route(name) {
             Ok(route) => route,
             Err(reason) => {
+                inner.injection.end(name);
                 self.abort_attachment(attachment).await;
                 return Err(reason);
             }
@@ -606,15 +643,143 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                         gate,
                         gated: Some(Arc::new(gated)),
                         ssh: None,
+                        guest: Some(guest),
+                        rewrite: Arc::default(),
                     },
                 );
                 Ok(())
             }
             Err(e) => {
+                inner.injection.end(name);
                 self.abort_attachment(attachment).await;
                 route.shutdown().await;
                 Err(boot_message(&e))
             }
+        }
+    }
+
+    /// Makes this start's CA for `name`, registers what it decrypts and plans the guest's boot
+    /// with the CA in its trust and the authors of the workspace's identities. A start that fails
+    /// after this must call `Injection::end`.
+    fn plan_guest(
+        &self,
+        name: &WorkspaceName,
+        image: ImageConfig,
+    ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
+        let inner = &self.inner;
+        let began = inner.injection.begin(name)?;
+        let state = GuestState {
+            image,
+            ca: began.certificate,
+            authors: authors(&began.git),
+        };
+        match inner.kit.plan(
+            &state.image,
+            &GuestInputs {
+                ca: &state.ca,
+                authors: &state.authors,
+            },
+        ) {
+            Ok((plan, env)) => Ok((plan, env, state)),
+            Err(reason) => {
+                inner.injection.end(name);
+                Err(reason)
+            }
+        }
+    }
+
+    /// A change to `name`'s Git settings (an identity attached, detached or edited, a coverage
+    /// changed): what the running workspace decrypts follows at once, and its guest gets the
+    /// authors of the new identities. A workspace that does not run reads the settings at its
+    /// next start.
+    pub(crate) async fn git_changed(&self, name: &WorkspaceName) {
+        if let Some(git) = self.decrypt_changed(name) {
+            self.rewrite_authors(name, &git).await;
+        }
+    }
+
+    /// Recomputes what the running `name` decrypts from the database: the next connection sees
+    /// the new set. The settings of a workspace that does not run, or that cannot be read, change
+    /// nothing here.
+    pub(crate) fn decrypt_changed(
+        &self,
+        name: &WorkspaceName,
+    ) -> Option<puddle_store::WorkspaceGit> {
+        let injection = &self.inner.injection;
+        let git = match injection.git(name) {
+            Ok(git) => git,
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "what the workspace decrypts is not updated");
+                return None;
+            }
+        };
+        injection.refresh(name, &git).then_some(git)
+    }
+
+    /// Runs the boot plan again in the running guest when its authors differ from what the guest
+    /// holds (the hook is idempotent: only the author files change).
+    pub(crate) async fn rewrite_authors(
+        &self,
+        name: &WorkspaceName,
+        git: &puddle_store::WorkspaceGit,
+    ) {
+        let inner = &self.inner;
+        let wanted = authors(git);
+        let rewrite = {
+            let live = inner.live.lock().await;
+            match live.get(name) {
+                Some(entry) => Arc::clone(&entry.rewrite),
+                None => return,
+            }
+        };
+        let _one_at_a_time = rewrite.lock().await;
+        let (gated, guest) = {
+            let live = inner.live.lock().await;
+            match live
+                .get(name)
+                .and_then(|e| Some((e.gated.clone()?, e.guest.clone()?)))
+            {
+                Some(running) => running,
+                // Not booted yet (the start reads the settings itself, and `settle` looks again)
+                // or stopped.
+                None => return,
+            }
+        };
+        if guest.authors == wanted {
+            return;
+        }
+        let planned = inner.kit.plan(
+            &guest.image,
+            &GuestInputs {
+                ca: &guest.ca,
+                authors: &wanted,
+            },
+        );
+        let plan = match planned {
+            Ok((plan, _)) => plan,
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the commit authors in the workspace are not updated");
+                return;
+            }
+        };
+        match inner.kit.hook().run(gated.ungated(), &plan).await {
+            Ok(_) => {
+                if let Some(entry) = inner.live.lock().await.get_mut(name)
+                    && let Some(state) = entry.guest.as_mut()
+                {
+                    state.authors = wanted;
+                }
+            }
+            Err(failure) => {
+                tracing::warn!(workspace = %name, %failure, "the commit authors in the workspace are not updated");
+            }
+        }
+    }
+
+    /// Looks at every running workspace again (after events were missed).
+    pub(crate) async fn all_git_changed(&self) {
+        for name in self.inner.injection.running_workspaces() {
+            self.git_changed(&name).await;
         }
     }
 
@@ -659,6 +824,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if self.direct_ssh_allowed(name) {
             self.open_ssh(name, gated).await;
         }
+        // A change made while the guest booted found no guest to rewrite: look again.
+        self.git_changed(name).await;
         Ok(())
     }
 
@@ -758,6 +925,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// handle. The route stays (the sandbox may start again); `drop_route` ends it too.
     async fn quiesce(&self, name: &WorkspaceName, drop_route: bool) {
         self.inner.lifecycle.release(&name.sandbox_name());
+        // The CA belongs to one start: a stopped or failed sandbox decrypts nothing.
+        self.inner.injection.end(name);
         let (ssh, route) = {
             let mut live = self.inner.live.lock().await;
             if drop_route {
@@ -769,6 +938,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 match live.get_mut(name) {
                     Some(entry) => {
                         entry.gated = None;
+                        entry.guest = None;
                         (entry.ssh.take(), None)
                     }
                     None => (None, None),
@@ -900,7 +1070,31 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let name = &record.name;
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
         let config = self.image_config(&image).await?;
-        let (plan, _) = inner.kit.plan(&config)?;
+        let (plan, _, guest) = self.plan_guest(name, config)?;
+        let started = self.start_planned(record, &plan).await;
+        match started {
+            Ok(gated) => {
+                if let Some(live) = inner.live.lock().await.get_mut(name) {
+                    live.gated = Some(Arc::new(gated));
+                    live.guest = Some(guest);
+                }
+                Ok(())
+            }
+            Err(reason) => {
+                inner.injection.end(name);
+                Err(reason)
+            }
+        }
+    }
+
+    /// Starts the stopped sandbox of `record` through the boot hook with `plan`.
+    async fn start_planned(
+        &self,
+        record: &WorkspaceRecord,
+        plan: &puddle_boot::BootPlan,
+    ) -> Result<GatedSandbox<R::Sandbox>, String> {
+        let inner = &self.inner;
+        let name = &record.name;
         let gate = inner
             .live
             .lock()
@@ -914,16 +1108,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .set_memory(&name.sandbox_name(), record.memory)
             .await
             .map_err(|e| e.to_string())?;
-        let gated = inner
+        inner
             .kit
             .hook()
-            .start(&inner.runtime, &name.sandbox_name(), &plan, &gate)
+            .start(&inner.runtime, &name.sandbox_name(), plan, &gate)
             .await
-            .map_err(|e| boot_message(&e))?;
-        if let Some(live) = inner.live.lock().await.get_mut(name) {
-            live.gated = Some(Arc::new(gated));
-        }
-        Ok(())
+            .map_err(|e| boot_message(&e))
     }
 
     async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), String> {

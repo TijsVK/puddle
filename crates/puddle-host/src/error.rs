@@ -32,6 +32,9 @@ pub enum HostError {
     /// The host's corporate root certificates could not be read.
     #[error("cannot read the host's certificate stores: {0}")]
     Roots(String),
+    /// puddle's TLS client, which verifies the servers of decrypted hosts, could not be built.
+    #[error("cannot set up TLS toward decrypted hosts: {0}")]
+    Tls(#[from] puddle_upstream::TlsSetupError),
     /// The runtime could not be opened.
     #[error("cannot open the sandbox runtime: {0}")]
     Compute(#[from] puddle_compute::ComputeError),

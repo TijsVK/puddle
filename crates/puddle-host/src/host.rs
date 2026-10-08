@@ -26,11 +26,14 @@ use puddle_compute::{Runtime, SandboxInfo};
 use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
-use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Upstream};
+use puddle_proxy::{
+    Injector, NoInjection, Proxy, ProxyUrl, PullProxy, PullRoute, Terminations, Upstream,
+};
+use puddle_secrets::{KeyringStore, SecretCache, Sources, ToolPaths};
 use puddle_settings::resolve;
 use puddle_store::{DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
 use puddle_types::{EventSink, WorkspaceName, WorkspaceStatus};
-use puddle_upstream::{AuthList, BasicAuth, Chain, Discovery, Watching, system_auth};
+use puddle_upstream::{AuthList, BasicAuth, Chain, Discovery, TlsClient, Watching, system_auth};
 use puddle_workspace::Workspaces;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 use url::Url;
@@ -38,6 +41,7 @@ use url::Url;
 use crate::boot::BootKit;
 use crate::doctor::system_doctor;
 use crate::files::{FileSettings, WorkspaceBook};
+use crate::injection::{Injection, InjectorFactory, InjectorInputs, forward_sign_in_needed};
 use crate::workspaces::{NoLauncher, Parts, known_ids};
 use crate::{HostConfig, HostError, HostWorkspaces, Platform};
 
@@ -256,6 +260,9 @@ pub struct HostOptions {
     pub launcher: Arc<dyn Launcher>,
     /// The proxy discovery to use instead of the system's (tests).
     pub discovery: Option<Arc<Discovery>>,
+    /// Builds the injector that decides, for every request on a decrypted host, which credential
+    /// is added. Without one nothing is added (decrypted requests pass as the guest sent them).
+    pub injector: Option<InjectorFactory>,
 }
 
 impl Default for HostOptions {
@@ -263,6 +270,7 @@ impl Default for HostOptions {
         Self {
             launcher: Arc::new(NoLauncher),
             discovery: None,
+            injector: None,
         }
     }
 }
@@ -291,6 +299,10 @@ struct Background {
     _watching: Option<Watching>,
     // Tells the API's event stream about each new network epoch; ended with the rest.
     _network_events: AbortOnDrop,
+    // Applies a change of a running workspace's identities to what it decrypts and its authors.
+    _git_changes: AbortOnDrop,
+    // Turns a read that needs a sign-in into the user's notice.
+    _sign_in_notices: AbortOnDrop,
 }
 
 /// Aborts its task when dropped, so a forwarder never outlives the host.
@@ -398,9 +410,46 @@ impl<R: Runtime + Clone> Host<R> {
         } = open_state(&config.paths, &events, &clock)?;
         steps.push(Step::StoreOpened);
 
+        // Credential injection: the secrets read from the user's own sign-ins, the injector that
+        // uses them, and what each workspace decrypts (the proxy asks the registry per connection).
+        let secrets = Arc::new(SecretCache::new(Sources::new(
+            ToolPaths::resolve(),
+            Arc::new(KeyringStore),
+        )));
+        let injector: Arc<dyn Injector> = options.injector.as_ref().map_or_else(
+            || Arc::new(NoInjection) as Arc<dyn Injector>,
+            |make| {
+                make(&InjectorInputs {
+                    store: store.clone(),
+                    secrets: secrets.clone(),
+                })
+            },
+        );
+        let terminations = Arc::new(Terminations::new());
+        let injection = Arc::new(Injection::new(
+            terminations.clone(),
+            injector,
+            store.clone(),
+        ));
+        // Verifies the real servers of decrypted hosts: the platform's roots plus the company's.
+        let tls = TlsClient::new(
+            roots
+                .certificates()
+                .iter()
+                .map(|root| rustls::pki_types::CertificateDer::from(root.der().to_vec())),
+        )?;
+
         // The way out: the company network (discovery, sign-in as the user, then Basic) for the
         // sandbox proxy and the pull proxy alike.
-        let egress = Egress::build(&config, &options, &settings, &endpoints, &store, &events);
+        let egress = Egress::build(
+            &config,
+            &options,
+            &settings,
+            &endpoints,
+            &store,
+            &events,
+            (terminations, tls),
+        );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
         let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);
         let pull_url = pull.proxy_url();
@@ -456,10 +505,16 @@ impl<R: Runtime + Clone> Host<R> {
                 settings: settings.clone(),
                 launcher: options.launcher,
                 book,
+                injection,
             },
             stored,
             &status,
         )?;
+        let git_changes = AbortOnDrop(crate::changes::follow(events.subscribe(), service.clone()));
+        let sign_in_notices = AbortOnDrop(forward_sign_in_needed(
+            &secrets,
+            events.clone() as Arc<dyn EventSink>,
+        ));
         steps.push(Step::WorkspacesReady);
 
         let services = Services::new(store.clone(), settings, events.clone(), clock)
@@ -487,6 +542,8 @@ impl<R: Runtime + Clone> Host<R> {
                 pull,
                 _watching: watching,
                 _network_events: network_events,
+                _git_changes: git_changes,
+                _sign_in_notices: sign_in_notices,
             })),
             steps: Mutex::new(steps),
             reconcile: report,
@@ -669,6 +726,7 @@ impl Egress {
         endpoints: &PuddleEndpoints,
         store: &Arc<Store>,
         events: &Arc<EventHub>,
+        (terminations, tls): (Arc<Terminations>, TlsClient),
     ) -> Self {
         let discovery = options.discovery.clone().unwrap_or_else(|| {
             Discovery::new(
@@ -691,7 +749,8 @@ impl Egress {
             Proxy::new(store.clone(), events.clone() as Arc<dyn EventSink>)
                 .with_connection_log(store.clone())
                 .with_address_check(Arc::new(guard))
-                .with_upstream(upstream.clone()),
+                .with_upstream(upstream.clone())
+                .with_termination(terminations, tls),
         );
         Self {
             proxy,

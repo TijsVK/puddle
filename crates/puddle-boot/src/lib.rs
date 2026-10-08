@@ -68,6 +68,7 @@ pub use hook::{BootError, BootFailure, BootHook, BootReport, STDERR_LIMIT};
 pub use machine::{MACHINE_SETTINGS_GUEST, machine_settings};
 pub use plan::{
     AgentConfig, BootPlan, BootPlanBuilder, CA_DIR_GUEST, DEFAULT_AGENT_PORT, ENV_FILE_GUEST,
-    GIT_CONFIG_GUEST, GitIdentity, PATH_FILE_GUEST, PLAN_HEADER, PlanError,
+    GIT_AUTHOR_DIR_GUEST, GIT_CONFIG_GUEST, GitAuthorRule, GitIdentity, MAX_GIT_AUTHOR_GLOBS,
+    MAX_GIT_AUTHOR_RULES, PATH_FILE_GUEST, PLAN_HEADER, PlanError,
 };
 pub use puddle_types::ApplyKind;

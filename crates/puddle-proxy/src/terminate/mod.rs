@@ -125,7 +125,9 @@ impl Termination {
         &self.set
     }
 
-    pub(crate) fn ca(&self) -> &Arc<WorkspaceCa> {
+    /// The CA that certifies every host of the set, for this workspace alone.
+    #[must_use]
+    pub fn ca(&self) -> &Arc<WorkspaceCa> {
         &self.ca
     }
 

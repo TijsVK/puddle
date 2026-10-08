@@ -36,7 +36,10 @@ impl EventHub {
         self.tx.receiver_count()
     }
 
-    pub(crate) fn subscribe(&self) -> broadcast::Receiver<Event> {
+    /// A receiver of every event emitted from now on. One that falls behind by more than the
+    /// buffer is told how many it missed (`RecvError::Lagged`) and should look at the state again.
+    #[must_use]
+    pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.tx.subscribe()
     }
 }
