@@ -2439,7 +2439,13 @@ async fn no_file_in_the_data_folder_holds_a_key_or_the_ca_whether_the_workspace_
     api.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
     check("stopped");
+    // A workspace still running at shutdown loses its CA with the host's routes.
+    api.post(&format!("/api/workspaces/{}/start", "acme"), "")
+        .await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(host.workspaces().termination(&name("acme")).is_some());
     host.shutdown().await;
+    assert!(host.workspaces().termination(&name("acme")).is_none());
     check("after shutdown");
 }
 

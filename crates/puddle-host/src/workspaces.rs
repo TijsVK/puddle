@@ -407,6 +407,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Closes what the sandboxes own: SSH endpoints and egress routes. The sandboxes are
     /// stopped by the [`Lifecycle`] before this.
     pub(crate) async fn release_all(&self) {
+        // The sandboxes are stopped, so no CA is needed any more.
+        for name in self.inner.injection.running_workspaces() {
+            self.inner.injection.end(&name);
+        }
         let live = std::mem::take(&mut *self.inner.live.lock().await);
         for (_, entry) in live {
             let Live { route, ssh, .. } = entry;
