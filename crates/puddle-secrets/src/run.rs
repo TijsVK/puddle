@@ -87,24 +87,31 @@ pub(crate) struct Output {
     pub(crate) stdout: Zeroizing<Vec<u8>>,
 }
 
-/// Runs `program` with fixed `args`, `stdin` and the prompt-suppressing environment. Never inherits
-/// a console, a terminal or a prompt. Standard error is discarded.
-pub(crate) async fn run(
-    tool: Tool,
-    program: &Path,
-    args: &[&str],
-    stdin: Option<&[u8]>,
-    timeout: Duration,
-) -> Result<Output, SourceError> {
+/// Whether the user is at the screen to answer what a tool opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Prompts {
+    /// Every prompt, window and askpass off: a request from a workspace.
+    Never,
+    /// Git Credential Manager may open its own window or browser: the user just clicked Sign in.
+    /// `gh` stays non-interactive (it prints a code instead of asking).
+    UserPresent,
+}
+
+/// A command with the environment every fixed invocation gets: no console window and, unless the
+/// user is present, no prompt of any kind.
+pub(crate) fn command(program: &Path, prompts: Prompts) -> Command {
     let mut cmd = Command::new(program);
-    cmd.args(args)
-        .current_dir(std::env::temp_dir())
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+    cmd.current_dir(std::env::temp_dir())
         .kill_on_drop(true)
-        // Git and Git Credential Manager: no terminal prompt, no GUI prompt, no askpass program.
-        .env("GCM_INTERACTIVE", "never")
+        // Git and Git Credential Manager: no terminal prompt and no askpass program; no GUI
+        // prompt either unless the user is present.
+        .env(
+            "GCM_INTERACTIVE",
+            match prompts {
+                Prompts::Never => "never",
+                Prompts::UserPresent => "true",
+            },
+        )
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "")
         .env("SSH_ASKPASS", "")
@@ -120,14 +127,50 @@ pub(crate) async fn run(
         // CREATE_NO_WINDOW: a console tool must not flash a window on the user's desktop.
         cmd.creation_flags(0x0800_0000);
     }
-    let mut child = cmd.spawn().map_err(|err| {
-        tracing::debug!(tool = tool.name(), kind = ?err.kind(), "could not start the tool");
-        if err.kind() == std::io::ErrorKind::NotFound {
-            SourceError::ToolMissing(tool)
+    cmd
+}
+
+/// What starting a tool failed with.
+pub(crate) fn spawn_error(tool: Tool, err: &std::io::Error) -> SourceError {
+    tracing::debug!(tool = tool.name(), kind = ?err.kind(), "could not start the tool");
+    if err.kind() == std::io::ErrorKind::NotFound {
+        SourceError::ToolMissing(tool)
+    } else {
+        SourceError::CouldNotRun(tool)
+    }
+}
+
+/// Runs `program` with fixed `args`, `stdin` and the prompt-suppressing environment. Never inherits
+/// a console, a terminal or a prompt. Standard error is discarded.
+pub(crate) async fn run(
+    tool: Tool,
+    program: &Path,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<Output, SourceError> {
+    run_with(Prompts::Never, tool, program, args, stdin, timeout).await
+}
+
+/// [`run`], with `prompts` saying whether the user is present.
+pub(crate) async fn run_with(
+    prompts: Prompts,
+    tool: Tool,
+    program: &Path,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<Output, SourceError> {
+    let mut cmd = command(program, prompts);
+    cmd.args(args)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
         } else {
-            SourceError::CouldNotRun(tool)
-        }
-    })?;
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = cmd.spawn().map_err(|err| spawn_error(tool, &err))?;
     if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
         // A tool that exits before reading its input is not an error here: its status says so.
         let _ = pipe.write_all(bytes).await;

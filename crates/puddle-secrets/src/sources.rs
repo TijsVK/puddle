@@ -194,7 +194,7 @@ pub fn pasted_token(text: &str) -> Result<Secret, SourceError> {
 /// Reads `git credential fill` output. The answer is used only when it names the host and path
 /// that were asked for (and the account, when one was): a helper that answered for another entry
 /// is the failure this guards against.
-fn parse_fill(
+pub(crate) fn parse_fill(
     text: &str,
     host: &HostName,
     path: &UrlPath,

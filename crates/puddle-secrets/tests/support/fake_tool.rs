@@ -10,6 +10,7 @@
 //! sleep_ms=0
 //! echo_stdin=1           <- print the standard input first
 //! stdout=password=x\n    <- `\n` is a newline
+//! stderr=code\n         <- printed (and flushed) before the sleep, as `gh` prints its prompt
 //! ```
 //!
 //! Every call appends the arguments, the standard input and the prompt-related environment to
@@ -53,14 +54,16 @@ fn main() {
         env("GH_PROMPT_DISABLED"),
     );
 
-    let (mut exit, mut sleep_ms, mut echo, mut stdout) = (0, 0, false, String::new());
+    let (mut exit, mut sleep_ms, mut echo) = (0, 0, false);
+    let (mut stdout, mut stderr) = (String::new(), String::new());
     let mut active = false;
     for line in behaviour.lines() {
         if let Some(rest) = line.strip_prefix('[') {
             let needle = rest.trim_end_matches(']');
             active = needle.is_empty() || joined.contains(needle);
             if active {
-                (exit, sleep_ms, echo, stdout) = (0, 0, false, String::new());
+                (exit, sleep_ms, echo) = (0, 0, false);
+                (stdout, stderr) = (String::new(), String::new());
             }
         } else if active {
             match line.split_once('=') {
@@ -68,10 +71,13 @@ fn main() {
                 Some(("sleep_ms", v)) => sleep_ms = v.parse().unwrap_or(0),
                 Some(("echo_stdin", v)) => echo = v == "1",
                 Some(("stdout", v)) => stdout = unescape(v),
+                Some(("stderr", v)) => stderr = unescape(v),
                 _ => {}
             }
         }
     }
+    eprint!("{stderr}");
+    let _ = std::io::stderr().flush();
     if sleep_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
     }

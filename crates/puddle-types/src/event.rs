@@ -160,6 +160,30 @@ pub enum Event {
         /// The workspace.
         workspace: WorkspaceName,
     },
+    /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
+    /// or the sign-in ran out). The user signs in from puddle; a request never opens a sign-in
+    /// window. Global: every subscriber gets it. Names only, never a value.
+    CredentialSignInNeeded {
+        /// The Git host the workspace was talking to.
+        host: String,
+        /// The source, as one line of names (`gh account me on github.com`).
+        source: String,
+    },
+    /// A push or a fetch was refused because the workspace's repository table does not allow it.
+    /// `host`, `owner` and `repo` are the table's spelling of the repository (lower-case, no
+    /// `.git`), so the notice can add the row as it is.
+    GitAccessDenied {
+        /// The workspace that tried.
+        workspace: WorkspaceName,
+        /// The Git host.
+        host: String,
+        /// The user or organisation.
+        owner: String,
+        /// `repo`, or `project/repo` on Azure DevOps.
+        repo: String,
+        /// What was refused.
+        access: GitAccess,
+    },
     /// New audit records were committed. `id` is the newest record's id, so a client that holds
     /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit,
     /// not per record. Global: every subscriber gets it.
@@ -197,6 +221,17 @@ pub struct PendingSummary {
     pub last_seen: u64,
     /// Requests the row stands for.
     pub attempts: u64,
+}
+
+/// What a workspace's repository table refused, as [`Event::GitAccessDenied`] reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub enum GitAccess {
+    /// A push (`git-receive-pack`).
+    Push,
+    /// A fetch or clone (`git-upload-pack`).
+    Pull,
 }
 
 /// How a pending request ended.
@@ -280,10 +315,12 @@ impl Event {
             | Self::PendingUpdated { workspace, .. }
             | Self::PendingClosed { workspace, .. }
             | Self::SuppressionChanged { workspace, .. }
+            | Self::GitAccessDenied { workspace, .. }
             | Self::WorkspaceGitChanged { workspace } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
             | Self::IdentitiesChanged {}
+            | Self::CredentialSignInNeeded { .. }
             | Self::AuditAppended { .. }
             | Self::NetworkChanged { .. } => None,
         }
@@ -564,6 +601,46 @@ mod tests {
     }
 
     #[test]
+    fn credential_and_git_access_events_have_fixed_shapes() {
+        for (event, json, workspace) in [
+            (
+                Event::CredentialSignInNeeded {
+                    host: "github.com".into(),
+                    source: "gh account me on github.com".into(),
+                },
+                r#"{"type":"credential_sign_in_needed","host":"github.com","source":"gh account me on github.com"}"#,
+                None,
+            ),
+            (
+                Event::GitAccessDenied {
+                    workspace: name(),
+                    host: "github.com".into(),
+                    owner: "acme".into(),
+                    repo: "web-shop".into(),
+                    access: GitAccess::Pull,
+                },
+                r#"{"type":"git_access_denied","workspace":"box","host":"github.com","owner":"acme","repo":"web-shop","access":"pull"}"#,
+                Some(name()),
+            ),
+            (
+                Event::GitAccessDenied {
+                    workspace: name(),
+                    host: "dev.azure.com".into(),
+                    owner: "acme".into(),
+                    repo: "proj/web".into(),
+                    access: GitAccess::Push,
+                },
+                r#"{"type":"git_access_denied","workspace":"box","host":"dev.azure.com","owner":"acme","repo":"proj/web","access":"push"}"#,
+                Some(name()),
+            ),
+        ] {
+            assert_eq!(serde_json::to_string(&event).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+            assert_eq!(event.workspace(), workspace.as_ref());
+        }
+    }
+
+    #[test]
     fn per_workspace_json_is_unchanged_by_global_events() {
         // Events are not persisted today, but SSE clients parse them: the wire shape of
         // existing variants must stay exactly as it was (ADR 0002).
@@ -613,6 +690,8 @@ mod tests {
                 "rules_changed",
                 "identities_changed",
                 "workspace_git_changed",
+                "credential_sign_in_needed",
+                "git_access_denied",
                 "audit_appended",
                 "network_changed"
             ]

@@ -36,8 +36,8 @@ pub use connection::{
 };
 pub use error::ValidationError;
 pub use event::{
-    CollectingSink, Event, EventSink, NullSink, PendingEnd, PendingSummary, WorkspaceStatus,
-    WorkspaceStep,
+    CollectingSink, Event, EventSink, GitAccess, NullSink, PendingEnd, PendingSummary,
+    WorkspaceStatus, WorkspaceStep,
 };
 pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};
 pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
