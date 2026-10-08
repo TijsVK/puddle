@@ -6,13 +6,18 @@
 mod support;
 
 use std::fmt::Write as _;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use puddle_inject::testing::World;
-use puddle_proxy::InjectDecision;
-use puddle_secrets::{SourceError, SourceSpec, Tool};
+use puddle_inject::testing::{StaticSettings, World};
+use puddle_inject::{CredentialSource, GitInjector, StoreSettings};
+use puddle_proxy::{InjectContext, InjectDecision, Injector as _, RequestView};
+use puddle_secrets::{
+    Credential, Fetch, Fetched, Secret, SecretCache, SourceError, SourceSpec, Tool,
+};
 use puddle_store::WorkspaceGit;
-use puddle_types::{Event, GitAccess};
+use puddle_types::{Event, GitAccess, Host};
 use support::{Ask as _, basic, injected, refusal};
 
 const FETCH: &str = "/acme/web.git/info/refs?service=git-upload-pack";
@@ -438,21 +443,21 @@ async fn two_candidates_are_refused_never_guessed() {
         w.store.identity(b.id).unwrap(),
     ];
     git.only_push_listed = false;
-    let settings = puddle_inject::testing::StaticSettings::new(git);
-    let injector = puddle_inject::GitInjector::new(
+    let settings = StaticSettings::new(git);
+    let injector = GitInjector::new(
         w.workspace.clone(),
         settings,
         w.credentials.clone(),
         w.events.clone(),
     );
-    let host = puddle_types::Host::parse_normalised("github.com").unwrap();
-    let context = puddle_proxy::InjectContext {
+    let host = Host::parse_normalised("github.com").unwrap();
+    let context = InjectContext {
         workspace: &w.workspace,
         host: &host,
     };
     let lines = vec!["host: github.com".to_owned()];
-    let view = puddle_proxy::RequestView::new("GET", "/acme/web.git/info/refs", &lines);
-    let decision = puddle_proxy::Injector::decide(&injector, &context, &view).await;
+    let view = RequestView::new("GET", "/acme/web.git/info/refs", &lines);
+    let decision = injector.decide(&context, &view).await;
     let (status, code, message) = refusal(&decision);
     assert_eq!((status, code), (409, "credential_ambiguous"));
     assert_eq!(
@@ -597,20 +602,20 @@ async fn a_credential_for_somewhere_else_is_never_sent() {
     let mut git = WorkspaceGit::unconfigured();
     git.identities = vec![identity];
     git.only_push_listed = false;
-    let injector = puddle_inject::GitInjector::new(
+    let injector = GitInjector::new(
         w.workspace.clone(),
-        puddle_inject::testing::StaticSettings::new(git),
+        StaticSettings::new(git),
         w.credentials.clone(),
         w.events.clone(),
     );
-    let host = puddle_types::Host::parse_normalised("github.com").unwrap();
-    let context = puddle_proxy::InjectContext {
+    let host = Host::parse_normalised("github.com").unwrap();
+    let context = InjectContext {
         workspace: &w.workspace,
         host: &host,
     };
     let lines = vec!["host: github.com".to_owned()];
-    let view = puddle_proxy::RequestView::new("GET", "/acme/web.git/info/refs", &lines);
-    let decision = puddle_proxy::Injector::decide(&injector, &context, &view).await;
+    let view = RequestView::new("GET", "/acme/web.git/info/refs", &lines);
+    let decision = injector.decide(&context, &view).await;
     let (status, code, message) = refusal(&decision);
     assert_eq!((status, code), (502, "credential_unavailable"));
     assert!(message.contains("is not for github.com/acme"), "{message}");
@@ -621,30 +626,29 @@ async fn a_credential_for_somewhere_else_is_never_sent() {
 #[tokio::test]
 async fn settings_that_cannot_be_read_are_a_502_and_nothing_goes_out() {
     let w = World::new();
-    let settings = puddle_inject::testing::StaticSettings::new(WorkspaceGit::unconfigured());
+    let settings = StaticSettings::new(WorkspaceGit::unconfigured());
     settings.fail("the database is locked");
-    let injector = puddle_inject::GitInjector::new(
+    let injector = GitInjector::new(
         w.workspace.clone(),
         settings,
         w.credentials.clone(),
         w.events.clone(),
     );
-    let host = puddle_types::Host::parse_normalised("github.com").unwrap();
-    let context = puddle_proxy::InjectContext {
+    let host = Host::parse_normalised("github.com").unwrap();
+    let context = InjectContext {
         workspace: &w.workspace,
         host: &host,
     };
     let lines = vec!["host: github.com".to_owned()];
-    let view = puddle_proxy::RequestView::new("GET", "/acme/web.git/info/refs", &lines);
-    let (status, code, message) =
-        refusal(&puddle_proxy::Injector::decide(&injector, &context, &view).await);
+    let view = RequestView::new("GET", "/acme/web.git/info/refs", &lines);
+    let (status, code, message) = refusal(&injector.decide(&context, &view).await);
     assert_eq!((status, code), (502, "git_settings_unavailable"));
     assert!(message.contains("the database is locked"), "{message}");
     // A path that is not Git never asks for the settings.
     let lines = vec!["host: github.com".to_owned()];
-    let view = puddle_proxy::RequestView::new("GET", "/login", &lines);
+    let view = RequestView::new("GET", "/login", &lines);
     assert!(matches!(
-        puddle_proxy::Injector::decide(&injector, &context, &view).await,
+        injector.decide(&context, &view).await,
         InjectDecision::PassThrough
     ));
 }
@@ -672,7 +676,7 @@ async fn no_refusal_or_log_line_carries_a_secret() {
 
 #[test]
 fn the_injector_prints_no_settings() {
-    let w = World::new();
+    let w = World::default();
     assert_eq!(
         format!("{:?}", w.injector),
         "GitInjector { workspace: WorkspaceName(\"box\"), .. }"
@@ -687,6 +691,111 @@ async fn forgetting_and_reading_go_through_the_credential_source() {
     let before = w.credentials.reads();
     let _ = w.decide("github.com", "GET", FETCH, &[]).await;
     assert_eq!(w.credentials.reads(), before + 1);
-    puddle_inject::CredentialSource::forget(&*w.credentials, source);
+    CredentialSource::forget(&*w.credentials, source);
     assert_eq!(w.credentials.forgotten(), std::slice::from_ref(source));
+}
+
+#[tokio::test]
+async fn a_flood_of_different_refusals_raises_a_bounded_number_of_notices() {
+    tokio::time::pause();
+    let w = world();
+    for n in 0..300 {
+        let target = format!("/acme/other{n}.git/git-receive-pack");
+        let decision = w.decide("github.com", "POST", &target, &[]).await;
+        assert_eq!(refusal(&decision).1, "push_denied");
+    }
+    assert_eq!(w.events.take().len(), 256, "the notices stop at the bound");
+    // Past their window the old ones are forgotten and new ones are raised again.
+    tokio::time::advance(Duration::from_secs(11)).await;
+    let _ = w
+        .decide(
+            "github.com",
+            "POST",
+            "/acme/another.git/git-receive-pack",
+            &[],
+        )
+        .await;
+    assert_eq!(w.events.take().len(), 1);
+}
+
+#[tokio::test]
+async fn settings_a_test_changes_by_hand_apply_to_the_next_request() {
+    let w = World::new();
+    let settings = StaticSettings::new(WorkspaceGit::unconfigured());
+    let injector = GitInjector::new(
+        w.workspace.clone(),
+        settings.clone(),
+        w.credentials.clone(),
+        w.events.clone(),
+    );
+    let host = Host::parse_normalised("github.com").unwrap();
+    let context = InjectContext {
+        workspace: &w.workspace,
+        host: &host,
+    };
+    let lines = vec!["host: github.com".to_owned()];
+    let view = RequestView::new("POST", "/acme/web.git/git-receive-pack", &lines);
+    // Nothing listed and the push list on by default.
+    let first = injector.decide(&context, &view).await;
+    assert_eq!(refusal(&first).1, "push_denied");
+    let mut git = WorkspaceGit::unconfigured();
+    git.only_push_listed = false;
+    settings.set(git);
+    let second = injector.decide(&context, &view).await;
+    assert!(
+        matches!(second, InjectDecision::PassThroughGuarded(_)),
+        "{second:?}"
+    );
+}
+
+/// A source that answers one token and counts its reads, behind the real cache.
+struct OneToken(Arc<AtomicUsize>);
+
+impl Fetch for OneToken {
+    fn fetch(&self, _: &SourceSpec) -> impl Future<Output = Result<Fetched, SourceError>> + Send {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        std::future::ready(Ok(Fetched {
+            credential: Credential {
+                username: None,
+                secret: Arc::new(Secret::new("CANARY-CACHED".to_owned())),
+            },
+            valid_for: None,
+        }))
+    }
+}
+
+#[tokio::test]
+async fn the_secrets_cache_is_a_credential_source_that_reads_once_and_forgets_on_request() {
+    let w = World::new();
+    let made = w.identity("Work", "github.com", &["acme"], false, "unused");
+    let reads = Arc::new(AtomicUsize::new(0));
+    let cache = Arc::new(SecretCache::new(OneToken(Arc::clone(&reads))));
+    let injector = GitInjector::new(
+        w.workspace.clone(),
+        Arc::new(StoreSettings::new(
+            Arc::clone(&w.store),
+            w.workspace.clone(),
+        )),
+        cache.clone(),
+        w.events.clone(),
+    );
+    let host = Host::parse_normalised("github.com").unwrap();
+    let context = InjectContext {
+        workspace: &w.workspace,
+        host: &host,
+    };
+    let lines = vec!["host: github.com".to_owned()];
+    let view = RequestView::new("GET", "/acme/web.git/info/refs", &lines);
+    for _ in 0..3 {
+        let decision = injector.decide(&context, &view).await;
+        assert!(
+            injected(&decision, &token_header("CANARY-CACHED")),
+            "{decision:?}"
+        );
+    }
+    // Three requests, one read of the source; forgetting it makes the next request read again.
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    CredentialSource::forget(&*cache, &made.source);
+    let _ = injector.decide(&context, &view).await;
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
 }

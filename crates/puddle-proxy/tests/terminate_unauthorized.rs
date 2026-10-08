@@ -227,3 +227,12 @@ async fn over_http2_a_401_with_no_credential_to_add_is_replaced_and_any_other_40
     );
     assert_eq!(own.text(), "server says no");
 }
+
+#[test]
+fn an_injection_compares_by_what_it_would_answer_with() {
+    let guard = rejected();
+    assert_eq!(guard, guard.clone());
+    assert_ne!(guard, rejected());
+    assert_eq!(format!("{guard:?}"), "Unauthorized");
+    assert_eq!(guard.refusal().code(), "credential_rejected");
+}

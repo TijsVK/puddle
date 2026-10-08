@@ -399,18 +399,28 @@ fn service(query: Option<&str>) -> Result<Option<Service>, &'static str> {
 mod tests {
     use super::*;
 
-    fn git(host: &str, method: &str, path: &str, query: Option<&str>) -> GitPath {
-        match classify(host, method, path, query) {
-            Classified::Git(found) => found,
-            other => panic!("{method} {path}?{query:?} on {host}: {other:?}"),
+    fn git_of(classified: Classified) -> Option<GitPath> {
+        match classified {
+            Classified::Git(found) => Some(found),
+            _ => None,
         }
     }
 
-    fn ambiguous(host: &str, method: &str, path: &str) -> &'static str {
-        match classify(host, method, path, None) {
-            Classified::Ambiguous(why) => why,
-            other => panic!("{method} {path} on {host}: {other:?}"),
+    fn why(classified: &Classified) -> Option<&'static str> {
+        match classified {
+            Classified::Ambiguous(why) => Some(why),
+            _ => None,
         }
+    }
+
+    fn git(host: &str, method: &str, path: &str, query: Option<&str>) -> GitPath {
+        git_of(classify(host, method, path, query))
+            .unwrap_or_else(|| panic!("{method} {path} on {host} is not a Git request"))
+    }
+
+    fn ambiguous(host: &str, method: &str, path: &str) -> &'static str {
+        why(&classify(host, method, path, None))
+            .unwrap_or_else(|| panic!("{method} {path} on {host} is not ambiguous"))
     }
 
     fn ref_of(host: &str, path: &str) -> String {
@@ -624,6 +634,8 @@ mod tests {
                 "{host}{path}"
             );
         }
+        assert_eq!(git_of(classify("github.com", "GET", "/", None)), None);
+        assert_eq!(why(&classify("github.com", "GET", "/", None)), None);
     }
 
     // The bypass probes of the first credential-injection test on a real host: every spelling
@@ -641,10 +653,7 @@ mod tests {
             "/acme/web.git/.%2e/other.git/git-receive-pack",
         ] {
             assert!(
-                matches!(
-                    classify("github.com", "POST", path, None),
-                    Classified::Ambiguous(_)
-                ),
+                why(&classify("github.com", "POST", path, None)).is_some(),
                 "{path}"
             );
         }
@@ -665,10 +674,7 @@ mod tests {
             "/acme%2F..%2Fother/web.git/git-receive-pack",
         ] {
             assert!(
-                matches!(
-                    classify("github.com", "POST", path, None),
-                    Classified::Ambiguous(_)
-                ),
+                why(&classify("github.com", "POST", path, None)).is_some(),
                 "{path}"
             );
         }
@@ -685,10 +691,7 @@ mod tests {
             "/acme/web.git/git-receive-pack/",
         ] {
             assert!(
-                matches!(
-                    classify("github.com", "POST", path, None),
-                    Classified::Ambiguous(_)
-                ),
+                why(&classify("github.com", "POST", path, None)).is_some(),
                 "{path}"
             );
         }
@@ -708,10 +711,7 @@ mod tests {
             "/acme/web.git/info/refs%0A",
         ] {
             assert!(
-                matches!(
-                    classify("github.com", "POST", path, None),
-                    Classified::Ambiguous(_)
-                ),
+                why(&classify("github.com", "POST", path, None)).is_some(),
                 "{path:?}"
             );
         }
@@ -738,10 +738,7 @@ mod tests {
             "/acme/web.git/info/refs%FF",
         ] {
             assert!(
-                matches!(
-                    classify("github.com", "POST", path, None),
-                    Classified::Ambiguous(_)
-                ),
+                why(&classify("github.com", "POST", path, None)).is_some(),
                 "{path:?}"
             );
         }
@@ -760,10 +757,7 @@ mod tests {
             "/acme/web\u{2024}git/git-receive-pack",
         ] {
             assert!(
-                matches!(
-                    classify("github.com", "POST", path, None),
-                    Classified::Ambiguous(_)
-                ),
+                why(&classify("github.com", "POST", path, None)).is_some(),
                 "{path:?}"
             );
         }

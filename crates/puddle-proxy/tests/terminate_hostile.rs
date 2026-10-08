@@ -386,10 +386,12 @@ async fn hostile_hg16_a_guest_that_stops_sending_a_body_does_not_hold_the_upstre
     assert!(server.recorded().iter().all(|r| r.body.len() != 100));
 }
 
-// HG-17-style: nothing of the guest's credentials competes ----------------------------------------
+// HG-17: what the guest sends in `Authorization` and `Proxy-Authorization`. The injector of the
+// Git hosts adds nothing when the guest sent its own `Authorization` (`terminate_git_inject.rs`);
+// what the proxy itself guarantees, whatever an injector says, is below.
 
 #[tokio::test]
-async fn the_guests_own_credentials_never_travel_with_an_injected_one() {
+async fn an_injected_authorization_replaces_the_guests_and_proxy_authorization_never_travels() {
     let pki = Pki::new();
     let server = upstream(&pki, ok_handler()).await;
     let rig = RigBuilder::new(&pki)

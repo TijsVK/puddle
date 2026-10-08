@@ -392,8 +392,9 @@ pub trait Injector: Send + Sync + fmt::Debug {
     /// How many bytes of this request's body the injector needs to see before it can decide, if
     /// any. The proxy then reads the whole body (a request with a larger one is refused with
     /// `413` and `x-puddle-blocked: body_too_large`; nothing is sent upstream), hands it to
-    /// [`Injector::decide`] through [`RequestView::body`] and forwards it unchanged. It is asked
-    /// before `decide`, with a view that has no body, and must be cheap.
+    /// [`Injector::decide`] through [`RequestView::body`] and forwards it unchanged (a trailer block
+    /// after the body is dropped). It is asked before `decide`, with a view that has no body, and
+    /// must be cheap.
     fn body_wanted(
         &self,
         _context: &InjectContext<'_>,

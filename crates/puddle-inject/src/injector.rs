@@ -38,6 +38,9 @@ use crate::source::{CredentialSource, GitSettings};
 /// objects is about 10 KiB.
 const MAX_LFS_BATCH: usize = 256 * 1024;
 
+/// What the guest reads when the store offers a way to choose that this reading does not know.
+const UNCHOOSABLE: &str = "puddle could not choose a credential for this request";
+
 /// A notice about the same thing is raised at most once in this long, however many requests
 /// meet it (a Git client retries).
 const NOTICE_EVERY: Duration = Duration::from_secs(10);
@@ -160,11 +163,7 @@ impl GitInjector {
                 )
             }
             // A choice a later puddle adds: nothing it says is trusted.
-            _ => refuse(
-                502,
-                "credential_unavailable",
-                "puddle could not choose a credential for this request",
-            ),
+            _ => refuse(502, "credential_unavailable", UNCHOOSABLE),
         }
     }
 
