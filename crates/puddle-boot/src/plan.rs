@@ -626,10 +626,13 @@ fn git_config(identity: Option<&GitIdentity>, rules: &[GitAuthorRule]) -> GuestF
     }
     for (i, rule) in rules.iter().enumerate() {
         for glob in &rule.globs {
-            text.push_str(&format!(
-                "[includeIf \"hasconfig:remote.*.url:{glob}\"]\n\tpath = {}\n",
-                git_author_name(i + 1)
-            ));
+            text.extend([
+                "[includeIf \"hasconfig:remote.*.url:",
+                glob,
+                "\"]\n\tpath = ",
+                &git_author_name(i + 1),
+                "\n",
+            ]);
         }
     }
     GuestFile::new(guest_path(GIT_CONFIG_GUEST), text.into_bytes())

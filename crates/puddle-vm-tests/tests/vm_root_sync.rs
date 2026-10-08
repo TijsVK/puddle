@@ -22,7 +22,7 @@ use std::fmt::Write as _;
 use std::time::{Duration, SystemTime};
 
 use microsandbox::Sandbox;
-use puddle_ca::{CaBuilder, NameConstraints, TrustBundle};
+use puddle_ca::{CaBuilder, TrustBundle};
 use puddle_certs::{
     CorporateRoots, GuestTrust, Location, Physical, StoreName, StoreSnapshot, StoreSource,
 };
@@ -100,12 +100,7 @@ fn fixture() -> Fixture {
     let corporate = CorporateRoots::select(&snapshot, SystemTime::now());
     assert_eq!(corporate.certificates().len(), 1);
     // And puddle's own proxy CA next to it, as in a real sandbox.
-    let proxy_ca = CaBuilder::new(
-        "puddle proxy CA (VM test)",
-        NameConstraints::new().permit_dns("github.com").unwrap(),
-    )
-    .build()
-    .unwrap();
+    let proxy_ca = CaBuilder::new("puddle proxy CA (VM test)").build().unwrap();
     let bundle = TrustBundle::new().with(proxy_ca.certificate().clone());
     Fixture {
         trust: GuestTrust::new(&corporate, &bundle),

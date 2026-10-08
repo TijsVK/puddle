@@ -417,6 +417,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    /// What `workspace` decrypts, and the CA that certifies it, while its sandbox runs: `None`
+    /// for a workspace that is stopped or never started.
+    #[must_use]
+    pub fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<puddle_proxy::Termination>> {
+        self.inner.injection.termination(workspace)
+    }
+
     /// The SSH endpoint of a running workspace's sandbox.
     pub async fn ssh_endpoint(&self, workspace: &WorkspaceName) -> Option<std::path::PathBuf> {
         let live = self.inner.live.lock().await;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The leaf certificate against programs other than rustls: Python's strict X.509 verification
-//! (authority key identifier, critical basic constraints and name constraints on the CA, a subject
-//! alternative name, `serverAuth`), which is what `pip` and `requests` run under.
+//! (authority key identifier, critical basic constraints on the CA, a subject alternative name,
+//! `serverAuth`), which is what `pip` and `requests` run under.
 //!
 //! Needs `python3` on the path; without it the test skips unless `PUDDLE_TOOLS_REQUIRED` is set
 //! (CI sets it).
@@ -45,7 +45,7 @@ fn python() -> Option<String> {
 }
 
 #[tokio::test]
-async fn python_strict_x509_accepts_the_leaf_and_the_name_constrained_ca() {
+async fn python_strict_x509_accepts_the_leaf_and_the_ca() {
     let Some(python) = python() else { return };
     let pki = Pki::new();
     let server = FakeServer::tls(

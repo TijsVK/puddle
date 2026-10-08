@@ -30,6 +30,7 @@ use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_types::{SandboxName, WorkspaceId, WorkspaceName};
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
 use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH};
+use rustls::pki_types::pem::PemObject;
 use serde_json::json;
 use support::{Api, ended};
 
@@ -132,6 +133,8 @@ impl RuntimeFactory for FakeFactory {
 #[derive(Default)]
 struct Guest {
     commands: Mutex<Vec<String>>,
+    /// The boot plan (stdin) of every run of the boot hook, with the sandbox it ran in.
+    plans: Mutex<Vec<(String, Vec<u8>)>>,
     dirty: AtomicBool,
     fail_clone: AtomicBool,
     fail_boot: AtomicBool,
@@ -163,6 +166,12 @@ impl Guest {
             .lock()
             .unwrap()
             .push(format!("{} {kind}", ctx.sandbox()));
+        if kind == "boot" {
+            self.plans
+                .lock()
+                .unwrap()
+                .push((ctx.sandbox().to_string(), r.stdin.clone()));
+        }
         Some(match kind {
             "boot" if self.fail_boot.load(Ordering::SeqCst) => {
                 ExecOutput::new(5, "", "boot.sh: no disk")
@@ -193,6 +202,59 @@ impl Guest {
     fn commands(&self) -> Vec<String> {
         self.commands.lock().unwrap().clone()
     }
+
+    /// The files the boot plan number `n` (from 0) wrote, by guest path.
+    fn plan_files(&self, n: usize) -> std::collections::BTreeMap<String, Vec<u8>> {
+        plan_files(&self.plans.lock().unwrap()[n].1)
+    }
+
+    fn boots(&self) -> usize {
+        self.plans.lock().unwrap().len()
+    }
+
+    /// Waits until the hook has run `n` times in all.
+    async fn boots_reach(&self, n: usize) {
+        for _ in 0..500 {
+            if self.boots() >= n {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            self.boots() >= n,
+            "the boot hook ran {} times, not {n}",
+            self.boots()
+        );
+    }
+}
+
+/// The files a rendered boot plan writes: each `puddle_file '<path>' <mode> '<printf format>'`
+/// line, with the format decoded the way `printf` reads it (`\NNN` is an octal byte).
+fn plan_files(plan: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let text = String::from_utf8(plan.to_vec()).unwrap();
+    let mut files = std::collections::BTreeMap::new();
+    for line in text.split("\npuddle_") {
+        let Some(rest) = line.strip_prefix("file ") else {
+            continue;
+        };
+        let rest = rest.strip_prefix('\'').unwrap();
+        let (path, rest) = rest.split_once("' ").unwrap();
+        let (_mode, rest) = rest.split_once(' ').unwrap();
+        let format = rest.strip_prefix('\'').unwrap();
+        let format = &format[..format.rfind('\'').unwrap()];
+        let mut bytes = Vec::new();
+        let mut chars = format.bytes().peekable();
+        while let Some(b) = chars.next() {
+            if b == b'\\' {
+                let octal: String = (0..3).map(|_| char::from(chars.next().unwrap())).collect();
+                bytes.push(u8::from_str_radix(&octal, 8).unwrap());
+            } else {
+                bytes.push(b);
+            }
+        }
+        files.insert(path.to_owned(), bytes);
+    }
+    files
 }
 
 #[derive(Debug)]
@@ -2004,5 +2066,467 @@ async fn a_create_is_refused_when_the_runtime_cannot_say_whether_the_volume_exis
             .unwrap()
             .is_empty()
     );
+    host.shutdown().await;
+}
+
+// ---- credential injection: the CA, what is decrypted, the authors ---------------------------------
+
+const KEY_MARKER: &[u8] = b"PRIVATE KEY";
+
+fn pem_of(files: &std::collections::BTreeMap<String, Vec<u8>>, path: &str) -> String {
+    String::from_utf8(files[path].clone()).unwrap()
+}
+
+/// `POST /api/identities`: a `gh` credential on `host` covering the rest of it (or `owners`).
+async fn make_identity(api: &Api, label: &str, host: &str, owners: &[&str]) -> i64 {
+    let body = json!({
+        "label": label,
+        "author": {"name": label, "email": format!("{}@example.org", label.to_lowercase())},
+        "credentials": [{
+            "host": host,
+            "source": {"kind": "gh", "host": host, "account": "me"},
+            "covers": {"owners": owners, "rest_of_host": owners.is_empty()}
+        }]
+    });
+    let reply = api.post("/api/identities", &body.to_string()).await;
+    assert_eq!(reply.status, 201, "{}", reply.body);
+    reply.json()["id"].as_i64().unwrap()
+}
+
+async fn attach(api: &Api, workspace: &str, identity: i64) {
+    let reply = api
+        .post(
+            &format!("/api/workspaces/{workspace}/identities"),
+            &json!({"identity": identity}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+}
+
+fn name(workspace: &str) -> WorkspaceName {
+    WorkspaceName::new(workspace).unwrap()
+}
+
+fn decrypts(host: &Host<FakeRuntime>, workspace: &str, site: &str) -> bool {
+    host.workspaces()
+        .termination(&name(workspace))
+        .is_some_and(|t| {
+            t.set()
+                .contains(&puddle_types::Host::parse_normalised(site).unwrap())
+        })
+}
+
+/// Waits for `condition` to hold (a change applies when the host has handled its event).
+async fn eventually(what: &str, condition: impl Fn() -> bool) {
+    for _ in 0..500 {
+        if condition() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(condition(), "never became true: {what}");
+}
+
+fn calls_of(rig: &Rig, op: &str) -> usize {
+    rig.runtime
+        .calls()
+        .iter()
+        .filter(|c| format!("{:?}", c.op) == op)
+        .count()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_workspace_trusts_its_own_ca_from_the_first_boot_and_decrypts_nothing_yet() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    create(&api, &mut events, "beta").await;
+
+    // The CA the guest was given is the one the proxy signs with, and each workspace has its own.
+    let ca_of = |workspace: &str| {
+        host.workspaces()
+            .termination(&name(workspace))
+            .unwrap()
+            .ca()
+            .certificate()
+            .clone()
+    };
+    let (acme, beta) = (ca_of("acme"), ca_of("beta"));
+    assert_ne!(acme, beta);
+    let files = rig.guest.plan_files(0);
+    for path in [
+        "/etc/puddle/extra-cas.pem",
+        "/usr/local/share/ca-certificates/puddle/puddle-ca-1.crt",
+    ] {
+        assert_eq!(pem_of(&files, path), acme.pem(), "{path}");
+    }
+    let guest_der =
+        rustls::pki_types::CertificateDer::from_pem_slice(&files["/etc/puddle/extra-cas.pem"])
+            .unwrap();
+    assert_eq!(guest_der.as_ref(), acme.der().as_ref());
+    assert_ne!(
+        pem_of(
+            &rig.guest.plan_files(rig.guest.boots() - 1),
+            "/etc/puddle/extra-cas.pem"
+        ),
+        acme.pem()
+    );
+    // Tools are pointed at the bundle, though nothing is decrypted yet.
+    let env = pem_of(&files, "/etc/profile.d/01-puddle-env.sh");
+    assert!(
+        env.contains("export SSL_CERT_FILE='/etc/puddle/ca-bundle.pem'"),
+        "{env}"
+    );
+    assert!(
+        env.contains("export NODE_EXTRA_CA_CERTS='/etc/puddle/extra-cas.pem'"),
+        "{env}"
+    );
+    assert!(!decrypts(&host, "acme", "github.com"));
+    assert!(
+        host.workspaces()
+            .termination(&name("acme"))
+            .unwrap()
+            .set()
+            .is_empty()
+    );
+    // No key anywhere in what the guest was sent.
+    for (_, plan) in rig.guest.plans.lock().unwrap().iter() {
+        assert!(!plan.windows(KEY_MARKER.len()).any(|w| w == KEY_MARKER));
+        assert!(!String::from_utf8_lossy(plan).contains("PRIVATE"));
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_for_any_host_applies_to_the_running_workspace_with_no_restart() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let ca_before = host
+        .workspaces()
+        .termination(&name("acme"))
+        .unwrap()
+        .ca()
+        .certificate()
+        .clone();
+    let (creates, starts, stops) = (
+        calls_of(&rig, "Create"),
+        calls_of(&rig, "Start"),
+        calls_of(&rig, "Stop"),
+    );
+
+    // A host the workspace has never used, on a host puddle's default list does not have.
+    let gitlab = make_identity(&api, "Ada", "gitlab.com", &[]).await;
+    attach(&api, "acme", gitlab).await;
+    eventually("gitlab.com decrypted", || {
+        decrypts(&host, "acme", "gitlab.com")
+    })
+    .await;
+    // A second one, on Azure DevOps: both of its names.
+    let azure = make_identity(&api, "Bob", "dev.azure.com", &["contoso"]).await;
+    attach(&api, "acme", azure).await;
+    eventually("azure decrypted", || {
+        decrypts(&host, "acme", "contoso.visualstudio.com")
+    })
+    .await;
+    assert!(decrypts(&host, "acme", "dev.azure.com"));
+    // Nothing else is: a host nobody gave a credential is still spliced.
+    assert!(!decrypts(&host, "acme", "github.com"));
+    assert!(!decrypts(&host, "acme", "api.gitlab.com"));
+    // The CA is the one the guest booted with, and the sandbox was not touched.
+    let after = host.workspaces().termination(&name("acme")).unwrap();
+    assert_eq!(after.ca().certificate(), &ca_before);
+    assert_eq!(
+        (
+            calls_of(&rig, "Create"),
+            calls_of(&rig, "Start"),
+            calls_of(&rig, "Stop")
+        ),
+        (creates, starts, stops)
+    );
+
+    // Taking an identity off takes its hosts out of the set on the next connection.
+    let gone = api
+        .delete(&format!("/api/workspaces/acme/identities/{gitlab}"), None)
+        .await;
+    assert_eq!(gone.status, 200, "{}", gone.body);
+    eventually("gitlab.com no longer decrypted", || {
+        !decrypts(&host, "acme", "gitlab.com")
+    })
+    .await;
+    assert!(decrypts(&host, "acme", "dev.azure.com"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let booted = rig.guest.boots();
+    // No identity yet: no author file, and the workspace's git settings name nobody.
+    let files = rig.guest.plan_files(booted - 1);
+    assert!(!pem_of(&files, "/etc/puddle/gitconfig").contains("[user]"));
+
+    // Work names acme on github.com; Personal covers the rest of it and is first in the list.
+    let personal = make_identity(&api, "Personal", "github.com", &[]).await;
+    let work = make_identity(&api, "Work", "github.com", &["Acme"]).await;
+    attach(&api, "acme", personal).await;
+    rig.guest.boots_reach(booted + 1).await;
+    attach(&api, "acme", work).await;
+    rig.guest.boots_reach(booted + 2).await;
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    let config = pem_of(&files, "/etc/puddle/gitconfig");
+    // The fallback is the first identity's; the rest-of-host rule comes before the named owner's,
+    // so git, which lets the last match win, gives acme's remotes to Work.
+    assert!(config.contains("[user]\n\tname = \"Personal\""), "{config}");
+    let personal_at = config.find("path = git-author-1.gitconfig").unwrap();
+    let work_at = config.find("path = git-author-2.gitconfig").unwrap();
+    assert!(personal_at < work_at, "{config}");
+    assert!(config.contains("[aA][cC][mM][eE]"), "{config}");
+    assert!(pem_of(&files, "/etc/puddle/git-author-2.gitconfig").contains("name = \"Work\""));
+    // The guest's trust is what it booted with: the same CA in every run.
+    let ca = host
+        .workspaces()
+        .termination(&name("acme"))
+        .unwrap()
+        .ca()
+        .certificate()
+        .clone();
+    assert_eq!(pem_of(&files, "/etc/puddle/extra-cas.pem"), ca.pem());
+
+    // A change that moves no author does not touch the guest again.
+    let reply = api
+        .request(
+            "PUT",
+            "/api/workspaces/acme/git/switches",
+            Some(&json!({"only_push_listed": false}).to_string()),
+            true,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(rig.guest.boots(), booted + 2);
+
+    // Taking both off removes the authors again.
+    for id in [personal, work] {
+        api.delete(&format!("/api/workspaces/acme/identities/{id}"), None)
+            .await;
+    }
+    rig.guest.boots_reach(booted + 4).await;
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(!pem_of(&files, "/etc/puddle/gitconfig").contains("[user]"));
+    assert!(!files.contains_key("/etc/puddle/git-author-1.gitconfig"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_workspace_has_no_ca_and_each_start_makes_a_new_one() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let first = host
+        .workspaces()
+        .termination(&name("acme"))
+        .unwrap()
+        .ca()
+        .certificate()
+        .clone();
+
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(host.workspaces().termination(&name("acme")).is_none());
+    // A change to a workspace that does not run reaches nothing now: its next start reads it.
+    let identity = make_identity(&api, "Ada", "github.com", &[]).await;
+    attach(&api, "acme", identity).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(host.workspaces().termination(&name("acme")).is_none());
+
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let second = host.workspaces().termination(&name("acme")).unwrap();
+    assert_ne!(second.ca().certificate(), &first);
+    assert!(decrypts(&host, "acme", "github.com"));
+    // The second boot got the second CA, and not the first.
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert_eq!(
+        pem_of(&files, "/etc/puddle/extra-cas.pem"),
+        second.ca().certificate().pem()
+    );
+    assert!(!pem_of(&files, "/etc/puddle/extra-cas.pem").contains(first.pem()));
+    // The author came from the identity at the start, with no rewrite after it.
+    assert!(pem_of(&files, "/etc/puddle/gitconfig").contains("name = \"Ada\""));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_file_in_the_data_folder_holds_a_key_or_the_ca_whether_the_workspace_runs_or_not() {
+    fn files_under(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                files_under(&path, out);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let identity = make_identity(&api, "Ada", "github.com", &[]).await;
+    attach(&api, "acme", identity).await;
+    eventually("decrypted", || decrypts(&host, "acme", "github.com")).await;
+    let ca = host
+        .workspaces()
+        .termination(&name("acme"))
+        .unwrap()
+        .ca()
+        .certificate()
+        .clone();
+    let body = ca.pem().lines().nth(1).unwrap().to_owned();
+
+    let check = |when: &str| {
+        let mut files = Vec::new();
+        files_under(&rig.dir.path().join("data"), &mut files);
+        files_under(&rig.dir.path().join("runtime"), &mut files);
+        assert!(!files.is_empty());
+        for file in files {
+            // A file the database or a save is replacing may be gone by now.
+            let Ok(bytes) = std::fs::read(&file) else {
+                continue;
+            };
+            assert!(
+                !bytes.windows(KEY_MARKER.len()).any(|w| w == KEY_MARKER),
+                "{when}: {} holds a key",
+                file.display()
+            );
+            assert!(
+                !bytes.windows(body.len()).any(|w| w == body.as_bytes()),
+                "{when}: {} holds the CA",
+                file.display()
+            );
+            assert!(
+                !bytes
+                    .windows(ca.der().len())
+                    .any(|w| w == ca.der().as_ref()),
+                "{when}: {} holds the CA",
+                file.display()
+            );
+        }
+    };
+    check("running");
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    check("stopped");
+    host.shutdown().await;
+    check("after shutdown");
+}
+
+#[derive(Debug)]
+struct MarkedInjector;
+
+impl puddle_proxy::Injector for MarkedInjector {
+    fn decide<'a>(
+        &'a self,
+        _: &'a puddle_proxy::InjectContext<'a>,
+        _: &'a puddle_proxy::RequestView<'a>,
+    ) -> futures_util::future::BoxFuture<'a, puddle_proxy::InjectDecision> {
+        Box::pin(async { puddle_proxy::InjectDecision::PassThrough })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_injector_is_built_once_from_the_hosts_store_and_secrets_and_serves_every_workspace() {
+    let rig = Rig::new();
+    let built = Arc::new(Mutex::new(Vec::new()));
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let mut options = HostOptions::default();
+    let record = built.clone();
+    options.injector = Some(Arc::new(move |inputs: &puddle_host::InjectorInputs| {
+        record.lock().unwrap().push(inputs.store.clone());
+        Arc::new(MarkedInjector)
+    }));
+    let host = Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
+        .await
+        .unwrap();
+    assert_eq!(built.lock().unwrap().len(), 1);
+    assert!(Arc::ptr_eq(&built.lock().unwrap()[0], host.store()));
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    create(&api, &mut events, "beta").await;
+    for workspace in ["acme", "beta"] {
+        let termination = host.workspaces().termination(&name(workspace)).unwrap();
+        assert!(
+            format!("{termination:?}").contains("MarkedInjector"),
+            "{termination:?}"
+        );
+    }
+    assert_eq!(built.lock().unwrap().len(), 1);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_that_fails_after_the_ca_was_made_leaves_no_ca_behind() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    // A create whose boot fails.
+    rig.guest.fail_boot.store(true, Ordering::SeqCst);
+    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(host.workspaces().termination(&name("acme")).is_none());
+
+    // A start in place whose boot fails.
+    rig.guest.fail_boot.store(false, Ordering::SeqCst);
+    create(&api, &mut events, "beta").await;
+    api.post("/api/workspaces/beta/stop", "").await;
+    events.until(ended("beta"), Duration::from_secs(20)).await;
+    rig.guest.fail_boot.store(true, Ordering::SeqCst);
+    api.post("/api/workspaces/beta/start", "").await;
+    let end = events.until(ended("beta"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(host.workspaces().termination(&name("beta")).is_none());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_company_roots_go_into_the_clients_that_verify_decrypted_hosts() {
+    // A host with company roots starts: the TLS client for decrypted hosts is built with them.
+    let rig = Rig::new();
+    let mut platform = FakePlatform::new(&rig.log);
+    platform.roots = company_roots();
+    let prepared = prepare(rig.config(), &platform).unwrap();
+    let host = Host::start(
+        prepared,
+        &FakeFactory::new(&rig.runtime, &rig.log),
+        HostOptions::default(),
+    )
+    .await
+    .unwrap();
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    // The guest got the company root and the CA in one extra-CAs file.
+    let files = rig.guest.plan_files(0);
+    let extra = pem_of(&files, "/etc/puddle/extra-cas.pem");
+    assert_eq!(extra.matches("BEGIN CERTIFICATE").count(), 2, "{extra}");
     host.shutdown().await;
 }

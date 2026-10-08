@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_ca::{CaBuilder, CaCertificate, WorkspaceCa};
-use puddle_proxy::{Injector, Termination, Terminations};
+use puddle_proxy::{Injector, Termination, TerminationSource, Terminations};
 use puddle_secrets::{Fetch, SecretCache, Sources};
 use puddle_store::{Store, WorkspaceGit};
 use puddle_types::{Event, EventSink, WorkspaceName};
@@ -125,6 +125,11 @@ impl Injection {
         self.running().remove(workspace);
     }
 
+    /// What `workspace` decrypts and the CA that certifies it, while it runs.
+    pub(crate) fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<Termination>> {
+        self.terminations.termination(workspace)
+    }
+
     /// The workspaces that have a CA now.
     pub(crate) fn running_workspaces(&self) -> Vec<WorkspaceName> {
         self.running().keys().cloned().collect()
@@ -158,7 +163,7 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    use puddle_proxy::{NoInjection, TerminationSource};
+    use puddle_proxy::NoInjection;
     use puddle_secrets::{AccountName, Fetched, HostName, SourceError, SourceSpec};
     use puddle_store::{
         Author, Clock, Coverage, CredentialBinding, IdentityDraft, Limits, ManualClock, Owner,
@@ -267,7 +272,7 @@ mod tests {
         injection.begin(&ws).unwrap();
         injection.end(&ws);
         assert!(terminations.termination(&ws).is_none());
-        assert!(injection.running_workspaces().is_empty());
+        assert_eq!(injection.running_workspaces(), []);
         // A change to a workspace that is not running touches nothing.
         assert!(!injection.refresh(&ws, &injection.git(&ws).unwrap()));
         assert!(terminations.termination(&ws).is_none());
@@ -300,9 +305,12 @@ mod tests {
     struct NotSignedIn(Mutex<usize>);
 
     impl Fetch for NotSignedIn {
-        async fn fetch(&self, _: &SourceSpec) -> Result<Fetched, SourceError> {
+        fn fetch(
+            &self,
+            _: &SourceSpec,
+        ) -> impl Future<Output = Result<Fetched, SourceError>> + Send {
             *self.0.lock().unwrap() += 1;
-            Err(SourceError::NotSignedIn)
+            std::future::ready(Err(SourceError::NotSignedIn))
         }
     }
 

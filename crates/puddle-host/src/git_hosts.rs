@@ -78,11 +78,10 @@ pub(crate) fn remote_globs(host: &str, owner: Option<&str>) -> Vec<String> {
     }
     let mut globs = Vec::new();
     for (authority, owner) in authorities {
-        let authority = if authority.starts_with("*.") {
+        let authority = match authority.strip_prefix("*.") {
             // Keep the leading `*.` as the glob it is; fold the rest.
-            format!("*.{}", fold(&authority[2..]))
-        } else {
-            fold(&authority)
+            Some(rest) => format!("*.{}", fold(rest)),
+            None => fold(&authority),
         };
         let path = owner.map_or_else(
             || "/**".to_owned(),
@@ -219,7 +218,7 @@ mod tests {
             ["dev.azure.com", "*.visualstudio.com"]
         );
         // Only port 443 is terminated.
-        assert!(decrypt_patterns("ghe.example:8443").is_empty());
+        assert_eq!(decrypt_patterns("ghe.example:8443"), [] as [String; 0]);
     }
 
     #[test]
@@ -308,7 +307,7 @@ mod tests {
     fn an_identity_without_credentials_is_only_a_fallback_and_nobody_is_none() {
         let a = authors(&git(vec![("Solo", vec![])]));
         assert_eq!(a.fallback.as_ref().unwrap().email(), "solo@example.org");
-        assert!(a.rules.is_empty());
+        assert_eq!(a.rules, []);
         assert_eq!(authors(&git(vec![])), Authors::default());
     }
 
@@ -358,5 +357,211 @@ mod tests {
         assert_eq!(a.rules.len(), MAX_GIT_AUTHOR_RULES);
         // The first identity (highest priority, written last) is kept.
         assert_eq!(a.rules.last().unwrap().author().name(), "Id0");
+    }
+
+    /// Real git, a system config that includes the one the boot plan writes, and repositories
+    /// with fake remotes: which author does a commit in each get?
+    mod with_real_git {
+        use std::path::Path;
+        use std::process::Command;
+
+        use puddle_boot::BootPlan;
+        use puddle_compute::ImageConfig;
+
+        use super::*;
+
+        /// `git` with none of the caller's `GIT_*` variables (a hook exports some), none of the
+        /// user's own configuration, and `root`'s `etc/gitconfig` as the system config.
+        fn git_in(root: &Path, dir: &Path, args: &[&str]) -> std::process::Output {
+            let mut cmd = Command::new("git");
+            for (key, _) in std::env::vars_os() {
+                if key.to_string_lossy().starts_with("GIT_") {
+                    cmd.env_remove(key);
+                }
+            }
+            cmd.current_dir(dir)
+                .env("GIT_CONFIG_SYSTEM", root.join("etc/gitconfig"))
+                .env("GIT_CONFIG_GLOBAL", root.join("no-such-global"))
+                .env("HOME", root)
+                .env("XDG_CONFIG_HOME", root.join("xdg"))
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .args(args)
+                .output()
+                .unwrap()
+        }
+
+        /// Writes the plan's git files under `root` as the guest would have them, and a system
+        /// config that includes puddle's, the way `boot.sh` does.
+        fn install(root: &Path, authors: &Authors) {
+            let mut builder = BootPlan::builder(&ImageConfig::default());
+            if let Some(fallback) = &authors.fallback {
+                builder = builder.git_identity(fallback.clone());
+            }
+            for rule in &authors.rules {
+                builder = builder.git_author_rule(rule.clone());
+            }
+            let plan = builder.build().unwrap();
+            for file in plan.files() {
+                let path = file.path().as_str();
+                if path.starts_with("/etc/puddle/") {
+                    let target = root.join(path.trim_start_matches('/'));
+                    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+                    std::fs::write(target, file.contents()).unwrap();
+                }
+            }
+            let include = root.join("etc/puddle/gitconfig");
+            std::fs::write(
+                root.join("etc/gitconfig"),
+                format!(
+                    "[include]\n\tpath = {}\n",
+                    include.to_string_lossy().replace('\\', "/")
+                ),
+            )
+            .unwrap();
+        }
+
+        /// The `user.email` a repository with these remotes gets.
+        fn email(root: &Path, remotes: &[&str]) -> Option<String> {
+            let repo = tempfile::tempdir().unwrap();
+            assert!(git_in(root, repo.path(), &["init", "-q"]).status.success());
+            for (i, url) in remotes.iter().enumerate() {
+                let name = format!("r{i}");
+                let out = git_in(root, repo.path(), &["remote", "add", &name, url]);
+                assert!(
+                    out.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            let out = git_in(root, repo.path(), &["config", "user.email"]);
+            out.status
+                .success()
+                .then(|| String::from_utf8(out.stdout).unwrap().trim().to_owned())
+        }
+
+        fn three_identities() -> Authors {
+            authors(&git(vec![
+                ("Personal", vec![credential("github.com", &[], true)]),
+                ("Work", vec![credential("github.com", &["acme"], false)]),
+                (
+                    "Contoso",
+                    vec![credential("dev.azure.com", &["contoso"], false)],
+                ),
+            ]))
+        }
+
+        #[test]
+        fn a_repository_gets_the_author_of_the_identity_that_covers_its_remote() {
+            let root = tempfile::tempdir().unwrap();
+            install(root.path(), &three_identities());
+            let want = |remotes: &[&str], who: &str| {
+                assert_eq!(
+                    email(root.path(), remotes).as_deref(),
+                    Some(format!("{who}@example.org").as_str()),
+                    "{remotes:?}"
+                );
+            };
+            // No remote, a host nobody covers, an owner nobody names on a host with no rest rule
+            // for it: the first identity's author.
+            want(&[], "personal");
+            want(&["https://gitlab.com/acme/web.git"], "personal");
+            want(&["https://dev.azure.com/other/p/_git/r"], "personal");
+            // The rest of github.com is Personal's; acme is named by Work, whatever the case or
+            // the `user@` in the URL.
+            want(&["https://github.com/someone/else.git"], "personal");
+            for url in [
+                "https://github.com/acme/web.git",
+                "https://github.com/ACME/web.git",
+                "https://GitHub.com/acme/web",
+                "https://x-access-token@github.com/Acme/web.git",
+                "https://user:secret@github.com/acme/web.git",
+            ] {
+                want(&[url], "work");
+            }
+            // Azure DevOps by either name, with and without the `user@` the web UI copies.
+            for url in [
+                "https://dev.azure.com/contoso/proj/_git/repo",
+                "https://contoso@dev.azure.com/contoso/proj/_git/repo",
+                "https://Contoso.VisualStudio.com/proj/_git/repo",
+                "https://contoso.visualstudio.com/DefaultCollection/proj/_git/repo",
+            ] {
+                want(&[url], "contoso");
+            }
+            // Two remotes of two identities: the more specific wins, whatever the remote order.
+            want(
+                &[
+                    "https://github.com/someone/else.git",
+                    "https://github.com/acme/web.git",
+                ],
+                "work",
+            );
+            want(
+                &[
+                    "https://github.com/acme/web.git",
+                    "https://github.com/someone/else.git",
+                ],
+                "work",
+            );
+        }
+
+        #[test]
+        fn the_first_of_two_equal_identities_wins_a_repository_with_both() {
+            let root = tempfile::tempdir().unwrap();
+            install(
+                root.path(),
+                &authors(&git(vec![
+                    ("First", vec![credential("github.com", &["a"], false)]),
+                    ("Second", vec![credential("gitlab.com", &["b"], false)]),
+                ])),
+            );
+            let remotes = ["https://gitlab.com/b/x.git", "https://github.com/a/y.git"];
+            assert_eq!(
+                email(root.path(), &remotes).as_deref(),
+                Some("first@example.org")
+            );
+            let flipped = [remotes[1], remotes[0]];
+            assert_eq!(
+                email(root.path(), &flipped).as_deref(),
+                Some("first@example.org")
+            );
+        }
+
+        #[test]
+        fn a_workspace_with_no_identity_names_no_author_and_a_push_url_alone_decides_nothing() {
+            let root = tempfile::tempdir().unwrap();
+            install(root.path(), &authors(&git(vec![])));
+            assert_eq!(
+                email(root.path(), &["https://github.com/acme/web.git"]),
+                None
+            );
+            // `pushurl` is not a remote url: a repository whose only match is a push url keeps the
+            // fallback.
+            install(root.path(), &three_identities());
+            let repo = tempfile::tempdir().unwrap();
+            assert!(
+                git_in(root.path(), repo.path(), &["init", "-q"])
+                    .status
+                    .success()
+            );
+            git_in(
+                root.path(),
+                repo.path(),
+                &["remote", "add", "o", "https://gitlab.com/x/y"],
+            );
+            git_in(
+                root.path(),
+                repo.path(),
+                &[
+                    "config",
+                    "remote.o.pushurl",
+                    "https://github.com/acme/web.git",
+                ],
+            );
+            let out = git_in(root.path(), repo.path(), &["config", "user.email"]);
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout).trim(),
+                "personal@example.org"
+            );
+        }
     }
 }

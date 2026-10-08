@@ -382,6 +382,10 @@ impl<R: Runtime + Clone> Host<R> {
     /// [`HostError`] from the step that failed. Whatever started is stopped again by drop, and
     /// no sandbox is left running: reconcile only runs after everything that can refuse to start
     /// has been built.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one start-up sequence, read top to bottom, each step recorded in order"
+    )]
     pub async fn start<F>(
         prepared: Prepared,
         factory: &F,
@@ -410,34 +414,9 @@ impl<R: Runtime + Clone> Host<R> {
         } = open_state(&config.paths, &events, &clock)?;
         steps.push(Step::StoreOpened);
 
-        // Credential injection: the secrets read from the user's own sign-ins, the injector that
-        // uses them, and what each workspace decrypts (the proxy asks the registry per connection).
-        let secrets = Arc::new(SecretCache::new(Sources::new(
-            ToolPaths::resolve(),
-            Arc::new(KeyringStore),
-        )));
-        let injector: Arc<dyn Injector> = options.injector.as_ref().map_or_else(
-            || Arc::new(NoInjection) as Arc<dyn Injector>,
-            |make| {
-                make(&InjectorInputs {
-                    store: store.clone(),
-                    secrets: secrets.clone(),
-                })
-            },
-        );
-        let terminations = Arc::new(Terminations::new());
-        let injection = Arc::new(Injection::new(
-            terminations.clone(),
-            injector,
-            store.clone(),
-        ));
-        // Verifies the real servers of decrypted hosts: the platform's roots plus the company's.
-        let tls = TlsClient::new(
-            roots
-                .certificates()
-                .iter()
-                .map(|root| rustls::pki_types::CertificateDer::from(root.der().to_vec())),
-        )?;
+        // Credential injection: what each workspace decrypts, the injector and the secrets behind
+        // it, and the client that verifies the real servers of decrypted hosts.
+        let injecting = Injecting::build(&options, &store, &roots)?;
 
         // The way out: the company network (discovery, sign-in as the user, then Basic) for the
         // sandbox proxy and the pull proxy alike.
@@ -448,7 +427,7 @@ impl<R: Runtime + Clone> Host<R> {
             &endpoints,
             &store,
             &events,
-            (terminations, tls),
+            injecting.termination(),
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
         let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);
@@ -477,10 +456,7 @@ impl<R: Runtime + Clone> Host<R> {
         // Clean up after an earlier run, then rebuild what only lives in memory.
         let (report, status) = reconcile_with(&runtime, &config, &stored).await?;
         steps.push(Step::Reconciled);
-        let workspaces = Workspaces::new(config.workspaces.clone());
-        let inventory = inventory_of(&runtime, &stored).await?;
-        let adopted = adopt_workspaces(&workspaces, &inventory);
-        tracing::info!(adopted = adopted.len(), "workspace holders rebuilt");
+        let workspaces = adopt_holders(&runtime, &config, &stored).await?;
         steps.push(Step::WorkspacesAdopted);
 
         // From here the host serves. The pull proxy first: the first create pulls an image.
@@ -505,16 +481,12 @@ impl<R: Runtime + Clone> Host<R> {
                 settings: settings.clone(),
                 launcher: options.launcher,
                 book,
-                injection,
+                injection: injecting.injection.clone(),
             },
             stored,
             &status,
         )?;
-        let git_changes = AbortOnDrop(crate::changes::follow(events.subscribe(), service.clone()));
-        let sign_in_notices = AbortOnDrop(forward_sign_in_needed(
-            &secrets,
-            events.clone() as Arc<dyn EventSink>,
-        ));
+        let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
         steps.push(Step::WorkspacesReady);
 
         let services = Services::new(store.clone(), settings, events.clone(), clock)
@@ -710,6 +682,78 @@ fn network_health_of(
     health
 }
 
+/// What credential injection is made of, built once at start.
+struct Injecting {
+    injection: Arc<Injection>,
+    secrets: Arc<SecretCache<Sources>>,
+    terminations: Arc<Terminations>,
+    tls: TlsClient,
+}
+
+impl Injecting {
+    /// What the egress proxy terminates with: the registry it asks and the TLS client.
+    fn termination(&self) -> (Arc<Terminations>, TlsClient) {
+        (self.terminations.clone(), self.tls.clone())
+    }
+
+    /// Starts following the changes that reach a running workspace: its identities (what it
+    /// decrypts, its commit authors) and the sign-ins its credentials need.
+    fn watch<R: Runtime + Clone>(
+        &self,
+        service: &HostWorkspaces<R>,
+        events: &Arc<EventHub>,
+    ) -> (AbortOnDrop, AbortOnDrop) {
+        (
+            AbortOnDrop(crate::changes::follow(events.subscribe(), service.clone())),
+            AbortOnDrop(forward_sign_in_needed(
+                &self.secrets,
+                events.clone() as Arc<dyn EventSink>,
+            )),
+        )
+    }
+
+    fn build(
+        options: &HostOptions,
+        store: &Arc<Store>,
+        roots: &CorporateRoots,
+    ) -> Result<Self, HostError> {
+        // The secrets read from the user's own sign-ins (`gh`, Git, the operating system's store).
+        let secrets = Arc::new(SecretCache::new(Sources::new(
+            ToolPaths::resolve(),
+            Arc::new(KeyringStore),
+        )));
+        let injector: Arc<dyn Injector> = options.injector.as_ref().map_or_else(
+            || Arc::new(NoInjection) as Arc<dyn Injector>,
+            |make| {
+                make(&InjectorInputs {
+                    store: store.clone(),
+                    secrets: secrets.clone(),
+                })
+            },
+        );
+        // The proxy asks this registry, once per connection, what the workspace decrypts.
+        let terminations = Arc::new(Terminations::new());
+        let injection = Arc::new(Injection::new(
+            terminations.clone(),
+            injector,
+            store.clone(),
+        ));
+        // The platform's roots plus the company's, as the guest is given.
+        let tls = TlsClient::new(
+            roots
+                .certificates()
+                .iter()
+                .map(|root| rustls::pki_types::CertificateDer::from(root.der().to_vec())),
+        )?;
+        Ok(Self {
+            injection,
+            secrets,
+            terminations,
+            tls,
+        })
+    }
+}
+
 /// The way out through the company network, shared by the sandbox proxy and the pull proxy.
 struct Egress {
     proxy: Arc<Proxy>,
@@ -823,6 +867,19 @@ async fn inventory_of<R: Runtime>(
         .filter_map(|s| puddle_types::WorkspaceId::new(&s.id).ok())
         .collect();
     Ok(inventory)
+}
+
+/// The workspaces' holders, rebuilt from what exists in the runtime.
+async fn adopt_holders<R: Runtime>(
+    runtime: &R,
+    config: &HostConfig,
+    stored: &[crate::files::Stored],
+) -> Result<Workspaces, HostError> {
+    let workspaces = Workspaces::new(config.workspaces.clone());
+    let inventory = inventory_of(runtime, stored).await?;
+    let adopted = adopt_workspaces(&workspaces, &inventory);
+    tracing::info!(adopted = adopted.len(), "workspace holders rebuilt");
+    Ok(workspaces)
 }
 
 /// Runs reconcile and returns its report with the state each known sandbox was left in.
