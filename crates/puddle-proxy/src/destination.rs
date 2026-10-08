@@ -95,37 +95,51 @@ impl Resolver for SystemResolver {
 
 /// `err` from `getaddrinfo`, with "the name does not exist" told apart from "the lookup failed":
 /// the first becomes [`io::ErrorKind::NotFound`] (the original text kept), the second is passed
-/// on. The standard library gives no error code for it on Unix, only the text of
-/// `gai_strerror`; Windows gives the Winsock code.
+/// on. Windows gives the Winsock code. Unix gives only the text of `gai_strerror`, in the
+/// process's language, so there a failure is recognised by the English texts that say so, and
+/// anything else stays "no such name", as every error was before; a system in another language
+/// therefore never has a name that exists refused, and at worst keeps the old answer.
 fn name_error(err: io::Error) -> io::Error {
-    if says_no_such_name(&err) {
-        io::Error::new(io::ErrorKind::NotFound, err)
-    } else {
+    if lookup_failed(&err) {
         err
+    } else {
+        io::Error::new(io::ErrorKind::NotFound, err)
     }
 }
 
-fn says_no_such_name(err: &io::Error) -> bool {
-    /// `WSAHOST_NOT_FOUND` and `WSANO_DATA`, the Winsock resolver's own "no such name" answers.
-    const WINSOCK: [i32; 2] = [11001, 11004];
-    /// What `gai_strerror` says for `EAI_NONAME` and `EAI_NODATA` in glibc, musl and the BSDs
+/// Whether `err` says the lookup itself failed (no resolver answered, the network is down)
+/// rather than that the name does not exist.
+fn lookup_failed(err: &io::Error) -> bool {
+    /// `WSAHOST_NOT_FOUND` and `WSANO_DATA`: the Winsock resolver's own "no such name" answers.
+    /// Any other Winsock code (`WSATRY_AGAIN`, `WSANO_RECOVERY`, a network error), and the errno of
+    /// `EAI_SYSTEM` on Unix, is a failure.
+    const WINSOCK_NO_SUCH_NAME: [i32; 2] = [11001, 11004];
+    /// What `gai_strerror` says for `EAI_AGAIN` and `EAI_FAIL` in glibc, musl and the BSDs
     /// (lower case).
-    const TEXTS: [&str; 6] = [
-        "name or service not known",
-        "no address associated with",
-        "name does not resolve",
-        "name has no usable address",
-        "nodename nor servname provided",
-        "hostname nor servname provided",
+    const FAILURE_TEXTS: [&str; 4] = [
+        "temporary failure in name resolution",
+        "non-recoverable failure in name resolution",
+        "try again",
+        "system error",
     ];
-    if err
-        .raw_os_error()
-        .is_some_and(|code| WINSOCK.contains(&code))
-    {
+    if let Some(code) = err.raw_os_error() {
+        return !WINSOCK_NO_SUCH_NAME.contains(&code);
+    }
+    if matches!(
+        err.kind(),
+        io::ErrorKind::TimedOut
+            | io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::HostUnreachable
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::NetworkDown
+    ) {
         return true;
     }
     let text = err.to_string().to_ascii_lowercase();
-    TEXTS.iter().any(|known| text.contains(known))
+    FAILURE_TEXTS.iter().any(|known| text.contains(known))
 }
 
 #[cfg(test)]
@@ -139,9 +153,10 @@ mod tests {
         for missing in [
             gai("Name or service not known"),
             gai("No address associated with hostname"),
-            gai("Name does not resolve"),
-            gai("Name has no usable address"),
             gai("nodename nor servname provided, or not known"),
+            // A system in another language: the text is not recognised, which keeps the answer
+            // every error used to get.
+            gai("Naam of service onbekend"),
             io::Error::from_raw_os_error(11001),
             io::Error::from_raw_os_error(11004),
         ] {
@@ -156,8 +171,12 @@ mod tests {
             gai("Temporary failure in name resolution"),
             gai("Non-recoverable failure in name resolution"),
             gai("Try again"),
+            // `EAI_SYSTEM` on Unix, `WSATRY_AGAIN` and `WSAENETDOWN` on Windows.
+            io::Error::from_raw_os_error(111),
             io::Error::from_raw_os_error(11002),
+            io::Error::from_raw_os_error(10050),
             io::Error::from(io::ErrorKind::TimedOut),
+            io::Error::from(io::ErrorKind::NetworkUnreachable),
         ] {
             let shown = failed.to_string();
             assert_ne!(
