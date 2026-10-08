@@ -6760,7 +6760,7 @@
       },
       "WorkspaceStatus": {
         "type": "string",
-        "description": "A workspace's state as the runtime reports it (msb's states, one for one).",
+        "description": "A workspace's state: its sandbox's state as the runtime reports it (msb's states, one for one).",
         "enum": [
           "created",
           "starting",

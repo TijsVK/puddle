@@ -2095,7 +2095,7 @@ export interface components {
             workspace: components["schemas"]["WorkspaceName"];
         };
         /**
-         * @description A workspace's state as the runtime reports it (msb's states, one for one).
+         * @description A workspace's state: its sandbox's state as the runtime reports it (msb's states, one for one).
          * @enum {string}
          */
         WorkspaceStatus: "created" | "starting" | "running" | "draining" | "paused" | "stopped" | "crashed";
