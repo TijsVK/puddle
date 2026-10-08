@@ -39,6 +39,7 @@ puddle-lifecycle = { path = "crates/puddle-lifecycle" }
 puddle-upstream = { path = "crates/puddle-upstream" }
 puddle-fs = { path = "crates/puddle-fs" }
 puddle-host = { path = "crates/puddle-host" }
+puddle-secrets = { path = "crates/puddle-secrets" }
 
 # External
 # msb SDK from puddle's fork, tag `v<release>-puddle.N`. The SDK and the bundled runtime
@@ -61,6 +62,10 @@ object = { version = "0.40", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
 sha2 = "0.11"
+# The OS credential store (Credential Manager, Keychain, Secret Service over D-Bus in pure Rust),
+# used only for tokens the user pastes into puddle.
+keyring = "4.2"
+zeroize = "1.9"
 rust-embed = { version = "8.12", default-features = false, features = ["mime-guess"] }
 hickory-resolver = { version = "0.26.3", default-features = true }
 proptest = { version = "1.11", default-features = false, features = ["std"] }
