@@ -357,6 +357,23 @@ describe("the overview", () => {
     expect(workspaceActions.deleting?.check.fingerprint).toBe("fp-dirty");
   });
 
+  it("says a workspace with no volume can be restored or deleted, and that deleting loses nothing", async () => {
+    api.list = [workspace("demo", { status: "volume_missing" })];
+    api.check = cleanCheck("demo", { volume_missing: true });
+    await load();
+    render(Overview);
+    expect(await screen.findByText(/Its disk is gone/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/delete the workspace below; nothing is lost/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/deleting only removes the workspace from puddle/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete workspace…" }),
+    ).toBeEnabled();
+  });
+
   it("shows nothing for a workspace it doesn't know", async () => {
     url.id = "nope";
     await load();
