@@ -8,6 +8,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { edgeLaunchArgs } from "./scripts/edge-launch-args.ts";
 
 // A free port per run, so gate runs from several checkouts can overlap. Playwright loads this
 // config again in every worker, so the first load (the runner's) picks the port and passes it on
@@ -61,7 +62,11 @@ export default defineConfig({
     ? [
         {
           name: "msedge",
-          use: { ...devices["Desktop Edge"], channel: "msedge" },
+          use: {
+            ...devices["Desktop Edge"],
+            channel: "msedge",
+            launchOptions: { args: edgeLaunchArgs() },
+          },
         },
       ]
     : [
