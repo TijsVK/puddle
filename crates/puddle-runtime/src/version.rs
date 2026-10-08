@@ -241,7 +241,7 @@ mod tests {
     fn parses_and_round_trips() {
         let v: RuntimeVersion = "0.7.7-puddle.14".parse().unwrap();
         assert_eq!(v.release(), "0.7.7");
-        assert_eq!(v.puddle_revision(), 12);
+        assert_eq!(v.puddle_revision(), 14);
         assert_eq!(v.to_string(), "0.7.7-puddle.14");
         assert_eq!(v.fork_tag(), "v0.7.7-puddle.14");
         assert_eq!(v.upstream_tag(), "v0.7.7");
