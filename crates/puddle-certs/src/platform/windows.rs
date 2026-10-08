@@ -4,7 +4,8 @@
 use std::ffi::c_void;
 
 use windows_sys::Win32::Foundation::{
-    CRYPT_E_NOT_FOUND, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GetLastError,
+    CRYPT_E_NOT_FOUND, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS, GetLastError,
+    SetLastError,
 };
 use windows_sys::Win32::Security::Cryptography::{
     CERT_CONTEXT, CERT_STORE_OPEN_EXISTING_FLAG, CERT_STORE_PROV_PHYSICAL_W,
@@ -33,8 +34,22 @@ pub(super) fn read(sources: &[StoreSource]) -> Result<StoreSnapshot, StoreError>
     for &source in sources {
         match Store::open(source) {
             Ok(store) => {
-                for der in store.certificates() {
+                let (certificates, failure) = store.certificates();
+                let read = certificates.len();
+                for der in certificates {
                     snapshot.add(source, der);
+                }
+                if let Some(code) = failure {
+                    let reason =
+                        format!("reading stopped after {read} certificates: os error {code:#x}");
+                    // A `Disallowed` store cut short would trust what the machine distrusts.
+                    if source.store == StoreName::Disallowed {
+                        return Err(StoreError::DisallowedUnreadable {
+                            store: source,
+                            reason,
+                        });
+                    }
+                    snapshot.note_unreadable(source, reason);
                 }
             }
             Err(OpenError::Missing) => {}
@@ -125,29 +140,52 @@ impl Store {
         Ok(Self(handle))
     }
 
-    /// Every certificate in the store, DER, copied out.
+    /// Every certificate in the store, DER, copied out, and the OS error code when the
+    /// enumeration ended in a failure instead of at the end of the store (the certificates read
+    /// before it are returned).
     #[expect(unsafe_code, reason = "CryptoAPI certificate enumeration")]
-    fn certificates(&self) -> Vec<Vec<u8>> {
-        let mut out = Vec::new();
+    fn certificates(&self) -> (Vec<Vec<u8>>, Option<u32>) {
         let mut ctx: *const CERT_CONTEXT = std::ptr::null();
-        loop {
-            // SAFETY: `self.0` is an open store; `ctx` is null or the context the previous call
-            // returned, which this call frees (CertEnumCertificatesInStore's contract). The loop
-            // ends on null, so no context is leaked or used after it was freed.
-            ctx = unsafe { CertEnumCertificatesInStore(self.0, ctx) };
-            if ctx.is_null() {
-                break;
-            }
-            // SAFETY: a non-null context from the enumeration is valid until the next call;
-            // `pbCertEncoded` points at `cbCertEncoded` bytes owned by it, copied out here.
-            let der = unsafe {
-                let c = &*ctx;
-                std::slice::from_raw_parts(c.pbCertEncoded, c.cbCertEncoded as usize).to_vec()
-            };
-            out.push(der);
-        }
-        out
+        drain(
+            || {
+                // SAFETY: no preconditions; clears this thread's last error so that what is read
+                // after a null return is this call's.
+                unsafe { SetLastError(ERROR_SUCCESS) };
+                // SAFETY: `self.0` is an open store; `ctx` is null or the context the previous
+                // call returned, which this call frees (CertEnumCertificatesInStore's contract).
+                // The drain stops on null, so no context is leaked or used after it was freed.
+                ctx = unsafe { CertEnumCertificatesInStore(self.0, ctx) };
+                if ctx.is_null() {
+                    return None;
+                }
+                // SAFETY: a non-null context from the enumeration is valid until the next call;
+                // `pbCertEncoded` points at `cbCertEncoded` bytes owned by it, copied out here.
+                Some(unsafe {
+                    let c = &*ctx;
+                    std::slice::from_raw_parts(c.pbCertEncoded, c.cbCertEncoded as usize).to_vec()
+                })
+            },
+            // SAFETY: no preconditions; reads this thread's last error right after the null return.
+            || unsafe { GetLastError() },
+        )
     }
+}
+
+/// Collects what `next` yields. When it yields `None`, `last_error` says why: `CRYPT_E_NOT_FOUND`
+/// (or no error at all) is the end of the store, anything else a read failure, whose code is
+/// returned beside the certificates read so far (a null return alone cannot tell the two apart).
+fn drain(
+    mut next: impl FnMut() -> Option<Vec<u8>>,
+    last_error: impl FnOnce() -> u32,
+) -> (Vec<Vec<u8>>, Option<u32>) {
+    let mut out = Vec::new();
+    while let Some(der) = next() {
+        out.push(der);
+    }
+    let code = last_error();
+    #[expect(clippy::cast_sign_loss, reason = "HRESULT bit pattern compared as u32")]
+    let end_of_store = code == ERROR_SUCCESS || code == CRYPT_E_NOT_FOUND as u32;
+    (out, (!end_of_store).then_some(code))
 }
 
 impl Drop for Store {
@@ -186,6 +224,30 @@ mod tests {
         );
         assert_eq!(f & 0xffff_0000, CERT_SYSTEM_STORE_CURRENT_USER);
         assert_ne!(f & CERT_STORE_READONLY_FLAG, 0);
+    }
+
+    #[test]
+    fn the_end_of_a_store_is_not_an_error_but_any_other_stop_is() {
+        let from = |items: Vec<Vec<u8>>| {
+            let mut items = items.into_iter();
+            move || items.next()
+        };
+        #[expect(clippy::cast_sign_loss, reason = "HRESULT bit pattern compared as u32")]
+        let not_found = CRYPT_E_NOT_FOUND as u32;
+        let (read, failure) = drain(from(vec![vec![1], vec![2]]), || not_found);
+        assert_eq!((read.len(), failure), (2, None));
+        let (read, failure) = drain(from(vec![vec![1]]), || ERROR_SUCCESS);
+        assert_eq!(
+            (read.len(), failure),
+            (1, None),
+            "no error recorded is the end"
+        );
+        let (read, failure) = drain(from(vec![vec![1], vec![2], vec![3]]), || 0x5);
+        assert_eq!(
+            (read.len(), failure),
+            (3, Some(0x5)),
+            "access denied is a failure"
+        );
     }
 
     #[test]
