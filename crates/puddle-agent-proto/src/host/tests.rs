@@ -459,6 +459,56 @@ async fn a_lookup_that_takes_too_long_is_answered_unavailable() {
     h.close().await.unwrap();
 }
 
+/// Collects what a scoped subscriber logs.
+#[derive(Clone, Default)]
+struct Logs(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lookup_that_takes_too_long_is_logged_with_the_workspace_and_the_limit() {
+    let logs = Logs::default();
+    let _scope = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(logs.clone())
+            .finish(),
+    );
+    let mut h = start_with(HostConfig {
+        resolve_timeout: Duration::from_secs(2),
+        ..HostConfig::default()
+    });
+    assert_eq!(
+        lookup(&mut h, "slow.example").await,
+        ResolveAnswer::Unavailable
+    );
+    h.close().await.unwrap();
+    let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        text.contains("WARN") && text.contains("did not answer in time"),
+        "{text}"
+    );
+    assert!(text.contains("timeout_secs=2"), "{text}");
+    assert!(text.contains(&name().to_string()), "{text}");
+}
+
 #[tokio::test(start_paused = true)]
 async fn lookups_over_the_per_session_limit_are_answered_unavailable() {
     let mut h = start_with(HostConfig {

@@ -343,9 +343,14 @@ async fn serve_resolve<H: StreamHandler>(
         }
     };
     let answer = if let Ok(_permit) = shared.resolves.try_acquire() {
-        tokio::time::timeout(shared.config.resolve_timeout, shared.handler.resolve(query))
-            .await
-            .unwrap_or(ResolveAnswer::Unavailable)
+        if let Ok(answer) =
+            tokio::time::timeout(shared.config.resolve_timeout, shared.handler.resolve(query)).await
+        {
+            answer
+        } else {
+            tracing::warn!(%workspace, timeout_secs = shared.config.resolve_timeout.as_secs(), "the name lookup handler did not answer in time; answered unavailable");
+            ResolveAnswer::Unavailable
+        }
     } else {
         tracing::warn!(%workspace, limit = shared.config.max_resolves, "too many lookups open on one session; answered unavailable");
         ResolveAnswer::Unavailable

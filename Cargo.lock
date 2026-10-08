@@ -5814,6 +5814,7 @@ dependencies = [
  "tokio",
  "tokio-yamux",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
