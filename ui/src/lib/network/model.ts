@@ -204,6 +204,15 @@ export function findings(report: NetworkHealth): Finding[] {
       fix: "Expired certificates are left out on purpose. If one you rely on is listed, ask IT for a renewed one.",
     });
   }
+  const leftOut = roots.left_out_of_tls ?? [];
+  if (leftOut.length > 0) {
+    out.push({
+      id: "roots-left-out-of-tls",
+      level: "problem",
+      title: `puddle can't use ${leftOut.length === 1 ? "a company certificate" : `${leftOut.length} company certificates`} when it checks the servers it adds your credentials for.`,
+      fix: "A Git host reached through a company proxy that inspects traffic may then fail with an unknown-issuer error. The list below says which certificate and why. Ask IT for it again as a standard CA certificate, then restart puddle.",
+    });
+  }
   if (!pull_proxy.active) {
     out.push({
       id: "pull-off",

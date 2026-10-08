@@ -2332,6 +2332,12 @@ export interface components {
              */
             intermediates: number;
             /**
+             * @description Company certificates puddle's own TLS checks could not use (the checks that guard a
+             *     workspace's credentials on the way out): a server that chains to one fails with an unknown
+             *     issuer. Workspaces still get them; this is only about what puddle itself verifies.
+             */
+            left_out_of_tls?: components["schemas"]["SkippedRoot"][];
+            /**
              * Format: int32
              * @description How many trust anchors workspaces get.
              */

@@ -264,6 +264,20 @@
         {/each}
       </ul>
     {/if}
+    <h3>Left out of puddle's own TLS checks</h3>
+    {#if (report.roots.left_out_of_tls ?? []).length === 0}
+      <p class="muted">No certificate was left out.</p>
+    {:else}
+      <ul class="plain">
+        {#each report.roots.left_out_of_tls ?? [] as s (s.fingerprint)}
+          <li class="error wrap">
+            {s.subject ?? "(no name)"}
+            <span class="muted mono small">{s.fingerprint.slice(0, 16)}</span>:
+            {s.reason}
+          </li>
+        {/each}
+      </ul>
+    {/if}
     <h3>Stores that couldn't be read</h3>
     {#if report.roots.unreadable_stores.length === 0}
       <p class="muted">None.</p>

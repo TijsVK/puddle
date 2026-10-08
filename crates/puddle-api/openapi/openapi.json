@@ -8608,6 +8608,13 @@
             "description": "How many intermediates workspaces get.",
             "minimum": 0
           },
+          "left_out_of_tls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedRoot"
+            },
+            "description": "Company certificates puddle's own TLS checks could not use (the checks that guard a\nworkspace's credentials on the way out): a server that chains to one fails with an unknown\nissuer. Workspaces still get them; this is only about what puddle itself verifies."
+          },
           "roots": {
             "type": "integer",
             "format": "int32",

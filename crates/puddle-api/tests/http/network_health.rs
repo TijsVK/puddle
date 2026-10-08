@@ -12,7 +12,7 @@ use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_store::{Clock, ManualClock};
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Destination, Discovery, FakeOs,
-    FakeProxy, Form, Hop, ProxyConfig, ProxyProblem, ProxyRules, Request, Scheme,
+    FakeProxy, Form, Hop, ProxyConfig, ProxyProblem, ProxyRules, RejectedRoot, Request, Scheme,
 };
 use serde_json::{Value, json};
 
@@ -275,4 +275,49 @@ async fn a_network_change_is_an_event_and_the_next_report_shows_it() {
     let body = api.get("/api/network-health").await.json();
     assert_eq!(body["proxy"]["epoch"], 1);
     assert!(body["proxy"]["last_change_at"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn company_certificates_the_hosts_own_tls_checks_left_out_are_listed_without_a_secret() {
+    let discovery = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
+    let clock = Arc::new(ManualClock::new(START_MS));
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+    let roots = CorporateRoots::select(&root_snapshot(), SystemTime::now());
+    let synced = roots.certificates()[0].der().to_vec();
+    // Before anything is recorded the list is there and empty.
+    let api = start_with_network(health.clone() as Arc<dyn NetworkHealthService>).await;
+    assert_eq!(
+        api.get("/api/network-health").await.json()["roots"]["left_out_of_tls"],
+        json!([])
+    );
+
+    // One of the synced company certificates (named) and one that is not (fingerprint only).
+    health.set_tls_left_out(
+        &[
+            RejectedRoot {
+                der: synced.clone().into(),
+                reason: "refused (fetched from https://svc:hunter2@pki.corp/ca)".to_owned(),
+            },
+            RejectedRoot {
+                der: b"another certificate".to_vec().into(),
+                reason: "not usable".to_owned(),
+            },
+        ],
+        &roots,
+    );
+    // Reported whether or not the stores were read.
+    let reply = api.get("/api/network-health").await;
+    assert!(!reply.body.contains("hunter2"), "{}", reply.body);
+    let left_out = reply.json()["roots"]["left_out_of_tls"].clone();
+    assert_eq!(left_out[0]["subject"], "Corp Root CA");
+    assert_eq!(
+        left_out[0]["fingerprint"],
+        puddle_certs::Fingerprint::of(&synced).to_string()
+    );
+    assert_eq!(left_out[1]["subject"], Value::Null);
+    assert_eq!(left_out[1]["reason"], "not usable");
+    health.set_roots(Arc::new(roots));
+    let synced_report = api.get("/api/network-health").await.json();
+    assert_eq!(synced_report["roots"]["synced"], true);
+    assert_eq!(synced_report["roots"]["left_out_of_tls"], left_out);
 }

@@ -2548,6 +2548,9 @@ async fn the_company_roots_go_into_the_clients_that_verify_decrypted_hosts() {
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
+    // The host's own TLS client took the company root: nothing is reported as left out.
+    let report = api.get("/api/network-health").await.json();
+    assert_eq!(report["roots"]["left_out_of_tls"], json!([]));
     // The guest got the company root and the CA in one extra-CAs file.
     let files = rig.guest.plan_files(0);
     let extra = pem_of(&files, "/etc/puddle/extra-cas.pem");

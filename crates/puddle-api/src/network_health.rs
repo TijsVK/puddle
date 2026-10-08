@@ -69,6 +69,8 @@ pub struct HostNetworkHealth {
     chain: Option<Arc<Chain>>,
     clock: Arc<dyn Clock>,
     roots: RwLock<Option<RootsState>>,
+    /// Company certificates puddle's own TLS client could not use.
+    left_out_of_tls: RwLock<Vec<SkippedRoot>>,
     pull: RwLock<PullProxyReport>,
 }
 
@@ -88,6 +90,7 @@ impl HostNetworkHealth {
             chain: None,
             clock,
             roots: RwLock::new(None),
+            left_out_of_tls: RwLock::new(Vec::new()),
             pull: RwLock::new(PullProxyReport {
                 active: false,
                 via_upstream: false,
@@ -107,6 +110,35 @@ impl HostNetworkHealth {
         let at_ms = self.clock.now_ms();
         *self.roots.write().unwrap_or_else(PoisonError::into_inner) =
             Some(RootsState { roots, at_ms });
+    }
+
+    /// Records the company certificates the host's own TLS client left out (it could not use them),
+    /// named from `roots` where they are the ones synced into workspaces.
+    pub fn set_tls_left_out(
+        &self,
+        rejected: &[puddle_upstream::RejectedRoot],
+        roots: &CorporateRoots,
+    ) {
+        let left_out = rejected
+            .iter()
+            .map(|root| {
+                let fingerprint = puddle_certs::Fingerprint::of(root.der.as_ref());
+                let subject = roots
+                    .certificates()
+                    .iter()
+                    .find(|cert| cert.fingerprint() == fingerprint)
+                    .and_then(|cert| cert.subject_cn());
+                SkippedRoot {
+                    subject: subject.map(redact_text),
+                    fingerprint: fingerprint.to_string(),
+                    reason: redact_text(&root.reason),
+                }
+            })
+            .collect();
+        *self
+            .left_out_of_tls
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = left_out;
     }
 
     /// Records whether image pulls go through the pull proxy, and whether that proxy leaves
@@ -136,6 +168,10 @@ impl HostNetworkHealth {
                     .read()
                     .unwrap_or_else(PoisonError::into_inner)
                     .as_ref(),
+                self.left_out_of_tls
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone(),
             ),
             pull_proxy: self
                 .pull
@@ -263,7 +299,7 @@ fn route(sample: &RouteSample) -> RouteDecision {
     }
 }
 
-fn roots_report(state: Option<&RootsState>) -> RootsReport {
+fn roots_report(state: Option<&RootsState>, left_out_of_tls: Vec<SkippedRoot>) -> RootsReport {
     let Some(state) = state else {
         return RootsReport {
             synced: false,
@@ -273,6 +309,7 @@ fn roots_report(state: Option<&RootsState>) -> RootsReport {
             certificates: Vec::new(),
             skipped: Vec::new(),
             unreadable_stores: Vec::new(),
+            left_out_of_tls,
         };
     };
     let certificates: Vec<SyncedRoot> = state
@@ -315,6 +352,7 @@ fn roots_report(state: Option<&RootsState>) -> RootsReport {
             .iter()
             .map(|store| format!("{}: {}", store.source, redact_text(&store.reason)))
             .collect(),
+        left_out_of_tls,
     }
 }
 

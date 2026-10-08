@@ -430,6 +430,7 @@ impl<R: Runtime + Clone> Host<R> {
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
         let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);
+        network_health.set_tls_left_out(injecting.tls.rejected_roots(), &roots);
         let pull_url = pull.proxy_url();
         // Image pulls are puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
         let pull = pull

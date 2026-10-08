@@ -197,6 +197,28 @@ describe("network health page", () => {
     ).toBeInTheDocument();
   });
 
+  it("lists the certificates left out of puddle's own TLS checks, with the reason", () => {
+    const r = report();
+    r.roots.left_out_of_tls = [
+      {
+        subject: "Corp CA",
+        fingerprint: "cd".repeat(32),
+        reason: "not usable",
+      },
+      { subject: null, fingerprint: "ef".repeat(32), reason: "bad key" },
+    ];
+    store.report = r;
+    render(Page);
+    expect(screen.getByText("1 problem found.")).toBeInTheDocument();
+    const list = within(section("Company certificates"));
+    expect(
+      list.getByText("Left out of puddle's own TLS checks"),
+    ).toBeInTheDocument();
+    expect(list.getByText(/Corp CA/)).toBeInTheDocument();
+    expect(list.getByText(/\(no name\)/)).toBeInTheDocument();
+    expect(list.getByText(/bad key/)).toBeInTheDocument();
+  });
+
   it("says one problem in the singular, and shows a settings error", () => {
     const r = report();
     r.proxy.settings_error = "no registry";

@@ -136,6 +136,30 @@ describe("findings", () => {
     );
   });
 
+  it("reports company certificates puddle's own TLS checks left out, in the singular and the plural", () => {
+    const r = report();
+    expect(ids(r)).toEqual([]);
+    r.roots.left_out_of_tls = [
+      { subject: "Corp", fingerprint: "aa", reason: "not usable" },
+    ];
+    expect(ids(r)).toEqual(["roots-left-out-of-tls"]);
+    expect(findings(r)[0]?.level).toBe("problem");
+    expect(findings(r)[0]?.title).toBe(
+      "puddle can't use a company certificate when it checks the servers it adds your credentials for.",
+    );
+    r.roots.left_out_of_tls.push({
+      subject: null,
+      fingerprint: "bb",
+      reason: "not usable",
+    });
+    expect(findings(r)[0]?.title).toBe(
+      "puddle can't use 2 company certificates when it checks the servers it adds your credentials for.",
+    );
+    // An older host that does not send the list has nothing to report.
+    delete r.roots.left_out_of_tls;
+    expect(ids(r)).toEqual([]);
+  });
+
   it("lists notes after problems: dead proxies, unread roots, skipped roots, pull proxy", () => {
     const r = report();
     r.proxy.dead_proxies = [{ proxy: "b:8080", retry_in_secs: 212 }];

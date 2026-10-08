@@ -47,6 +47,7 @@ utoipa-axum = { workspace = true }
 proptest = { workspace = true }
 rcgen = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }
+rustls = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time", "test-util"] }
 
