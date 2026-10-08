@@ -122,6 +122,10 @@ describe("making, renaming and deleting", () => {
     await fireEvent.input(within(dialog).getByLabelText("Name"), {
       target: { value: "Client X" },
     });
+    await fireEvent.input(
+      within(dialog).getByLabelText("Description (optional)"),
+      { target: { value: "their tenant" } },
+    );
     await fireEvent.click(
       within(dialog).getByRole("button", { name: "Make rule set" }),
     );
@@ -144,6 +148,15 @@ describe("making, renaming and deleting", () => {
 
   it("deletes a set after asking", async () => {
     mount();
+    await fireEvent.click(
+      within(card("Work")).getByRole("button", { name: "Delete set" }),
+    );
+    await fireEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Cancel",
+      }),
+    );
+    expect(api.calls).not.toContain("DELETE /api/rule-sets/{id}");
     await fireEvent.click(
       within(card("Work")).getByRole("button", { name: "Delete set" }),
     );

@@ -265,12 +265,9 @@ impl RuleIndex {
         let mut own: Option<&Rule> = None;
         let mut set_best: Option<(SetKey, Hit<'_>)> = None;
         let mut set_deny: Option<(SetKey, Hit<'_>)> = None;
-        for slot in self.candidates(host) {
-            let hit = match slot {
-                Slot::Rule(index) => {
-                    let Some(rule) = self.rules.get(index) else {
-                        continue;
-                    };
+        for found in self.candidates(host) {
+            let hit = match found {
+                Hit::Rule(rule) => {
                     if rule.is_expired(now) {
                         continue;
                     }
@@ -296,10 +293,7 @@ impl RuleIndex {
                         }
                     }
                 }
-                Slot::Entry(index) => {
-                    let Some(entry) = self.entries.get(index) else {
-                        continue;
-                    };
+                Hit::Entry(entry) => {
                     let applies = match (&entry.set, &entry.sandbox) {
                         (RuleSetId::System, None) => true,
                         (RuleSetId::System, Some(s)) => s == sandbox,
@@ -331,8 +325,16 @@ impl RuleIndex {
         }
     }
 
+    /// Rows and entries whose pattern matches `host`: its exact entry, then every proper suffix.
+    fn candidates<'a>(&'a self, host: &Host) -> impl Iterator<Item = Hit<'a>> + 'a {
+        self.slots(host).filter_map(|slot| match slot {
+            Slot::Rule(index) => self.rules.get(index).map(Hit::Rule),
+            Slot::Entry(index) => self.entries.get(index).map(Hit::Entry),
+        })
+    }
+
     /// Slots whose pattern matches `host`: its exact entry, then every proper suffix.
-    fn candidates<'a>(&'a self, host: &Host) -> impl Iterator<Item = Slot> + 'a {
+    fn slots<'a>(&'a self, host: &Host) -> impl Iterator<Item = Slot> + 'a {
         let exact = self
             .exact
             .get(&host.to_string())

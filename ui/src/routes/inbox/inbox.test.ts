@@ -10,10 +10,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = await vi.hoisted(async () => {
   const m = await import("#lib/testing/fake-inbox.ts");
+  const sets = await import("#lib/testing/fake-rule-sets.ts");
   return {
     inbox: new m.FakeInbox(),
+    setsApi: new sets.FakeRuleSets(),
     source: new m.FakeSource(),
     request: m.request,
+    mine: sets.mine,
+  };
+});
+
+vi.mock("#lib/stores/rule-sets.svelte.ts", async (original) => {
+  const mod =
+    await original<typeof import("#lib/stores/rule-sets.svelte.ts")>();
+  return {
+    ...mod,
+    ruleSets: new mod.RuleSetsStore({
+      api: h.setsApi as never,
+      source: h.source,
+      pollMs: 60_000,
+    }),
   };
 });
 
@@ -33,7 +49,7 @@ import { pending } from "#lib/stores/pending.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import InboxPage from "./+page.svelte";
 
-const { inbox, source, request } = h;
+const { inbox, setsApi, source, request, mine } = h;
 
 function reset() {
   inbox.open = [];
@@ -47,6 +63,7 @@ function reset() {
   pending.suppression = {};
   pending.toggles = {};
   pending.status = "loading";
+  setsApi.sets = [];
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 }
 
@@ -283,6 +300,47 @@ describe("deciding with the buttons", () => {
       await screen.findByText("puddle couldn't undo that."),
     ).toBeInTheDocument();
     reset();
+  });
+
+  it("puts the rule into one of your sets that is on for the workspace", async () => {
+    setsApi.sets = [
+      mine(4, { name: "Client X" }),
+      mine(5, {
+        name: "Elsewhere",
+        overrides: [{ sandbox: "demo" as never, enabled: false }],
+      }),
+    ];
+    inbox.add(request(1, { host: "a.example.com" }), "example.com");
+    await ready();
+    await vi.waitFor(() =>
+      expect(setsApi.calls).toContain("GET /api/rule-sets"),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: /^More choices for a\.example\.com/ }),
+    );
+    const dialog = await showOptions();
+    expect(
+      within(dialog).queryByRole("radio", { name: /Elsewhere/ }),
+    ).toBeNull();
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: /Into rule set Client X/ }),
+    );
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: /Allow/ }),
+    );
+    // On for every workspace, so it asks first.
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent(
+      "Allow a.example.com in rule set Client X (which is on for every workspace), permanently",
+    );
+    await fireEvent.click(
+      within(confirm).getByRole("button", { name: "Allow in every workspace" }),
+    );
+    await vi.waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Allowed a.example.com in rule set Client X",
+      ),
+    );
   });
 
   it("mentions the other requests the rule closed", async () => {

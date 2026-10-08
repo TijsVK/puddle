@@ -57,6 +57,15 @@ describe("OptionsPopover", () => {
       within(dialog).getByRole("radio", { name: /Into rule set Client X/ }),
     ).toHaveAccessibleName(/on everywhere; asks/);
     await fireEvent.click(
+      within(dialog).getByRole("radio", { name: /Into rule set Client X/ }),
+    );
+    await fireEvent.click(
+      within(dialog).getByRole("radio", { name: /^Only demo/ }),
+    );
+    expect(
+      within(dialog).getByRole("radio", { name: /^Only demo/ }),
+    ).toBeChecked();
+    await fireEvent.click(
       within(dialog).getByRole("radio", { name: /Into rule set Local/ }),
     );
     await fireEvent.click(

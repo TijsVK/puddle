@@ -20,8 +20,15 @@ pub struct CatalogueEntry {
     pub note: &'static str,
 }
 
-const fn entry(pattern: &'static str, note: &'static str) -> CatalogueEntry {
-    CatalogueEntry { pattern, note }
+/// `entry!("example.com", "what for")`: a catalogue entry (a macro, so the data has no code of
+/// its own to cover).
+macro_rules! entry {
+    ($pattern:expr, $note:expr $(,)?) => {
+        CatalogueEntry {
+            pattern: $pattern,
+            note: $note,
+        }
+    };
 }
 
 /// A rule set that ships with puddle. Read-only; on or off like any set (R-37).
@@ -48,20 +55,20 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         description: "The public registries of npm, Yarn, PyPI, crates.io, Go modules, Maven Central, NuGet and RubyGems.",
         default_on: false,
         entries: &[
-            entry("registry.npmjs.org", "npm"),
-            entry("registry.yarnpkg.com", "Yarn"),
-            entry("pypi.org", "PyPI index"),
-            entry("files.pythonhosted.org", "PyPI downloads"),
-            entry("crates.io", "crates.io"),
-            entry("index.crates.io", "crates.io index"),
-            entry("static.crates.io", "crates.io downloads"),
-            entry("proxy.golang.org", "Go module proxy"),
-            entry("sum.golang.org", "Go checksum database"),
-            entry("repo.maven.apache.org", "Maven Central"),
-            entry("repo1.maven.org", "Maven Central"),
-            entry("api.nuget.org", "NuGet"),
-            entry("rubygems.org", "RubyGems"),
-            entry("index.rubygems.org", "RubyGems index"),
+            entry!("registry.npmjs.org", "npm"),
+            entry!("registry.yarnpkg.com", "Yarn"),
+            entry!("pypi.org", "PyPI index"),
+            entry!("files.pythonhosted.org", "PyPI downloads"),
+            entry!("crates.io", "crates.io"),
+            entry!("index.crates.io", "crates.io index"),
+            entry!("static.crates.io", "crates.io downloads"),
+            entry!("proxy.golang.org", "Go module proxy"),
+            entry!("sum.golang.org", "Go checksum database"),
+            entry!("repo.maven.apache.org", "Maven Central"),
+            entry!("repo1.maven.org", "Maven Central"),
+            entry!("api.nuget.org", "NuGet"),
+            entry!("rubygems.org", "RubyGems"),
+            entry!("index.rubygems.org", "RubyGems index"),
         ],
     },
     BuiltInSet {
@@ -70,12 +77,12 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         description: "The Debian and Ubuntu package archives, for apt.",
         default_on: false,
         entries: &[
-            entry("deb.debian.org", "Debian archive"),
-            entry("security.debian.org", "Debian security updates"),
-            entry("archive.ubuntu.com", "Ubuntu archive"),
-            entry("*.archive.ubuntu.com", "Ubuntu country mirrors"),
-            entry("security.ubuntu.com", "Ubuntu security updates"),
-            entry("ports.ubuntu.com", "Ubuntu archive for other architectures"),
+            entry!("deb.debian.org", "Debian archive"),
+            entry!("security.debian.org", "Debian security updates"),
+            entry!("archive.ubuntu.com", "Ubuntu archive"),
+            entry!("*.archive.ubuntu.com", "Ubuntu country mirrors"),
+            entry!("security.ubuntu.com", "Ubuntu security updates"),
+            entry!("ports.ubuntu.com", "Ubuntu archive for other architectures"),
         ],
     },
     BuiltInSet {
@@ -84,12 +91,12 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         description: "github.com, its API, and the hosts that serve repository archives, raw files and release downloads.",
         default_on: false,
         entries: &[
-            entry("github.com", "GitHub"),
-            entry("api.github.com", "GitHub API"),
-            entry("codeload.github.com", "repository archives"),
-            entry("raw.githubusercontent.com", "raw files"),
-            entry("objects.githubusercontent.com", "downloads"),
-            entry("release-assets.githubusercontent.com", "release downloads"),
+            entry!("github.com", "GitHub"),
+            entry!("api.github.com", "GitHub API"),
+            entry!("codeload.github.com", "repository archives"),
+            entry!("raw.githubusercontent.com", "raw files"),
+            entry!("objects.githubusercontent.com", "downloads"),
+            entry!("release-assets.githubusercontent.com", "release downloads"),
         ],
     },
 ];
@@ -115,22 +122,22 @@ pub enum SystemReason {
 }
 
 const MICROSOFT_HOSTS: &[CatalogueEntry] = &[
-    entry(
+    entry!(
         "update.code.visualstudio.com",
         "VS Code server downloads and updates",
     ),
-    entry(
+    entry!(
         "vscode.download.prss.microsoft.com",
         "VS Code server downloads",
     ),
-    entry("marketplace.visualstudio.com", "Visual Studio Marketplace"),
-    entry("*.gallery.vsassets.io", "Marketplace extension files"),
-    entry("*.gallerycdn.vsassets.io", "Marketplace extension files"),
+    entry!("marketplace.visualstudio.com", "Visual Studio Marketplace"),
+    entry!("*.gallery.vsassets.io", "Marketplace extension files"),
+    entry!("*.gallerycdn.vsassets.io", "Marketplace extension files"),
 ];
 
 const OPEN_VSX_HOSTS: &[CatalogueEntry] = &[
-    entry("open-vsx.org", "Open VSX extensions"),
-    entry("openvsx.eclipsecontent.org", "Open VSX extension files"),
+    entry!("open-vsx.org", "Open VSX extensions"),
+    entry!("openvsx.eclipsecontent.org", "Open VSX extension files"),
 ];
 
 impl SystemReason {
@@ -229,6 +236,22 @@ mod tests {
             }
             assert_eq!(patterns(entries).len(), entries.len());
         }
+    }
+
+    #[test]
+    fn a_bad_catalogue_entry_is_skipped_not_fatal() {
+        static BAD: [CatalogueEntry; 2] = [
+            CatalogueEntry {
+                pattern: "*.com",
+                note: "a public suffix",
+            },
+            CatalogueEntry {
+                pattern: "ok.example",
+                note: "fine",
+            },
+        ];
+        let kept: Vec<String> = patterns(&BAD).iter().map(ToString::to_string).collect();
+        assert_eq!(kept, ["ok.example"]);
     }
 
     #[test]

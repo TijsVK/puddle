@@ -4,3 +4,6 @@
 # reach it. Code that runs only on another OS or in a VM is covered by that tier (docs/STANDARDS.md,
 # "Coverage"), so list it here, with that tier named in the reason, rather than leaving it unexplained.
 # A new entry needs a reason a reviewer accepts; stale entries are reported by the gate.
+crates/puddle-api/src/wire/rule_sets.rs | _ => return None, | `SystemReason` is non-exhaustive in puddle-store; a reason this API doesn't map can only come from a later store version, so no test can build one
+crates/puddle-store/src/store/sets.rs | _ => return Err(StoreError::UnknownRuleSet(set.to_string())), | `RuleSetId` is non-exhaustive in puddle-types; every variant this version has is handled above, so no test can reach the fallback
+ui/src/lib/stores/rule-sets.svelte.ts | onDecidedElsewhere: () => void live.refresh(), | the app-wide instance's badge hook; tests build their own store and check the hook with a counter (rule-sets.test.ts)

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use puddle_store::{
     Actor, BUILT_IN_SETS, Effect, Limits, ManualClock, NewRule, Pattern, PendingState, Resolution,
-    Scope, ScopeChoice, Store, StoreError, SystemPlan, SystemReason,
+    Scope, ScopeChoice, Store, StoreError, SystemPlan, SystemReason, parse_rule_set,
 };
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, Decision, EgressRequest, Host, PatternKind,
@@ -592,4 +592,72 @@ fn r40_system_managed_lists_every_host_with_its_reason_and_no_rule_rows() {
         store.rule_set(RuleSetId::System),
         Err(StoreError::UnknownRuleSet(_))
     ));
+}
+
+#[test]
+fn set_ids_parse_only_in_their_written_form() {
+    assert_eq!(parse_rule_set("user:7"), Some(RuleSetId::User(7)));
+    assert_eq!(parse_rule_set("user:+7"), None);
+    assert_eq!(parse_rule_set("user:"), None);
+    assert_eq!(
+        parse_rule_set("builtin:github"),
+        Some(RuleSetId::BuiltIn("github"))
+    );
+    assert_eq!(parse_rule_set("builtin:gone"), None);
+    assert_eq!(parse_rule_set("system"), Some(RuleSetId::System));
+    assert_eq!(parse_rule_set("other"), None);
+}
+
+#[test]
+fn r38_the_list_has_your_sets_after_the_built_in_ones_and_only_users_change_them() {
+    let (_, store) = fixture();
+    let b = user_set(&store, "b set");
+    let a = user_set(&store, "A set");
+    let ids: Vec<RuleSetId> = store
+        .rule_sets()
+        .unwrap()
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    assert_eq!(ids.len(), BUILT_IN_SETS.len() + 2);
+    assert_eq!(
+        &ids[BUILT_IN_SETS.len()..],
+        [RuleSetId::User(a), RuleSetId::User(b)]
+    );
+    assert!(matches!(
+        store.update_rule_set(a, "x", "", Actor::System),
+        Err(StoreError::SystemActor)
+    ));
+    assert!(matches!(
+        store.delete_rule_set(a, Actor::System),
+        Err(StoreError::SystemActor)
+    ));
+}
+
+#[test]
+fn r37_stored_switches_and_reasons_this_version_cannot_read_are_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let clock = Arc::new(ManualClock::new(T0));
+    drop(Store::open(&path, clock.clone(), Limits::default()).unwrap());
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "INSERT INTO rule_set_switches (rule_set, sandbox_id, enabled, changed_at) VALUES
+            ('builtin:gone', NULL, 1, 1),
+            ('builtin:github', 'Not A Name', 1, 1),
+            ('builtin:github', 'a', 1, 1);
+         INSERT INTO system_reasons (sandbox_id, reason) VALUES
+            (NULL, 'a_later_reason'),
+            ('Not A Name', 'code_server'),
+            ('a', 'code_server');",
+    )
+    .unwrap();
+    drop(conn);
+    let store = Store::open(&path, clock, Limits::default()).unwrap();
+    // The readable rows count; the others are skipped.
+    assert!(decide(&store, "a", "github.com").is_allow());
+    assert!(!decide(&store, "b", "github.com").is_allow());
+    let hosts = store.system_managed().unwrap();
+    assert!(hosts.iter().all(|h| h.sandbox == Some(sb("a"))));
+    assert!(decide(&store, "a", "open-vsx.org").is_allow());
 }

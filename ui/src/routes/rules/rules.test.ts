@@ -652,6 +652,20 @@ describe("rule sets and System managed (rules spec §7)", () => {
         scope: { type: "set", set: 4 },
       }),
     );
+    // Or choose the set in a plain Add rule.
+    await fireEvent.click(
+      screen.getAllByRole("button", { name: "Add rule" })[0]!,
+    );
+    const plain = await screen.findByRole("dialog", { name: "Add a rule" });
+    await fireEvent.click(
+      within(plain).getByRole("radio", { name: /In rule set Client X/ }),
+    );
+    expect(
+      within(plain).getByRole("radio", { name: /In rule set Client X/ }),
+    ).toBeChecked();
+    await fireEvent.click(
+      within(plain).getByRole("button", { name: "Cancel" }),
+    );
     await fireEvent.click(
       within(card).getByRole("button", {
         name: "Delete x.example from Client X",

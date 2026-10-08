@@ -58,6 +58,11 @@ describe("a built-in set", () => {
     });
     await fireEvent.click(screen.getByRole("button", { name: "Off there" }));
     expect(props.onSwitch).toHaveBeenCalledWith(props.set, "api", false);
+    // Enter in the field submits nothing by itself: the buttons say on or off.
+    await fireEvent.submit(
+      screen.getByRole("form", { name: "Switch github for one workspace" }),
+    );
+    expect(props.onSwitch).toHaveBeenCalledTimes(1);
   });
 
   it("lists the workspaces that switch it, each with a way back", async () => {

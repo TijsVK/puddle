@@ -16,7 +16,6 @@ use crate::audit::{AuditRecord, RuleDeleteReason, RuleSetWire, RuleWire, actor_s
 use crate::catalogue::{self, BUILT_IN_SETS, SystemReason};
 use crate::engine::{RuleIndex, SetEntry, Switches, default_on};
 use crate::error::StoreError;
-use crate::pending::PendingRow;
 use crate::rule::{Actor, Effect, Rule, Scope};
 
 /// The longest rule set name, in characters.
@@ -242,15 +241,13 @@ pub(super) fn note_built_in_changes(conn: &mut Connection, now: u64) -> Result<(
                     "UPDATE builtin_sets_seen SET entries = ?2, changed_at = ?3 WHERE slug = ?1",
                     params![set.slug, json, sql_ts(now)],
                 )?;
-                append(
-                    &tx,
-                    &AuditRecord::RuleSetChanged {
-                        ts: now,
-                        set_id: RuleSetId::BuiltIn(set.slug).to_string(),
-                        added: current.difference(&before).cloned().collect(),
-                        removed: before.difference(&current).cloned().collect(),
-                    },
-                )?;
+                let record = AuditRecord::RuleSetChanged {
+                    ts: now,
+                    set_id: RuleSetId::BuiltIn(set.slug).to_string(),
+                    added: current.difference(&before).cloned().collect(),
+                    removed: before.difference(&current).cloned().collect(),
+                };
+                append(&tx, &record)?;
             }
         }
     }
@@ -348,13 +345,16 @@ fn checked_names(
     Ok((name.to_owned(), description.to_owned()))
 }
 
-/// Open rows that `index` now decides, in `sandbox` or in any sandbox.
-fn rows_now_decided(
+/// Closes the open rows (in `sandbox`, or in any sandbox) that `index` now decides, the way it
+/// decides them (R-37: like a new rule, R-16). Returns the rows it closed.
+fn close_rows_now_decided(
     tx: &Transaction<'_>,
     index: &RuleIndex,
     sandbox: Option<&SandboxName>,
+    actor: Actor,
     now: u64,
-) -> Result<Vec<PendingRow>, StoreError> {
+    fx: &mut Vec<Event>,
+) -> Result<Vec<PendingId>, StoreError> {
     let mut stmt = tx.prepare(&format!(
         "SELECT {PENDING_COLUMNS} FROM pending
          WHERE state = 'requested' AND (?1 IS NULL OR sandbox_id = ?1) ORDER BY id"
@@ -363,31 +363,14 @@ fn rows_now_decided(
         .query_map([sandbox.map(SandboxName::as_str)], raw_pending)?
         .map(|raw| pending_from_raw(&raw?))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(open
-        .into_iter()
-        .filter(|row| {
-            index
-                .decide(&row.sandbox, &row.host, now, SuffixAllows::Count)
-                .is_some()
-        })
-        .collect())
-}
-
-/// Closes `rows` the way `index` decides them (R-37: like a new rule, R-16).
-fn close_rows(
-    tx: &Transaction<'_>,
-    index: &RuleIndex,
-    rows: &[PendingRow],
-    actor: Actor,
-    now: u64,
-    fx: &mut Vec<Event>,
-) -> Result<Vec<PendingId>, StoreError> {
+    drop(stmt);
     let mut closed = Vec::new();
-    for row in rows {
-        if let Some(hit) = index.decide(&row.sandbox, &row.host, now, SuffixAllows::Count) {
-            decide_row_by(tx, row, hit, actor, now, fx)?;
-            closed.push(row.id);
-        }
+    for row in &open {
+        let Some(hit) = index.decide(&row.sandbox, &row.host, now, SuffixAllows::Count) else {
+            continue;
+        };
+        decide_row_by(tx, row, hit, actor, now, fx)?;
+        closed.push(row.id);
     }
     Ok(closed)
 }
@@ -484,14 +467,12 @@ impl Store {
                 params![name, description, sql_ts(now), actor.as_str()],
             )?;
             let id = tx.last_insert_rowid();
-            append(
-                tx,
-                &AuditRecord::RuleSetCreated {
-                    ts: now,
-                    rule_set: require_user_set(tx, id)?,
-                    actor: actor_str(actor),
-                },
-            )?;
+            let record = AuditRecord::RuleSetCreated {
+                ts: now,
+                rule_set: require_user_set(tx, id)?,
+                actor: actor_str(actor),
+            };
+            append(tx, &record)?;
             fx.push(Event::RulesChanged {});
             Ok(id)
         })?;
@@ -521,15 +502,13 @@ impl Store {
                 "UPDATE rule_sets SET name = ?2, description = ?3 WHERE id = ?1",
                 params![id, name, description],
             )?;
-            append(
-                tx,
-                &AuditRecord::RuleSetUpdated {
-                    ts: now,
-                    before,
-                    rule_set: require_user_set(tx, id)?,
-                    actor: actor_str(actor),
-                },
-            )?;
+            let record = AuditRecord::RuleSetUpdated {
+                ts: now,
+                before,
+                rule_set: require_user_set(tx, id)?,
+                actor: actor_str(actor),
+            };
+            append(tx, &record)?;
             fx.push(Event::RulesChanged {});
             Ok(())
         })?;
@@ -553,29 +532,25 @@ impl Store {
                 .collect();
             tx.execute("DELETE FROM rules WHERE set_id = ?1", [id])?;
             for rule in &entries {
-                append(
-                    tx,
-                    &AuditRecord::RuleDeleted {
-                        ts: now,
-                        rule: RuleWire::from(rule),
-                        reason: RuleDeleteReason::SetDeleted,
-                        actor: actor_str(actor),
-                    },
-                )?;
+                let record = AuditRecord::RuleDeleted {
+                    ts: now,
+                    rule: RuleWire::from(rule),
+                    reason: RuleDeleteReason::SetDeleted,
+                    actor: actor_str(actor),
+                };
+                append(tx, &record)?;
             }
             tx.execute(
                 "DELETE FROM rule_set_switches WHERE rule_set = ?1",
                 [RuleSetId::User(id).to_string()],
             )?;
             tx.execute("DELETE FROM rule_sets WHERE id = ?1", [id])?;
-            append(
-                tx,
-                &AuditRecord::RuleSetDeleted {
-                    ts: now,
-                    rule_set: set,
-                    actor: actor_str(actor),
-                },
-            )?;
+            let record = AuditRecord::RuleSetDeleted {
+                ts: now,
+                rule_set: set,
+                actor: actor_str(actor),
+            };
+            append(tx, &record)?;
             fx.push(Event::RulesChanged {});
             Ok(())
         })?;
@@ -625,19 +600,16 @@ impl Store {
                     params![key, name, i64::from(on), sql_ts(now)],
                 )?;
             }
-            append(
-                tx,
-                &AuditRecord::RuleSetSwitched {
-                    ts: now,
-                    set_id: key,
-                    sandbox_id: name.map(str::to_owned),
-                    enabled,
-                    actor: actor_str(actor),
-                },
-            )?;
+            let record = AuditRecord::RuleSetSwitched {
+                ts: now,
+                set_id: key,
+                sandbox_id: name.map(str::to_owned),
+                enabled,
+                actor: actor_str(actor),
+            };
+            append(tx, &record)?;
             let index = load_index(tx)?;
-            let rows = rows_now_decided(tx, &index, sandbox, now)?;
-            let closed = close_rows(tx, &index, &rows, actor, now, fx)?;
+            let closed = close_rows_now_decided(tx, &index, sandbox, actor, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok(closed)
         })?;
@@ -710,25 +682,22 @@ impl Store {
                 if before == after {
                     continue;
                 }
-                append(
-                    tx,
-                    &AuditRecord::SystemManagedChanged {
-                        ts: now,
-                        sandbox_id: scope.as_ref().map(ToString::to_string),
-                        added: after
-                            .difference(before)
-                            .map(|r| r.as_str().to_owned())
-                            .collect(),
-                        removed: before
-                            .difference(after)
-                            .map(|r| r.as_str().to_owned())
-                            .collect(),
-                    },
-                )?;
+                let record = AuditRecord::SystemManagedChanged {
+                    ts: now,
+                    sandbox_id: scope.as_ref().map(ToString::to_string),
+                    added: after
+                        .difference(before)
+                        .map(|r| r.as_str().to_owned())
+                        .collect(),
+                    removed: before
+                        .difference(after)
+                        .map(|r| r.as_str().to_owned())
+                        .collect(),
+                };
+                append(tx, &record)?;
             }
             let index = load_index(tx)?;
-            let rows = rows_now_decided(tx, &index, None, now)?;
-            let closed = close_rows(tx, &index, &rows, Actor::System, now, fx)?;
+            let closed = close_rows_now_decided(tx, &index, None, Actor::System, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok(closed)
         })?;
