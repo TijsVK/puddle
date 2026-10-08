@@ -514,6 +514,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         record: &WorkspaceRecord,
         created_volume: &mut bool,
         announce_pull: bool,
+        fresh: bool,
     ) -> Result<(), String> {
         let inner = &self.inner;
         let (id, name) = (&record.id, &record.name);
@@ -521,11 +522,19 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if announce_pull {
             self.progress(name, WorkspaceStep::PreparingVolume, None);
         }
-        let attachment = inner
-            .workspaces
-            .prepare(&inner.runtime, id, &name.sandbox_name(), Some(size))
-            .await
-            .map_err(|e| e.to_string())?;
+        // A start must find the volume it left; only a create makes one.
+        let attachment = if fresh {
+            inner
+                .workspaces
+                .prepare(&inner.runtime, id, &name.sandbox_name(), Some(size))
+                .await
+        } else {
+            inner
+                .workspaces
+                .prepare_existing(&inner.runtime, id, &name.sandbox_name())
+                .await
+        }
+        .map_err(|e| e.to_string())?;
         *created_volume = attachment.created_volume();
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string());
         let config = match &image {
@@ -793,7 +802,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     async fn create_work(&self, record: WorkspaceRecord) -> Result<(), String> {
         let mut created_volume = false;
-        self.boot_new(&record, &mut created_volume, true).await?;
+        self.boot_new(&record, &mut created_volume, true, true)
+            .await?;
         if let Err(reason) = self.settle(&record).await {
             self.undo_boot(&record, true, created_volume).await;
             return Err(reason);
@@ -860,7 +870,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             // A route left from an earlier boot belongs to a sandbox that no longer exists.
             self.quiesce(name, true).await;
             let mut created_volume = false;
-            self.boot_new(&record, &mut created_volume, false).await?;
+            self.boot_new(&record, &mut created_volume, false, false)
+                .await?;
         }
         if let Err(reason) = self.settle(&record).await {
             self.undo_boot(&record, false, false).await;
@@ -983,6 +994,27 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             record.disk_size_mib = u64::from(self.inner.workspaces.config().default_size.as_mib());
             record.disk_used_mib = None;
             record.busy = Some(Operation::Creating);
+            // A volume of this name that the list does not name holds someone's work (reconcile
+            // keeps it); a create would clone into the old checkout. Refuse before anything exists.
+            let volume = id.volume_name();
+            if self
+                .inner
+                .runtime
+                .volume(&volume)
+                .await
+                .map_err(|e| {
+                    WorkspaceError::Unavailable(format!(
+                        "cannot check for an existing volume {volume}: {e}"
+                    ))
+                })?
+                .is_some()
+            {
+                return Err(WorkspaceError::Conflict(format!(
+                    "a volume named {volume} already exists, left from an earlier workspace, and may hold its work; \
+                     {} was not created. Choose another name; puddle does not reuse or delete that volume",
+                    new.name
+                )));
+            }
             {
                 let mut state = self.state();
                 if state.closed {

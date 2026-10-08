@@ -1569,3 +1569,106 @@ async fn an_image_pull_is_audited_as_puddles_own_connection() {
     }
     host.shutdown().await;
 }
+
+/// Seeds a workspace the list names whose volume is gone, then returns the rig and its host.
+async fn host_with_listed_workspace_whose_volume_is_gone() -> (Rig, Host<FakeRuntime>) {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(events);
+    rig.runtime
+        .remove_volume(&WorkspaceId::new("acme").unwrap().volume_name())
+        .await
+        .unwrap();
+    let again = rig.start().await;
+    (rig, again)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn starting_a_workspace_whose_volume_is_gone_refuses_and_makes_no_empty_volume() {
+    let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let detail = end["detail"].as_str().unwrap();
+    assert!(detail.contains("has no volume"), "{detail}");
+    assert!(detail.contains("ws-acme"), "{detail}");
+    assert!(detail.contains("no new empty volume"), "{detail}");
+    // Nothing was made in its place.
+    assert!(volume_names(&rig).await.is_empty());
+    assert!(rig.runtime.list().await.unwrap().is_empty());
+    // The entry stays in the list (nothing else was lost).
+    assert_eq!(
+        api.get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn creating_a_workspace_named_like_a_kept_volume_is_refused_and_leaves_it_alone() {
+    let rig = Rig::new();
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("lost").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    let host = rig.start().await;
+    let api = api(&host);
+
+    let reply = api.post("/api/workspaces", &new_workspace("lost")).await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    let message = reply.json()["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("ws-lost"), "{message}");
+    assert!(message.contains("may hold"), "{message}");
+    assert!(message.contains("another name"), "{message}");
+    // Nothing was made or removed, and no list entry exists.
+    assert_eq!(volume_names(&rig).await, ["ws-lost"]);
+    assert!(rig.runtime.list().await.unwrap().is_empty());
+    assert!(
+        api.get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    // Another name still works.
+    let mut events = api.events().await;
+    create(&api, &mut events, "other").await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sandbox_record_the_list_does_not_name_is_removed_and_reported_but_its_volume_stays() {
+    let rig = Rig::new();
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("lost").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    let ghost = SandboxName::new("ghost").unwrap();
+    rig.runtime
+        .create(puddle_compute::SandboxSpec::new(
+            ghost.clone(),
+            puddle_types::ImageRef::new(FakeRuntime::DEBIAN).unwrap(),
+        ))
+        .await
+        .unwrap();
+
+    let host = rig.start().await;
+    assert_eq!(host.reconcile_report().removed, [ghost]);
+    assert!(rig.runtime.list().await.unwrap().is_empty());
+    assert_eq!(volume_names(&rig).await, ["ws-lost"]);
+    host.shutdown().await;
+}

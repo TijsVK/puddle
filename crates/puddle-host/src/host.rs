@@ -774,6 +774,14 @@ async fn reconcile_with<R: Runtime>(
             "workspace volumes that no workspace in the list claims were kept"
         );
     }
+    if !report.removed.is_empty() {
+        // Only the sandbox's own disk goes (its workspace volume is never touched), and a restart
+        // rebuilds a sandbox from the volume anyway; say so rather than remove silently.
+        tracing::warn!(
+            sandboxes = ?report.removed,
+            "sandbox records that no workspace in the list claims were removed (their root disks are discarded; workspace volumes are untouched)"
+        );
+    }
     for failure in &report.failures {
         tracing::warn!(item = %failure.item, action = failure.action, error = %failure.error, "reconcile did not finish this");
     }

@@ -26,6 +26,17 @@ pub enum WorkspaceError {
         /// The workspace.
         workspace: String,
     },
+    /// A workspace that should have data has no volume, and puddle did not make an empty one
+    /// in its place.
+    #[error(
+        "workspace {workspace:?} has no volume ({volume}); it was not started, and no new empty volume was made in its place"
+    )]
+    VolumeMissing {
+        /// The workspace.
+        workspace: String,
+        /// The volume that should hold it.
+        volume: String,
+    },
     /// A guest path could not be formed (a checkout name that isn't usable).
     #[error("invalid workspace path: {reason}")]
     Layout {

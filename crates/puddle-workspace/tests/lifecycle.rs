@@ -976,3 +976,35 @@ async fn a_busy_guest_keeps_its_locks() {
     assert!(report.skipped_busy);
     assert_eq!(report.removed_count(), 0);
 }
+
+#[tokio::test]
+async fn preparing_an_existing_workspace_never_makes_a_missing_volume() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let err = w
+        .prepare_existing(&rt, &id, &name("box"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, WorkspaceError::VolumeMissing { .. }), "{err}");
+    let text = err.to_string();
+    assert!(
+        text.contains("ws-acme") && text.contains("no new empty volume"),
+        "{text}"
+    );
+    assert!(names(&rt).await.is_empty());
+    assert!(rt.list_volumes().await.unwrap().is_empty());
+    // The failed prepare released its reservation.
+    assert!(w.holder(&id).is_none());
+}
+
+#[tokio::test]
+async fn preparing_an_existing_workspace_reuses_its_volume() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let first = w.prepare(&rt, &id, &name("box"), None).await.unwrap();
+    first.commit();
+    let att = w.prepare_existing(&rt, &id, &name("box")).await.unwrap();
+    assert!(!att.created_volume());
+}

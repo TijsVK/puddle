@@ -177,6 +177,33 @@ impl Workspaces {
         sandbox: &SandboxName,
         size: Option<DiskSize>,
     ) -> Result<Attachment<'_>, WorkspaceError> {
+        self.prepare_with(rt, id, sandbox, size, true).await
+    }
+
+    /// Like [`Workspaces::prepare`], for a workspace that already has data: a missing volume is
+    /// [`WorkspaceError::VolumeMissing`] instead of a new empty one, so a restart can never
+    /// quietly put an empty workspace in place of one that lost its volume.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkspaceError::VolumeMissing`]; [`WorkspaceError::InUse`]; [`WorkspaceError::Runtime`].
+    pub async fn prepare_existing<R: Runtime>(
+        &self,
+        rt: &R,
+        id: &WorkspaceId,
+        sandbox: &SandboxName,
+    ) -> Result<Attachment<'_>, WorkspaceError> {
+        self.prepare_with(rt, id, sandbox, None, false).await
+    }
+
+    async fn prepare_with<R: Runtime>(
+        &self,
+        rt: &R,
+        id: &WorkspaceId,
+        sandbox: &SandboxName,
+        size: Option<DiskSize>,
+        may_create: bool,
+    ) -> Result<Attachment<'_>, WorkspaceError> {
         self.reserve(rt, id, sandbox).await?;
         let mut attachment = Attachment {
             workspaces: self,
@@ -219,6 +246,11 @@ impl Workspaces {
                 info!(workspace = %id, size = %info.size, "workspace volume exists; keeping its size");
             }
             info
+        } else if !may_create {
+            return Err(WorkspaceError::VolumeMissing {
+                workspace: id.to_string(),
+                volume: volume.to_string(),
+            });
         } else {
             let size = size.unwrap_or(self.config.default_size);
             let info = rt
