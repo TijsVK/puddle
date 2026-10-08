@@ -307,3 +307,9 @@ async fn a_tool_that_is_not_allowed_to_run_is_not_reported_missing() {
         .unwrap_err();
     assert_eq!(err, SourceError::CouldNotRun(Tool::Gh));
 }
+
+#[test]
+fn the_process_path_can_be_searched() {
+    // Whatever this machine has installed, looking tools up in its own PATH does not fail.
+    let _ = ToolPaths::resolve();
+}

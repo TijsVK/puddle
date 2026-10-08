@@ -57,7 +57,6 @@ crates/puddle-api/src/wire/identities.rs | _ => return None, | the arm for a sou
 crates/puddle-store/src/store/identities.rs | )?; | the closing line of a statement that spans lines: the error branch of a SQLite failure inside a transaction; not reproducible against an in-memory database
 crates/puddle-store/src/store/identities.rs | other => return Err(corrupt(format!("unknown signing {other}"))), | the column has a CHECK that allows only none, so a database cannot hold another value
 crates/puddle-secrets/src/discovery.rs | return Vec::new(); | the two host names are literals that always parse; the guard exists only to avoid an unwrap
-crates/puddle-secrets/src/run.rs | Self::from_search_path(std::env::var_os("PATH").as_deref().unwrap_or_default()) | reads the test process's own PATH; the search itself is tested through from_search_path
 crates/puddle-secrets/src/run.rs | format!("{name}.exe") | the Windows spelling of a tool name; the Linux gate cannot run it, the Windows job does
 crates/puddle-secrets/src/run.rs | SourceError::ToolMissing(tool) | a tool that was found on PATH and is gone at spawn time; a race a test cannot stage
 crates/puddle-secrets/src/run.rs | Ok(Err(_)) => return Err(SourceError::CouldNotRun(tool)), | waiting on a child failing at the operating system level; not reproducible

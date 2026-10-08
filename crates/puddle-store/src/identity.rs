@@ -477,13 +477,14 @@ mod tests {
         let personal = identity(2, "Personal", vec![binding("github.com", &[], true)]);
         let both = [work, personal];
         for (owner, who, exact) in [("acme", 1, true), ("ACME-Labs", 1, true), ("me", 2, false)] {
-            let got = match resolve(&both, "GitHub.com", owner) {
-                CredentialChoice::Covered {
-                    identity, exact: e, ..
-                } => Some((identity.id, e)),
-                _ => None,
-            };
-            assert_eq!(got, Some((IdentityId(who), exact)), "{owner}");
+            assert!(
+                matches!(
+                    resolve(&both, "GitHub.com", owner),
+                    CredentialChoice::Covered { identity, exact: e, .. }
+                        if (identity.id, e) == (IdentityId(who), exact)
+                ),
+                "{owner}"
+            );
         }
         assert_eq!(
             resolve(&both, "dev.azure.com", "acme"),
