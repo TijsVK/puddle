@@ -1695,6 +1695,24 @@ async fn a_workspace_whose_volume_is_gone_can_be_deleted_without_a_check_in_a_sa
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn deleting_a_workspace_with_no_volume_also_removes_the_sandbox_record_the_runtime_still_has()
+{
+    let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    // The restart kept the stopped sandbox; nothing in the host's memory says it is acme's.
+    assert_eq!(rig.runtime.list().await.unwrap().len(), 1);
+    let api = api(&host);
+    let mut events = api.events().await;
+    let check = api.get("/api/workspaces/acme/delete-check").await.json();
+    let seen = json!({"confirm": true, "fingerprint": check["fingerprint"]}).to_string();
+    let accepted = api.delete("/api/workspaces/acme", Some(&seen)).await;
+    assert_eq!(accepted.status, 202, "{}", accepted.body);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(rig.runtime.list().await.unwrap().is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_restored_volume_lets_a_volume_missing_workspace_start() {
     let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
     let api = api(&host);

@@ -1065,3 +1065,46 @@ async fn preparing_an_existing_workspace_reuses_its_volume() {
     let att = w.prepare_existing(&rt, &id, &name("box")).await.unwrap();
     assert!(!att.created_volume());
 }
+
+#[tokio::test]
+async fn a_sandbox_that_cannot_be_removed_stops_a_delete_without_a_volume() {
+    let rt = FakeRuntime::new();
+    let _stub = CheckStub::install(&rt, CLEAN);
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    sb.stop().await.unwrap();
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+    let report = w.check_delete(&rt, &id).await.unwrap();
+    rt.inject(
+        Op::Remove,
+        Fault::once(ComputeError::Runtime {
+            op: "remove",
+            message: "injected".into(),
+        }),
+    );
+    let err = w.delete(&rt, &id, &report.confirm()).await.unwrap_err();
+    assert!(err.to_string().contains("injected"), "{err}");
+    assert_eq!(names(&rt).await, ["box"]);
+}
+
+#[tokio::test]
+async fn a_returned_volume_that_cannot_be_checked_stops_the_delete_with_the_check_error() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    sb.stop().await.unwrap();
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+    let report = w.check_delete(&rt, &id).await.unwrap();
+    rt.create_volume(VolumeSpec {
+        name: id.volume_name(),
+        size: DiskSize::mib(1024),
+    })
+    .await
+    .unwrap();
+    // No check script is installed, so the fresh check cannot run: fail closed.
+    let err = w.delete(&rt, &id, &report.confirm()).await.unwrap_err();
+    assert!(matches!(err, WorkspaceError::Check { .. }), "{err}");
+    assert!(rt.volume(&id.volume_name()).await.unwrap().is_some());
+}

@@ -160,11 +160,8 @@ impl fmt::Display for DeleteReport {
     /// A plain-text summary for the CLI and logs.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.volume_missing {
-            writeln!(
-                f,
-                "workspace {}: its volume is already gone; nothing is lost by deleting it",
-                self.workspace
-            )?;
+            let gone = "its volume is already gone; nothing is lost by deleting it";
+            writeln!(f, "workspace {}: {gone}", self.workspace)?;
         } else if self.is_clean() {
             writeln!(f, "workspace {}: nothing unsaved", self.workspace)?;
         } else {
