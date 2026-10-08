@@ -30,7 +30,7 @@ describe("the one-click buttons", () => {
       screen.getByRole("button", { name: "Deny api.example.com for demo" }),
     );
     const narrow = {
-      scope: "sandbox",
+      scope: "workspace",
       ruleSet: null,
       match: "exact",
       durationSecs: null,
