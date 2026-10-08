@@ -5,7 +5,7 @@
 //! line. The host answers with one JSON [`ResolveAnswer`] line and closes the stream. Lines are
 //! `\n`-terminated and bounded ([`MAX_QUERY_LINE`], [`MAX_ANSWER_LINE`]).
 //!
-//! The host decides with the sandbox's rules and never writes a pending row for a lookup:
+//! The host decides with the workspace's rules and never writes a pending row for a lookup:
 //!
 //! - a name the rules allow is looked up on the host, and the answer says whether the guest should
 //!   get a stand-in address for it ([`ResolveAnswer::StandIn`]) or `NXDOMAIN`;

@@ -48,7 +48,10 @@ async fn a_guest_oom_kill_becomes_one_event_on_the_hosts_sink_within_2_s() {
     let event = common::next_event(&mut rig.events, Duration::from_secs(2))
         .await
         .expect("no event within 2 s");
-    assert_eq!(event, Event::oom_kill(common::sandbox(), 31337, "python3"));
+    assert_eq!(
+        event,
+        Event::oom_kill(common::workspace(), 31337, "python3")
+    );
     // Exactly one: the counter increase was matched to the log line.
     assert_eq!(
         common::next_event(&mut rig.events, Duration::from_millis(800)).await,
@@ -68,7 +71,7 @@ async fn a_guest_oom_kill_becomes_one_event_on_the_hosts_sink_within_2_s() {
     let event = common::next_event(&mut rig.events, Duration::from_secs(5))
         .await
         .expect("no event after the host restart");
-    assert_eq!(event, Event::oom_kill(common::sandbox(), 4040, "node"));
+    assert_eq!(event, Event::oom_kill(common::workspace(), 4040, "node"));
 
     // The agent still relays: the host answers a CONNECT to a closed port with 502.
     let gone = TcpListener::bind("127.0.0.1:0")

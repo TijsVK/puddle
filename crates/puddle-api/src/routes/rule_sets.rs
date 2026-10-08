@@ -130,7 +130,7 @@ pub(crate) async fn delete_rule_set(
     Ok(Json(RuleSetView::from_store(set)))
 }
 
-/// Switches a set on or off for every sandbox or for one (`enabled: null` removes that switch),
+/// Switches a set on or off for every workspace or for one (`enabled: null` removes that switch),
 /// and closes the open requests the set now decides.
 #[utoipa::path(
     put,
@@ -154,7 +154,7 @@ pub(crate) async fn switch_rule_set(
         let closed =
             state
                 .store
-                .switch_rule_set(id, body.sandbox.as_ref(), body.enabled, Actor::Api)?;
+                .switch_rule_set(id, body.workspace.as_ref(), body.enabled, Actor::Api)?;
         Ok(RuleSetSwitched {
             set: RuleSetView::from_store(state.store.rule_set(id)?),
             closed: closed.into_iter().map(|p| p.0).collect(),

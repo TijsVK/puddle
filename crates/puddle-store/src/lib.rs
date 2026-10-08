@@ -34,7 +34,7 @@ pub use pending::{
 pub use rule::{Actor, Effect, NewRule, Rule, Scope};
 pub use schema::SCHEMA_VERSION;
 pub use store::{
-    AuditCursor, AuditFilter, Limits, RuleSetEntryInfo, RuleSetInfo, SandboxDeletion, Store,
-    SweepReport, SystemHost, SystemPlan, parse_rule_set,
+    AuditCursor, AuditFilter, Limits, RuleSetEntryInfo, RuleSetInfo, Store, SweepReport,
+    SystemHost, SystemPlan, WorkspaceDeletion, parse_rule_set,
 };
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, Sweeper};

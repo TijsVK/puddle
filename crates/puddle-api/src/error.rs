@@ -216,7 +216,7 @@ mod tests {
             (
                 StoreError::RuleSetOff {
                     set: "user:1".into(),
-                    sandbox: "a".into(),
+                    workspace: "a".into(),
                 },
                 StatusCode::CONFLICT,
             ),

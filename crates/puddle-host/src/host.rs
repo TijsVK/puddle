@@ -26,9 +26,9 @@ use puddle_compute::{Runtime, SandboxInfo};
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Upstream};
-use puddle_settings::{GlobalSettings, SandboxSettings, resolve};
+use puddle_settings::{GlobalSettings, WorkspaceSettings, resolve};
 use puddle_store::{DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
-use puddle_types::{EventSink, SandboxName, SandboxStatus};
+use puddle_types::{EventSink, WorkspaceName, WorkspaceStatus};
 use puddle_upstream::{AuthList, BasicAuth, Chain, Discovery, Watching, system_auth};
 use puddle_workspace::Workspaces;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
@@ -76,7 +76,7 @@ pub enum Step {
     /// Running workspace operations have finished (or were ended after the grace period).
     OperationsFinished,
     /// Every sandbox is trimmed and stopped.
-    SandboxesStopped,
+    WorkspacesStopped,
     /// The SSH endpoints and egress routes are closed.
     RoutesClosed,
     /// The API stopped serving.
@@ -115,7 +115,7 @@ pub const START_STEPS: [Step; 14] = [
 pub const SHUTDOWN_STEPS: [Step; 6] = [
     Step::WorkspacesClosed,
     Step::OperationsFinished,
-    Step::SandboxesStopped,
+    Step::WorkspacesStopped,
     Step::RoutesClosed,
     Step::ApiStopped,
     Step::BackgroundStopped,
@@ -327,7 +327,7 @@ impl<R: Runtime + Clone> std::fmt::Debug for Host<R> {
 /// The local-destination settings of `sandbox`, read from the settings at each connection so a
 /// change applies to the next one. A document that cannot be read leaves the defaults (all
 /// local destinations blocked): the guard fails closed.
-fn local_access(settings: &dyn SettingsRepo, sandbox: &SandboxName) -> LocalAccess {
+fn local_access(settings: &dyn SettingsRepo, workspace: &WorkspaceName) -> LocalAccess {
     let global = settings
         .load_global()
         .ok()
@@ -336,10 +336,10 @@ fn local_access(settings: &dyn SettingsRepo, sandbox: &SandboxName) -> LocalAcce
         .map(|loaded| loaded.settings)
         .unwrap_or_default();
     let own = settings
-        .load_sandbox(sandbox)
+        .load_workspace(workspace)
         .ok()
         .flatten()
-        .and_then(|doc| SandboxSettings::from_document(doc).ok())
+        .and_then(|doc| WorkspaceSettings::from_document(doc).ok())
         .map(|loaded| loaded.settings);
     LocalAccess::from_effective(&resolve(&global, own.as_ref()))
 }
@@ -551,7 +551,7 @@ impl<R: Runtime + Clone> Host<R> {
                 let operations_ended = self.workspaces.finish_operations(self.grace).await;
                 self.step(Step::OperationsFinished);
                 let sandboxes = self.lifecycle.shutdown().await;
-                self.step(Step::SandboxesStopped);
+                self.step(Step::WorkspacesStopped);
                 self.workspaces.release_all().await;
                 self.step(Step::RoutesClosed);
                 if let Some(api) = self.api.lock().await.take() {
@@ -668,8 +668,8 @@ impl Egress {
         let chain = Chain::new(discovery.clone(), Arc::new(auth));
         let upstream = Upstream::new(chain.clone());
         let access_settings = settings.clone();
-        let guard = NetPolicy::new(Arc::new(move |sandbox: &SandboxName| {
-            local_access(access_settings.as_ref(), sandbox)
+        let guard = NetPolicy::new(Arc::new(move |workspace: &WorkspaceName| {
+            local_access(access_settings.as_ref(), workspace)
         }))
         .with_endpoints(endpoints.clone());
         let proxy = Arc::new(
@@ -733,14 +733,14 @@ async fn inventory_of<R: Runtime>(
     for stored in stored.iter().filter(|s| !s.creating) {
         let (Ok(id), Ok(name)) = (
             puddle_types::WorkspaceId::new(&stored.id),
-            SandboxName::new(&stored.name),
+            WorkspaceName::new(&stored.name),
         ) else {
             continue;
         };
         if existing.contains(name.as_str()) {
-            inventory.attached.insert(id, name.clone());
+            inventory.attached.insert(id, name.sandbox_name());
         }
-        inventory.sandboxes.insert(name);
+        inventory.sandboxes.insert(name.sandbox_name());
     }
     inventory.workspaces = workspaces;
     inventory.interrupted = stored
@@ -759,7 +759,7 @@ async fn reconcile_with<R: Runtime>(
 ) -> Result<
     (
         puddle_lifecycle::ReconcileReport,
-        BTreeMap<SandboxName, SandboxStatus>,
+        BTreeMap<WorkspaceName, WorkspaceStatus>,
     ),
     HostError,
 > {
@@ -780,7 +780,7 @@ async fn reconcile_with<R: Runtime>(
     let status = report
         .crashed
         .iter()
-        .map(|name| (name.clone(), SandboxStatus::Crashed))
+        .filter_map(|name| Some((name.workspace_name()?, WorkspaceStatus::Crashed)))
         .collect();
     Ok((report, status))
 }

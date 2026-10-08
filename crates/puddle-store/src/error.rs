@@ -65,13 +65,13 @@ pub enum StoreError {
     /// A rule set's name is empty, too long, or already used by another set.
     #[error("rule set name: {0}")]
     RuleSetName(String),
-    /// Approving into a set that is off for the request's sandbox would not allow it (R-38).
-    #[error("rule set {set} is off for {sandbox}; switch it on there first")]
+    /// Approving into a set that is off for the request's workspace would not allow it (R-38).
+    #[error("rule set {set} is off for {workspace}; switch it on there first")]
     RuleSetOff {
         /// The set.
         set: String,
-        /// The sandbox.
-        sandbox: String,
+        /// The workspace.
+        workspace: String,
     },
     /// An audit record couldn't be written.
     #[error(transparent)]

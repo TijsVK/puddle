@@ -11,7 +11,7 @@
 //!
 //! Nothing the guest says reaches the check: the name is the one the host already admitted and
 //! the clock is the host's. Session resumption is off, so no TLS state is shared between
-//! connections (and so between sandboxes).
+//! connections (and so between workspaces).
 
 use std::io;
 use std::sync::Arc;

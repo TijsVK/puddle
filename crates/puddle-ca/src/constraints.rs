@@ -12,7 +12,7 @@ const MAX_LABEL_LEN: usize = 63;
 /// The names a CA may certify: DNS subtrees (a name and every name below it, RFC 5280
 /// §4.2.1.10) and IP prefixes.
 ///
-/// The proxy CA permits the sandbox's bound hosts (`github.com`, `dev.azure.com`); a later dev CA
+/// The proxy CA permits the workspace's bound hosts (`github.com`, `dev.azure.com`); a later dev CA
 /// would permit `localhost`, `127.0.0.1/32` and `::1/128`. Address families with no permitted
 /// prefix are excluded outright in the certificate, because RFC 5280 leaves a name form without
 /// a permitted subtree unconstrained.

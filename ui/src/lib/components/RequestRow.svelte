@@ -47,7 +47,7 @@
       >
     </p>
     <p class="facts">
-      <span>Workspace <b class="mono">{request.sandbox}</b></span>
+      <span>Workspace <b class="mono">{request.workspace}</b></span>
       <span
         >{request.attempts}
         {request.attempts === 1 ? "attempt" : "attempts"}</span
@@ -73,7 +73,7 @@
   <div class="acts">
     <DecisionControl
       target={{ host: request.host, registrableDomain: row.domain }}
-      workspace={request.sandbox}
+      workspace={request.workspace}
       {optionsOpen}
       denyOnly={blockedBy !== null}
       onDecide={(choice) => onDecide(row, choice)}

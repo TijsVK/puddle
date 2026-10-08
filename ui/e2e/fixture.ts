@@ -19,10 +19,10 @@ export interface Control {
     pending: number;
     scripts: string[];
   }>;
-  /** An `Event` in its wire form, e.g. `{ type: "oom_kill", sandbox, pid, process }`. */
+  /** An `Event` in its wire form, e.g. `{ type: "oom_kill", workspace, pid, process }`. */
   emit(event: Record<string, unknown>): Promise<void>;
   advance(ms: number): Promise<void>;
-  /** One step: `{ do: "request", sandbox, host }`, `{ do: "rule", ... }`, ... */
+  /** One step: `{ do: "request", workspace, host }`, `{ do: "rule", ... }`, ... */
   step(step: Record<string, unknown>): Promise<void>;
   script(name: string): Promise<void>;
   /** Ends open event streams and serves again with the same data. */

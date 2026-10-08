@@ -21,7 +21,7 @@
   const waitingBy = $derived.by(() => {
     const counts: Record<string, number> = {};
     for (const row of pending.rows)
-      counts[row.request.sandbox] = (counts[row.request.sandbox] ?? 0) + 1;
+      counts[row.request.workspace] = (counts[row.request.workspace] ?? 0) + 1;
     return counts;
   });
   const latest = $derived.by(() => {
@@ -29,7 +29,7 @@
       (a, b) => b.request.first_seen - a.request.first_seen,
     )[0]?.request;
     return newest
-      ? { workspace: newest.sandbox, host: newest.host, port: newest.port }
+      ? { workspace: newest.workspace, host: newest.host, port: newest.port }
       : undefined;
   });
 </script>

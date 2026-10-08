@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Effective values: a sandbox's override over the global value over puddle's built-in default.
+//! Effective values: a workspace's override over the global value over puddle's built-in default.
 
 use puddle_types::{LocalCategory, MemoryMib};
 use serde::Serialize;
 
-use crate::{ClipboardRead, GlobalSettings, LocalToggles, ReconnectionGrace, SandboxSettings};
+use crate::{ClipboardRead, GlobalSettings, LocalToggles, ReconnectionGrace, WorkspaceSettings};
 
 /// Which level a value came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
-    /// The sandbox's own override.
-    Sandbox,
+    /// The workspace's own override.
+    Workspace,
     /// The user's global setting.
     Global,
     /// puddle's built-in default.
@@ -27,7 +27,7 @@ pub struct Resolved<T> {
     pub source: Source,
 }
 
-/// The values one sandbox runs with. Every field is set.
+/// The values one workspace runs with. Every field is set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct Effective {
     /// Guest memory.
@@ -38,15 +38,15 @@ pub struct Effective {
     pub wildcards_reach_local: Resolved<bool>,
     /// Browser VS Code's reconnection grace.
     pub reconnection_grace: Resolved<ReconnectionGrace>,
-    /// Zoom hotkeys in sandbox windows.
+    /// Zoom hotkeys in workspace windows.
     pub zoom_hotkeys: Resolved<bool>,
-    /// Programmatic clipboard reads in sandbox windows.
+    /// Programmatic clipboard reads in workspace windows.
     pub clipboard_read: Resolved<ClipboardRead>,
     /// Whether puddle opens an SSH endpoint and an ssh config entry for the workspace.
     pub direct_ssh: Resolved<bool>,
 }
 
-/// The local-destination toggles in effect for one sandbox.
+/// The local-destination toggles in effect for one workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct EffectiveToggles {
     /// Host loopback.
@@ -111,11 +111,11 @@ const fn default<T: Copy>(value: T) -> Resolved<T> {
     }
 }
 
-fn pick<T: Copy>(sandbox: Option<T>, global: Option<T>, builtin: Resolved<T>) -> Resolved<T> {
-    match (sandbox, global) {
+fn pick<T: Copy>(workspace: Option<T>, global: Option<T>, builtin: Resolved<T>) -> Resolved<T> {
+    match (workspace, global) {
         (Some(value), _) => Resolved {
             value,
-            source: Source::Sandbox,
+            source: Source::Workspace,
         },
         (None, Some(value)) => Resolved {
             value,
@@ -125,31 +125,31 @@ fn pick<T: Copy>(sandbox: Option<T>, global: Option<T>, builtin: Resolved<T>) ->
     }
 }
 
-/// The settings `sandbox` runs with: its override if set, else the global value if set, else
-/// puddle's default ([`Effective::DEFAULTS`]). `None` resolves a sandbox that has no settings
+/// The settings `workspace` runs with: its override if set, else the global value if set, else
+/// puddle's default ([`Effective::DEFAULTS`]). `None` resolves a workspace that has no settings
 /// document (yet), i.e. the global values.
 ///
 /// ```
-/// use puddle_settings::{GlobalSettings, SandboxSettings, Source, resolve};
+/// use puddle_settings::{GlobalSettings, WorkspaceSettings, Source, resolve};
 ///
 /// let mut global = GlobalSettings::default();
-/// global.sandbox_defaults.local_toggles.private = Some(true);
-/// let mut sandbox = SandboxSettings::default();
-/// sandbox.overrides.local_toggles.private = Some(false);
+/// global.workspace_defaults.local_toggles.private = Some(true);
+/// let mut workspace = WorkspaceSettings::default();
+/// workspace.overrides.local_toggles.private = Some(false);
 ///
-/// let e = resolve(&global, Some(&sandbox));
+/// let e = resolve(&global, Some(&workspace));
 /// assert!(!e.local_toggles.private.value);
-/// assert_eq!(e.local_toggles.private.source, Source::Sandbox);
+/// assert_eq!(e.local_toggles.private.source, Source::Workspace);
 /// assert_eq!(e.local_toggles.loopback.source, Source::Default);
 /// ```
 #[must_use]
-pub fn resolve(global: &GlobalSettings, sandbox: Option<&SandboxSettings>) -> Effective {
-    let g = &global.sandbox_defaults;
-    let none = crate::SandboxLayer::default();
-    let s = sandbox.map_or(&none, |s| &s.overrides);
+pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -> Effective {
+    let g = &global.workspace_defaults;
+    let none = crate::WorkspaceLayer::default();
+    let s = workspace.map_or(&none, |s| &s.overrides);
     let d = Effective::DEFAULTS;
     // Destructured so a new layer field doesn't compile until it is resolved here.
-    let crate::SandboxLayer {
+    let crate::WorkspaceLayer {
         memory,
         local_toggles,
         wildcards_reach_local,
@@ -211,15 +211,15 @@ mod tests {
     #[test]
     fn direct_ssh_follows_the_override_then_the_global_default() {
         let mut g = GlobalSettings::default();
-        let mut s = SandboxSettings::default();
-        g.sandbox_defaults.direct_ssh = Some(true);
+        let mut s = WorkspaceSettings::default();
+        g.workspace_defaults.direct_ssh = Some(true);
         let e = resolve(&g, Some(&s));
         assert!(e.direct_ssh.value);
         assert_eq!(e.direct_ssh.source, Source::Global);
         s.overrides.direct_ssh = Some(false);
         let e = resolve(&g, Some(&s));
         assert!(!e.direct_ssh.value);
-        assert_eq!(e.direct_ssh.source, Source::Sandbox);
+        assert_eq!(e.direct_ssh.source, Source::Workspace);
     }
 
     #[test]
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(
             resolve(
                 &GlobalSettings::default(),
-                Some(&SandboxSettings::default())
+                Some(&WorkspaceSettings::default())
             ),
             Effective::DEFAULTS
         );
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn effective_values_serialise_with_their_source() {
         let mut g = GlobalSettings::default();
-        g.sandbox_defaults.zoom_hotkeys = Some(false);
+        g.workspace_defaults.zoom_hotkeys = Some(false);
         let v = serde_json::to_value(resolve(&g, None)).unwrap();
         assert_eq!(
             v["zoom_hotkeys"],
@@ -262,10 +262,10 @@ mod tests {
     fn toggles_resolve_per_category_under_their_keys() {
         for category in LocalCategory::ALL {
             let mut g = GlobalSettings::default();
-            let mut s = SandboxSettings::default();
-            // The global default turns it on; the sandbox turns it off again.
+            let mut s = WorkspaceSettings::default();
+            // The global default turns it on; the workspace turns it off again.
             let doc = serde_json::json!({ category.key(): true });
-            g.sandbox_defaults.local_toggles = serde_json::from_value(doc).unwrap();
+            g.workspace_defaults.local_toggles = serde_json::from_value(doc).unwrap();
             assert_eq!(
                 resolve(&g, Some(&s)).local_toggles.get(category),
                 Resolved {
@@ -280,11 +280,11 @@ mod tests {
                 e.local_toggles.get(category),
                 Resolved {
                     value: false,
-                    source: Source::Sandbox
+                    source: Source::Workspace
                 }
             );
             let v = serde_json::to_value(e).unwrap();
-            assert_eq!(v["local_toggles"][category.key()]["source"], "sandbox");
+            assert_eq!(v["local_toggles"][category.key()]["source"], "workspace");
             for other in LocalCategory::ALL.into_iter().filter(|o| *o != category) {
                 assert_eq!(e.local_toggles.get(other).source, Source::Default);
             }

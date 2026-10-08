@@ -69,7 +69,7 @@ describe("a built-in set", () => {
     const props = mount(
       builtIn("github", {
         global: true,
-        overrides: [{ sandbox: "api" as never, enabled: false }],
+        overrides: [{ workspace: "api" as never, enabled: false }],
       }),
     );
     expect(

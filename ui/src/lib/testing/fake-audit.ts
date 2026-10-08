@@ -17,8 +17,8 @@ export function connection(
     record: {
       type: "connection",
       ts: 1_000_000 + id * 1000,
-      sandbox_id: "demo",
-      origin: "sandbox",
+      workspace_id: "demo",
+      origin: "workspace",
       host: `h${id}.example.com`,
       port: 443,
       decision: "allow",
@@ -48,11 +48,11 @@ function hostOf(record: AuditRecord): string {
   return "";
 }
 
-function sandboxOf(record: AuditRecord): string | null {
-  if (record.type === "connection") return record.sandbox_id;
-  if (record.type === "pending_suppressed") return record.sandbox_id;
-  if ("pending" in record) return record.pending.sandbox_id;
-  if ("rule" in record) return record.rule.sandbox_id;
+function workspaceOf(record: AuditRecord): string | null {
+  if (record.type === "connection") return record.workspace_id;
+  if (record.type === "pending_suppressed") return record.workspace_id;
+  if ("pending" in record) return record.pending.workspace_id;
+  if ("rule" in record) return record.rule.workspace_id;
   return null;
 }
 
@@ -63,7 +63,7 @@ function outcomeOf(record: AuditRecord): string | null {
 }
 
 export interface AuditQuery {
-  sandbox?: string;
+  workspace?: string;
   type?: string;
   outcome?: string;
   host_contains?: string;
@@ -116,7 +116,8 @@ export class FakeAudit {
     const limit = Math.min(query.limit ?? 100, 500);
     const matches = this.entries.filter(
       ({ record }) =>
-        (query.sandbox === undefined || sandboxOf(record) === query.sandbox) &&
+        (query.workspace === undefined ||
+          workspaceOf(record) === query.workspace) &&
         (query.type === undefined || record.type === query.type) &&
         (query.outcome === undefined || outcomeOf(record) === query.outcome) &&
         (query.host_contains === undefined ||

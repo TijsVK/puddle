@@ -86,14 +86,14 @@ async fn an_unbound_host_is_spliced_and_its_real_issuer_reaches_the_guest() {
         client.get("unbound.test", "/x").await.text(),
         "the real thing"
     );
-    // And the sandbox CA is not what vouched for it.
+    // And the workspace CA is not what vouched for it.
     let mut other_guest = rig.guest().await;
     let refused = other_guest
         .tls_trusting("unbound.test:443", &[rig.ca.certificate().der().clone()])
         .await;
     assert!(
         refused.is_err(),
-        "the sandbox CA must not vouch for an unbound host"
+        "the workspace CA must not vouch for an unbound host"
     );
     assert_eq!(bound.accepted(), 0);
 }
@@ -207,7 +207,7 @@ async fn keep_alive_requests_share_one_upstream_connection_and_connections_never
 }
 
 #[tokio::test]
-async fn two_sandboxes_have_their_own_ca_and_their_own_upstream_connections() {
+async fn two_workspaces_have_their_own_ca_and_their_own_upstream_connections() {
     let pki = Pki::new();
     let server = upstream(&pki, ok_handler()).await;
     let rig = RigBuilder::new(&pki)
@@ -235,7 +235,7 @@ async fn two_sandboxes_have_their_own_ca_and_their_own_upstream_connections() {
         200
     );
     assert_eq!(server.accepted(), 2);
-    // The other sandbox's CA does not vouch for this sandbox's leaf.
+    // The other workspace's CA does not vouch for this workspace's leaf.
     let (code, reader) = mine.connect_to("bound.test:443").await;
     assert_eq!(code, 200);
     let config =
@@ -247,7 +247,7 @@ async fn two_sandboxes_have_their_own_ca_and_their_own_upstream_connections() {
         )
         .await;
     assert!(refused.is_err());
-    // Only the first sandbox's request was injected.
+    // Only the first workspace's request was injected.
     let seen = server.recorded();
     let injected = seen
         .iter()

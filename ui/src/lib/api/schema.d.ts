@@ -186,7 +186,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Approves an open request: creates an allow rule (this sandbox, exact host, permanent unless
+         * Approves an open request: creates an allow rule (this workspace, exact host, permanent unless
          *     the body says otherwise) and closes the other open requests it now decides.
          */
         post: operations["approve"];
@@ -206,7 +206,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Denies an open request: creates a deny rule (this sandbox, exact host, permanent unless the
+         * Denies an open request: creates a deny rule (this workspace, exact host, permanent unless the
          *     body says otherwise) and closes the other open requests it now decides.
          */
         post: operations["deny"];
@@ -264,7 +264,7 @@ export interface paths {
         };
         get?: never;
         /**
-         * Switches a set on or off for every sandbox or for one (`enabled: null` removes that switch),
+         * Switches a set on or off for every workspace or for one (`enabled: null` removes that switch),
          *     and closes the open requests the set now decides.
          */
         put: operations["switch_rule_set"];
@@ -327,26 +327,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sandboxes/{sandbox}/suppression": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Whether a sandbox's new pending requests are being suppressed (R-13), for the inbox's
-         *     "N requests suppressed" line.
-         */
-        get: operations["suppression"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/settings": {
         parameters: {
             query?: never;
@@ -354,7 +334,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The global settings and the effective values of a sandbox without overrides. */
+        /** The global settings and the effective values of a workspace without overrides. */
         get: operations["get_global"];
         /**
          * Replaces the global settings listed in the body; `null` falls back to puddle's default.
@@ -368,7 +348,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/sandboxes/{sandbox}": {
+    "/api/settings/workspaces/{workspace}": {
         parameters: {
             query?: never;
             header?: never;
@@ -376,12 +356,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * One sandbox's overrides and effective values. A sandbox without stored settings has no
+         * One workspace's overrides and effective values. A workspace without stored settings has no
          *     overrides.
          */
-        get: operations["get_sandbox"];
-        /** Replaces one sandbox's overrides; `null` inherits the global value. */
-        put: operations["put_sandbox"];
+        get: operations["get_workspace_settings"];
+        /** Replaces one workspace's overrides; `null` inherits the global value. */
+        put: operations["put_workspace_settings"];
         post?: never;
         delete?: never;
         options?: never;
@@ -523,6 +503,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace}/suppression": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether a workspace's new pending requests are being suppressed (R-13), for the inbox's
+         *     "N requests suppressed" line.
+         */
+        get: operations["suppression"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -637,10 +637,10 @@ export interface components {
             rule_id: number | null;
             /** @description The rule set whose entry decided it. */
             rule_set: string | null;
-            /** @description The sandbox. */
-            sandbox_id: string;
             /** @description `requested`, `allowed`, `denied` or `expired`. */
             state: string;
+            /** @description The workspace. */
+            workspace_id: string;
         };
         /**
          * @description One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
@@ -672,7 +672,7 @@ export interface components {
             injected: boolean;
             /** @description HTTP method, where the proxy saw the request in clear. */
             method: string | null;
-            /** @description Whose connection it is. Records written before it existed read as `sandbox`. */
+            /** @description Whose connection it is. Records written before it existed read as `workspace`. */
             origin: components["schemas"]["ConnectionOrigin"];
             /** @description HTTP path without query string, where `method` is set. */
             path: string | null;
@@ -699,8 +699,6 @@ export interface components {
             rule_id: number | null;
             /** @description The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`). */
             rule_set: string | null;
-            /** @description The sandbox; `null` for puddle's own connections (`origin` is `puddle`). */
-            sandbox_id: string | null;
             /**
              * Format: int64
              * @description Epoch ms.
@@ -713,6 +711,8 @@ export interface components {
              *     upstream route is configured.
              */
             upstream: string | null;
+            /** @description The workspace; `null` for puddle's own connections (`origin` is `puddle`). */
+            workspace_id: string | null;
         } | {
             /** @description The request. */
             pending: components["schemas"]["AuditPending"];
@@ -751,8 +751,6 @@ export interface components {
              * @description Requests suppressed since the previous record.
              */
             count: number;
-            /** @description The sandbox. */
-            sandbox_id: string;
             /**
              * Format: int64
              * @description Epoch ms.
@@ -760,6 +758,8 @@ export interface components {
             ts: number;
             /** @enum {string} */
             type: "pending_suppressed";
+            /** @description The workspace. */
+            workspace_id: string;
         } | {
             /** @description The rule. */
             rule: components["schemas"]["AuditRule"];
@@ -851,8 +851,6 @@ export interface components {
             actor: string;
             /** @description On, off, or `null` to follow the next level. */
             enabled: boolean | null;
-            /** @description The sandbox whose override changed; `null` for every sandbox. */
-            sandbox_id: string | null;
             /** @description `builtin:<slug>` or `user:<id>`. */
             set_id: string;
             /**
@@ -862,6 +860,8 @@ export interface components {
             ts: number;
             /** @enum {string} */
             type: "rule_set_switched";
+            /** @description The workspace whose override changed; `null` for every workspace. */
+            workspace_id: string | null;
         } | {
             /** @description Patterns added. */
             added: string[];
@@ -881,8 +881,6 @@ export interface components {
             added: components["schemas"]["SystemReason"][];
             /** @description Reasons that no longer apply. */
             removed: components["schemas"]["SystemReason"][];
-            /** @description The sandbox; `null` for every sandbox. */
-            sandbox_id: string | null;
             /**
              * Format: int64
              * @description Epoch ms.
@@ -890,6 +888,8 @@ export interface components {
             ts: number;
             /** @enum {string} */
             type: "system_managed_changed";
+            /** @description The workspace; `null` for every workspace. */
+            workspace_id: string | null;
         } | {
             /**
              * Format: int64
@@ -934,9 +934,7 @@ export interface components {
             pattern: string;
             /** @description `exact` or `suffix`. */
             pattern_kind: string;
-            /** @description The sandbox, for a sandbox rule. */
-            sandbox_id: string | null;
-            /** @description `global`, `sandbox` or `set`. */
+            /** @description `global`, `workspace` or `set`. */
             scope: string;
             /**
              * Format: int64
@@ -948,6 +946,8 @@ export interface components {
              * @description The pending request it came from.
              */
             source_pending_id: number | null;
+            /** @description The workspace, for a workspace rule. */
+            workspace_id: string | null;
         };
         /** @description A rule set you made, as an audit record shows it. */
         AuditRuleSet: {
@@ -979,7 +979,7 @@ export interface components {
          */
         ClipboardRead: "ask" | "allow" | "deny";
         /**
-         * @description What closing the window does while a sandbox runs.
+         * @description What closing the window does while a workspace runs.
          * @enum {string}
          */
         CloseBehaviour: "tray" | "quit";
@@ -992,7 +992,7 @@ export interface components {
          * @description Whose connection an audit record describes.
          * @enum {string}
          */
-        ConnectionOrigin: "sandbox" | "puddle";
+        ConnectionOrigin: "workspace" | "puddle";
         /** @description What the user agreed to or declined. */
         Consent: {
             /** @enum {string} */
@@ -1068,7 +1068,7 @@ export interface components {
         };
         /**
          * @description The choices of an approve or deny (R-15). Each one left out stays at its narrowest default:
-         *     this sandbox, the exact host, permanent.
+         *     this workspace, the exact host, permanent.
          */
         DecisionRequest: {
             /**
@@ -1079,11 +1079,11 @@ export interface components {
             /**
              * Format: int64
              * @description Put the rule into this rule set of yours (the number of `user:<id>`) instead: it then
-             *     applies wherever the set is on. `scope` must be left at `sandbox`. The set must be on
-             *     for the request's sandbox.
+             *     applies wherever the set is on. `scope` must be left at `workspace`. The set must be on
+             *     for the request's workspace.
              */
             rule_set?: number | null;
-            /** @description This sandbox (default) or every sandbox. */
+            /** @description This workspace (default) or every workspace. */
             scope?: components["schemas"]["ScopeChoice"];
             /**
              * @description A suffix of the host (`example.com`, `.example.com` or `*.example.com`) to cover every
@@ -1128,7 +1128,7 @@ export interface components {
          * @enum {string}
          */
         Effect: "allow" | "deny";
-        /** @description The values a sandbox gets: its override, else the global value, else puddle's default. */
+        /** @description The values a workspace gets: its override, else the global value, else puddle's default. */
         EffectiveSettings: {
             /** @description Clipboard reads. */
             clipboard_read: components["schemas"]["ResolvedClipboardRead"];
@@ -1167,17 +1167,17 @@ export interface components {
          * @description Something the user should hear about. Serialised as one internally tagged enum
          *     (`{"type":"oom_kill",...}`, ADR 0002).
          *
-         *     Most events are about one sandbox and carry a `sandbox` field; global ones (crash report
-         *     waiting, consent needed, network change, ...) carry none, and [`Event::sandbox`] returns
+         *     Most events are about one workspace and carry a `workspace` field; global ones (crash report
+         *     waiting, consent needed, network change, ...) carry none, and [`Event::workspace`] returns
          *     `None` for them.
          */
         Event: {
-            /** @description The sandbox. */
-            sandbox: components["schemas"]["SandboxName"];
             /** @description Its new state. */
-            status: components["schemas"]["SandboxStatus"];
+            status: components["schemas"]["WorkspaceStatus"];
             /** @enum {string} */
             type: "status_changed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         } | {
             /**
              * Format: int32
@@ -1186,22 +1186,22 @@ export interface components {
             pid: number;
             /** @description The killed process's name (`comm`), cleaned by [`Event::oom_kill`]. */
             process: string;
-            /** @description The sandbox whose guest killed the process. */
-            sandbox: components["schemas"]["SandboxName"];
             /** @enum {string} */
             type: "oom_kill";
+            /** @description The workspace whose guest killed the process. */
+            workspace: components["schemas"]["WorkspaceName"];
         } | {
             /**
              * @description More about the step, or why it failed; `null` when there is nothing to add. It can
              *     quote tool output: escape it when rendering.
              */
             detail: string | null;
-            /** @description The workspace's sandbox. */
-            sandbox: components["schemas"]["SandboxName"];
             /** @description What it is doing now. */
             step: components["schemas"]["WorkspaceStep"];
             /** @enum {string} */
             type: "workspace_progress";
+            /** @description The workspace's workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         } | {
             /** @description The request, as `GET /api/pending` shows it. */
             request: components["schemas"]["PendingSummary"];
@@ -1223,10 +1223,10 @@ export interface components {
              * @description Epoch ms of the latest one.
              */
             last_seen: number;
-            /** @description The sandbox. */
-            sandbox: components["schemas"]["SandboxName"];
             /** @enum {string} */
             type: "pending_updated";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         } | {
             /**
              * Format: int64
@@ -1238,12 +1238,12 @@ export interface components {
              * @description The rule that decided it; `null` for an expiry.
              */
             rule_id: number | null;
-            /** @description The sandbox. */
-            sandbox: components["schemas"]["SandboxName"];
             /** @description How it ended. */
             state: components["schemas"]["PendingEnd"];
             /** @enum {string} */
             type: "pending_closed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         } | {
             /** @description Whether suppression is on. */
             active: boolean;
@@ -1252,10 +1252,10 @@ export interface components {
              * @description Requests held back in this episode so far.
              */
             count: number;
-            /** @description The sandbox. */
-            sandbox: components["schemas"]["SandboxName"];
             /** @enum {string} */
             type: "suppression_changed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         } | {
             /** @enum {string} */
             type: "rules_changed";
@@ -1288,19 +1288,17 @@ export interface components {
         };
         /** @description New global settings. Replaces every value listed here; unknown stored fields are kept. */
         GlobalSettingsRequest: {
-            /** @description Defaults for every sandbox. */
-            sandbox_defaults?: components["schemas"]["SettingsLayer"];
             /** @description Preferences for puddle's window. */
             ui?: components["schemas"]["UiPrefs"];
             /** @description VS Code server options. */
             vscode_server?: components["schemas"]["VsCodeServer"];
+            /** @description Defaults for every workspace. */
+            workspace_defaults?: components["schemas"]["SettingsLayer"];
         };
-        /** @description The global settings, and what a sandbox without overrides gets. */
+        /** @description The global settings, and what a workspace without overrides gets. */
         GlobalSettingsView: {
-            /** @description The effective values for a sandbox with no overrides. */
+            /** @description The effective values for a workspace with no overrides. */
             effective: components["schemas"]["EffectiveSettings"];
-            /** @description Defaults for every sandbox. */
-            sandbox_defaults: components["schemas"]["SettingsLayer"];
             /** @description Preferences for puddle's window. */
             ui: components["schemas"]["UiPrefs"];
             /**
@@ -1310,6 +1308,8 @@ export interface components {
             unknown_fields: string[];
             /** @description VS Code server options. */
             vscode_server: components["schemas"]["VsCodeServer"];
+            /** @description Defaults for every workspace. */
+            workspace_defaults: components["schemas"]["SettingsLayer"];
         };
         /** @description The API's identity, for a client to check it reached puddle. */
         Health: {
@@ -1351,7 +1351,7 @@ export interface components {
          * @enum {string}
          */
         LocalCategory: "loopback" | "private" | "link_local" | "metadata" | "special";
-        /** @description Local destination categories a sandbox may approve. `null` inherits. */
+        /** @description Local destination categories a workspace may approve. `null` inherits. */
         LocalToggles: {
             /** @description Link-local addresses. */
             link_local: boolean | null;
@@ -1396,7 +1396,7 @@ export interface components {
              *     refused).
              */
             pattern: string;
-            /** @description Global or one sandbox. */
+            /** @description Global or one workspace. */
             scope: components["schemas"]["RuleScope"];
         };
         /** @description A rule set to make. */
@@ -1415,8 +1415,8 @@ export interface components {
              * @description Memory in MiB (256 to 1048576); left out or `null` is the default.
              */
             memory_mib?: number | null;
-            /** @description The workspace's name, which is also its sandbox's name. */
-            name: components["schemas"]["SandboxName"];
+            /** @description The workspace's name, which is also its workspace's name. */
+            name: components["schemas"]["WorkspaceName"];
             /**
              * @description The repository to clone, as an `https://` URL without credentials. SSH remotes
              *     (`git@host:path`, `ssh://`) are refused with a message saying so.
@@ -1442,7 +1442,7 @@ export interface components {
          * @description Why a pending request expired.
          * @enum {string}
          */
-        PendingExpiryReason: "stale" | "sandbox_deleted";
+        PendingExpiryReason: "stale" | "workspace_deleted";
         /** @description Pending requests, most recent first. */
         PendingList: {
             /** @description The requests. */
@@ -1497,10 +1497,10 @@ export interface components {
              *     did.
              */
             rule_set: string | null;
-            /** @description The requesting sandbox. */
-            sandbox: components["schemas"]["SandboxName"];
             /** @description Where the row is in its life. */
             state: components["schemas"]["PendingState"];
+            /** @description The requesting workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         };
         /**
          * @description Where a pending request is in its life (R-12).
@@ -1544,8 +1544,8 @@ export interface components {
              *     itself), the key the inbox groups rows by.
              */
             registrable_domain: string;
-            /** @description The sandbox that asked. */
-            sandbox: components["schemas"]["SandboxName"];
+            /** @description The workspace that asked. */
+            workspace: components["schemas"]["WorkspaceName"];
         };
         /**
          * @description What puddle found out about the proxy setup.
@@ -1717,7 +1717,7 @@ export interface components {
             pattern: string;
             /** @description Exact or suffix. */
             pattern_kind: components["schemas"]["PatternKind"];
-            /** @description Global or one sandbox. */
+            /** @description Global or one workspace. */
             scope: components["schemas"]["RuleScope"];
             /**
              * Format: int64
@@ -1729,7 +1729,7 @@ export interface components {
          * @description Why a rule was deleted.
          * @enum {string}
          */
-        RuleDeleteReason: "user" | "sandbox_deleted" | "set_deleted";
+        RuleDeleteReason: "user" | "workspace_deleted" | "set_deleted";
         /** @description A rule's new expiry. */
         RuleExpiryRequest: {
             /**
@@ -1743,15 +1743,15 @@ export interface components {
             /** @description The rules. */
             rules: components["schemas"]["Rule"][];
         };
-        /** @description Which sandboxes a rule applies to. */
+        /** @description Which workspaces a rule applies to. */
         RuleScope: {
             /** @enum {string} */
             type: "global";
         } | {
-            /** @description The sandbox. */
-            sandbox: components["schemas"]["SandboxName"];
             /** @enum {string} */
-            type: "sandbox";
+            type: "workspace";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         } | {
             /**
              * Format: int64
@@ -1800,21 +1800,21 @@ export interface components {
              */
             system_managed: components["schemas"]["SystemManagedHost"][];
         };
-        /** @description One sandbox's own switch for a set. */
+        /** @description One workspace's own switch for a set. */
         RuleSetOverride: {
             /** @description On or off there. */
             enabled: boolean;
-            /** @description The sandbox. */
-            sandbox: components["schemas"]["SandboxName"];
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         };
-        /** @description Switch a set on or off, for every sandbox or for one. */
+        /** @description Switch a set on or off, for every workspace or for one. */
         RuleSetSwitchRequest: {
             /**
              * @description On or off; `null` removes the switch, so the next level decides (the global switch, then
              *     the set's default).
              */
             enabled: boolean | null;
-            sandbox?: components["schemas"]["SandboxName"] | null;
+            workspace?: components["schemas"]["WorkspaceName"] | null;
         };
         /** @description What a switch did. */
         RuleSetSwitched: {
@@ -1848,7 +1848,7 @@ export interface components {
             description: string;
             /** @description Its entries. */
             entries: components["schemas"]["RuleSetEntry"][];
-            /** @description The switch for every sandbox; `null` follows `default_on`. */
+            /** @description The switch for every workspace; `null` follows `default_on`. */
             global: boolean | null;
             /** @description `builtin:<slug>` or `user:<id>`. */
             id: string;
@@ -1856,40 +1856,19 @@ export interface components {
             kind: components["schemas"]["RuleSetKind"];
             /** @description Name. */
             name: string;
-            /** @description Sandboxes with a switch of their own. */
+            /** @description Workspaces with a switch of their own. */
             overrides: components["schemas"]["RuleSetOverride"][];
         };
         /**
-         * @description A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), not `tauri`, `ipc` or `asset`.
+         * @description A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`).
          * @example my-project
          */
         SandboxName: string;
-        /** @description New overrides for one sandbox. Replaces every value listed; `null` inherits. */
-        SandboxSettingsRequest: {
-            /** @description The overrides. */
-            overrides?: components["schemas"]["SettingsLayer"];
-        };
-        /** @description One sandbox's overrides and effective values. */
-        SandboxSettingsView: {
-            /** @description What it gets. */
-            effective: components["schemas"]["EffectiveSettings"];
-            /** @description Its overrides; `null` inherits. */
-            overrides: components["schemas"]["SettingsLayer"];
-            /** @description The sandbox. */
-            sandbox: components["schemas"]["SandboxName"];
-            /** @description Unknown fields in its stored document (kept). */
-            unknown_fields: string[];
-        };
         /**
-         * @description A sandbox's state as the runtime reports it (msb's states, one for one).
+         * @description Whether an approval or denial covers only the request's workspace or every workspace.
          * @enum {string}
          */
-        SandboxStatus: "created" | "starting" | "running" | "draining" | "paused" | "stopped" | "crashed";
-        /**
-         * @description Whether an approval or denial covers only the request's sandbox or every sandbox.
-         * @enum {string}
-         */
-        ScopeChoice: "sandbox" | "global";
+        ScopeChoice: "workspace" | "global";
         /**
          * @description Which VS Code server browser VS Code runs.
          * @enum {string}
@@ -1899,10 +1878,10 @@ export interface components {
          * @description Which level an effective value came from.
          * @enum {string}
          */
-        SettingSource: "sandbox" | "global" | "default";
+        SettingSource: "workspace" | "global" | "default";
         /**
-         * @description The settings every sandbox has. On a global document they are the defaults for every
-         *     sandbox; on a sandbox they override those. `null` means "not set here": the next level (the
+         * @description The settings every workspace has. On a global document they are the defaults for every
+         *     workspace; on a workspace they override those. `null` means "not set here": the next level (the
          *     global value, then puddle's default) applies.
          */
         SettingsLayer: {
@@ -1970,7 +1949,7 @@ export interface components {
             /** @description The subject's common name, when readable. */
             subject: string | null;
         };
-        /** @description Whether a sandbox's new pending requests are being suppressed (R-13). */
+        /** @description Whether a workspace's new pending requests are being suppressed (R-13). */
         Suppression: {
             /** @description Whether requests are being suppressed now. */
             active: boolean;
@@ -1979,8 +1958,8 @@ export interface components {
              * @description Requests suppressed in the current (or last) episode.
              */
             count: number;
-            /** @description The sandbox. */
-            sandbox: components["schemas"]["SandboxName"];
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
         };
         /** @description A certificate copied into workspaces. */
         SyncedRoot: {
@@ -2008,7 +1987,7 @@ export interface components {
             reason: components["schemas"]["SystemReason"];
             /** @description The reason in words. */
             reason_text: string;
-            sandbox: components["schemas"]["SandboxName"] | null;
+            workspace: components["schemas"]["WorkspaceName"] | null;
         };
         /**
          * @description Why puddle allows a System managed host: a choice you made.
@@ -2037,7 +2016,7 @@ export interface components {
             /** @description Whether the server may send Microsoft telemetry (default off). */
             telemetry: boolean | null;
         };
-        /** @description A workspace: a repository checkout on its own disk, and the sandbox that runs it. */
+        /** @description A workspace: a repository checkout on its own disk, and the workspace that runs it. */
         Workspace: {
             busy: components["schemas"]["WorkspaceOperation"] | null;
             /**
@@ -2069,19 +2048,19 @@ export interface components {
             first_connect_notice_due: boolean;
             /** @description The id used in paths. Today it is the workspace's name. */
             id: string;
-            /** @description The image its sandbox boots. */
+            /** @description The image its workspace boots. */
             image: string;
             /**
              * Format: int32
              * @description Memory in MiB, applied at the next start.
              */
             memory_mib: number;
-            /** @description The name of the sandbox that runs it; events and per-sandbox settings use this name. */
-            name: components["schemas"]["SandboxName"];
+            /** @description The name of the workspace that runs it; events and per-workspace settings use this name. */
+            name: components["schemas"]["WorkspaceName"];
             /** @description The HTTPS URL it was cloned from. */
             repo_url: string;
-            /** @description The sandbox's state. */
-            status: components["schemas"]["SandboxStatus"];
+            /** @description The workspace's state. */
+            status: components["schemas"]["WorkspaceStatus"];
         };
         /** @description `GET /api/workspaces`. */
         WorkspaceList: {
@@ -2089,11 +2068,37 @@ export interface components {
             workspaces: components["schemas"]["Workspace"][];
         };
         /**
+         * @description A workspace's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), not `tauri`, `ipc` or `asset`.
+         * @example my-project
+         */
+        WorkspaceName: string;
+        /**
          * @description The long operation a workspace is in the middle of; progress comes as
          *     `workspace_progress` events.
          * @enum {string}
          */
         WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "deleting";
+        /** @description New overrides for one workspace. Replaces every value listed; `null` inherits. */
+        WorkspaceSettingsRequest: {
+            /** @description The overrides. */
+            overrides?: components["schemas"]["SettingsLayer"];
+        };
+        /** @description One workspace's overrides and effective values. */
+        WorkspaceSettingsView: {
+            /** @description What it gets. */
+            effective: components["schemas"]["EffectiveSettings"];
+            /** @description Its overrides; `null` inherits. */
+            overrides: components["schemas"]["SettingsLayer"];
+            /** @description Unknown fields in its stored document (kept). */
+            unknown_fields: string[];
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        };
+        /**
+         * @description A workspace's state as the runtime reports it (msb's states, one for one).
+         * @enum {string}
+         */
+        WorkspaceStatus: "created" | "starting" | "running" | "draining" | "paused" | "stopped" | "crashed";
         /**
          * @description Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
          * @enum {string}
@@ -2117,13 +2122,13 @@ export interface operations {
                 before?: number;
                 /** @description records per page (default 100) */
                 limit?: number;
-                /** @description records about this sandbox */
-                sandbox?: string;
+                /** @description records about this workspace */
+                workspace?: string;
                 /** @description records of this type */
                 type?: components["schemas"]["AuditType"];
                 /** @description records with this outcome; types that have none never match */
                 outcome?: components["schemas"]["AuditOutcome"];
-                /** @description `connection` records of this origin (`sandbox` or `puddle`); other types have none and never match */
+                /** @description `connection` records of this origin (`workspace` or `puddle`); other types have none and never match */
                 origin?: components["schemas"]["ConnectionOrigin"];
                 /** @description records whose host (a rule's pattern) contains this text, case-insensitive */
                 host_contains?: string;
@@ -2361,8 +2366,8 @@ export interface operations {
     events: {
         parameters: {
             query?: {
-                /** @description only this sandbox's events; global events always come through */
-                sandbox?: components["schemas"]["SandboxName"];
+                /** @description only this workspace's events; global events always come through */
+                workspace?: components["schemas"]["WorkspaceName"];
             };
             header?: never;
             path?: never;
@@ -2379,7 +2384,7 @@ export interface operations {
                     "text/event-stream": string;
                 };
             };
-            /** @description invalid sandbox name */
+            /** @description invalid workspace name */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2606,8 +2611,8 @@ export interface operations {
     list_pending: {
         parameters: {
             query?: {
-                /** @description only this sandbox's requests */
-                sandbox?: components["schemas"]["SandboxName"];
+                /** @description only this workspace's requests */
+                workspace?: components["schemas"]["WorkspaceName"];
             };
             header?: never;
             path?: never;
@@ -2624,7 +2629,7 @@ export interface operations {
                     "application/json": components["schemas"]["PendingList"];
                 };
             };
-            /** @description invalid sandbox name */
+            /** @description invalid workspace name */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3557,74 +3562,6 @@ export interface operations {
             };
         };
     };
-    suppression: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description sandbox name */
-                sandbox: components["schemas"]["SandboxName"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description the sandbox's suppression state */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Suppression"];
-                };
-            };
-            /** @description invalid sandbox name */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description missing or wrong bearer token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description forbidden origin */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description Host is not the API's own address */
-            421: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description puddle failed; see its log */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-        };
-    };
     get_global: {
         parameters: {
             query?: never;
@@ -3768,28 +3705,28 @@ export interface operations {
             };
         };
     };
-    get_sandbox: {
+    get_workspace_settings: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description sandbox name */
-                sandbox: components["schemas"]["SandboxName"];
+                /** @description workspace name */
+                workspace: components["schemas"]["WorkspaceName"];
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description the sandbox's settings */
+            /** @description the workspace's settings */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SandboxSettingsView"];
+                    "application/json": components["schemas"]["WorkspaceSettingsView"];
                 };
             };
-            /** @description invalid sandbox name */
+            /** @description invalid workspace name */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3845,32 +3782,32 @@ export interface operations {
             };
         };
     };
-    put_sandbox: {
+    put_workspace_settings: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description sandbox name */
-                sandbox: components["schemas"]["SandboxName"];
+                /** @description workspace name */
+                workspace: components["schemas"]["WorkspaceName"];
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SandboxSettingsRequest"];
+                "application/json": components["schemas"]["WorkspaceSettingsRequest"];
             };
         };
         responses: {
-            /** @description the sandbox's new settings */
+            /** @description the workspace's new settings */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SandboxSettingsView"];
+                    "application/json": components["schemas"]["WorkspaceSettingsView"];
                 };
             };
-            /** @description invalid sandbox name */
+            /** @description invalid workspace name */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4589,6 +4526,74 @@ export interface operations {
             };
             /** @description not running or busy */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    suppression: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace name */
+                workspace: components["schemas"]["WorkspaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the workspace's suppression state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Suppression"];
+                };
+            };
+            /** @description invalid workspace name */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -26,7 +26,7 @@ test.describe("the UI fixture backend", () => {
     await expect(page.getByTestId("pending-badge")).toContainText("1 pending");
     await backend.control.step({
       do: "bulk",
-      sandbox: "demo",
+      workspace: "demo",
       count: 4,
       domain: "arrivals.example.org",
     });

@@ -150,7 +150,7 @@ describe("the workspace list", () => {
     api.list = [workspace("a"), workspace("b")];
     inbox.add(
       request(1, {
-        sandbox: "a" as never,
+        workspace: "a" as never,
         host: "old.example.com",
         first_seen: 1,
       }),
@@ -158,7 +158,7 @@ describe("the workspace list", () => {
     );
     inbox.add(
       request(2, {
-        sandbox: "b" as never,
+        workspace: "b" as never,
         host: "new.example.com",
         first_seen: 9,
       }),
@@ -166,7 +166,7 @@ describe("the workspace list", () => {
     );
     inbox.add(
       request(3, {
-        sandbox: "b" as never,
+        workspace: "b" as never,
         host: "newer.example.org",
         first_seen: 5,
       }),
@@ -197,14 +197,14 @@ describe("the workspace list", () => {
     await mount();
     workspaces.handleEvent({
       type: "oom_kill",
-      sandbox: "a",
+      workspace: "a",
       pid: 3,
       process: "node",
     });
     expect(await screen.findByText(/Out of memory/)).toBeInTheDocument();
     workspaces.handleEvent({
       type: "workspace_progress",
-      sandbox: "a",
+      workspace: "a",
       step: "failed",
       detail: "boom",
     });
@@ -242,13 +242,13 @@ describe("the workspaces layout", () => {
     await workspaces.refresh();
     source.emit({
       type: "workspace_progress",
-      sandbox: "a",
+      workspace: "a",
       step: "stopping",
       detail: null,
     });
     source.emit({
       type: "workspace_progress",
-      sandbox: "a",
+      workspace: "a",
       step: "done",
       detail: null,
     });

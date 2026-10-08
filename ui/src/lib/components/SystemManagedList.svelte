@@ -22,7 +22,7 @@
   {#if groups.length === 0}
     <p class="muted">Puddle allows nothing by itself right now.</p>
   {:else}
-    {#each groups as group (`${group.reason}/${group.sandbox ?? ""}`)}
+    {#each groups as group (`${group.reason}/${group.workspace ?? ""}`)}
       <div class="group">
         <p>
           <b>{group.text}</b>

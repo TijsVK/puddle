@@ -87,7 +87,7 @@ async function scrollDown(page: Page, count: number): Promise<void> {
 function connect(backend: Backend, host: string, extra = {}) {
   return backend.control.step({
     do: "connection",
-    sandbox: "web-shop",
+    workspace: "web-shop",
     host,
     decision: "allow",
     ...extra,
@@ -195,7 +195,7 @@ test.describe("filters", () => {
       await matching(request, backend, {
         type: "connection",
         outcome: "blocked",
-        sandbox: "docs-site",
+        workspace: "docs-site",
       })
     ).length;
     await page.getByLabel("Workspace").selectOption("docs-site");
@@ -227,7 +227,7 @@ test.describe("filters", () => {
     await total(page, before);
     await backend.control.step({
       do: "connection",
-      sandbox: "web-shop",
+      workspace: "web-shop",
       host: "ancient.example.org",
       decision: "allow",
       ago_ms: 3 * 86_400_000,
@@ -251,7 +251,7 @@ test.describe("filters", () => {
   }) => {
     const expected = (
       await matching(request, backend, {
-        sandbox: "web-shop",
+        workspace: "web-shop",
         type: "connection",
         outcome: "allow",
         host_contains: "crates",
@@ -311,7 +311,7 @@ test.describe("filters", () => {
   }) => {
     await backend.control.step({
       do: "connection",
-      sandbox: "web-shop",
+      workspace: "web-shop",
       host: "xn--bcher-kva.example.com",
       decision: "allow",
     });

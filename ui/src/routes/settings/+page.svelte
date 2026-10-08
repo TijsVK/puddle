@@ -368,7 +368,7 @@
                 void layerPatch(
                   {
                     local_toggles: {
-                      ...view.sandbox_defaults.local_toggles,
+                      ...view.workspace_defaults.local_toggles,
                       [category]: box.checked,
                     },
                   },

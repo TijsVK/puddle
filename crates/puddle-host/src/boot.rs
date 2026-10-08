@@ -12,7 +12,7 @@ use puddle_compute::{FileMount, ImageConfig, SandboxSpec, VsockRoute};
 use puddle_guest_env::{ProxySettings, guest_proxy_config};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::{Proxy, Route};
-use puddle_types::{GuestEnv, ImageRef, MemoryMib, SandboxName};
+use puddle_types::{GuestEnv, ImageRef, MemoryMib, WorkspaceName};
 
 use crate::{GuestSettings, HostError};
 
@@ -75,9 +75,9 @@ impl BootKit {
 
     /// Starts the egress route of `sandbox`: a fresh owner-only endpoint served by the shared
     /// proxy. It lives as long as the returned [`Route`].
-    pub(crate) fn route(&self, sandbox: &SandboxName) -> Result<Route, String> {
+    pub(crate) fn route(&self, workspace: &WorkspaceName) -> Result<Route, String> {
         let listener = self.ipc.listen().map_err(|e| e.to_string())?;
-        Ok(self.proxy.serve_route(listener, sandbox.clone()))
+        Ok(self.proxy.serve_route(listener, workspace.clone()))
     }
 
     /// The boot plan and the environment for a sandbox of `image`.
@@ -103,13 +103,13 @@ impl BootKit {
     /// The spec of a new sandbox: image, memory, environment, the route and puddle's mounts.
     pub(crate) fn spec(
         &self,
-        name: &SandboxName,
+        name: &WorkspaceName,
         image: ImageRef,
         memory: MemoryMib,
         env: &GuestEnv,
         route: &Route,
     ) -> SandboxSpec {
-        let spec = SandboxSpec::new(name.clone(), image)
+        let spec = SandboxSpec::new(name.sandbox_name(), image)
             .with_memory(memory)
             .with_env(env)
             .with_route(VsockRoute::new(AGENT_ROUTE_PORT, route.endpoint().path()));

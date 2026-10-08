@@ -20,7 +20,7 @@ use puddle_store::{
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
     ConnectionReason, Decision, EgressRequest, Host, HttpRequestLine, PatternKind, PendingId,
-    PendingOutcome, Policy, RuleId, SandboxName, SuffixAllows,
+    PendingOutcome, Policy, RuleId, SuffixAllows, WorkspaceName,
 };
 use serde_json::Value;
 
@@ -37,23 +37,23 @@ fn fixture_with(limits: Limits) -> (Arc<ManualClock>, Store) {
     (clock, store)
 }
 
-fn sb(id: &str) -> SandboxName {
-    SandboxName::new(id).unwrap()
+fn sb(id: &str) -> WorkspaceName {
+    WorkspaceName::new(id).unwrap()
 }
 
-fn req(sandbox: &str, host: &str, port: u16) -> EgressRequest {
-    EgressRequest::new(sb(sandbox), Host::parse_normalised(host).unwrap(), port)
+fn req(workspace: &str, host: &str, port: u16) -> EgressRequest {
+    EgressRequest::new(sb(workspace), Host::parse_normalised(host).unwrap(), port)
 }
 
-fn decide(store: &Store, sandbox: &str, host: &str) -> Decision {
+fn decide(store: &Store, workspace: &str, host: &str) -> Decision {
     store
-        .decide(&req(sandbox, host, 443), SuffixAllows::Count)
+        .decide(&req(workspace, host, 443), SuffixAllows::Count)
         .unwrap()
 }
 
 fn rule(scope: Option<&str>, pattern: &str, effect: Effect) -> NewRule {
     NewRule {
-        scope: scope.map_or(Scope::Global, |s| Scope::Sandbox(sb(s))),
+        scope: scope.map_or(Scope::Global, |s| Scope::Workspace(sb(s))),
         pattern: Pattern::parse(pattern).unwrap(),
         effect,
         expires_at: None,
@@ -164,7 +164,7 @@ fn r04_suffix_must_be_longer_than_a_public_suffix() {
 }
 
 #[test]
-fn r05_another_sandboxes_rules_never_apply() {
+fn r05_another_workspaces_rules_never_apply() {
     let (_, store) = fixture();
     add(&store, Some("b"), "example.com", Effect::Allow);
     let global = add(&store, None, "global.example", Effect::Allow);
@@ -183,15 +183,15 @@ fn r05_another_sandboxes_rules_never_apply() {
 }
 
 #[test]
-fn r06_most_specific_wins_then_sandbox_then_deny() {
+fn r06_most_specific_wins_then_workspace_then_deny() {
     let (_, store) = fixture();
     let global_deny = add(&store, None, ".example.com", Effect::Deny);
-    let sandbox_allow = add(&store, Some("a"), ".example.com", Effect::Allow);
+    let workspace_allow = add(&store, Some("a"), ".example.com", Effect::Allow);
     let exact_deny = add(&store, Some("a"), "bad.example.com", Effect::Deny);
     let exact_allow = add(&store, Some("a"), "bad.example.com", Effect::Allow);
     assert_eq!(
         allowed_by(decide(&store, "a", "x.example.com")),
-        Some(sandbox_allow)
+        Some(workspace_allow)
     );
     assert_eq!(
         decide(&store, "b", "x.example.com"),
@@ -212,7 +212,7 @@ fn r06_most_specific_wins_then_sandbox_then_deny() {
         allowed_by(decide(&store, "a", "bad.example.com")),
         Some(exact_allow)
     );
-    // A broader sandbox allow never overrides a narrower global deny.
+    // A broader workspace allow never overrides a narrower global deny.
     let narrow_deny = add(&store, None, ".api.example.com", Effect::Deny);
     assert_eq!(
         decide(&store, "a", "v1.api.example.com"),
@@ -364,7 +364,7 @@ fn r10_unmatched_request_is_recorded_with_first_and_last_seen() {
     decide(&store, "a", "example.com");
     let row = store.pending(id).unwrap();
     assert_eq!(
-        (row.sandbox.as_str(), row.host.to_string(), row.port),
+        (row.workspace.as_str(), row.host.to_string(), row.port),
         ("a", "example.com".to_owned(), 443)
     );
     assert_eq!((row.first_seen, row.last_seen), (T0, T0 + 5000));
@@ -383,7 +383,7 @@ fn r11_repeats_dedupe_onto_the_open_row() {
         );
     }
     assert_eq!(store.pending(id).unwrap().attempts, 4);
-    // Another port or sandbox is another key.
+    // Another port or workspace is another key.
     let other_port = store
         .decide(&req("a", "example.com", 80), SuffixAllows::Count)
         .unwrap();
@@ -419,7 +419,7 @@ fn r12_pending_rows_are_immutable_and_ids_never_reused() {
     let conn = rusqlite::Connection::open(&path).unwrap();
     for sql in [
         "UPDATE pending SET host = 'evil.example' WHERE id = 1",
-        "UPDATE pending SET sandbox_id = 'b' WHERE id = 1",
+        "UPDATE pending SET workspace_id = 'b' WHERE id = 1",
         "UPDATE pending SET port = 1 WHERE id = 1",
         "UPDATE pending SET first_seen = 0 WHERE id = 1",
         "UPDATE pending SET id = 9 WHERE id = 1",
@@ -446,7 +446,7 @@ fn r12_pending_rows_are_immutable_and_ids_never_reused() {
 }
 
 #[test]
-fn r13_new_rows_are_rate_limited_per_sandbox() {
+fn r13_new_rows_are_rate_limited_per_workspace() {
     let limits = Limits {
         new_rows_burst: 3,
         new_rows_refill_ms: 1000,
@@ -462,7 +462,7 @@ fn r13_new_rows_are_rate_limited_per_sandbox() {
             Decision::Pending(PendingOutcome::Suppressed)
         );
     }
-    // Other sandboxes have their own bucket.
+    // Other workspaces have their own bucket.
     new_pending(decide(&store, "b", "h9.example"));
     let suppression = store.suppression(&sb("a"));
     assert!(suppression.active);
@@ -472,7 +472,7 @@ fn r13_new_rows_are_rate_limited_per_sandbox() {
     assert_eq!(records.len(), 1);
     assert_eq!(
         (
-            records[0]["sandbox_id"].clone(),
+            records[0]["workspace_id"].clone(),
             records[0]["count"].clone()
         ),
         ("a".into(), 1.into())
@@ -582,8 +582,8 @@ fn r14_lookup_finds_an_exact_ip_rule_and_never_writes_a_pending_row() {
         })
         .unwrap()
         .id;
-    let lookup = |sandbox: &str, host: &str| {
-        Policy::lookup(&store, &req(sandbox, host, 443), SuffixAllows::Ignore).unwrap()
+    let lookup = |workspace: &str, host: &str| {
+        Policy::lookup(&store, &req(workspace, host, 443), SuffixAllows::Ignore).unwrap()
     };
     assert_eq!(
         lookup("a", "192.168.1.20"),
@@ -606,7 +606,7 @@ fn r14_lookup_finds_an_exact_ip_rule_and_never_writes_a_pending_row() {
             pattern: PatternKind::Exact
         })
     );
-    // Another sandbox's rule, an unlisted neighbour and an expired rule: no match, no row.
+    // Another workspace's rule, an unlisted neighbour and an expired rule: no match, no row.
     assert_eq!(lookup("b", "192.168.1.20"), None);
     assert_eq!(lookup("a", "192.168.1.23"), None);
     clock.advance(DAY);
@@ -615,27 +615,27 @@ fn r14_lookup_finds_an_exact_ip_rule_and_never_writes_a_pending_row() {
 }
 
 #[test]
-fn r15_approve_defaults_to_this_sandbox_exact_host_permanent() {
+fn r15_approve_defaults_to_this_workspace_exact_host_permanent() {
     let (_, store) = fixture();
     let id = new_pending(decide(&store, "a", "api.example.com"));
     let decided = store
         .resolve_pending(id, &Resolution::allow(), Actor::Ui)
         .unwrap();
     let rule = decided.rule;
-    assert_eq!(rule.scope, Scope::Sandbox(sb("a")));
+    assert_eq!(rule.scope, Scope::Workspace(sb("a")));
     assert_eq!(rule.pattern.to_string(), "api.example.com");
     assert_eq!(rule.effect, Effect::Allow);
     assert_eq!(rule.expires_at, None);
     assert_eq!(rule.source_pending_id, Some(id));
     assert_eq!(rule.created_by, Actor::Ui);
-    // Not widened: siblings, the apex and other sandboxes are still unknown.
-    for (sandbox, host) in [
+    // Not widened: siblings, the apex and other workspaces are still unknown.
+    for (workspace, host) in [
         ("a", "v2.api.example.com"),
         ("a", "example.com"),
         ("b", "api.example.com"),
     ] {
         assert!(matches!(
-            decide(&store, sandbox, host),
+            decide(&store, workspace, host),
             Decision::Pending(_)
         ));
     }
@@ -711,26 +711,26 @@ fn r15_invalid_choices_are_refused() {
 fn r16_a_decision_closes_every_other_row_the_rule_decides() {
     let (_, store) = fixture();
     let target = new_pending(decide(&store, "a", "x.example.com"));
-    let same_sandbox = new_pending(decide(&store, "a", "y.example.com"));
-    let other_sandbox = new_pending(decide(&store, "b", "z.example.com"));
+    let same_workspace = new_pending(decide(&store, "a", "y.example.com"));
+    let other_workspace = new_pending(decide(&store, "b", "z.example.com"));
     let apex = new_pending(decide(&store, "a", "example.com"));
     let unrelated = new_pending(decide(&store, "a", "example.org"));
 
-    let mut sandbox_suffix = Resolution::allow();
-    sandbox_suffix.pattern = PatternChoice::Suffix("example.com".into());
+    let mut workspace_suffix = Resolution::allow();
+    workspace_suffix.pattern = PatternChoice::Suffix("example.com".into());
     let decided = store
-        .resolve_pending(target, &sandbox_suffix, Actor::Ui)
+        .resolve_pending(target, &workspace_suffix, Actor::Ui)
         .unwrap();
-    assert_eq!(decided.also_closed, vec![same_sandbox]);
-    let closed = store.pending(same_sandbox).unwrap();
+    assert_eq!(decided.also_closed, vec![same_workspace]);
+    let closed = store.pending(same_workspace).unwrap();
     assert_eq!(closed.state, PendingState::Allowed);
     assert_eq!(closed.rule_id, Some(decided.rule.id));
     assert_eq!(closed.decided_by, Some(Actor::Ui));
-    for open in [other_sandbox, apex, unrelated] {
+    for open in [other_workspace, apex, unrelated] {
         assert_eq!(store.pending(open).unwrap().state, PendingState::Requested);
     }
 
-    // A global rule closes the rows it decides in every sandbox.
+    // A global rule closes the rows it decides in every workspace.
     let c_row = new_pending(decide(&store, "c", "v.example.com"));
     let id = new_pending(decide(&store, "b", "q.example.com"));
     let mut global_deny = Resolution::deny();
@@ -738,9 +738,9 @@ fn r16_a_decision_closes_every_other_row_the_rule_decides() {
     global_deny.pattern = PatternChoice::Suffix("example.com".into());
     let decided = store.resolve_pending(id, &global_deny, Actor::Ui).unwrap();
     let closed: HashSet<_> = decided.also_closed.into_iter().collect();
-    assert_eq!(closed, HashSet::from([other_sandbox, c_row]));
+    assert_eq!(closed, HashSet::from([other_workspace, c_row]));
     assert_eq!(
-        store.pending(other_sandbox).unwrap().state,
+        store.pending(other_workspace).unwrap().state,
         PendingState::Denied
     );
     assert_eq!(audit_of(&store, "pending_decided").len(), 5);
@@ -801,7 +801,7 @@ fn r17_success_echoes_exactly_what_was_approved() {
         .unwrap();
     assert_eq!(
         (
-            decided.row.sandbox.as_str(),
+            decided.row.workspace.as_str(),
             decided.row.host.to_string(),
             decided.row.port
         ),
@@ -834,7 +834,7 @@ fn r18_inbox_groups_by_registrable_domain() {
         [("example.co.uk", 3), ("10.0.0.1", 1), ("example.org", 1)]
     );
     // Most recent row first within a group.
-    assert_eq!(groups[0].rows[0].sandbox.as_str(), "b");
+    assert_eq!(groups[0].rows[0].workspace.as_str(), "b");
 }
 
 // §4 Sweeper
@@ -857,7 +857,7 @@ fn r19_sweeper_deletes_expired_rules_and_records_them_whole() {
     let r = &records[0]["rule"];
     assert_eq!(r["id"], id.0);
     assert_eq!(r["pattern"], ".example.com");
-    assert_eq!(r["sandbox_id"], "a");
+    assert_eq!(r["workspace_id"], "a");
     assert_eq!(r["expires_at"], T0 + 10);
 }
 
@@ -882,7 +882,7 @@ fn r20_open_rows_expire_after_seven_days_without_a_repeat() {
 }
 
 #[test]
-fn r21_sandbox_deletion_removes_its_rules_and_expires_its_rows() {
+fn r21_workspace_deletion_removes_its_rules_and_expires_its_rows() {
     let (_, store) = fixture();
     add(&store, Some("a"), "example.com", Effect::Allow);
     add(&store, Some("a"), ".example.org", Effect::Deny);
@@ -890,7 +890,7 @@ fn r21_sandbox_deletion_removes_its_rules_and_expires_its_rows() {
     let b_rule = add(&store, Some("b"), "example.com", Effect::Allow);
     let a_row = new_pending(decide(&store, "a", "x.example"));
     let b_row = new_pending(decide(&store, "b", "x.example"));
-    let deletion = store.delete_sandbox(&sb("a")).unwrap();
+    let deletion = store.delete_workspace(&sb("a")).unwrap();
     assert_eq!((deletion.rules_deleted, deletion.pending_expired), (2, 1));
     let ids: Vec<_> = store.rules().iter().map(|r| r.id).collect();
     assert_eq!(ids, [global, b_rule]);
@@ -901,11 +901,11 @@ fn r21_sandbox_deletion_removes_its_rules_and_expires_its_rows() {
     assert!(
         deleted
             .iter()
-            .all(|r| r["reason"] == "sandbox_deleted" && r["actor"] == "system")
+            .all(|r| r["reason"] == "workspace_deleted" && r["actor"] == "system")
     );
     assert_eq!(
         audit_of(&store, "pending_expired")[0]["reason"],
-        "sandbox_deleted"
+        "workspace_deleted"
     );
 }
 
@@ -1026,9 +1026,9 @@ fn r24_the_store_writes_each_record_type_it_owns() {
     }
 }
 
-fn connection(sandbox: &str) -> ConnectionEvent {
+fn connection(workspace: &str) -> ConnectionEvent {
     let request = EgressRequest::new(
-        sb(sandbox),
+        sb(workspace),
         Host::parse_normalised("api.example.com").unwrap(),
         443,
     );
@@ -1079,7 +1079,7 @@ fn r24_the_store_serves_as_the_proxy_connection_log() {
 }
 
 #[test]
-fn r26_connection_records_are_limited_per_sandbox_per_second() {
+fn r26_connection_records_are_limited_per_workspace_per_second() {
     let (clock, store) = fixture_with(Limits {
         connection_records_per_second: 3,
         ..Limits::default()
@@ -1098,7 +1098,7 @@ fn r26_connection_records_are_limited_per_sandbox_per_second() {
         .collect();
     assert_eq!(summary.len(), 1);
     assert_eq!(summary[0]["count"], 2);
-    assert_eq!(summary[0]["sandbox_id"], "a");
+    assert_eq!(summary[0]["workspace_id"], "a");
     assert!(summary[0]["host"].is_null());
     // A second with excess but no later record is flushed by the sweeper.
     for _ in 0..4 {
@@ -1108,7 +1108,7 @@ fn r26_connection_records_are_limited_per_sandbox_per_second() {
     store.sweep().unwrap();
     let flushed: Vec<_> = audit_of(&store, "connection")
         .into_iter()
-        .filter(|r| r["reason"] == "suppressed" && r["sandbox_id"] == "b")
+        .filter(|r| r["reason"] == "suppressed" && r["workspace_id"] == "b")
         .collect();
     assert_eq!(flushed.len(), 1);
     assert_eq!(flushed[0]["count"], 1);
@@ -1124,7 +1124,7 @@ fn puddle_connection() -> ConnectionEvent {
 }
 
 #[test]
-fn r24_a_puddle_connection_has_an_origin_and_no_sandbox() {
+fn r24_a_puddle_connection_has_an_origin_and_no_workspace() {
     let (_, store) = fixture();
     let mut event = puddle_connection();
     event.upstream = Some("PROXY proxy.corp:3128".into());
@@ -1133,12 +1133,12 @@ fn r24_a_puddle_connection_has_an_origin_and_no_sandbox() {
     store.record_connection(&connection("a")).unwrap();
     let records = audit_of(&store, "connection");
     assert_eq!(records[0]["origin"], "puddle");
-    assert!(records[0]["sandbox_id"].is_null());
+    assert!(records[0]["workspace_id"].is_null());
     assert_eq!(records[0]["reason"], "puddle_request");
     assert_eq!(records[0]["upstream"], "PROXY proxy.corp:3128");
     assert_eq!(records[0]["bytes_down"], 4096);
-    assert_eq!(records[1]["origin"], "sandbox");
-    assert_eq!(records[1]["sandbox_id"], "a");
+    assert_eq!(records[1]["origin"], "workspace");
+    assert_eq!(records[1]["workspace_id"], "a");
     let found = |origin| {
         let filter = AuditFilter {
             origin: Some(origin),
@@ -1152,14 +1152,14 @@ fn r24_a_puddle_connection_has_an_origin_and_no_sandbox() {
     assert_eq!(
         (
             found(ConnectionOrigin::Puddle),
-            found(ConnectionOrigin::Sandbox)
+            found(ConnectionOrigin::Workspace)
         ),
         (1, 1)
     );
 }
 
 #[test]
-fn r24_a_record_written_before_origin_existed_reads_as_a_sandbox_connection() {
+fn r24_a_record_written_before_origin_existed_reads_as_a_workspace_connection() {
     let (_, store) = fixture();
     store.record_connection(&connection("a")).unwrap();
     let (_, line) = store.audit_lines(0, 1).unwrap().remove(0);
@@ -1167,8 +1167,8 @@ fn r24_a_record_written_before_origin_existed_reads_as_a_sandbox_connection() {
     assert!(value.as_object_mut().unwrap().remove("origin").is_some());
     let old = serde_json::to_string(&value).unwrap();
     let record: AuditRecord = serde_json::from_str(&old).unwrap();
-    assert_eq!(record.origin(), Some(ConnectionOrigin::Sandbox));
-    assert_eq!(record.sandbox_id(), Some("a"));
+    assert_eq!(record.origin(), Some(ConnectionOrigin::Workspace));
+    assert_eq!(record.workspace_id(), Some("a"));
 }
 
 #[test]
@@ -1180,7 +1180,7 @@ fn r26_puddle_connection_records_are_limited_on_their_own() {
     for _ in 0..4 {
         store.record_connection(&puddle_connection()).unwrap();
     }
-    // A sandbox keeps its own allowance.
+    // A workspace keeps its own allowance.
     store.record_connection(&connection("a")).unwrap();
     assert_eq!(audit_of(&store, "connection").len(), 3);
     clock.advance(1000);
@@ -1192,7 +1192,7 @@ fn r26_puddle_connection_records_are_limited_on_their_own() {
     assert_eq!(summary.len(), 1);
     assert_eq!(summary[0]["count"], 2);
     assert_eq!(summary[0]["origin"], "puddle");
-    assert!(summary[0]["sandbox_id"].is_null());
+    assert!(summary[0]["workspace_id"].is_null());
 }
 
 #[test]

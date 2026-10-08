@@ -9,7 +9,7 @@ type Req = components["schemas"]["PendingRequest"];
 export function request(id: number, over: Partial<Req> = {}): Req {
   return {
     id,
-    sandbox: "demo" as Req["sandbox"],
+    workspace: "demo" as Req["workspace"],
     host: `h${id}.example.com`,
     port: 443,
     first_seen: 1_000_000 + id,
@@ -74,21 +74,21 @@ export class FakeInbox {
         })),
       });
     }
-    if (path === "/api/sandboxes/{sandbox}/suppression") {
-      const sandbox = String(init?.params?.path?.["sandbox"]);
-      const s = this.suppression[sandbox] ?? { active: false, count: 0 };
-      return this.reply(200, { sandbox, ...s });
+    if (path === "/api/workspaces/{workspace}/suppression") {
+      const workspace = String(init?.params?.path?.["workspace"]);
+      const s = this.suppression[workspace] ?? { active: false, count: 0 };
+      return this.reply(200, { workspace, ...s });
     }
-    if (path === "/api/settings/sandboxes/{sandbox}") {
-      const sandbox = String(init?.params?.path?.["sandbox"]);
-      const t = this.toggles[sandbox];
+    if (path === "/api/settings/workspaces/{workspace}") {
+      const workspace = String(init?.params?.path?.["workspace"]);
+      const t = this.toggles[workspace];
       if (t === undefined) return this.reply(500);
       const v = (name: string) => ({
         value: t[name] ?? false,
         source: "default",
       });
       return this.reply(200, {
-        sandbox,
+        workspace,
         effective: {
           local_toggles: {
             loopback: v("loopback"),
@@ -122,7 +122,7 @@ export class FakeInbox {
     const global = init.body.scope === "global";
     const suffix = init.body.suffix ?? null;
     const covers = (o: { request: Req; domain: string }) =>
-      (global || o.request.sandbox === found.request.sandbox) &&
+      (global || o.request.workspace === found.request.workspace) &&
       (suffix === null
         ? o.request.host === found.request.host
         : o.request.host.endsWith(suffix));
@@ -137,7 +137,7 @@ export class FakeInbox {
           ? { type: "set", set: init.body.rule_set }
           : global
             ? { type: "global" }
-            : { type: "sandbox", sandbox: found.request.sandbox },
+            : { type: "workspace", workspace: found.request.workspace },
       pattern: suffix ?? found.request.host,
       pattern_kind: suffix === null ? "exact" : "suffix",
       effect,

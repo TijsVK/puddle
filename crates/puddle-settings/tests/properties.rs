@@ -8,8 +8,8 @@
 use proptest::prelude::*;
 use puddle_settings::{
     ClipboardRead, Consent, ConsentKind, Effective, GLOBAL_SCHEMA_VERSION, GlobalSettings,
-    ReconnectionGrace, Resolved, SANDBOX_SCHEMA_VERSION, SandboxLayer, SandboxSettings,
-    SettingsError, Source, TermsVersion, UnixMillis, resolve,
+    ReconnectionGrace, Resolved, SettingsError, Source, TermsVersion, UnixMillis,
+    WORKSPACE_SCHEMA_VERSION, WorkspaceLayer, WorkspaceSettings, resolve,
 };
 use puddle_types::MemoryMib;
 use serde_json::{Value, json};
@@ -31,7 +31,7 @@ fn clipboard() -> impl Strategy<Value = ClipboardRead> {
     ]
 }
 
-fn layer() -> impl Strategy<Value = SandboxLayer> {
+fn layer() -> impl Strategy<Value = WorkspaceLayer> {
     (
         proptest::option::of(memory()),
         proptest::array::uniform5(proptest::option::of(any::<bool>())),
@@ -42,7 +42,7 @@ fn layer() -> impl Strategy<Value = SandboxLayer> {
         proptest::option::of(any::<bool>()),
     )
         .prop_map(|(memory, toggles, wild, grace, zoom, clip, direct_ssh)| {
-            let mut l = SandboxLayer::default();
+            let mut l = WorkspaceLayer::default();
             l.memory = memory;
             let [loopback, private, link_local, metadata, special] = toggles;
             l.local_toggles.loopback = loopback;
@@ -83,7 +83,7 @@ fn global() -> impl Strategy<Value = GlobalSettings> {
     )
         .prop_map(|(defaults, telemetry, auto_update, consents)| {
             let mut g = GlobalSettings::default();
-            g.sandbox_defaults = defaults;
+            g.workspace_defaults = defaults;
             g.vscode_server.telemetry = telemetry;
             g.vscode_server.auto_update = auto_update;
             for (kind, c) in ConsentKind::ALL.into_iter().zip(consents) {
@@ -93,9 +93,9 @@ fn global() -> impl Strategy<Value = GlobalSettings> {
         })
 }
 
-fn sandbox() -> impl Strategy<Value = SandboxSettings> {
+fn workspace() -> impl Strategy<Value = WorkspaceSettings> {
     layer().prop_map(|overrides| {
-        let mut s = SandboxSettings::default();
+        let mut s = WorkspaceSettings::default();
         s.overrides = overrides;
         s
     })
@@ -104,23 +104,23 @@ fn sandbox() -> impl Strategy<Value = SandboxSettings> {
 /// The rule, written out once more independently of `resolve`.
 fn expect<T: Copy + PartialEq + std::fmt::Debug>(
     got: Resolved<T>,
-    sandbox: Option<T>,
+    workspace: Option<T>,
     global: Option<T>,
     builtin: T,
 ) {
-    let want = match (sandbox, global) {
-        (Some(v), _) => (v, Source::Sandbox),
+    let want = match (workspace, global) {
+        (Some(v), _) => (v, Source::Workspace),
         (None, Some(v)) => (v, Source::Global),
         (None, None) => (builtin, Source::Default),
     };
     assert_eq!((got.value, got.source), want);
 }
 
-fn check_rule(g: &GlobalSettings, s: Option<&SandboxSettings>) {
+fn check_rule(g: &GlobalSettings, s: Option<&WorkspaceSettings>) {
     let eff = resolve(g, s);
-    let empty = SandboxLayer::default();
+    let empty = WorkspaceLayer::default();
     let over = s.map_or(&empty, |s| &s.overrides);
-    let glob = &g.sandbox_defaults;
+    let glob = &g.workspace_defaults;
     let builtin = Effective::DEFAULTS;
     expect(eff.memory, over.memory, glob.memory, builtin.memory.value);
     expect(
@@ -182,19 +182,19 @@ fn unknown_key() -> impl Strategy<Value = String> {
 
 proptest! {
     #[test]
-    fn override_beats_global_beats_default(g in global(), s in sandbox()) {
+    fn override_beats_global_beats_default(g in global(), s in workspace()) {
         check_rule(&g, Some(&s));
         check_rule(&g, None);
     }
 
     #[test]
     fn an_empty_override_layer_inherits_everything(g in global()) {
-        let empty = SandboxSettings::default();
+        let empty = WorkspaceSettings::default();
         prop_assert_eq!(resolve(&g, Some(&empty)), resolve(&g, None));
     }
 
     #[test]
-    fn a_full_override_layer_ignores_the_global_level(g1 in global(), g2 in global(), s in sandbox()) {
+    fn a_full_override_layer_ignores_the_global_level(g1 in global(), g2 in global(), s in workspace()) {
         // Fill every override, then the global level makes no difference.
         let mut full = s;
         let o = &mut full.overrides;
@@ -223,10 +223,10 @@ proptest! {
     }
 
     #[test]
-    fn sandbox_documents_round_trip(s in sandbox()) {
+    fn workspace_documents_round_trip(s in workspace()) {
         let doc = s.to_document();
-        prop_assert_eq!(&doc["schema_version"], &json!(SANDBOX_SCHEMA_VERSION));
-        prop_assert_eq!(SandboxSettings::from_document(doc).unwrap().settings, s);
+        prop_assert_eq!(&doc["schema_version"], &json!(WORKSPACE_SCHEMA_VERSION));
+        prop_assert_eq!(WorkspaceSettings::from_document(doc).unwrap().settings, s);
     }
 
     #[test]
@@ -243,7 +243,7 @@ proptest! {
         let mut doc = g.to_document();
         let mut paths = Vec::new();
         for (i, key) in keys.iter().enumerate() {
-            let parent = ["", "sandbox_defaults", "vscode_server", "consents"][i % 4];
+            let parent = ["", "workspace_defaults", "vscode_server", "consents"][i % 4];
             let target = if parent.is_empty() {
                 &mut doc
             } else {
@@ -265,7 +265,7 @@ proptest! {
         let err = GlobalSettings::from_document(json!({"schema_version": v})).unwrap_err();
         let refused = matches!(err, SettingsError::NewerSchema { found, .. } if found == v);
         prop_assert!(refused);
-        let err = SandboxSettings::from_document(json!({"schema_version": v})).unwrap_err();
+        let err = WorkspaceSettings::from_document(json!({"schema_version": v})).unwrap_err();
         let refused = matches!(err, SettingsError::NewerSchema { .. });
         prop_assert!(refused);
     }
@@ -273,14 +273,14 @@ proptest! {
     #[test]
     fn arbitrary_json_never_panics(doc in arb_json()) {
         let _ = GlobalSettings::from_document(doc.clone());
-        let _ = SandboxSettings::from_document(doc);
+        let _ = WorkspaceSettings::from_document(doc);
     }
 }
 
 fn arb_json() -> impl Strategy<Value = Value> {
     let key = prop_oneof![
         Just("schema_version".to_owned()),
-        Just("sandbox_defaults".to_owned()),
+        Just("workspace_defaults".to_owned()),
         Just("overrides".to_owned()),
         Just("memory".to_owned()),
         Just("local_toggles".to_owned()),

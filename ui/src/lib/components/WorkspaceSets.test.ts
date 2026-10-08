@@ -27,7 +27,7 @@ beforeEach(async () => {
     builtIn("github", { name: "GitHub" }),
     mine(4, {
       name: "Work",
-      overrides: [{ sandbox: "api" as never, enabled: false }],
+      overrides: [{ workspace: "api" as never, enabled: false }],
     }),
   ];
   api.system = [
@@ -35,7 +35,7 @@ beforeEach(async () => {
     systemHost("marketplace.visualstudio.com", {
       reason: "direct_ssh",
       reason_text: "Direct SSH is on for this workspace.",
-      sandbox: "other" as never,
+      workspace: "other" as never,
     }),
   ];
   store = new RuleSetsStore({ api: api as never });

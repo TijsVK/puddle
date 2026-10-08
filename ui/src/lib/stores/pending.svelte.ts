@@ -147,14 +147,14 @@ export class PendingStore {
 
   /** The workspaces that have an open request. */
   get workspaces(): string[] {
-    return [...new Set(this.rows.map((r) => r.request.sandbox))].sort();
+    return [...new Set(this.rows.map((r) => r.request.workspace))].sort();
   }
 
   /** Why a request can't be approved yet: the toggle it needs is off (R-14). */
   blockedBy(request: PendingRequest): LocalCategory | null {
     const category = localCategory(request.host);
     if (category === null) return null;
-    const toggles = this.toggles[request.sandbox];
+    const toggles = this.toggles[request.workspace];
     return toggles && !toggles[category] ? category : null;
   }
 
@@ -203,13 +203,13 @@ export class PendingStore {
   async #loadSuppression(): Promise<void> {
     const next: Record<string, Suppression> = {};
     await Promise.all(
-      this.workspaces.map(async (sandbox) => {
+      this.workspaces.map(async (workspace) => {
         try {
           const { data } = await this.#api.GET(
-            "/api/sandboxes/{sandbox}/suppression",
-            { params: { path: { sandbox } } },
+            "/api/workspaces/{workspace}/suppression",
+            { params: { path: { workspace } } },
           );
-          if (data) next[sandbox] = data;
+          if (data) next[workspace] = data;
         } catch {
           // The held-back line is a courtesy; the list stays usable without it.
         }
@@ -222,18 +222,18 @@ export class PendingStore {
     const wanted = new Set(
       this.rows
         .filter((r) => localCategory(r.request.host) !== null)
-        .map((r) => r.request.sandbox),
+        .map((r) => r.request.workspace),
     );
     const next: Record<string, Toggles | null> = {};
     await Promise.all(
-      [...wanted].map(async (sandbox) => {
+      [...wanted].map(async (workspace) => {
         try {
           const { data } = await this.#api.GET(
-            "/api/settings/sandboxes/{sandbox}",
-            { params: { path: { sandbox } } },
+            "/api/settings/workspaces/{workspace}",
+            { params: { path: { workspace } } },
           );
           const t = data?.effective.local_toggles;
-          next[sandbox] = t
+          next[workspace] = t
             ? {
                 loopback: t.loopback.value,
                 private: t.private.value,
@@ -243,7 +243,7 @@ export class PendingStore {
               }
             : null;
         } catch {
-          next[sandbox] = null;
+          next[workspace] = null;
         }
       }),
     );
@@ -277,7 +277,7 @@ export class PendingStore {
         }
         this.#setRows([{ request, domain }, ...this.rows]);
         if (localCategory(request.host) !== null) void this.#loadToggles();
-        void this.#loadSuppressionFor(request.sandbox);
+        void this.#loadSuppressionFor(request.workspace);
         return;
       }
       case "pending_updated":
@@ -302,8 +302,8 @@ export class PendingStore {
       case "suppression_changed":
         this.suppression = {
           ...this.suppression,
-          [event.sandbox]: {
-            sandbox: event.sandbox as Suppression["sandbox"],
+          [event.workspace]: {
+            workspace: event.workspace as Suppression["workspace"],
             active: event.active,
             count: event.count,
           },
@@ -312,14 +312,14 @@ export class PendingStore {
     }
   }
 
-  async #loadSuppressionFor(sandbox: string): Promise<void> {
-    if (this.suppression[sandbox]) return;
+  async #loadSuppressionFor(workspace: string): Promise<void> {
+    if (this.suppression[workspace]) return;
     try {
       const { data } = await this.#api.GET(
-        "/api/sandboxes/{sandbox}/suppression",
-        { params: { path: { sandbox } } },
+        "/api/workspaces/{workspace}/suppression",
+        { params: { path: { workspace } } },
       );
-      if (data) this.suppression = { ...this.suppression, [sandbox]: data };
+      if (data) this.suppression = { ...this.suppression, [workspace]: data };
     } catch {
       // see #loadSuppression
     }
@@ -376,7 +376,8 @@ export class PendingStore {
         effect: rule.effect,
         pattern: rule.pattern,
         patternKind: rule.pattern_kind,
-        workspace: rule.scope.type === "sandbox" ? rule.scope.sandbox : null,
+        workspace:
+          rule.scope.type === "workspace" ? rule.scope.workspace : null,
         ruleSet: choice.ruleSet?.name ?? null,
         expiresAt: rule.expires_at,
         alsoClosed: data.also_closed.length,

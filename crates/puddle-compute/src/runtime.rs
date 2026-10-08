@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 
-use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus, VolumeName};
+use puddle_types::{ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec};
@@ -29,7 +29,7 @@ pub struct SandboxInfo {
     /// The name as the runtime reports it; may be a name puddle didn't create.
     pub name: String,
     /// Its state.
-    pub status: SandboxStatus,
+    pub status: WorkspaceStatus,
     /// Whether puddle created it (msb: the sandbox carries puddle's owner label). Shutdown and
     /// reconcile only ever touch sandboxes with this set and a valid [`SandboxName`].
     pub puddle_owned: bool,
@@ -294,7 +294,7 @@ pub trait Sandbox: Send + Sync + 'static {
     /// # Errors
     ///
     /// [`ComputeError::NotFound`] if it was removed.
-    fn status(&self) -> impl Future<Output = Result<SandboxStatus, ComputeError>> + Send;
+    fn status(&self) -> impl Future<Output = Result<WorkspaceStatus, ComputeError>> + Send;
 
     /// Stops the VM gracefully; the sandbox becomes `Stopped`. Stopping a sandbox that is
     /// already down is a no-op.
@@ -339,13 +339,13 @@ mod tests {
     fn info_names_parse_only_when_valid() {
         let ours = SandboxInfo {
             name: "box".into(),
-            status: SandboxStatus::Running,
+            status: WorkspaceStatus::Running,
             puddle_owned: true,
         };
         assert_eq!(ours.sandbox_name().unwrap().as_str(), "box");
         let foreign = SandboxInfo {
             name: "Foreign_Box".into(),
-            status: SandboxStatus::Stopped,
+            status: WorkspaceStatus::Stopped,
             puddle_owned: false,
         };
         assert!(foreign.sandbox_name().is_none());

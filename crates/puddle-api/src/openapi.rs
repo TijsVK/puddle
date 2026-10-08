@@ -12,7 +12,7 @@ use crate::routes::{AppState, api_router};
 
 /// The contract's version. Bump the minor version for additive changes and the major version
 /// for anything a generated client would break on.
-pub const API_VERSION: &str = "0.4.0";
+pub const API_VERSION: &str = "0.5.0";
 
 /// The security scheme's name in the spec.
 const BEARER: &str = "bearer";
@@ -35,7 +35,7 @@ const BEARER: &str = "bearer";
         crate::wire::AuditType,
         crate::wire::AuditOutcome,
         crate::wire::ConnectionOrigin,
-        puddle_types::SandboxName
+        puddle_types::WorkspaceName
     )),
     tags(
         (name = "service", description = "Who is answering"),
@@ -43,7 +43,7 @@ const BEARER: &str = "bearer";
         (name = "pending", description = "Connections waiting for a decision"),
         (name = "rules", description = "Allow and deny rules"),
         (name = "audit", description = "The audit log"),
-        (name = "settings", description = "Global and per-sandbox settings"),
+        (name = "settings", description = "Global and per-workspace settings"),
         (name = "consents", description = "What the user agreed to"),
         (name = "network", description = "How puddle reaches the internet: proxy, sign-in, company roots"),
         (name = "workspaces", description = "Workspaces: repository checkouts with their own disk and sandbox")

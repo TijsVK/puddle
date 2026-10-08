@@ -5,8 +5,11 @@
 
 use axum::Json;
 use axum::extract::State;
-use puddle_settings::{GlobalSettings, Loaded, SandboxSettings, resolve};
-use puddle_types::SandboxName;
+use puddle_settings::{
+    GLOBAL_SCHEMA_VERSION, GlobalSettings, Loaded, WORKSPACE_SCHEMA_VERSION, WorkspaceSettings,
+    resolve,
+};
+use puddle_types::WorkspaceName;
 use serde_json::{Value, json};
 
 use crate::ApiErrorBody;
@@ -16,15 +19,19 @@ use crate::routes::AppState;
 use crate::settings::SettingsRepo;
 use crate::wire::{
     ConsentKind, ConsentRequest, Consents, GlobalSettingsRequest, GlobalSettingsView,
-    SandboxSettingsRequest, SandboxSettingsView, SettingsLayer,
+    SettingsLayer, WorkspaceSettingsRequest, WorkspaceSettingsView,
 };
 
-fn empty() -> Value {
-    json!({})
+/// The document of a kind that was never saved: current, so reading it migrates and writes nothing.
+fn empty(version: u32) -> Value {
+    json!({ "schema_version": version })
 }
 
 pub(crate) fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettings>, ApiError> {
-    let loaded = GlobalSettings::from_document(repo.load_global()?.unwrap_or_else(empty))?;
+    let loaded = GlobalSettings::from_document(
+        repo.load_global()?
+            .unwrap_or_else(|| empty(GLOBAL_SCHEMA_VERSION)),
+    )?;
     if !loaded.unknown_fields.is_empty() {
         tracing::warn!(fields = ?loaded.unknown_fields, "global settings have fields this puddle doesn't know; kept");
     }
@@ -35,35 +42,38 @@ pub(crate) fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettin
     Ok(loaded)
 }
 
-pub(crate) fn load_sandbox(
+pub(crate) fn load_workspace(
     repo: &dyn SettingsRepo,
-    sandbox: &SandboxName,
-) -> Result<Loaded<SandboxSettings>, ApiError> {
-    let loaded = SandboxSettings::from_document(repo.load_sandbox(sandbox)?.unwrap_or_else(empty))?;
+    workspace: &WorkspaceName,
+) -> Result<Loaded<WorkspaceSettings>, ApiError> {
+    let loaded = WorkspaceSettings::from_document(
+        repo.load_workspace(workspace)?
+            .unwrap_or_else(|| empty(WORKSPACE_SCHEMA_VERSION)),
+    )?;
     if !loaded.unknown_fields.is_empty() {
-        tracing::warn!(%sandbox, fields = ?loaded.unknown_fields, "sandbox settings have fields this puddle doesn't know; kept");
+        tracing::warn!(%workspace, fields = ?loaded.unknown_fields, "workspace settings have fields this puddle doesn't know; kept");
     }
     if let Some(from) = loaded.migrated_from {
-        repo.save_sandbox(sandbox, loaded.settings.to_document())?;
-        tracing::info!(%sandbox, from, "sandbox settings migrated");
+        repo.save_workspace(workspace, loaded.settings.to_document())?;
+        tracing::info!(%workspace, from, "workspace settings migrated");
     }
     Ok(loaded)
 }
 
-fn sandbox_view(
-    sandbox: SandboxName,
+fn workspace_view(
+    workspace: WorkspaceName,
     global: &GlobalSettings,
-    loaded: &Loaded<SandboxSettings>,
-) -> SandboxSettingsView {
-    SandboxSettingsView {
-        sandbox,
+    loaded: &Loaded<WorkspaceSettings>,
+) -> WorkspaceSettingsView {
+    WorkspaceSettingsView {
+        workspace,
         overrides: SettingsLayer::from(&loaded.settings.overrides),
         effective: resolve(global, Some(&loaded.settings)).into(),
         unknown_fields: loaded.unknown_fields.clone(),
     }
 }
 
-/// The global settings and the effective values of a sandbox without overrides.
+/// The global settings and the effective values of a workspace without overrides.
 #[utoipa::path(
     get,
     path = "/api/settings",
@@ -130,64 +140,64 @@ pub(crate) async fn put_global(
     Ok(Json(GlobalSettingsView::new(&loaded)))
 }
 
-/// One sandbox's overrides and effective values. A sandbox without stored settings has no
+/// One workspace's overrides and effective values. A workspace without stored settings has no
 /// overrides.
 #[utoipa::path(
     get,
-    path = "/api/settings/sandboxes/{sandbox}",
+    path = "/api/settings/workspaces/{workspace}",
     tag = "settings",
-    params(("sandbox" = SandboxName, Path, description = "sandbox name")),
+    params(("workspace" = WorkspaceName, Path, description = "workspace name")),
     responses(
-        (status = OK, description = "the sandbox's settings", body = SandboxSettingsView),
-        (status = BAD_REQUEST, description = "invalid sandbox name", body = ApiErrorBody),
+        (status = OK, description = "the workspace's settings", body = WorkspaceSettingsView),
+        (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody),
         (status = CONFLICT, description = "written by a newer puddle", body = ApiErrorBody)
     )
 )]
-pub(crate) async fn get_sandbox(
+pub(crate) async fn get_workspace_settings(
     State(state): State<AppState>,
-    Path(sandbox): Path<SandboxName>,
-) -> Result<Json<SandboxSettingsView>, ApiError> {
+    Path(workspace): Path<WorkspaceName>,
+) -> Result<Json<WorkspaceSettingsView>, ApiError> {
     let _lock = state.settings_lock.lock().await;
     let view = blocking(move || {
         let repo = state.settings.as_ref();
         let global = load_global(repo)?;
-        let loaded = load_sandbox(repo, &sandbox)?;
-        Ok(sandbox_view(sandbox, &global.settings, &loaded))
+        let loaded = load_workspace(repo, &workspace)?;
+        Ok(workspace_view(workspace, &global.settings, &loaded))
     })
     .await?;
     Ok(Json(view))
 }
 
-/// Replaces one sandbox's overrides; `null` inherits the global value.
+/// Replaces one workspace's overrides; `null` inherits the global value.
 #[utoipa::path(
     put,
-    path = "/api/settings/sandboxes/{sandbox}",
+    path = "/api/settings/workspaces/{workspace}",
     tag = "settings",
-    params(("sandbox" = SandboxName, Path, description = "sandbox name")),
-    request_body = SandboxSettingsRequest,
+    params(("workspace" = WorkspaceName, Path, description = "workspace name")),
+    request_body = WorkspaceSettingsRequest,
     responses(
-        (status = OK, description = "the sandbox's new settings", body = SandboxSettingsView),
-        (status = BAD_REQUEST, description = "invalid sandbox name", body = ApiErrorBody),
+        (status = OK, description = "the workspace's new settings", body = WorkspaceSettingsView),
+        (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody),
         (status = CONFLICT, description = "written by a newer puddle", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "a value out of range", body = ApiErrorBody)
     )
 )]
-pub(crate) async fn put_sandbox(
+pub(crate) async fn put_workspace_settings(
     State(state): State<AppState>,
-    Path(sandbox): Path<SandboxName>,
-    crate::extract::Json(body): crate::extract::Json<SandboxSettingsRequest>,
-) -> Result<Json<SandboxSettingsView>, ApiError> {
+    Path(workspace): Path<WorkspaceName>,
+    crate::extract::Json(body): crate::extract::Json<WorkspaceSettingsRequest>,
+) -> Result<Json<WorkspaceSettingsView>, ApiError> {
     let workspaces = state.workspaces.clone();
     let after = state.clone();
     let lock = state.settings_lock.lock().await;
     let view = blocking(move || {
         let repo = state.settings.as_ref();
         let global = load_global(repo)?;
-        let mut loaded = load_sandbox(repo, &sandbox)?;
+        let mut loaded = load_workspace(repo, &workspace)?;
         body.overrides.apply_to(&mut loaded.settings.overrides)?;
-        repo.save_sandbox(&sandbox, loaded.settings.to_document())?;
-        tracing::info!(%sandbox, "sandbox settings changed");
-        Ok(sandbox_view(sandbox, &global.settings, &loaded))
+        repo.save_workspace(&workspace, loaded.settings.to_document())?;
+        tracing::info!(%workspace, "workspace settings changed");
+        Ok(workspace_view(workspace, &global.settings, &loaded))
     })
     .await?;
     workspaces.settings_changed().await;

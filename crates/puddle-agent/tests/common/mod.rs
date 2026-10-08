@@ -11,7 +11,7 @@ use puddle_agent::config::{OomSources, Target};
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::host::{HostConfig, serve_session};
 use puddle_agent_proto::testing::AllowAll;
-use puddle_types::{Event, EventSink, SandboxName};
+use puddle_types::{Event, EventSink, WorkspaceName};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -46,8 +46,8 @@ impl Drop for TempDir {
     }
 }
 
-pub fn sandbox() -> SandboxName {
-    SandboxName::new("agent").unwrap()
+pub fn workspace() -> WorkspaceName {
+    WorkspaceName::new("agent").unwrap()
 }
 
 pub struct Rig {
@@ -89,7 +89,7 @@ pub fn start_host(socket: &Path, sink: Arc<dyn EventSink>) -> JoinHandle<()> {
                 // A session ends with an error when the agent side goes away mid-frame; fine here.
                 let _ = serve_session(
                     conn,
-                    sandbox(),
+                    workspace(),
                     sink,
                     Arc::new(AllowAll),
                     HostConfig::default(),

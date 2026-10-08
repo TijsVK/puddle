@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Guest memory size. The setting itself (a global default with per-sandbox overrides) lives in
+//! Guest memory size. The setting itself (a global default with per-workspace overrides) lives in
 //! `puddle-settings`.
 //!
-//! The value becomes msb's `--memory` at create; a change applies at the sandbox's next start.
+//! The value becomes msb's `--memory` at create; a change applies at the workspace's next start.
 //! puddle never sets `--max-memory`.
 
 use std::fmt;
@@ -28,7 +28,7 @@ impl MemoryMib {
     pub const MIN: MemoryMib = MemoryMib(256);
     /// Largest accepted size: 1 TiB.
     pub const MAX: MemoryMib = MemoryMib(1024 * 1024);
-    /// The default for every sandbox: 8 GiB.
+    /// The default for every workspace: 8 GiB.
     pub const DEFAULT: MemoryMib = MemoryMib(8 * 1024);
 
     /// Checks `mib` and wraps it.

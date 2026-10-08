@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! I tests of upstream chaining: the sandbox proxy and the pull proxy send admitted
+//! I tests of upstream chaining: the workspace proxy and the pull proxy send admitted
 //! connections out along a company-proxy route, against a scripted proxy on loopback. The hostile
 //! cases pin what chaining must never change: the rules, the address guard and the IP rules run
 //! first, and no hop is ever contacted for a request admission refused.
@@ -24,7 +24,7 @@ use puddle_ipc::IpcRoot;
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, PullProxy, Route, Upstream};
-use puddle_types::{ConnectionEvent, Host, NullSink, SandboxName};
+use puddle_types::{ConnectionEvent, Host, NullSink, WorkspaceName};
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Discovery, FakeOs, FakeProxy,
     Hop, NoAuth, ProxyAddr, ProxyAuth, ProxyConfig,
@@ -79,7 +79,7 @@ fn dead_proxy() -> (ProxyAddr, tokio::net::TcpSocket) {
     (ProxyAddr::new("127.0.0.1", port), socket)
 }
 
-/// The sandbox proxy with one route, an in-memory policy and a connection log.
+/// The workspace proxy with one route, an in-memory policy and a connection log.
 struct Rig {
     policy: Arc<StaticPolicy>,
     log: Arc<CollectingConnectionLog>,
@@ -102,7 +102,7 @@ impl Rig {
             .with_upstream(upstream);
         let root = IpcRoot::new().unwrap();
         let route =
-            Arc::new(proxy).serve_route(root.listen().unwrap(), SandboxName::new("box").unwrap());
+            Arc::new(proxy).serve_route(root.listen().unwrap(), WorkspaceName::new("box").unwrap());
         Self {
             policy,
             log,
@@ -578,7 +578,7 @@ async fn hostile_a_guest_cannot_supply_proxy_credentials_or_a_second_request() {
 }
 
 #[tokio::test]
-async fn hostile_a_hostile_company_proxy_cannot_hang_or_loop_the_sandbox_proxy() {
+async fn hostile_a_hostile_company_proxy_cannot_hang_or_loop_the_workspace_proxy() {
     for behaviour in [Behaviour::Garbage, Behaviour::Silent, Behaviour::Always407] {
         let proxy = FakeProxy::start(behaviour).await;
         let (up, _) = upstream(vec![via(&proxy)], basic("u", "p"));

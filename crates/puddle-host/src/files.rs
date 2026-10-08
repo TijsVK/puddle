@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use puddle_api::{SettingsRepo, SettingsRepoError};
-use puddle_types::{SandboxName, WorkspaceId};
+use puddle_types::{WorkspaceId, WorkspaceName};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -34,12 +34,15 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
-/// Settings documents as files: `global.json` and `sandboxes/<name>.json` in one folder.
+/// Settings documents as files: `global.json` and `workspaces/<name>.json` in one folder.
 ///
-/// The API versions and validates the documents; this only keeps them. Sandbox names are
+/// The API versions and validates the documents; this only keeps them. Workspace names are
 /// validated DNS labels, so a name is always a safe file name. Reads are served from memory after
-/// the first one (the proxy asks for a sandbox's settings on every new connection); saves write
+/// the first one (the proxy asks for a workspace's settings on every new connection); saves write
 /// the file first and the memory second, and this process is the file's only writer.
+///
+/// Workspace documents used to live in `sandboxes/<name>.json`. A document with no file in
+/// `workspaces/` is read from there, and saving it moves it to `workspaces/`.
 #[derive(Debug)]
 pub struct FileSettings {
     dir: PathBuf,
@@ -50,7 +53,7 @@ pub struct FileSettings {
 struct Cache {
     global: Option<Value>,
     global_read: bool,
-    sandboxes: BTreeMap<SandboxName, Option<Value>>,
+    workspaces: BTreeMap<WorkspaceName, Option<Value>>,
 }
 
 impl FileSettings {
@@ -67,8 +70,15 @@ impl FileSettings {
         self.dir.join("global.json")
     }
 
-    fn sandbox_path(&self, sandbox: &SandboxName) -> PathBuf {
-        self.dir.join("sandboxes").join(format!("{sandbox}.json"))
+    fn workspace_path(&self, workspace: &WorkspaceName) -> PathBuf {
+        self.dir
+            .join("workspaces")
+            .join(format!("{workspace}.json"))
+    }
+
+    /// Where workspace documents were kept before they were called workspaces.
+    fn legacy_path(&self, workspace: &WorkspaceName) -> PathBuf {
+        self.dir.join("sandboxes").join(format!("{workspace}.json"))
     }
 
     fn cache(&self) -> MutexGuard<'_, Cache> {
@@ -96,24 +106,34 @@ impl SettingsRepo for FileSettings {
         Ok(())
     }
 
-    fn load_sandbox(&self, sandbox: &SandboxName) -> Result<Option<Value>, SettingsRepoError> {
+    fn load_workspace(
+        &self,
+        workspace: &WorkspaceName,
+    ) -> Result<Option<Value>, SettingsRepoError> {
         let mut cache = self.cache();
-        if let Some(cached) = cache.sandboxes.get(sandbox) {
+        if let Some(cached) = cache.workspaces.get(workspace) {
             return Ok(cached.clone());
         }
-        let loaded = read_json(&self.sandbox_path(sandbox)).map_err(SettingsRepoError::new)?;
-        cache.sandboxes.insert(sandbox.clone(), loaded.clone());
+        let mut loaded =
+            read_json(&self.workspace_path(workspace)).map_err(SettingsRepoError::new)?;
+        if loaded.is_none() {
+            loaded = read_json(&self.legacy_path(workspace)).map_err(SettingsRepoError::new)?;
+        }
+        cache.workspaces.insert(workspace.clone(), loaded.clone());
         Ok(loaded)
     }
 
-    fn save_sandbox(
+    fn save_workspace(
         &self,
-        sandbox: &SandboxName,
+        workspace: &WorkspaceName,
         document: Value,
     ) -> Result<(), SettingsRepoError> {
         let mut cache = self.cache();
-        write_json(&self.sandbox_path(sandbox), &document).map_err(SettingsRepoError::new)?;
-        cache.sandboxes.insert(sandbox.clone(), Some(document));
+        write_json(&self.workspace_path(workspace), &document).map_err(SettingsRepoError::new)?;
+        // The document now lives in its new place; a leftover old copy would only be read again
+        // if the new one were deleted. Failing to remove it changes nothing.
+        let _ = std::fs::remove_file(self.legacy_path(workspace));
+        cache.workspaces.insert(workspace.clone(), Some(document));
         Ok(())
     }
 }
@@ -182,7 +202,7 @@ impl WorkspaceBook {
         for stored in &file.workspaces {
             WorkspaceId::new(&stored.id)
                 .map_err(|e| Self::error(format!("workspace {:?}: {e}", stored.id)))?;
-            SandboxName::new(&stored.name)
+            WorkspaceName::new(&stored.name)
                 .map_err(|e| Self::error(format!("workspace {:?}: {e}", stored.id)))?;
         }
         Ok(file.workspaces)
@@ -221,17 +241,17 @@ mod tests {
     fn settings_round_trip_and_a_missing_file_is_none() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FileSettings::new(dir.path().join("settings"));
-        let a = SandboxName::new("a").unwrap();
+        let a = WorkspaceName::new("a").unwrap();
         assert_eq!(repo.load_global().unwrap(), None);
-        assert_eq!(repo.load_sandbox(&a).unwrap(), None);
+        assert_eq!(repo.load_workspace(&a).unwrap(), None);
         repo.save_global(json!({"schema_version": 1})).unwrap();
-        repo.save_sandbox(&a, json!({"overrides": {}})).unwrap();
+        repo.save_workspace(&a, json!({"overrides": {}})).unwrap();
         assert_eq!(
             repo.load_global().unwrap(),
             Some(json!({"schema_version": 1}))
         );
         assert_eq!(
-            repo.load_sandbox(&a).unwrap(),
+            repo.load_workspace(&a).unwrap(),
             Some(json!({"overrides": {}}))
         );
         // A second instance over the same folder sees the same documents.
@@ -239,6 +259,29 @@ mod tests {
         assert_eq!(
             again.load_global().unwrap(),
             Some(json!({"schema_version": 1}))
+        );
+    }
+
+    #[test]
+    fn a_document_kept_under_the_old_folder_name_is_read_and_moves_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("sandboxes");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("a.json"), br#"{"overrides":{"cpus":2}}"#).unwrap();
+        let a = WorkspaceName::new("a").unwrap();
+        let repo = FileSettings::new(dir.path());
+        assert_eq!(
+            repo.load_workspace(&a).unwrap(),
+            Some(json!({"overrides": {"cpus": 2}}))
+        );
+        repo.save_workspace(&a, json!({"overrides": {"cpus": 4}}))
+            .unwrap();
+        assert!(!old.join("a.json").exists());
+        assert!(dir.path().join("workspaces").join("a.json").exists());
+        let again = FileSettings::new(dir.path());
+        assert_eq!(
+            again.load_workspace(&a).unwrap(),
+            Some(json!({"overrides": {"cpus": 4}}))
         );
     }
 

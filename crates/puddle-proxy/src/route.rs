@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The host listener on one sandbox's route: accept agent connections and serve
-//! each as a yamux session whose proxied streams go to that sandbox's [`SandboxHandler`].
+//! The host listener on one workspace's route: accept agent connections and serve
+//! each as a yamux session whose proxied streams go to that workspace's [`WorkspaceHandler`].
 //!
-//! The endpoint is the identity: every connection on it belongs to the sandbox the route
+//! The endpoint is the identity: every connection on it belongs to the workspace the route
 //! was created for, whatever the guest says.
 
 use std::sync::Arc;
@@ -10,11 +10,11 @@ use std::time::Duration;
 
 use puddle_agent_proto::host::serve_session;
 use puddle_ipc::{Endpoint, IpcError, Listener};
-use puddle_types::SandboxName;
+use puddle_types::WorkspaceName;
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::Instrument;
 
-use crate::proxy::{Proxy, SandboxHandler};
+use crate::proxy::{Proxy, WorkspaceHandler};
 
 /// Pause after an accept error, so a broken listener can't spin a core.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
@@ -24,21 +24,21 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 #[derive(Debug)]
 pub struct Route {
     endpoint: Endpoint,
-    sandbox: SandboxName,
+    workspace: WorkspaceName,
     task: JoinHandle<()>,
 }
 
 impl Route {
-    /// The endpoint the sandbox's vsock route points at.
+    /// The endpoint the workspace's vsock route points at.
     #[must_use]
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
     }
 
-    /// The sandbox this route serves.
+    /// The workspace this route serves.
     #[must_use]
-    pub fn sandbox(&self) -> &SandboxName {
-        &self.sandbox
+    pub fn workspace(&self) -> &WorkspaceName {
+        &self.workspace
     }
 
     /// Stops the route and waits until its accept loop and sessions are gone.
@@ -47,7 +47,7 @@ impl Route {
         if let Err(err) = (&mut self.task).await
             && err.is_panic()
         {
-            tracing::error!(sandbox = %self.sandbox, "route task panicked");
+            tracing::error!(workspace = %self.workspace, "route task panicked");
         }
     }
 }
@@ -59,23 +59,23 @@ impl Drop for Route {
 }
 
 impl Proxy {
-    /// Serves `listener` (the route of `sandbox`) until the returned [`Route`] is dropped or shut
+    /// Serves `listener` (the route of `workspace`) until the returned [`Route`] is dropped or shut
     /// down. Must be called inside a tokio runtime.
     #[must_use]
-    pub fn serve_route(self: &Arc<Self>, listener: Listener, sandbox: SandboxName) -> Route {
+    pub fn serve_route(self: &Arc<Self>, listener: Listener, workspace: WorkspaceName) -> Route {
         let endpoint = listener.endpoint().clone();
-        let handler = Arc::new(self.handler(sandbox.clone()));
-        let span = tracing::info_span!("route", sandbox = %sandbox);
+        let handler = Arc::new(self.handler(workspace.clone()));
+        let span = tracing::info_span!("route", workspace = %workspace);
         let task = tokio::spawn(accept_loop(Arc::clone(self), listener, handler).instrument(span));
         Route {
             endpoint,
-            sandbox,
+            workspace,
             task,
         }
     }
 }
 
-async fn accept_loop(proxy: Arc<Proxy>, mut listener: Listener, handler: Arc<SandboxHandler>) {
+async fn accept_loop(proxy: Arc<Proxy>, mut listener: Listener, handler: Arc<WorkspaceHandler>) {
     let max = proxy.config.max_sessions_per_route;
     let mut sessions = JoinSet::new();
     loop {
@@ -86,12 +86,12 @@ async fn accept_loop(proxy: Arc<Proxy>, mut listener: Listener, handler: Arc<San
                     drop(conn);
                 }
                 Ok(conn) => {
-                    let sandbox = handler.sandbox().clone();
+                    let workspace = handler.workspace().clone();
                     let sink = Arc::clone(&proxy.sink);
                     let config = proxy.config.session;
                     let handler = Arc::clone(&handler);
                     sessions.spawn(async move {
-                        serve_session(conn, sandbox, sink, handler, config).await
+                        serve_session(conn, workspace, sink, handler, config).await
                     });
                 }
                 Err(IpcError::Closed { .. }) => {

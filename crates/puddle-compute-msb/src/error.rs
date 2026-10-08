@@ -3,7 +3,7 @@
 
 use microsandbox::MicrosandboxError;
 use puddle_compute::ComputeError;
-use puddle_types::SandboxStatus;
+use puddle_types::WorkspaceStatus;
 
 /// Maps an SDK error from operation `op` on `target` (a sandbox name, or the image or volume the
 /// call was about) to a [`ComputeError`]. Matches on the SDK's variants; anything without a
@@ -23,12 +23,12 @@ pub fn map(op: &'static str, target: &str, error: MicrosandboxError) -> ComputeE
         MicrosandboxError::SandboxStillRunning(_) => ComputeError::InvalidState {
             sandbox: target.to_owned(),
             op,
-            status: SandboxStatus::Running,
+            status: WorkspaceStatus::Running,
         },
         MicrosandboxError::SandboxNotRunning(_) => ComputeError::InvalidState {
             sandbox: target.to_owned(),
             op,
-            status: SandboxStatus::Stopped,
+            status: WorkspaceStatus::Stopped,
         },
         MicrosandboxError::VolumeNotFound(volume) => ComputeError::VolumeNotFound { volume },
         MicrosandboxError::VolumeAlreadyExists(volume) => ComputeError::VolumeExists { volume },
@@ -86,7 +86,7 @@ mod tests {
             ComputeError::InvalidState {
                 sandbox: "box".into(),
                 op: "start",
-                status: SandboxStatus::Running
+                status: WorkspaceStatus::Running
             }
         );
         assert_eq!(
@@ -96,7 +96,7 @@ mod tests {
             ComputeError::InvalidState {
                 sandbox: "box".into(),
                 op: "start",
-                status: SandboxStatus::Stopped
+                status: WorkspaceStatus::Stopped
             }
         );
         assert_eq!(

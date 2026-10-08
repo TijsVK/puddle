@@ -27,7 +27,7 @@
 
   let now = $state(Date.now());
   let dismissedOom = $state<number | null>(null);
-  let memorySource = $state<"sandbox" | "global" | "default" | null>(null);
+  let memorySource = $state<"workspace" | "global" | "default" | null>(null);
 
   onMount(() => {
     const stopRules = rulesStore.start();
@@ -48,8 +48,8 @@
     void memoryMib; // read again when the figure changes
     void (async () => {
       try {
-        const { data } = await api.GET("/api/settings/sandboxes/{sandbox}", {
-          params: { path: { sandbox: name } },
+        const { data } = await api.GET("/api/settings/workspaces/{workspace}", {
+          params: { path: { workspace: name } },
         });
         memorySource = data?.effective.memory.source ?? null;
       } catch {
@@ -59,7 +59,7 @@
   });
 
   const waiting = $derived(
-    pending.rows.filter((r) => r.request.sandbox === workspace?.name).length,
+    pending.rows.filter((r) => r.request.workspace === workspace?.name).length,
   );
   const ruleCounts = $derived.by(() => {
     const active = rulesStore.rules.filter((r) => !isExpired(r, now));
@@ -134,7 +134,7 @@
           {formatMib(workspace.memory_mib)}
           {#if memorySource}
             <span class="chip"
-              >{memorySource === "sandbox"
+              >{memorySource === "workspace"
                 ? "workspace override"
                 : memorySource === "global"
                   ? "global default"

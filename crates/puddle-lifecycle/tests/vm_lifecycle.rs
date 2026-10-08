@@ -30,7 +30,7 @@ use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_lifecycle::{
     Inventory, Lifecycle, Role, ShutdownConfig, ShutdownSignals, reconcile, supervise,
 };
-use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus, VolumeName, WorkspaceId};
+use puddle_types::{ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceId, WorkspaceStatus};
 use puddle_vm_tests::{RunPrefix, Settings, VmEnv};
 
 /// Which helper role this process plays (unset: a normal test run).
@@ -93,7 +93,7 @@ fn spec(name: &SandboxName) -> SandboxSpec {
         .with_memory(MemoryMib::new(512).unwrap())
 }
 
-async fn status(rt: &MsbRuntime, name: &SandboxName) -> Option<SandboxStatus> {
+async fn status(rt: &MsbRuntime, name: &SandboxName) -> Option<WorkspaceStatus> {
     rt.list()
         .await
         .expect("list")
@@ -376,7 +376,7 @@ impl World {
         }
     }
 
-    async fn status(&self) -> Option<SandboxStatus> {
+    async fn status(&self) -> Option<WorkspaceStatus> {
         status(&self.rt, &self.name).await
     }
 
@@ -400,7 +400,7 @@ async fn graceful_rounds(
     for round in 1..=ITERATIONS {
         let host = spawn(&world.prefix, &world.name);
         let worker = host.ready();
-        assert_eq!(world.status().await, Some(SandboxStatus::Running));
+        assert_eq!(world.status().await, Some(WorkspaceStatus::Running));
         trigger(host, worker);
         let after = world.status().await;
         eprintln!("round {round}: record {after:?}");
@@ -408,7 +408,7 @@ async fn graceful_rounds(
     }
     let stopped = results
         .iter()
-        .filter(|s| **s == Some(SandboxStatus::Stopped))
+        .filter(|s| **s == Some(WorkspaceStatus::Stopped))
         .count();
     assert_eq!(stopped, ITERATIONS, "records after each round: {results:?}");
     world.finish().await;
@@ -651,8 +651,11 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
             "{f} not reported foreign: {report:?}"
         );
     }
-    assert_eq!(status(rt, &sb("known")).await, Some(SandboxStatus::Stopped));
-    assert_eq!(status(rt, &foreign).await, Some(SandboxStatus::Stopped));
+    assert_eq!(
+        status(rt, &sb("known")).await,
+        Some(WorkspaceStatus::Stopped)
+    );
+    assert_eq!(status(rt, &foreign).await, Some(WorkspaceStatus::Stopped));
     assert_eq!(status(rt, &sb("unknown")).await, None);
     assert!(sandboxes_dir.join("Foreign_Dir").is_dir());
     assert!(

@@ -102,12 +102,12 @@ describe("WorkspaceDialogs", () => {
     expect(trust).toHaveTextContent(
       "The browser editor keeps the workspace isolated.",
     );
-    expect(api.calls).not.toContain("PUT /api/settings/sandboxes/{sandbox}");
+    expect(api.calls).not.toContain("PUT /api/settings/workspaces/{workspace}");
     await fireEvent.click(
       within(trust).getByRole("button", { name: "Allow direct SSH" }),
     );
     await vi.waitFor(() =>
-      expect(api.calls).toContain("PUT /api/settings/sandboxes/{sandbox}"),
+      expect(api.calls).toContain("PUT /api/settings/workspaces/{workspace}"),
     );
     // The step now shows the workspace as trusted and offers VS Code.
     await vi.waitFor(() =>
@@ -133,7 +133,7 @@ describe("WorkspaceDialogs", () => {
       await screen.findByRole("button", { name: "Cancel" }),
     );
     await vi.waitFor(() => expect(actions.trustFor).toBeNull());
-    expect(api.calls).not.toContain("PUT /api/settings/sandboxes/{sandbox}");
+    expect(api.calls).not.toContain("PUT /api/settings/workspaces/{workspace}");
     expect(workspaces.byName("demo")?.direct_ssh).toBe(false);
   });
 
@@ -166,7 +166,7 @@ describe("WorkspaceDialogs", () => {
       within(dialog).getByRole("checkbox", { name: "Allow direct SSH" }),
     );
     await vi.waitFor(() =>
-      expect(api.calls).toContain("PUT /api/settings/sandboxes/{sandbox}"),
+      expect(api.calls).toContain("PUT /api/settings/workspaces/{workspace}"),
     );
     expect(screen.queryByRole("alertdialog")).toBeNull();
     await vi.waitFor(() =>

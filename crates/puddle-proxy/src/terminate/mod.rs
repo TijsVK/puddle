@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! TLS termination for the hosts a sandbox has a credential for.
+//! TLS termination for the hosts a workspace has a credential for.
 //!
 //! Almost every connection through the proxy is spliced: the guest and the real server talk TLS
 //! to each other and puddle sees only the name. A *bound* host is the exception, so that a
-//! credential can be added to the request without ever entering the sandbox. For those hosts, and
+//! credential can be added to the request without ever entering the workspace. For those hosts, and
 //! only those, the proxy is the TLS server the guest sees (with a certificate from the
-//! sandbox's own name-constrained CA, `puddle-ca`) and a verifying TLS client to the real server.
+//! workspace's own name-constrained CA, `puddle-ca`) and a verifying TLS client to the real server.
 //!
 //! A connection is terminated only when all of these hold; otherwise it is spliced exactly as
 //! before:
 //!
-//! - the sandbox has a [`Termination`] (a [`TerminationSet`], its CA and an [`Injector`]);
+//! - the workspace has a [`Termination`] (a [`TerminationSet`], its CA and an [`Injector`]);
 //! - the guest asked for a *name* (an IP literal never matches) in the set;
 //! - the port is 443.
 //!
@@ -43,8 +43,8 @@ mod set;
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
-use puddle_ca::SandboxCa;
-use puddle_types::SandboxName;
+use puddle_ca::WorkspaceCa;
+use puddle_types::WorkspaceName;
 
 pub use inject::{
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
@@ -68,12 +68,12 @@ pub enum TerminationError {
     NotPermitted(String),
 }
 
-/// What terminating one sandbox's bound hosts needs: which hosts, the CA that certifies them for
-/// that sandbox alone, and the injector that decides about credentials.
+/// What terminating one workspace's bound hosts needs: which hosts, the CA that certifies them for
+/// that workspace alone, and the injector that decides about credentials.
 #[derive(Debug)]
 pub struct Termination {
     set: TerminationSet,
-    ca: Arc<SandboxCa>,
+    ca: Arc<WorkspaceCa>,
     injector: Arc<dyn Injector>,
 }
 
@@ -85,7 +85,7 @@ impl Termination {
     /// set.
     pub fn new(
         set: TerminationSet,
-        ca: Arc<SandboxCa>,
+        ca: Arc<WorkspaceCa>,
         injector: Arc<dyn Injector>,
     ) -> Result<Self, TerminationError> {
         for name in set.dns_names() {
@@ -102,7 +102,7 @@ impl Termination {
         &self.set
     }
 
-    pub(crate) fn ca(&self) -> &Arc<SandboxCa> {
+    pub(crate) fn ca(&self) -> &Arc<WorkspaceCa> {
         &self.ca
     }
 
@@ -111,17 +111,17 @@ impl Termination {
     }
 }
 
-/// Where the proxy finds a sandbox's [`Termination`]. Asked once per `CONNECT`; `None` means the
-/// sandbox has no credential bound and everything is spliced.
+/// Where the proxy finds a workspace's [`Termination`]. Asked once per `CONNECT`; `None` means the
+/// workspace has no credential bound and everything is spliced.
 pub trait TerminationSource: Send + Sync + std::fmt::Debug {
-    /// The termination of `sandbox`, if it has one.
-    fn termination(&self, sandbox: &SandboxName) -> Option<Arc<Termination>>;
+    /// The termination of `workspace`, if it has one.
+    fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<Termination>>;
 }
 
-/// A [`TerminationSource`] the host program updates as sandboxes start, stop and change.
+/// A [`TerminationSource`] the host program updates as workspaces start, stop and change.
 #[derive(Debug, Default)]
 pub struct Terminations {
-    sandboxes: RwLock<HashMap<SandboxName, Arc<Termination>>>,
+    workspaces: RwLock<HashMap<WorkspaceName, Arc<Termination>>>,
 }
 
 impl Terminations {
@@ -131,29 +131,29 @@ impl Terminations {
         Self::default()
     }
 
-    /// Sets (or replaces) `sandbox`'s termination. Connections already open keep the old one.
-    pub fn insert(&self, sandbox: SandboxName, termination: Termination) {
-        self.sandboxes
+    /// Sets (or replaces) `workspace`'s termination. Connections already open keep the old one.
+    pub fn insert(&self, workspace: WorkspaceName, termination: Termination) {
+        self.workspaces
             .write()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(sandbox, Arc::new(termination));
+            .insert(workspace, Arc::new(termination));
     }
 
-    /// Removes `sandbox`'s termination (its CA is dropped once its connections end).
-    pub fn remove(&self, sandbox: &SandboxName) {
-        self.sandboxes
+    /// Removes `workspace`'s termination (its CA is dropped once its connections end).
+    pub fn remove(&self, workspace: &WorkspaceName) {
+        self.workspaces
             .write()
             .unwrap_or_else(PoisonError::into_inner)
-            .remove(sandbox);
+            .remove(workspace);
     }
 }
 
 impl TerminationSource for Terminations {
-    fn termination(&self, sandbox: &SandboxName) -> Option<Arc<Termination>> {
-        self.sandboxes
+    fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<Termination>> {
+        self.workspaces
             .read()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(sandbox)
+            .get(workspace)
             .cloned()
     }
 }

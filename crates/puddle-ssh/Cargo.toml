@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-ssh"
-description = "SSH endpoint per sandbox (serve_connection behind the readiness gate) and the ssh-bridge relay"
+description = "SSH endpoint per workspace (serve_connection behind the readiness gate) and the ssh-bridge relay"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

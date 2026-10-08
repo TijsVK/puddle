@@ -53,7 +53,7 @@ export function systemHost(
     note: "extensions",
     reason: "code_server",
     reason_text: "The browser editor runs the bundled code-server.",
-    sandbox: null,
+    workspace: null,
     ...over,
   };
 }
@@ -119,17 +119,17 @@ export class FakeRuleSets {
     if (!found) return this.reply(404);
     let next: RuleSet;
     if (path.endsWith("/switch")) {
-      const sandbox = (init.body?.["sandbox"] as string | null) ?? null;
+      const workspace = (init.body?.["workspace"] as string | null) ?? null;
       const enabled = init.body?.["enabled"] as boolean | null;
-      if (sandbox === null) next = { ...found, global: enabled };
+      if (workspace === null) next = { ...found, global: enabled };
       else {
-        const rest = found.overrides.filter((o) => o.sandbox !== sandbox);
+        const rest = found.overrides.filter((o) => o.workspace !== workspace);
         next = {
           ...found,
           overrides:
             enabled === null
               ? rest
-              : [...rest, { sandbox: sandbox as never, enabled }],
+              : [...rest, { workspace: workspace as never, enabled }],
         };
       }
       this.sets = this.sets.map((s) => (s.id === found.id ? next : s));

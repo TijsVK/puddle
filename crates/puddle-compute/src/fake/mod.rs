@@ -49,7 +49,7 @@ mod exec;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus, VolumeName};
+use puddle_types::{ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub use self::exec::{ExecContext, ExecHandler, FsError};
@@ -198,7 +198,7 @@ pub(crate) struct VolumeRecord {
 
 struct SandboxRecord {
     spec: SandboxSpec,
-    status: SandboxStatus,
+    status: WorkspaceStatus,
     boot: u64,
     files: Files,
 }
@@ -206,7 +206,7 @@ struct SandboxRecord {
 impl SandboxRecord {
     /// The guest's view of its memory at boot, like the kernel's `/proc/meminfo`.
     fn boot(&mut self, boot: u64) {
-        self.status = SandboxStatus::Running;
+        self.status = WorkspaceStatus::Running;
         self.boot = boot;
         let kib = u64::from(self.spec.memory.get()) * 1024;
         self.files.insert(
@@ -224,7 +224,7 @@ struct State {
     images: BTreeMap<String, ImageConfig>,
     sandboxes: BTreeMap<String, SandboxRecord>,
     /// Sandboxes puddle didn't create ([`FakeRuntime::add_foreign_sandbox`]): listed only.
-    foreign: BTreeMap<String, SandboxStatus>,
+    foreign: BTreeMap<String, WorkspaceStatus>,
     stale_dirs: BTreeSet<String>,
     volumes: BTreeMap<String, VolumeRecord>,
     faults: Vec<(Op, Fault)>,
@@ -272,7 +272,7 @@ impl State {
         self.sandboxes
             .iter()
             .find(|(_, r)| {
-                r.status == SandboxStatus::Running
+                r.status == WorkspaceStatus::Running
                     && r.spec.volumes.iter().any(|m| m.volume.as_str() == volume)
             })
             .map(|(name, _)| name.clone())
@@ -416,8 +416,8 @@ impl FakeRuntime {
     pub fn crash(&self, name: &SandboxName) -> bool {
         let mut state = self.lock();
         match state.sandboxes.get_mut(name.as_str()) {
-            Some(r) if r.status == SandboxStatus::Running => {
-                r.status = SandboxStatus::Crashed;
+            Some(r) if r.status == WorkspaceStatus::Running => {
+                r.status = WorkspaceStatus::Crashed;
                 true
             }
             _ => false,
@@ -428,7 +428,7 @@ impl FakeRuntime {
     /// [`Runtime::list`] shows it with `puddle_owned: false`; no other operation sees it, so a
     /// test can check through [`FakeRuntime::calls`] that nothing touched it. `name` need not be
     /// a valid [`SandboxName`].
-    pub fn add_foreign_sandbox(&self, name: &str, status: SandboxStatus) {
+    pub fn add_foreign_sandbox(&self, name: &str, status: WorkspaceStatus) {
         self.lock().foreign.insert(name.to_owned(), status);
     }
 
@@ -540,7 +540,7 @@ impl Runtime for FakeRuntime {
                 name.to_string(),
                 SandboxRecord {
                     spec,
-                    status: SandboxStatus::Stopped,
+                    status: WorkspaceStatus::Stopped,
                     boot: 0,
                     files: Files::new(),
                 },
@@ -561,7 +561,7 @@ impl Runtime for FakeRuntime {
         let boot = state.next_boot();
         let mut record = SandboxRecord {
             spec,
-            status: SandboxStatus::Created,
+            status: WorkspaceStatus::Created,
             boot: 0,
             files: Files::new(),
         };
@@ -613,7 +613,7 @@ impl Runtime for FakeRuntime {
             None => Err(ComputeError::NotFound {
                 sandbox: name.to_string(),
             }),
-            Some(r) if r.status != SandboxStatus::Running => Err(ComputeError::InvalidState {
+            Some(r) if r.status != WorkspaceStatus::Running => Err(ComputeError::InvalidState {
                 sandbox: name.to_string(),
                 op: "connect to",
                 status: r.status,
@@ -781,7 +781,7 @@ impl FakeSandbox {
             .ok_or_else(|| ComputeError::NotFound {
                 sandbox: self.name.to_string(),
             })?;
-        if r.status != SandboxStatus::Running {
+        if r.status != WorkspaceStatus::Running {
             return Err(ComputeError::InvalidState {
                 sandbox: self.name.to_string(),
                 op,
@@ -833,7 +833,7 @@ impl Sandbox for FakeSandbox {
     }
 
     #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
-    async fn status(&self) -> Result<SandboxStatus, ComputeError> {
+    async fn status(&self) -> Result<WorkspaceStatus, ComputeError> {
         let mut state = self.runtime.lock();
         state.enter(Op::Status, Some(self.name.as_str()), None)?;
         state
@@ -864,7 +864,7 @@ impl Sandbox for FakeSandbox {
                 sandbox: self.name.to_string(),
             });
         }
-        r.status = SandboxStatus::Stopped;
+        r.status = WorkspaceStatus::Stopped;
         Ok(())
     }
 
@@ -908,9 +908,9 @@ impl Drop for FakeSandbox {
         let mut state = self.runtime.lock();
         if let Some(r) = state.sandboxes.get_mut(self.name.as_str())
             && r.boot == self.boot
-            && r.status == SandboxStatus::Running
+            && r.status == WorkspaceStatus::Running
         {
-            r.status = SandboxStatus::Stopped;
+            r.status = WorkspaceStatus::Stopped;
         }
     }
 }

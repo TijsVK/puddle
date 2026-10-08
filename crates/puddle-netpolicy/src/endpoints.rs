@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! puddle's own listeners: every puddle listener registers here when it binds, and
-//! the guard blocks a sandbox from reaching any of them, whatever the loopback toggle or
+//! the guard blocks a workspace from reaching any of them, whatever the loopback toggle or
 //! the rules say.
 
 use std::fmt;

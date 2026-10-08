@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The guard: what a sandbox may reach, per destination and per resolved address (R-14).
+//! The guard: what a workspace may reach, per destination and per resolved address (R-14).
 
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use puddle_types::{BlockReason, Host, LocalCategory, SandboxName};
+use puddle_types::{BlockReason, Host, LocalCategory, WorkspaceName};
 
 use crate::{
     AddressClass, HostAddrs, LocalAccess, LocalAccessSource, OwnAddresses, PuddleEndpoints, Target,
@@ -27,23 +27,23 @@ pub enum AddressVerdict {
     Block(BlockReason),
 }
 
-/// The destination guard: address classes, the sandbox's local toggles and puddle's own
-/// endpoints. Cheap to share (`Arc`); every check reads the sandbox's current settings.
+/// The destination guard: address classes, the workspace's local toggles and puddle's own
+/// endpoints. Cheap to share (`Arc`); every check reads the workspace's current settings.
 ///
 /// ```
 /// use std::sync::Arc;
 /// use puddle_netpolicy::{AddressVerdict, LocalAccess, NetPolicy};
-/// use puddle_types::{BlockReason, LocalCategory, SandboxName};
+/// use puddle_types::{BlockReason, LocalCategory, WorkspaceName};
 ///
 /// let guard = NetPolicy::new(Arc::new(LocalAccess::NONE.with_toggle(LocalCategory::Private, true)));
-/// let sandbox = SandboxName::new("box").unwrap();
-/// assert_eq!(guard.check_address(&sandbox, "8.8.8.8:443".parse().unwrap()), AddressVerdict::Allow);
+/// let workspace = WorkspaceName::new("box").unwrap();
+/// assert_eq!(guard.check_address(&workspace, "8.8.8.8:443".parse().unwrap()), AddressVerdict::Allow);
 /// assert_eq!(
-///     guard.check_address(&sandbox, "10.0.0.1:443".parse().unwrap()),
+///     guard.check_address(&workspace, "10.0.0.1:443".parse().unwrap()),
 ///     AddressVerdict::ExactOnly(LocalCategory::Private)
 /// );
 /// assert_eq!(
-///     guard.check_address(&sandbox, "127.0.0.1:80".parse().unwrap()),
+///     guard.check_address(&workspace, "127.0.0.1:80".parse().unwrap()),
 ///     AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Loopback))
 /// );
 /// ```
@@ -63,7 +63,7 @@ impl fmt::Debug for NetPolicy {
 }
 
 impl NetPolicy {
-    /// A guard that reads each sandbox's toggles from `access`, with an empty endpoint registry
+    /// A guard that reads each workspace's toggles from `access`, with an empty endpoint registry
     /// and the host's real addresses ([`OwnAddresses`]).
     #[must_use]
     pub fn new(access: Arc<dyn LocalAccessSource>) -> Self {
@@ -104,10 +104,10 @@ impl NetPolicy {
         }
     }
 
-    /// The verdict on one address `sandbox` would connect to.
+    /// The verdict on one address `workspace` would connect to.
     #[must_use]
-    pub fn check_address(&self, sandbox: &SandboxName, addr: SocketAddr) -> AddressVerdict {
-        verdict(self.classify(addr), self.access.local_access(sandbox))
+    pub fn check_address(&self, workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
+        verdict(self.classify(addr), self.access.local_access(workspace))
     }
 
     /// The name stage, before the rules are asked: a destination that is blocked by its literal
@@ -116,11 +116,11 @@ impl NetPolicy {
     #[must_use]
     pub fn check_target(
         &self,
-        sandbox: &SandboxName,
+        workspace: &WorkspaceName,
         target: &Target,
         port: u16,
     ) -> Option<BlockReason> {
-        let access = self.access.local_access(sandbox);
+        let access = self.access.local_access(workspace);
         if let Host::Ip(ip) = target.host() {
             return match verdict(self.classify(SocketAddr::new(*ip, port)), access) {
                 AddressVerdict::Block(reason) => Some(reason),
@@ -156,15 +156,15 @@ fn verdict(class: AddressClass, access: LocalAccess) -> AddressVerdict {
 ///
 /// ```
 /// use puddle_netpolicy::block_message;
-/// use puddle_types::{BlockReason, Host, LocalCategory, SandboxName};
+/// use puddle_types::{BlockReason, Host, LocalCategory, WorkspaceName};
 ///
-/// let sandbox = SandboxName::new("box").unwrap();
+/// let workspace = WorkspaceName::new("box").unwrap();
 /// let host = Host::parse_normalised("10.0.0.1").unwrap();
-/// let msg = block_message(&host, &sandbox, &[BlockReason::LocalToggle(LocalCategory::Private)]);
-/// assert!(msg.contains("turn on 'private' (local/private network) globally or for sandbox box"));
+/// let msg = block_message(&host, &workspace, &[BlockReason::LocalToggle(LocalCategory::Private)]);
+/// assert!(msg.contains("turn on 'private' (local/private network) globally or for workspace box"));
 /// ```
 #[must_use]
-pub fn block_message(host: &Host, sandbox: &SandboxName, reasons: &[BlockReason]) -> String {
+pub fn block_message(host: &Host, workspace: &WorkspaceName, reasons: &[BlockReason]) -> String {
     let mut toggles: Vec<LocalCategory> = reasons
         .iter()
         .filter_map(|r| match r {
@@ -177,7 +177,7 @@ pub fn block_message(host: &Host, sandbox: &SandboxName, reasons: &[BlockReason]
     if toggles.is_empty() {
         return match reasons.first() {
             Some(BlockReason::PuddleEndpoint) => format!(
-                "{host} is one of puddle's own endpoints; sandboxes never reach them, and no rule or toggle changes this"
+                "{host} is one of puddle's own endpoints; workspaces never reach them, and no rule or toggle changes this"
             ),
             Some(BlockReason::SshUnsupported) => "SSH is not supported yet, use HTTPS".to_owned(),
             _ => format!("{host} is a local address puddle does not connect to"),
@@ -194,7 +194,7 @@ pub fn block_message(host: &Host, sandbox: &SandboxName, reasons: &[BlockReason]
         .collect::<Vec<_>>()
         .join(" or ");
     format!(
-        "{host} is {what}, and that toggle is off. To allow it, turn on {switch} globally or for sandbox {sandbox}; it then still needs an allow rule or an approval. Approving it alone does not change this"
+        "{host} is {what}, and that toggle is off. To allow it, turn on {switch} globally or for workspace {workspace}; it then still needs an allow rule or an approval. Approving it alone does not change this"
     )
 }
 
@@ -205,8 +205,8 @@ mod tests {
     use super::*;
     use crate::{EndpointKind, Registration, normalise_host};
 
-    fn sandbox() -> SandboxName {
-        SandboxName::new("box").unwrap()
+    fn workspace() -> WorkspaceName {
+        WorkspaceName::new("box").unwrap()
     }
 
     fn sa(s: &str) -> SocketAddr {
@@ -245,13 +245,13 @@ mod tests {
             ("224.0.0.1:80", LocalCategory::Special),
         ] {
             assert_eq!(
-                g.check_address(&sandbox(), sa(addr)),
+                g.check_address(&workspace(), sa(addr)),
                 AddressVerdict::Block(BlockReason::LocalToggle(c)),
                 "{addr}"
             );
         }
         assert_eq!(
-            g.check_address(&sandbox(), sa("8.8.8.8:80")),
+            g.check_address(&workspace(), sa("8.8.8.8:80")),
             AddressVerdict::Allow
         );
     }
@@ -260,18 +260,18 @@ mod tests {
     fn toggle_on_permits_exact_allows_only_unless_wildcards_reach_local() {
         let (g, _api) = guard(all_on());
         assert_eq!(
-            g.check_address(&sandbox(), sa("10.1.2.3:80")),
+            g.check_address(&workspace(), sa("10.1.2.3:80")),
             AddressVerdict::ExactOnly(LocalCategory::Private)
         );
         let (g, _api) = guard(all_on().with_wildcards_reach_local(true));
         assert_eq!(
-            g.check_address(&sandbox(), sa("10.1.2.3:80")),
+            g.check_address(&workspace(), sa("10.1.2.3:80")),
             AddressVerdict::Allow
         );
         // The wildcard setting never replaces a toggle.
         let (g, _api) = guard(LocalAccess::NONE.with_wildcards_reach_local(true));
         assert_eq!(
-            g.check_address(&sandbox(), sa("10.1.2.3:80")),
+            g.check_address(&workspace(), sa("10.1.2.3:80")),
             AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Private))
         );
     }
@@ -291,17 +291,17 @@ mod tests {
                 "{addr}"
             );
             assert_eq!(
-                g.check_address(&sandbox(), sa(addr)),
+                g.check_address(&workspace(), sa(addr)),
                 AddressVerdict::Block(BlockReason::PuddleEndpoint),
                 "{addr}"
             );
         }
         assert_eq!(
-            g.check_address(&sandbox(), sa("127.0.0.1:7071")),
+            g.check_address(&workspace(), sa("127.0.0.1:7071")),
             AddressVerdict::Allow
         );
         assert_eq!(
-            g.check_address(&sandbox(), sa("192.168.1.11:7070")),
+            g.check_address(&workspace(), sa("192.168.1.11:7070")),
             AddressVerdict::Allow
         );
     }
@@ -310,7 +310,7 @@ mod tests {
     fn the_name_stage_blocks_literals_and_category_names_before_the_rules() {
         let target = |h: &str| normalise_host(h).unwrap();
         let (off, _a) = guard(LocalAccess::NONE);
-        let check = |g: &NetPolicy, h: &str, port| g.check_target(&sandbox(), &target(h), port);
+        let check = |g: &NetPolicy, h: &str, port| g.check_target(&workspace(), &target(h), port);
         assert_eq!(
             check(&off, "10.0.0.1", 80),
             Some(BlockReason::LocalToggle(LocalCategory::Private))
@@ -351,18 +351,18 @@ mod tests {
     }
 
     #[test]
-    fn toggles_are_read_per_sandbox_per_call() {
-        let per = |s: &SandboxName| {
+    fn toggles_are_read_per_workspace_per_call() {
+        let per = |s: &WorkspaceName| {
             LocalAccess::NONE.with_toggle(LocalCategory::Loopback, s.as_str() == "dev")
         };
         let g = NetPolicy::new(Arc::new(per));
-        let dev = SandboxName::new("dev").unwrap();
+        let dev = WorkspaceName::new("dev").unwrap();
         assert_eq!(
             g.check_address(&dev, sa("127.0.0.1:3000")),
             AddressVerdict::ExactOnly(LocalCategory::Loopback)
         );
         assert_eq!(
-            g.check_address(&sandbox(), sa("127.0.0.1:3000")),
+            g.check_address(&workspace(), sa("127.0.0.1:3000")),
             AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Loopback))
         );
         assert!(format!("{g:?}").starts_with("NetPolicy"));
@@ -373,16 +373,16 @@ mod tests {
         let host = Host::parse_normalised("nas.example").unwrap();
         let one = block_message(
             &host,
-            &sandbox(),
+            &workspace(),
             &[BlockReason::LocalToggle(LocalCategory::Private)],
         );
         assert_eq!(
             one,
-            "nas.example is local/private network, and that toggle is off. To allow it, turn on 'private' (local/private network) globally or for sandbox box; it then still needs an allow rule or an approval. Approving it alone does not change this"
+            "nas.example is local/private network, and that toggle is off. To allow it, turn on 'private' (local/private network) globally or for workspace box; it then still needs an allow rule or an approval. Approving it alone does not change this"
         );
         let two = block_message(
             &host,
-            &sandbox(),
+            &workspace(),
             &[
                 BlockReason::LocalToggle(LocalCategory::Private),
                 BlockReason::PuddleEndpoint,
@@ -395,14 +395,14 @@ mod tests {
             "{two}"
         );
         assert!(
-            block_message(&host, &sandbox(), &[BlockReason::PuddleEndpoint])
+            block_message(&host, &workspace(), &[BlockReason::PuddleEndpoint])
                 .contains("puddle's own endpoints")
         );
-        assert!(block_message(&host, &sandbox(), &[BlockReason::SshUnsupported]).contains("SSH"));
+        assert!(block_message(&host, &workspace(), &[BlockReason::SshUnsupported]).contains("SSH"));
         assert!(
-            block_message(&host, &sandbox(), &[BlockReason::LocalAddress])
+            block_message(&host, &workspace(), &[BlockReason::LocalAddress])
                 .contains("local address")
         );
-        assert!(block_message(&host, &sandbox(), &[]).contains("local address"));
+        assert!(block_message(&host, &workspace(), &[]).contains("local address"));
     }
 }

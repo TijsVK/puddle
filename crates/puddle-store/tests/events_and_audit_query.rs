@@ -19,14 +19,14 @@ use puddle_store::{
 use puddle_types::{
     CollectingSink, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
     ConnectionReason, Decision, EgressRequest, Event, Host, PendingEnd, PendingId, PendingOutcome,
-    SandboxName, SuffixAllows,
+    SuffixAllows, WorkspaceName,
 };
 use rusqlite::params;
 
 const T0: u64 = 1_800_000_000_000;
 
-fn sb(id: &str) -> SandboxName {
-    SandboxName::new(id).unwrap()
+fn sb(id: &str) -> WorkspaceName {
+    WorkspaceName::new(id).unwrap()
 }
 
 fn fixture(limits: Limits) -> (Arc<ManualClock>, Arc<CollectingSink>, Store) {
@@ -38,10 +38,10 @@ fn fixture(limits: Limits) -> (Arc<ManualClock>, Arc<CollectingSink>, Store) {
     (clock, sink, store)
 }
 
-fn ask(store: &Store, sandbox: &str, host: &str) -> PendingOutcome {
+fn ask(store: &Store, workspace: &str, host: &str) -> PendingOutcome {
     match store
         .decide(
-            &EgressRequest::new(sb(sandbox), Host::parse_normalised(host).unwrap(), 443),
+            &EgressRequest::new(sb(workspace), Host::parse_normalised(host).unwrap(), 443),
             SuffixAllows::Count,
         )
         .unwrap()
@@ -94,7 +94,11 @@ fn a_new_request_opens_a_pending_row_and_appends_to_the_audit() {
         panic!()
     };
     assert_eq!(
-        (request.id, request.sandbox.as_str(), request.host.as_str()),
+        (
+            request.id,
+            request.workspace.as_str(),
+            request.host.as_str()
+        ),
         (id.0, "a", "api.example.co.uk")
     );
     assert_eq!(request.registrable_domain, "example.co.uk");
@@ -120,7 +124,7 @@ fn a_repeat_updates_the_row_and_writes_no_audit_record() {
     assert_eq!(
         sink.take(),
         [Event::PendingUpdated {
-            sandbox: sb("a"),
+            workspace: sb("a"),
             id: id.0,
             attempts: 2,
             last_seen: T0 + 5000,
@@ -147,11 +151,11 @@ fn approving_closes_the_row_and_reports_the_rule_and_every_other_row_it_decides(
         .iter()
         .filter_map(|e| match e {
             Event::PendingClosed {
-                sandbox,
+                workspace,
                 id,
                 state,
                 rule_id,
-            } => Some((sandbox.to_string(), *id, *state, *rule_id)),
+            } => Some((workspace.to_string(), *id, *state, *rule_id)),
             _ => None,
         })
         .collect();
@@ -162,7 +166,7 @@ fn approving_closes_the_row_and_reports_the_rule_and_every_other_row_it_decides(
             ("a".to_owned(), first.0, PendingEnd::Allowed, rule),
             ("a".to_owned(), second.0, PendingEnd::Allowed, rule),
         ],
-        "the other sandbox's row ({other:?}) is not covered by a sandbox rule"
+        "the other workspace's row ({other:?}) is not covered by a workspace rule"
     );
     let tail = kinds(&events);
     assert_eq!(
@@ -211,7 +215,7 @@ fn rule_changes_emit_rules_changed_and_a_rule_that_decides_open_rows_closes_them
         .unwrap();
     let events = sink.take();
     assert!(events.contains(&Event::PendingClosed {
-        sandbox: sb("a"),
+        workspace: sb("a"),
         id: id.0,
         state: PendingEnd::Denied,
         rule_id: Some(rule.id.0),
@@ -258,7 +262,7 @@ fn a_change_that_fails_emits_nothing() {
 }
 
 #[test]
-fn stale_rows_and_deleted_sandboxes_close_as_expired() {
+fn stale_rows_and_deleted_workspaces_close_as_expired() {
     let limits = Limits {
         pending_stale_after_ms: 1000,
         ..Limits::default()
@@ -271,16 +275,16 @@ fn stale_rows_and_deleted_sandboxes_close_as_expired() {
     store.sweep().unwrap();
     let events = sink.take();
     assert!(events.contains(&Event::PendingClosed {
-        sandbox: sb("a"),
+        workspace: sb("a"),
         id: stale.0,
         state: PendingEnd::Expired,
         rule_id: None,
     }));
     assert_eq!(kinds(&events).last(), Some(&"audit_appended"));
-    store.delete_sandbox(&sb("b")).unwrap();
+    store.delete_workspace(&sb("b")).unwrap();
     let events = sink.take();
     assert!(events.contains(&Event::PendingClosed {
-        sandbox: sb("b"),
+        workspace: sb("b"),
         id: gone.0,
         state: PendingEnd::Expired,
         rule_id: None,
@@ -290,11 +294,11 @@ fn stale_rows_and_deleted_sandboxes_close_as_expired() {
 }
 
 #[test]
-fn deleting_a_sandbox_with_rules_reports_rules_changed() {
+fn deleting_a_workspace_with_rules_reports_rules_changed() {
     let (_, sink, store) = fixture(Limits::default());
     store
         .add_rule(&NewRule {
-            scope: Scope::Sandbox(sb("a")),
+            scope: Scope::Workspace(sb("a")),
             pattern: Pattern::parse("example.com").unwrap(),
             effect: Effect::Allow,
             expires_at: None,
@@ -302,7 +306,7 @@ fn deleting_a_sandbox_with_rules_reports_rules_changed() {
         })
         .unwrap();
     drop(sink.take());
-    store.delete_sandbox(&sb("a")).unwrap();
+    store.delete_workspace(&sb("a")).unwrap();
     assert!(sink.take().contains(&Event::RulesChanged {}));
 }
 
@@ -350,7 +354,7 @@ fn suppression_starts_grows_at_a_throttled_pace_and_ends() {
 }
 
 #[test]
-fn deleting_a_suppressed_sandbox_ends_its_suppression() {
+fn deleting_a_suppressed_workspace_ends_its_suppression() {
     let limits = Limits {
         new_rows_burst: 1,
         new_rows_refill_ms: 10_000,
@@ -360,9 +364,9 @@ fn deleting_a_suppressed_sandbox_ends_its_suppression() {
     ask(&store, "a", "one.example");
     ask(&store, "a", "two.example");
     drop(sink.take());
-    store.delete_sandbox(&sb("a")).unwrap();
+    store.delete_workspace(&sb("a")).unwrap();
     assert!(sink.take().contains(&Event::SuppressionChanged {
-        sandbox: sb("a"),
+        workspace: sb("a"),
         active: false,
         count: 1,
     }));
@@ -435,10 +439,10 @@ fn a_store_without_a_sink_works() {
 // ---------------------------------------------------------------------------------------------
 // Audit queries
 
-fn pending_wire(sandbox: &str, host: &str, state: &str) -> PendingWire {
+fn pending_wire(workspace: &str, host: &str, state: &str) -> PendingWire {
     PendingWire {
         id: 1,
-        sandbox_id: sandbox.into(),
+        workspace_id: workspace.into(),
         host: host.into(),
         port: 443,
         first_seen: 1,
@@ -452,11 +456,11 @@ fn pending_wire(sandbox: &str, host: &str, state: &str) -> PendingWire {
     }
 }
 
-fn rule_wire(sandbox: Option<&str>, pattern: &str) -> RuleWire {
+fn rule_wire(workspace: Option<&str>, pattern: &str) -> RuleWire {
     RuleWire {
         id: 1,
-        scope: sandbox.map_or("global", |_| "sandbox").into(),
-        sandbox_id: sandbox.map(Into::into),
+        scope: workspace.map_or("global", |_| "workspace").into(),
+        workspace_id: workspace.map(Into::into),
         pattern_kind: "exact".into(),
         pattern: pattern.into(),
         effect: "allow".into(),
@@ -468,15 +472,15 @@ fn rule_wire(sandbox: Option<&str>, pattern: &str) -> RuleWire {
     }
 }
 
-/// A connection record; an empty `sandbox` is one of puddle's own (no sandbox).
-fn connection(ts: u64, sandbox: &str, host: &str, decision: ConnectionDecision) -> AuditRecord {
+/// A connection record; an empty `workspace` is one of puddle's own (no workspace).
+fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision) -> AuditRecord {
     AuditRecord::Connection(ConnectionRecord {
         ts,
-        sandbox_id: (!sandbox.is_empty()).then(|| sandbox.to_owned()),
-        origin: if sandbox.is_empty() {
+        workspace_id: (!workspace.is_empty()).then(|| workspace.to_owned()),
+        origin: if workspace.is_empty() {
             ConnectionOrigin::Puddle
         } else {
-            ConnectionOrigin::Sandbox
+            ConnectionOrigin::Workspace
         },
         host: Some(host.into()),
         port: Some(443),
@@ -510,7 +514,7 @@ fn seeded(records: &[AuditRecord]) -> (tempfile::TempDir, Store) {
     {
         let mut insert = tx
             .prepare(
-                "INSERT INTO audit (ts, type, sandbox_id, host, outcome, line)
+                "INSERT INTO audit (ts, type, workspace_id, host, outcome, line)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )
             .unwrap();
@@ -519,7 +523,7 @@ fn seeded(records: &[AuditRecord]) -> (tempfile::TempDir, Store) {
                 .execute(params![
                     i64::try_from(record.ts()).unwrap(),
                     record.kind(),
-                    record.sandbox_id(),
+                    record.workspace_id(),
                     record.host(),
                     record.outcome().map(AuditOutcome::as_str),
                     record.to_line().unwrap(),
@@ -537,9 +541,9 @@ fn naive(records: &[AuditRecord], filter: &AuditFilter) -> Vec<i64> {
         .zip(1_i64..)
         .filter(|(r, _)| {
             filter
-                .sandbox
+                .workspace
                 .as_ref()
-                .is_none_or(|s| r.sandbox_id() == Some(s.as_str()))
+                .is_none_or(|s| r.workspace_id() == Some(s.as_str()))
                 && filter.kind.is_none_or(|k| r.kind() == k)
                 && filter.outcome.is_none_or(|o| r.outcome() == Some(o))
                 && filter.origin.is_none_or(|o| r.origin() == Some(o))
@@ -559,7 +563,7 @@ fn ids(rows: Vec<(i64, String)>) -> Vec<i64> {
 }
 
 fn any_record() -> impl Strategy<Value = AuditRecord> {
-    let sandbox = prop::sample::select(vec!["a", "b", "c"]);
+    let workspace = prop::sample::select(vec!["a", "b", "c"]);
     let host = prop::sample::select(vec![
         "example.com",
         "api.example.com",
@@ -575,7 +579,7 @@ fn any_record() -> impl Strategy<Value = AuditRecord> {
         ConnectionDecision::Blocked,
     ]);
     let state = prop::sample::select(vec!["requested", "allowed", "denied", "expired"]);
-    (0..8_u8, sandbox, host, ts, decision, state).prop_map(|(kind, sb_, host, ts, d, st)| {
+    (0..8_u8, workspace, host, ts, decision, state).prop_map(|(kind, sb_, host, ts, d, st)| {
         let host = host.to_lowercase();
         match kind {
             0 => connection(ts, sb_, &host, d),
@@ -605,7 +609,7 @@ fn any_record() -> impl Strategy<Value = AuditRecord> {
             },
             _ => AuditRecord::PendingSuppressed {
                 ts,
-                sandbox_id: sb_.into(),
+                workspace_id: sb_.into(),
                 count: 3,
             },
         }
@@ -618,7 +622,7 @@ fn any_filter() -> impl Strategy<Value = AuditFilter> {
         prop::option::of(prop::sample::select(AuditRecord::KINDS.to_vec())),
         prop::option::of(prop::sample::select(AuditOutcome::ALL.to_vec())),
         prop::option::of(prop::sample::select(vec![
-            ConnectionOrigin::Sandbox,
+            ConnectionOrigin::Workspace,
             ConnectionOrigin::Puddle,
         ])),
         prop::option::of(prop::sample::select(vec![
@@ -633,8 +637,8 @@ fn any_filter() -> impl Strategy<Value = AuditFilter> {
         prop::option::of(0_u64..22),
     )
         .prop_map(
-            |(sandbox, kind, outcome, origin, host, from, to)| AuditFilter {
-                sandbox: sandbox.map(sb),
+            |(workspace, kind, outcome, origin, host, from, to)| AuditFilter {
+                workspace: workspace.map(sb),
                 kind,
                 outcome,
                 origin,
@@ -698,7 +702,7 @@ fn filters_combine_and_the_host_is_case_folded() {
     assert_eq!(q(AuditFilter::default()), [1, 2, 3, 4]);
     assert_eq!(
         q(AuditFilter {
-            sandbox: Some(sb("a")),
+            workspace: Some(sb("a")),
             kind: Some("connection"),
             outcome: Some(AuditOutcome::Allow),
             host_contains: Some("API.EXAMPLE".into()),
@@ -767,7 +771,7 @@ fn hostile_filter_text_is_data_not_sql_or_a_pattern() {
 #[expect(clippy::too_many_lines, reason = "one table of query cases")]
 fn a_hundred_thousand_records_answer_every_filter_quickly() {
     const ROWS: u64 = 100_000;
-    let sandboxes = ["alpha", "beta", "gamma", "delta"];
+    let workspaces = ["alpha", "beta", "gamma", "delta"];
     let decisions = [
         ConnectionDecision::Allow,
         ConnectionDecision::Deny,
@@ -776,20 +780,20 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
     ];
     let records: Vec<AuditRecord> = (0..ROWS)
         .map(|i| {
-            let sandbox = sandboxes[(i % 4) as usize];
+            let workspace = workspaces[(i % 4) as usize];
             let ts = T0 + i * 10;
             match i % 50 {
                 0 => AuditRecord::RuleCreated {
                     ts,
-                    rule: rule_wire(Some(sandbox), &format!("rule{i}.example.com")),
+                    rule: rule_wire(Some(workspace), &format!("rule{i}.example.com")),
                 },
                 1 => AuditRecord::PendingCreated {
                     ts,
-                    pending: pending_wire(sandbox, &format!("host{i}.example.org"), "requested"),
+                    pending: pending_wire(workspace, &format!("host{i}.example.org"), "requested"),
                 },
                 _ => connection(
                     ts,
-                    sandbox,
+                    workspace,
                     &format!("h{}.site{}.example.net", i % 97, i % 13),
                     decisions[(i % 4) as usize],
                 ),
@@ -815,13 +819,13 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
             "USING INTEGER PRIMARY KEY (rowid<?)",
         ),
         (
-            "sandbox",
+            "workspace",
             AuditFilter {
-                sandbox: Some(sb("beta")),
+                workspace: Some(sb("beta")),
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
-            "USING INDEX audit_sandbox (sandbox_id=?)",
+            "USING INDEX audit_workspace (workspace_id=?)",
         ),
         (
             "type",
@@ -890,10 +894,10 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
         (
             "everything at once",
             AuditFilter {
-                sandbox: Some(sb("gamma")),
+                workspace: Some(sb("gamma")),
                 kind: Some("connection"),
                 outcome: Some(AuditOutcome::Pending),
-                origin: Some(ConnectionOrigin::Sandbox),
+                origin: Some(ConnectionOrigin::Workspace),
                 host_contains: Some("site7".into()),
                 from: Some(T0),
                 to: Some(last),

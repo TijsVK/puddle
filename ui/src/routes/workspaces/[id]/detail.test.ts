@@ -91,8 +91,8 @@ const { inbox, api, workspace, request, rules, rule } = h;
 
 /** The overrides a workspace has now (all inherited, for one never changed). */
 async function settingsOf(name: string) {
-  const { data } = (await api.GET("/api/settings/sandboxes/{sandbox}", {
-    params: { path: { sandbox: name } },
+  const { data } = (await api.GET("/api/settings/workspaces/{workspace}", {
+    params: { path: { workspace: name } },
   })) as unknown as { data: { overrides: Record<string, unknown> } };
   return data.overrides as never as (typeof api.overrides)[string];
 }
@@ -170,8 +170,8 @@ describe("the detail layout", () => {
 
   it("marks another tab, and counts what waits on the network tab", async () => {
     url.pathname = "/workspaces/demo/network";
-    inbox.add(request(1, { sandbox: "demo" as never }), "example.com");
-    inbox.add(request(2, { sandbox: "other" as never }), "example.com");
+    inbox.add(request(1, { workspace: "demo" as never }), "example.com");
+    inbox.add(request(2, { workspace: "other" as never }), "example.com");
     await load();
     render(DetailLayout, { children: (() => {}) as never });
     const link = await screen.findByRole("link", { name: /Network/ });
@@ -242,11 +242,11 @@ describe("the trusted mark", () => {
 describe("the overview", () => {
   it("shows state, image, repository, resources and the network summary", async () => {
     rules.rules = [
-      rule(1, { scope: { type: "sandbox", sandbox: "demo" } }),
+      rule(1, { scope: { type: "workspace", workspace: "demo" } }),
       rule(2),
       rule(3, { expires_at: 1 }),
     ];
-    inbox.add(request(1, { sandbox: "demo" as never }), "example.com");
+    inbox.add(request(1, { workspace: "demo" as never }), "example.com");
     await load();
     render(Overview);
     expect(await screen.findByText("ws-demo")).toBeInTheDocument();
@@ -279,7 +279,7 @@ describe("the overview", () => {
       expect(screen.getByText("workspace override")).toBeInTheDocument(),
     );
     view.unmount();
-    api.refuse.set("GET /api/settings/sandboxes/{sandbox}", {
+    api.refuse.set("GET /api/settings/workspaces/{workspace}", {
       status: 500,
       message: "x",
     });
@@ -295,7 +295,7 @@ describe("the overview", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     workspaces.handleEvent({
       type: "oom_kill",
-      sandbox: "demo",
+      workspace: "demo",
       pid: 77,
       process: "node",
     });
@@ -374,7 +374,7 @@ describe("the network tab", () => {
   it("lists this workspace's waiting requests, newest first, and not another's", async () => {
     inbox.add(
       request(1, {
-        sandbox: "demo" as never,
+        workspace: "demo" as never,
         host: "old.example.com",
         first_seen: 1,
       }),
@@ -382,14 +382,14 @@ describe("the network tab", () => {
     );
     inbox.add(
       request(2, {
-        sandbox: "demo" as never,
+        workspace: "demo" as never,
         host: "new.example.com",
         first_seen: 9,
       }),
       "example.com",
     );
     inbox.add(
-      request(3, { sandbox: "other" as never, host: "theirs.example.org" }),
+      request(3, { workspace: "other" as never, host: "theirs.example.org" }),
       "example.org",
     );
     await load();
@@ -417,7 +417,7 @@ describe("the network tab", () => {
 
   it("allows a request with one click, and the row leaves", async () => {
     inbox.add(
-      request(1, { sandbox: "demo" as never, host: "a.example.com" }),
+      request(1, { workspace: "demo" as never, host: "a.example.com" }),
       "example.com",
     );
     await load();
@@ -437,12 +437,12 @@ describe("the network tab", () => {
     rules.rules = [
       rule(1, {
         pattern: "mine.example.com",
-        scope: { type: "sandbox", sandbox: "demo" },
+        scope: { type: "workspace", workspace: "demo" },
       }),
       rule(2, { pattern: "everyone.example.com" }),
       rule(3, {
         pattern: "theirs.example.com",
-        scope: { type: "sandbox", sandbox: "other" },
+        scope: { type: "workspace", workspace: "other" },
       }),
     ];
     await load();
@@ -586,7 +586,7 @@ describe("the settings tab", () => {
 
   it("puts the choice back and says why when the save is refused", async () => {
     const memory = await open();
-    api.refuse.set("PUT /api/settings/sandboxes/{sandbox}", {
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
       status: 422,
       message: "memory is too small",
     });
@@ -595,14 +595,14 @@ describe("the settings tab", () => {
       "memory is too small",
     );
     expect(memory.value).toBe("");
-    api.refuse.set("PUT /api/settings/sandboxes/{sandbox}", {
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
       status: 422,
       message: "no",
     });
     const toggle = screen.getByLabelText("Link-local") as HTMLSelectElement;
     await fireEvent.change(toggle, { target: { value: "on" } });
     await vi.waitFor(() => expect(toggle.value).toBe("inherit"));
-    api.refuse.set("PUT /api/settings/sandboxes/{sandbox}", {
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
       status: 422,
       message: "no",
     });
@@ -615,7 +615,7 @@ describe("the settings tab", () => {
 
   it("says when the settings can't be read, and while they load", async () => {
     await load();
-    api.refuse.set("GET /api/settings/sandboxes/{sandbox}", {
+    api.refuse.set("GET /api/settings/workspaces/{workspace}", {
       status: 500,
       message: "x",
     });

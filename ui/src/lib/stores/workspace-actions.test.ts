@@ -78,7 +78,7 @@ describe("connecting", () => {
     actions.requestDirectSsh(w("up"), true);
     expect(actions.trustOpen).toBe(true);
     expect(actions.trustFor?.name).toBe("up");
-    expect(api.calls).not.toContain("PUT /api/settings/sandboxes/{sandbox}");
+    expect(api.calls).not.toContain("PUT /api/settings/workspaces/{workspace}");
     actions.confirmTrust();
     await expect
       .poll(() => messages())
@@ -143,11 +143,11 @@ describe("connecting", () => {
 
   it("a confirm with nothing to confirm does nothing", () => {
     actions.confirmTrust();
-    expect(api.calls).not.toContain("PUT /api/settings/sandboxes/{sandbox}");
+    expect(api.calls).not.toContain("PUT /api/settings/workspaces/{workspace}");
   });
 
   it("a refused change is an error toast and the workspace stays as it was", async () => {
-    api.refuse.set("PUT /api/settings/sandboxes/{sandbox}", {
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
       status: 422,
       message: "storage failed",
     });
@@ -163,7 +163,7 @@ describe("connecting", () => {
   });
 
   it("says so when the settings cannot be read", async () => {
-    api.refuse.set("GET /api/settings/sandboxes/{sandbox}", {
+    api.refuse.set("GET /api/settings/workspaces/{workspace}", {
       status: 404,
       message: "no settings",
     });

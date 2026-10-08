@@ -110,8 +110,8 @@ pub struct Services {
     /// The network-health report. [`Services::new`] starts with [`NoNetworkHealth`], which
     /// answers 503; set the real one with [`Services::with_network_health`].
     pub network_health: Arc<dyn NetworkHealthService>,
-    /// The registry of puddle's own listeners that the sandbox proxy's guard consults. The API
-    /// registers its address here when it binds, so a sandbox can't reach it even with the
+    /// The registry of puddle's own listeners that the workspace proxy's guard consults. The API
+    /// registers its address here when it binds, so a workspace can't reach it even with the
     /// loopback toggle on. [`Services::new`] starts with an empty registry of its own; give the
     /// one the proxy uses with [`Services::with_endpoints`].
     pub endpoints: PuddleEndpoints,
@@ -144,7 +144,7 @@ impl Services {
         self
     }
 
-    /// These services registering the API in `endpoints`, the registry the sandbox proxy's guard
+    /// These services registering the API in `endpoints`, the registry the workspace proxy's guard
     /// uses.
     #[must_use]
     pub fn with_endpoints(mut self, endpoints: PuddleEndpoints) -> Self {

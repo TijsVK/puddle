@@ -26,8 +26,8 @@ const rule = {
   id: 7,
   pattern: ".example.com",
   pattern_kind: "suffix",
-  scope: "sandbox",
-  sandbox_id: "shop",
+  scope: "workspace",
+  workspace_id: "shop",
   effect: "allow",
   expires_at: null,
   created_at: 1,
@@ -36,7 +36,7 @@ const rule = {
 };
 const pending = {
   id: 3,
-  sandbox_id: "shop",
+  workspace_id: "shop",
   host: "evil.example.org",
   port: 8443,
   first_seen: 1,
@@ -57,14 +57,14 @@ describe("filters and the API query", () => {
   });
   it("sends every set filter, trimmed, and measures the range from now", () => {
     const filter: Filter = {
-      sandbox: "shop",
+      workspace: "shop",
       type: "connection",
       outcome: "deny",
       host: "  github  ",
       range: "1h",
     };
     expect(toQuery(filter, 10_000_000)).toEqual({
-      sandbox: "shop",
+      workspace: "shop",
       type: "connection",
       outcome: "deny",
       host_contains: "github",
@@ -75,7 +75,7 @@ describe("filters and the API query", () => {
     expect(isFiltered(NO_FILTER)).toBe(false);
     expect(isFiltered({ ...NO_FILTER, host: "  " })).toBe(false);
     for (const change of [
-      { sandbox: "a" },
+      { workspace: "a" },
       { type: "connection" },
       { outcome: "allow" },
       { host: "x" },
@@ -92,7 +92,7 @@ describe("isNarrowed", () => {
     expect(isNarrowed(NO_FILTER)).toBe(true);
     expect(isNarrowed({ ...NO_FILTER, range: "all", host: "  " })).toBe(false);
     for (const change of [
-      { sandbox: "a" },
+      { workspace: "a" },
       { type: "connection" },
       { outcome: "allow" },
       { host: "x" },
@@ -109,7 +109,7 @@ describe("the page address", () => {
   });
   it("round-trips every filter, whatever the host holds", () => {
     const filter: Filter = {
-      sandbox: "shop",
+      workspace: "shop",
       type: "rule_created",
       outcome: "blocked",
       host: "a&b=c d",
@@ -197,7 +197,7 @@ describe("a record as a row", () => {
   it("shows puddle's own connections as puddle, with its own reason", () => {
     const view = row(
       connection(1, {
-        sandbox_id: null,
+        workspace_id: null,
         origin: "puddle",
         reason: "puddle_request",
         rule_id: null,
@@ -277,7 +277,7 @@ describe("a record as a row", () => {
       row({
         ...base,
         type: "rule_expired",
-        rule: { ...rule, scope: "global", sandbox_id: null },
+        rule: { ...rule, scope: "global", workspace_id: null },
       } as AuditRecord),
     ).toMatchObject({
       workspace: null,
@@ -297,7 +297,7 @@ describe("a record as a row", () => {
         type: "rule_deleted",
         actor: "ui",
         reason: "user",
-        rule: { ...rule, sandbox_id: null },
+        rule: { ...rule, workspace_id: null },
       } as unknown as AuditRecord).detail,
     ).toBe("allow for workspace ?, by ui, user");
   });
@@ -306,7 +306,7 @@ describe("a record as a row", () => {
       row({
         type: "pending_suppressed",
         ts: 1,
-        sandbox_id: "shop",
+        workspace_id: "shop",
         count: 40,
       } as AuditRecord),
     ).toMatchObject({
@@ -355,12 +355,12 @@ describe("rule set records (R-43)", () => {
     }
   });
   it("shows a switch for every workspace or one", () => {
-    const switched = (sandbox: string | null, enabled: boolean | null) =>
+    const switched = (workspace: string | null, enabled: boolean | null) =>
       row({
         type: "rule_set_switched",
         ts: 1,
         set_id: "builtin:github",
-        sandbox_id: sandbox,
+        workspace_id: workspace,
         enabled,
         actor: "ui",
       } as AuditRecord);
@@ -394,7 +394,7 @@ describe("rule set records (R-43)", () => {
       row({
         type: "system_managed_changed",
         ts: 1,
-        sandbox_id: null,
+        workspace_id: null,
         added,
         removed,
       } as AuditRecord).detail;
@@ -429,7 +429,7 @@ describe("rule set records (R-43)", () => {
       row({
         type: "rule_created",
         ts: 1,
-        rule: { ...rule, scope: "set", sandbox_id: null, set_id: 4 },
+        rule: { ...rule, scope: "set", workspace_id: null, set_id: 4 },
       } as AuditRecord).detail,
     ).toBe("allow in rule set 4, by ui");
   });

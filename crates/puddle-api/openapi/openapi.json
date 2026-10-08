@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "paths": {
     "/api/audit": {
@@ -55,9 +55,9 @@
             }
           },
           {
-            "name": "sandbox",
+            "name": "workspace",
             "in": "query",
-            "description": "records about this sandbox",
+            "description": "records about this workspace",
             "required": false,
             "schema": {
               "type": "string"
@@ -84,7 +84,7 @@
           {
             "name": "origin",
             "in": "query",
-            "description": "`connection` records of this origin (`sandbox` or `puddle`); other types have none and never match",
+            "description": "`connection` records of this origin (`workspace` or `puddle`); other types have none and never match",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/ConnectionOrigin"
@@ -388,12 +388,12 @@
         "operationId": "events",
         "parameters": [
           {
-            "name": "sandbox",
+            "name": "workspace",
             "in": "query",
-            "description": "only this sandbox's events; global events always come through",
+            "description": "only this workspace's events; global events always come through",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/SandboxName"
+              "$ref": "#/components/schemas/WorkspaceName"
             }
           }
         ],
@@ -409,7 +409,7 @@
             }
           },
           "400": {
-            "description": "invalid sandbox name",
+            "description": "invalid workspace name",
             "content": {
               "application/json": {
                 "schema": {
@@ -663,12 +663,12 @@
         "operationId": "list_pending",
         "parameters": [
           {
-            "name": "sandbox",
+            "name": "workspace",
             "in": "query",
-            "description": "only this sandbox's requests",
+            "description": "only this workspace's requests",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/SandboxName"
+              "$ref": "#/components/schemas/WorkspaceName"
             }
           }
         ],
@@ -684,7 +684,7 @@
             }
           },
           "400": {
-            "description": "invalid sandbox name",
+            "description": "invalid workspace name",
             "content": {
               "application/json": {
                 "schema": {
@@ -824,7 +824,7 @@
         "tags": [
           "pending"
         ],
-        "summary": "Approves an open request: creates an allow rule (this sandbox, exact host, permanent unless\nthe body says otherwise) and closes the other open requests it now decides.",
+        "summary": "Approves an open request: creates an allow rule (this workspace, exact host, permanent unless\nthe body says otherwise) and closes the other open requests it now decides.",
         "operationId": "approve",
         "parameters": [
           {
@@ -937,7 +937,7 @@
         "tags": [
           "pending"
         ],
-        "summary": "Denies an open request: creates a deny rule (this sandbox, exact host, permanent unless the\nbody says otherwise) and closes the other open requests it now decides.",
+        "summary": "Denies an open request: creates a deny rule (this workspace, exact host, permanent unless the\nbody says otherwise) and closes the other open requests it now decides.",
         "operationId": "deny",
         "parameters": [
           {
@@ -1382,7 +1382,7 @@
         "tags": [
           "rules"
         ],
-        "summary": "Switches a set on or off for every sandbox or for one (`enabled: null` removes that switch),\nand closes the open requests the set now decides.",
+        "summary": "Switches a set on or off for every workspace or for one (`enabled: null` removes that switch),\nand closes the open requests the set now decides.",
         "operationId": "switch_rule_set",
         "parameters": [
           {
@@ -1805,94 +1805,12 @@
         }
       }
     },
-    "/api/sandboxes/{sandbox}/suppression": {
-      "get": {
-        "tags": [
-          "pending"
-        ],
-        "summary": "Whether a sandbox's new pending requests are being suppressed (R-13), for the inbox's\n\"N requests suppressed\" line.",
-        "operationId": "suppression",
-        "parameters": [
-          {
-            "name": "sandbox",
-            "in": "path",
-            "description": "sandbox name",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/SandboxName"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "the sandbox's suppression state",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Suppression"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "invalid sandbox name",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "forbidden origin",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
-          "421": {
-            "description": "Host is not the API's own address",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "puddle failed; see its log",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/settings": {
       "get": {
         "tags": [
           "settings"
         ],
-        "summary": "The global settings and the effective values of a sandbox without overrides.",
+        "summary": "The global settings and the effective values of a workspace without overrides.",
         "operationId": "get_global",
         "responses": {
           "200": {
@@ -2047,37 +1965,37 @@
         }
       }
     },
-    "/api/settings/sandboxes/{sandbox}": {
+    "/api/settings/workspaces/{workspace}": {
       "get": {
         "tags": [
           "settings"
         ],
-        "summary": "One sandbox's overrides and effective values. A sandbox without stored settings has no\noverrides.",
-        "operationId": "get_sandbox",
+        "summary": "One workspace's overrides and effective values. A workspace without stored settings has no\noverrides.",
+        "operationId": "get_workspace_settings",
         "parameters": [
           {
-            "name": "sandbox",
+            "name": "workspace",
             "in": "path",
-            "description": "sandbox name",
+            "description": "workspace name",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/SandboxName"
+              "$ref": "#/components/schemas/WorkspaceName"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "the sandbox's settings",
+            "description": "the workspace's settings",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SandboxSettingsView"
+                  "$ref": "#/components/schemas/WorkspaceSettingsView"
                 }
               }
             }
           },
           "400": {
-            "description": "invalid sandbox name",
+            "description": "invalid workspace name",
             "content": {
               "application/json": {
                 "schema": {
@@ -2142,16 +2060,16 @@
         "tags": [
           "settings"
         ],
-        "summary": "Replaces one sandbox's overrides; `null` inherits the global value.",
-        "operationId": "put_sandbox",
+        "summary": "Replaces one workspace's overrides; `null` inherits the global value.",
+        "operationId": "put_workspace_settings",
         "parameters": [
           {
-            "name": "sandbox",
+            "name": "workspace",
             "in": "path",
-            "description": "sandbox name",
+            "description": "workspace name",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/SandboxName"
+              "$ref": "#/components/schemas/WorkspaceName"
             }
           }
         ],
@@ -2159,7 +2077,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SandboxSettingsRequest"
+                "$ref": "#/components/schemas/WorkspaceSettingsRequest"
               }
             }
           },
@@ -2167,17 +2085,17 @@
         },
         "responses": {
           "200": {
-            "description": "the sandbox's new settings",
+            "description": "the workspace's new settings",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SandboxSettingsView"
+                  "$ref": "#/components/schemas/WorkspaceSettingsView"
                 }
               }
             }
           },
           "400": {
-            "description": "invalid sandbox name",
+            "description": "invalid workspace name",
             "content": {
               "application/json": {
                 "schema": {
@@ -3060,6 +2978,88 @@
           }
         }
       }
+    },
+    "/api/workspaces/{workspace}/suppression": {
+      "get": {
+        "tags": [
+          "pending"
+        ],
+        "summary": "Whether a workspace's new pending requests are being suppressed (R-13), for the inbox's\n\"N requests suppressed\" line.",
+        "operationId": "suppression",
+        "parameters": [
+          {
+            "name": "workspace",
+            "in": "path",
+            "description": "workspace name",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the workspace's suppression state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suppression"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid workspace name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3209,7 +3209,7 @@
         "description": "A pending request as an audit record shows it. `host` comes from the guest: escape it.",
         "required": [
           "id",
-          "sandbox_id",
+          "workspace_id",
           "host",
           "port",
           "first_seen",
@@ -3286,13 +3286,13 @@
             ],
             "description": "The rule set whose entry decided it."
           },
-          "sandbox_id": {
-            "type": "string",
-            "description": "The sandbox."
-          },
           "state": {
             "type": "string",
             "description": "`requested`, `allowed`, `denied` or `expired`."
+          },
+          "workspace_id": {
+            "type": "string",
+            "description": "The workspace."
           }
         }
       },
@@ -3303,7 +3303,7 @@
             "description": "A connection the proxy handled. `host`, `port` and `decision` are `null` on a\n`suppressed` summary, which carries `count`.",
             "required": [
               "ts",
-              "sandbox_id",
+              "workspace_id",
               "origin",
               "host",
               "port",
@@ -3384,7 +3384,7 @@
               },
               "origin": {
                 "$ref": "#/components/schemas/ConnectionOrigin",
-                "description": "Whose connection it is. Records written before it existed read as `sandbox`."
+                "description": "Whose connection it is. Records written before it existed read as `workspace`."
               },
               "path": {
                 "type": [
@@ -3440,13 +3440,6 @@
                 ],
                 "description": "The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`)."
               },
-              "sandbox_id": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "The sandbox; `null` for puddle's own connections (`origin` is `puddle`)."
-              },
               "ts": {
                 "type": "integer",
                 "format": "int64",
@@ -3465,6 +3458,13 @@
                   "null"
                 ],
                 "description": "The company-proxy hop that carried it: `DIRECT` or `PROXY host:port`; `null` when no\nupstream route is configured."
+              },
+              "workspace_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The workspace; `null` for puddle's own connections (`origin` is `puddle`)."
               }
             }
           },
@@ -3556,10 +3556,10 @@
           },
           {
             "type": "object",
-            "description": "Requests over a sandbox's limit, not written as rows.",
+            "description": "Requests over a workspace's limit, not written as rows.",
             "required": [
               "ts",
-              "sandbox_id",
+              "workspace_id",
               "count",
               "type"
             ],
@@ -3569,10 +3569,6 @@
                 "format": "int64",
                 "description": "Requests suppressed since the previous record.",
                 "minimum": 0
-              },
-              "sandbox_id": {
-                "type": "string",
-                "description": "The sandbox."
               },
               "ts": {
                 "type": "integer",
@@ -3585,6 +3581,10 @@
                 "enum": [
                   "pending_suppressed"
                 ]
+              },
+              "workspace_id": {
+                "type": "string",
+                "description": "The workspace."
               }
             }
           },
@@ -3823,7 +3823,7 @@
             "required": [
               "ts",
               "set_id",
-              "sandbox_id",
+              "workspace_id",
               "enabled",
               "actor",
               "type"
@@ -3840,13 +3840,6 @@
                 ],
                 "description": "On, off, or `null` to follow the next level."
               },
-              "sandbox_id": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "The sandbox whose override changed; `null` for every sandbox."
-              },
               "set_id": {
                 "type": "string",
                 "description": "`builtin:<slug>` or `user:<id>`."
@@ -3862,6 +3855,13 @@
                 "enum": [
                   "rule_set_switched"
                 ]
+              },
+              "workspace_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The workspace whose override changed; `null` for every workspace."
               }
             }
           },
@@ -3913,7 +3913,7 @@
             "description": "The reasons for the System managed hosts changed, because your setup did.",
             "required": [
               "ts",
-              "sandbox_id",
+              "workspace_id",
               "added",
               "removed",
               "type"
@@ -3933,13 +3933,6 @@
                 },
                 "description": "Reasons that no longer apply."
               },
-              "sandbox_id": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "The sandbox; `null` for every sandbox."
-              },
               "ts": {
                 "type": "integer",
                 "format": "int64",
@@ -3951,6 +3944,13 @@
                 "enum": [
                   "system_managed_changed"
                 ]
+              },
+              "workspace_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The workspace; `null` for every workspace."
               }
             }
           },
@@ -4002,7 +4002,7 @@
         "required": [
           "id",
           "scope",
-          "sandbox_id",
+          "workspace_id",
           "pattern_kind",
           "pattern",
           "effect",
@@ -4049,16 +4049,9 @@
             "type": "string",
             "description": "`exact` or `suffix`."
           },
-          "sandbox_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The sandbox, for a sandbox rule."
-          },
           "scope": {
             "type": "string",
-            "description": "`global`, `sandbox` or `set`."
+            "description": "`global`, `workspace` or `set`."
           },
           "set_id": {
             "type": [
@@ -4075,6 +4068,13 @@
             ],
             "format": "int64",
             "description": "The pending request it came from."
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The workspace, for a workspace rule."
           }
         }
       },
@@ -4147,7 +4147,7 @@
       },
       "CloseBehaviour": {
         "type": "string",
-        "description": "What closing the window does while a sandbox runs.",
+        "description": "What closing the window does while a workspace runs.",
         "enum": [
           "tray",
           "quit"
@@ -4167,7 +4167,7 @@
         "type": "string",
         "description": "Whose connection an audit record describes.",
         "enum": [
-          "sandbox",
+          "workspace",
           "puddle"
         ]
       },
@@ -4356,7 +4356,7 @@
       },
       "DecisionRequest": {
         "type": "object",
-        "description": "The choices of an approve or deny (R-15). Each one left out stays at its narrowest default:\nthis sandbox, the exact host, permanent.",
+        "description": "The choices of an approve or deny (R-15). Each one left out stays at its narrowest default:\nthis workspace, the exact host, permanent.",
         "properties": {
           "expires_in_secs": {
             "type": [
@@ -4373,11 +4373,11 @@
               "null"
             ],
             "format": "int64",
-            "description": "Put the rule into this rule set of yours (the number of `user:<id>`) instead: it then\napplies wherever the set is on. `scope` must be left at `sandbox`. The set must be on\nfor the request's sandbox."
+            "description": "Put the rule into this rule set of yours (the number of `user:<id>`) instead: it then\napplies wherever the set is on. `scope` must be left at `workspace`. The set must be on\nfor the request's workspace."
           },
           "scope": {
             "$ref": "#/components/schemas/ScopeChoice",
-            "description": "This sandbox (default) or every sandbox."
+            "description": "This workspace (default) or every workspace."
           },
           "suffix": {
             "type": [
@@ -4425,7 +4425,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/SandboxName",
-                "description": "The stopped sandbox that is removed together with the workspace."
+                "description": "The stopped workspace that is removed together with the workspace."
               },
               {
                 "type": "null"
@@ -4476,7 +4476,7 @@
       },
       "EffectiveSettings": {
         "type": "object",
-        "description": "The values a sandbox gets: its override, else the global value, else puddle's default.",
+        "description": "The values a workspace gets: its override, else the global value, else puddle's default.",
         "required": [
           "memory",
           "local_toggles",
@@ -4572,19 +4572,15 @@
         "oneOf": [
           {
             "type": "object",
-            "description": "A sandbox changed state.",
+            "description": "A workspace changed state.",
             "required": [
-              "sandbox",
+              "workspace",
               "status",
               "type"
             ],
             "properties": {
-              "sandbox": {
-                "$ref": "#/components/schemas/SandboxName",
-                "description": "The sandbox."
-              },
               "status": {
-                "$ref": "#/components/schemas/SandboxStatus",
+                "$ref": "#/components/schemas/WorkspaceStatus",
                 "description": "Its new state."
               },
               "type": {
@@ -4592,6 +4588,10 @@
                 "enum": [
                   "status_changed"
                 ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
               }
             }
           },
@@ -4599,7 +4599,7 @@
             "type": "object",
             "description": "The guest kernel's OOM killer ended a process (reported by the guest agent).\n\n`pid` and `process` come from the guest and are untrusted: build this variant with\n[`Event::oom_kill`], which bounds and cleans the name, and escape it when rendering.",
             "required": [
-              "sandbox",
+              "workspace",
               "pid",
               "process",
               "type"
@@ -4615,15 +4615,15 @@
                 "type": "string",
                 "description": "The killed process's name (`comm`), cleaned by [`Event::oom_kill`]."
               },
-              "sandbox": {
-                "$ref": "#/components/schemas/SandboxName",
-                "description": "The sandbox whose guest killed the process."
-              },
               "type": {
                 "type": "string",
                 "enum": [
                   "oom_kill"
                 ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace whose guest killed the process."
               }
             }
           },
@@ -4631,7 +4631,7 @@
             "type": "object",
             "description": "A workspace operation (create, start, stop, reclaim, delete) moved on. An operation ends\nwith one event whose step is [`WorkspaceStep::Done`] or [`WorkspaceStep::Failed`].",
             "required": [
-              "sandbox",
+              "workspace",
               "step",
               "detail",
               "type"
@@ -4644,10 +4644,6 @@
                 ],
                 "description": "More about the step, or why it failed; `null` when there is nothing to add. It can\nquote tool output: escape it when rendering."
               },
-              "sandbox": {
-                "$ref": "#/components/schemas/SandboxName",
-                "description": "The workspace's sandbox."
-              },
               "step": {
                 "$ref": "#/components/schemas/WorkspaceStep",
                 "description": "What it is doing now."
@@ -4657,12 +4653,16 @@
                 "enum": [
                   "workspace_progress"
                 ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace's workspace."
               }
             }
           },
           {
             "type": "object",
-            "description": "A new open pending request (a sandbox asked for a host:port no rule decides).",
+            "description": "A new open pending request (a workspace asked for a host:port no rule decides).",
             "required": [
               "request",
               "type"
@@ -4684,7 +4684,7 @@
             "type": "object",
             "description": "An open pending request was seen again.",
             "required": [
-              "sandbox",
+              "workspace",
               "id",
               "attempts",
               "last_seen",
@@ -4708,15 +4708,15 @@
                 "description": "Epoch ms of the latest one.",
                 "minimum": 0
               },
-              "sandbox": {
-                "$ref": "#/components/schemas/SandboxName",
-                "description": "The sandbox."
-              },
               "type": {
                 "type": "string",
                 "enum": [
                   "pending_updated"
                 ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
               }
             }
           },
@@ -4724,7 +4724,7 @@
             "type": "object",
             "description": "A pending request is no longer open: decided by a user or by a rule, or expired.",
             "required": [
-              "sandbox",
+              "workspace",
               "id",
               "state",
               "rule_id",
@@ -4744,10 +4744,6 @@
                 "format": "int64",
                 "description": "The rule that decided it; `null` for an expiry."
               },
-              "sandbox": {
-                "$ref": "#/components/schemas/SandboxName",
-                "description": "The sandbox."
-              },
               "state": {
                 "$ref": "#/components/schemas/PendingEnd",
                 "description": "How it ended."
@@ -4757,14 +4753,18 @@
                 "enum": [
                   "pending_closed"
                 ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
               }
             }
           },
           {
             "type": "object",
-            "description": "A sandbox's \"requests held back\" state (R-13) changed. Sent when suppression starts or\nends, and at most twice a second while its count grows.",
+            "description": "A workspace's \"requests held back\" state (R-13) changed. Sent when suppression starts or\nends, and at most twice a second while its count grows.",
             "required": [
-              "sandbox",
+              "workspace",
               "active",
               "count",
               "type"
@@ -4780,15 +4780,15 @@
                 "description": "Requests held back in this episode so far.",
                 "minimum": 0
               },
-              "sandbox": {
-                "$ref": "#/components/schemas/SandboxName",
-                "description": "The sandbox."
-              },
               "type": {
                 "type": "string",
                 "enum": [
                   "suppression_changed"
                 ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
               }
             }
           },
@@ -4851,7 +4851,7 @@
             }
           }
         ],
-        "description": "Something the user should hear about. Serialised as one internally tagged enum\n(`{\"type\":\"oom_kill\",...}`, ADR 0002).\n\nMost events are about one sandbox and carry a `sandbox` field; global ones (crash report\nwaiting, consent needed, network change, ...) carry none, and [`Event::sandbox`] returns\n`None` for them."
+        "description": "Something the user should hear about. Serialised as one internally tagged enum\n(`{\"type\":\"oom_kill\",...}`, ADR 0002).\n\nMost events are about one workspace and carry a `workspace` field; global ones (crash report\nwaiting, consent needed, network change, ...) carry none, and [`Event::workspace`] returns\n`None` for them."
       },
       "FindingList": {
         "type": "object",
@@ -4880,10 +4880,6 @@
         "type": "object",
         "description": "New global settings. Replaces every value listed here; unknown stored fields are kept.",
         "properties": {
-          "sandbox_defaults": {
-            "$ref": "#/components/schemas/SettingsLayer",
-            "description": "Defaults for every sandbox."
-          },
           "ui": {
             "$ref": "#/components/schemas/UiPrefs",
             "description": "Preferences for puddle's window."
@@ -4891,15 +4887,19 @@
           "vscode_server": {
             "$ref": "#/components/schemas/VsCodeServer",
             "description": "VS Code server options."
+          },
+          "workspace_defaults": {
+            "$ref": "#/components/schemas/SettingsLayer",
+            "description": "Defaults for every workspace."
           }
         },
         "additionalProperties": false
       },
       "GlobalSettingsView": {
         "type": "object",
-        "description": "The global settings, and what a sandbox without overrides gets.",
+        "description": "The global settings, and what a workspace without overrides gets.",
         "required": [
-          "sandbox_defaults",
+          "workspace_defaults",
           "vscode_server",
           "ui",
           "effective",
@@ -4908,11 +4908,7 @@
         "properties": {
           "effective": {
             "$ref": "#/components/schemas/EffectiveSettings",
-            "description": "The effective values for a sandbox with no overrides."
-          },
-          "sandbox_defaults": {
-            "$ref": "#/components/schemas/SettingsLayer",
-            "description": "Defaults for every sandbox."
+            "description": "The effective values for a workspace with no overrides."
           },
           "ui": {
             "$ref": "#/components/schemas/UiPrefs",
@@ -4928,6 +4924,10 @@
           "vscode_server": {
             "$ref": "#/components/schemas/VsCodeServer",
             "description": "VS Code server options."
+          },
+          "workspace_defaults": {
+            "$ref": "#/components/schemas/SettingsLayer",
+            "description": "Defaults for every workspace."
           }
         }
       },
@@ -5014,7 +5014,7 @@
       },
       "LocalToggles": {
         "type": "object",
-        "description": "Local destination categories a sandbox may approve. `null` inherits.",
+        "description": "Local destination categories a workspace may approve. `null` inherits.",
         "required": [
           "loopback",
           "private",
@@ -5133,7 +5133,7 @@
           },
           "scope": {
             "$ref": "#/components/schemas/RuleScope",
-            "description": "Global or one sandbox."
+            "description": "Global or one workspace."
           }
         },
         "additionalProperties": false
@@ -5182,8 +5182,8 @@
             "minimum": 256
           },
           "name": {
-            "$ref": "#/components/schemas/SandboxName",
-            "description": "The workspace's name, which is also its sandbox's name."
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The workspace's name, which is also its workspace's name."
           },
           "repo_url": {
             "type": "string",
@@ -5224,7 +5224,7 @@
         "description": "Why a pending request expired.",
         "enum": [
           "stale",
-          "sandbox_deleted"
+          "workspace_deleted"
         ]
       },
       "PendingList": {
@@ -5248,7 +5248,7 @@
         "description": "A connection that matched no rule and waits for the user (R-10).",
         "required": [
           "id",
-          "sandbox",
+          "workspace",
           "host",
           "port",
           "first_seen",
@@ -5341,13 +5341,13 @@
             ],
             "description": "The rule set whose entry decided it (`system`, `builtin:<slug>`, `user:<id>`), when one\ndid."
           },
-          "sandbox": {
-            "$ref": "#/components/schemas/SandboxName",
-            "description": "The requesting sandbox."
-          },
           "state": {
             "$ref": "#/components/schemas/PendingState",
             "description": "Where the row is in its life."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The requesting workspace."
           }
         }
       },
@@ -5366,7 +5366,7 @@
         "description": "An open pending request as [`Event::PendingOpened`] carries it. `host` comes from the guest\n(already normalised by the proxy): escape it when rendering.",
         "required": [
           "id",
-          "sandbox",
+          "workspace",
           "host",
           "registrable_domain",
           "port",
@@ -5412,9 +5412,9 @@
             "type": "string",
             "description": "The host's registrable domain (`example.co.uk` for `api.example.co.uk`; the IP literal\nitself), the key the inbox groups rows by."
           },
-          "sandbox": {
-            "$ref": "#/components/schemas/SandboxName",
-            "description": "The sandbox that asked."
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The workspace that asked."
           }
         }
       },
@@ -5816,7 +5816,7 @@
           },
           "scope": {
             "$ref": "#/components/schemas/RuleScope",
-            "description": "Global or one sandbox."
+            "description": "Global or one workspace."
           },
           "source_pending_id": {
             "type": [
@@ -5833,7 +5833,7 @@
         "description": "Why a rule was deleted.",
         "enum": [
           "user",
-          "sandbox_deleted",
+          "workspace_deleted",
           "set_deleted"
         ]
       },
@@ -5876,7 +5876,7 @@
         "oneOf": [
           {
             "type": "object",
-            "description": "Every sandbox.",
+            "description": "Every workspace.",
             "required": [
               "type"
             ],
@@ -5891,27 +5891,27 @@
           },
           {
             "type": "object",
-            "description": "One sandbox.",
+            "description": "One workspace.",
             "required": [
-              "sandbox",
+              "workspace",
               "type"
             ],
             "properties": {
-              "sandbox": {
-                "$ref": "#/components/schemas/SandboxName",
-                "description": "The sandbox."
-              },
               "type": {
                 "type": "string",
                 "enum": [
-                  "sandbox"
+                  "workspace"
                 ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
               }
             }
           },
           {
             "type": "object",
-            "description": "An entry of a rule set you made: it applies wherever the set is on, and your own global\nand sandbox rules decide first.",
+            "description": "An entry of a rule set you made: it applies wherever the set is on, and your own global\nand workspace rules decide first.",
             "required": [
               "set",
               "type"
@@ -5931,7 +5931,7 @@
             }
           }
         ],
-        "description": "Which sandboxes a rule applies to."
+        "description": "Which workspaces a rule applies to."
       },
       "RuleSetEntry": {
         "type": "object",
@@ -6014,9 +6014,9 @@
       },
       "RuleSetOverride": {
         "type": "object",
-        "description": "One sandbox's own switch for a set.",
+        "description": "One workspace's own switch for a set.",
         "required": [
-          "sandbox",
+          "workspace",
           "enabled"
         ],
         "properties": {
@@ -6024,15 +6024,15 @@
             "type": "boolean",
             "description": "On or off there."
           },
-          "sandbox": {
-            "$ref": "#/components/schemas/SandboxName",
-            "description": "The sandbox."
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The workspace."
           }
         }
       },
       "RuleSetSwitchRequest": {
         "type": "object",
-        "description": "Switch a set on or off, for every sandbox or for one.",
+        "description": "Switch a set on or off, for every workspace or for one.",
         "required": [
           "enabled"
         ],
@@ -6044,11 +6044,11 @@
             ],
             "description": "On or off; `null` removes the switch, so the next level decides (the global switch, then\nthe set's default)."
           },
-          "sandbox": {
+          "workspace": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/SandboxName",
-                "description": "The sandbox whose own switch to set; left out or `null` for every sandbox."
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace whose own switch to set; left out or `null` for every workspace."
               },
               {
                 "type": "null"
@@ -6152,7 +6152,7 @@
               "boolean",
               "null"
             ],
-            "description": "The switch for every sandbox; `null` follows `default_on`."
+            "description": "The switch for every workspace; `null` follows `default_on`."
           },
           "id": {
             "type": "string",
@@ -6171,78 +6171,23 @@
             "items": {
               "$ref": "#/components/schemas/RuleSetOverride"
             },
-            "description": "Sandboxes with a switch of their own."
+            "description": "Workspaces with a switch of their own."
           }
         }
       },
       "SandboxName": {
         "type": "string",
-        "description": "A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), not `tauri`, `ipc` or `asset`.",
+        "description": "A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`).",
         "example": "my-project",
         "maxLength": 63,
         "minLength": 1,
         "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
       },
-      "SandboxSettingsRequest": {
-        "type": "object",
-        "description": "New overrides for one sandbox. Replaces every value listed; `null` inherits.",
-        "properties": {
-          "overrides": {
-            "$ref": "#/components/schemas/SettingsLayer",
-            "description": "The overrides."
-          }
-        },
-        "additionalProperties": false
-      },
-      "SandboxSettingsView": {
-        "type": "object",
-        "description": "One sandbox's overrides and effective values.",
-        "required": [
-          "sandbox",
-          "overrides",
-          "effective",
-          "unknown_fields"
-        ],
-        "properties": {
-          "effective": {
-            "$ref": "#/components/schemas/EffectiveSettings",
-            "description": "What it gets."
-          },
-          "overrides": {
-            "$ref": "#/components/schemas/SettingsLayer",
-            "description": "Its overrides; `null` inherits."
-          },
-          "sandbox": {
-            "$ref": "#/components/schemas/SandboxName",
-            "description": "The sandbox."
-          },
-          "unknown_fields": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Unknown fields in its stored document (kept)."
-          }
-        }
-      },
-      "SandboxStatus": {
-        "type": "string",
-        "description": "A sandbox's state as the runtime reports it (msb's states, one for one).",
-        "enum": [
-          "created",
-          "starting",
-          "running",
-          "draining",
-          "paused",
-          "stopped",
-          "crashed"
-        ]
-      },
       "ScopeChoice": {
         "type": "string",
-        "description": "Whether an approval or denial covers only the request's sandbox or every sandbox.",
+        "description": "Whether an approval or denial covers only the request's workspace or every workspace.",
         "enum": [
-          "sandbox",
+          "workspace",
           "global"
         ]
       },
@@ -6258,14 +6203,14 @@
         "type": "string",
         "description": "Which level an effective value came from.",
         "enum": [
-          "sandbox",
+          "workspace",
           "global",
           "default"
         ]
       },
       "SettingsLayer": {
         "type": "object",
-        "description": "The settings every sandbox has. On a global document they are the defaults for every\nsandbox; on a sandbox they override those. `null` means \"not set here\": the next level (the\nglobal value, then puddle's default) applies.",
+        "description": "The settings every workspace has. On a global document they are the defaults for every\nworkspace; on a workspace they override those. `null` means \"not set here\": the next level (the\nglobal value, then puddle's default) applies.",
         "required": [
           "memory",
           "local_toggles",
@@ -6441,9 +6386,9 @@
       },
       "Suppression": {
         "type": "object",
-        "description": "Whether a sandbox's new pending requests are being suppressed (R-13).",
+        "description": "Whether a workspace's new pending requests are being suppressed (R-13).",
         "required": [
-          "sandbox",
+          "workspace",
           "active",
           "count"
         ],
@@ -6458,9 +6403,9 @@
             "description": "Requests suppressed in the current (or last) episode.",
             "minimum": 0
           },
-          "sandbox": {
-            "$ref": "#/components/schemas/SandboxName",
-            "description": "The sandbox."
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The workspace."
           }
         }
       },
@@ -6513,7 +6458,7 @@
           "note",
           "reason",
           "reason_text",
-          "sandbox"
+          "workspace"
         ],
         "properties": {
           "note": {
@@ -6532,11 +6477,11 @@
             "type": "string",
             "description": "The reason in words."
           },
-          "sandbox": {
+          "workspace": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/SandboxName",
-                "description": "The one sandbox it is allowed for; `null` for every sandbox."
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The one workspace it is allowed for; `null` for every workspace."
               },
               {
                 "type": "null"
@@ -6577,7 +6522,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/CloseBehaviour",
-                "description": "What closing the window does while a sandbox runs (default `tray`)."
+                "description": "What closing the window does while a workspace runs (default `tray`)."
               },
               {
                 "type": "null"
@@ -6651,7 +6596,7 @@
       },
       "Workspace": {
         "type": "object",
-        "description": "A workspace: a repository checkout on its own disk, and the sandbox that runs it.",
+        "description": "A workspace: a repository checkout on its own disk, and the workspace that runs it.",
         "required": [
           "id",
           "name",
@@ -6714,7 +6659,7 @@
           },
           "image": {
             "type": "string",
-            "description": "The image its sandbox boots."
+            "description": "The image its workspace boots."
           },
           "memory_mib": {
             "type": "integer",
@@ -6723,16 +6668,16 @@
             "minimum": 0
           },
           "name": {
-            "$ref": "#/components/schemas/SandboxName",
-            "description": "The name of the sandbox that runs it; events and per-sandbox settings use this name."
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The name of the workspace that runs it; events and per-workspace settings use this name."
           },
           "repo_url": {
             "type": "string",
             "description": "The HTTPS URL it was cloned from."
           },
           "status": {
-            "$ref": "#/components/schemas/SandboxStatus",
-            "description": "The sandbox's state."
+            "$ref": "#/components/schemas/WorkspaceStatus",
+            "description": "The workspace's state."
           }
         }
       },
@@ -6752,6 +6697,14 @@
           }
         }
       },
+      "WorkspaceName": {
+        "type": "string",
+        "description": "A workspace's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), not `tauri`, `ipc` or `asset`.",
+        "example": "my-project",
+        "maxLength": 63,
+        "minLength": 1,
+        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+      },
       "WorkspaceOperation": {
         "type": "string",
         "description": "The long operation a workspace is in the middle of; progress comes as\n`workspace_progress` events.",
@@ -6761,6 +6714,61 @@
           "stopping",
           "reclaiming",
           "deleting"
+        ]
+      },
+      "WorkspaceSettingsRequest": {
+        "type": "object",
+        "description": "New overrides for one workspace. Replaces every value listed; `null` inherits.",
+        "properties": {
+          "overrides": {
+            "$ref": "#/components/schemas/SettingsLayer",
+            "description": "The overrides."
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceSettingsView": {
+        "type": "object",
+        "description": "One workspace's overrides and effective values.",
+        "required": [
+          "workspace",
+          "overrides",
+          "effective",
+          "unknown_fields"
+        ],
+        "properties": {
+          "effective": {
+            "$ref": "#/components/schemas/EffectiveSettings",
+            "description": "What it gets."
+          },
+          "overrides": {
+            "$ref": "#/components/schemas/SettingsLayer",
+            "description": "Its overrides; `null` inherits."
+          },
+          "unknown_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Unknown fields in its stored document (kept)."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The workspace."
+          }
+        }
+      },
+      "WorkspaceStatus": {
+        "type": "string",
+        "description": "A workspace's state as the runtime reports it (msb's states, one for one).",
+        "enum": [
+          "created",
+          "starting",
+          "running",
+          "draining",
+          "paused",
+          "stopped",
+          "crashed"
         ]
       },
       "WorkspaceStep": {
@@ -6816,7 +6824,7 @@
     },
     {
       "name": "settings",
-      "description": "Global and per-sandbox settings"
+      "description": "Global and per-workspace settings"
     },
     {
       "name": "consents",

@@ -2,7 +2,7 @@
 //! Connecting through the route [`Discovery`] picked: the hops in order, the `CONNECT`
 //! and absolute-form exchanges with a proxy, and the `407` loop driven by [`ProxyAuth`].
 //!
-//! The caller (the sandbox proxy, the pull proxy, a host-side client) has already decided that
+//! The caller (the workspace proxy, the pull proxy, a host-side client) has already decided that
 //! the connection may happen: the rules said yes and the resolved addresses passed the guard.
 //! [`Chain`] only decides *how* to reach the destination, and keeps that decision from widening
 //! what was checked:

@@ -8,7 +8,7 @@ Why it is a switch: desktop editors over SSH let code in the workspace run comma
 computer and read the editor's secrets (a signed-in GitHub token). The browser editor does not.
 
 1. Each workspace has an "Allow direct SSH" setting (`direct_ssh`), off by default. A global default
-   (`sandbox_defaults.direct_ssh`, also off) applies to workspaces that set none; a workspace's own
+   (`workspace_defaults.direct_ssh`, also off) applies to workspaces that set none; a workspace's own
    value wins.
 2. While it is off for a workspace, Puddle opens no SSH endpoint for it, and writes no ssh config
    entry. The check is `HostWorkspaces::direct_ssh_allowed`; anything that opens a way in must

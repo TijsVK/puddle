@@ -159,7 +159,7 @@ impl ConsentKind {
 }
 
 /// Every consent, one field per [`ConsentKind`]. Part of [`crate::GlobalSettings`]: consent is
-/// per user, never per sandbox.
+/// per user, never per workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Consents {
     /// puddle's own usage telemetry.

@@ -17,7 +17,7 @@
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
   const current = $derived(activeTab(page.url.pathname, id));
   const waiting = $derived(
-    pending.rows.filter((r) => r.request.sandbox === workspace?.name).length,
+    pending.rows.filter((r) => r.request.workspace === workspace?.name).length,
   );
 
   // A workspace that was here and is gone (deleted, here or elsewhere) takes you back to the list.

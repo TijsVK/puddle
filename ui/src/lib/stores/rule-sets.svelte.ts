@@ -141,7 +141,8 @@ export class RuleSetsStore {
         {
           params: { path: { id } },
           body: {
-            sandbox: workspace as components["schemas"]["SandboxName"] | null,
+            workspace: workspace as
+              components["schemas"]["WorkspaceName"] | null,
             enabled,
           },
         },

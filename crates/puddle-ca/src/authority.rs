@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The per-sandbox CA and its leaf cache.
+//! The per-workspace CA and its leaf cache.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -28,7 +28,7 @@ const MAX_COMMON_NAME: usize = 64;
 /// use puddle_ca::{CaBuilder, NameConstraints};
 ///
 /// let constraints = NameConstraints::new().permit_dns("github.com")?;
-/// let ca = CaBuilder::new("puddle proxy CA (sandbox demo)", constraints).build()?;
+/// let ca = CaBuilder::new("puddle proxy CA (workspace demo)", constraints).build()?;
 /// let leaf = ca.leaf("github.com")?;
 /// assert_eq!(leaf.cert.len(), 1);
 /// assert!(ca.leaf("example.com").is_err());
@@ -107,11 +107,11 @@ impl CaBuilder {
     /// [`CaError::InvalidSetting`] for an empty or over-long common name, a zero validity, a leaf
     /// validity longer than the CA's, or a zero cache capacity, and [`CaError::Generate`] when key
     /// generation or signing fails.
-    pub fn build(self) -> Result<SandboxCa, CaError> {
+    pub fn build(self) -> Result<WorkspaceCa, CaError> {
         self.build_at(OffsetDateTime::now_utc())
     }
 
-    pub(crate) fn build_at(self, now: OffsetDateTime) -> Result<SandboxCa, CaError> {
+    pub(crate) fn build_at(self, now: OffsetDateTime) -> Result<WorkspaceCa, CaError> {
         if !self.constraints.has_dns() {
             return Err(CaError::NoPermittedNames);
         }
@@ -148,7 +148,7 @@ impl CaBuilder {
 
         let key = KeyPair::generate().map_err(CaError::Generate)?;
         let cert = params.self_signed(&key).map_err(CaError::Generate)?;
-        Ok(SandboxCa {
+        Ok(WorkspaceCa {
             certificate: CaCertificate::new(&cert),
             issuer: Issuer::new(params, key),
             constraints: self.constraints,
@@ -162,12 +162,12 @@ impl CaBuilder {
     }
 }
 
-/// One sandbox's CA (never shared between sandboxes), with the leaves it issued.
+/// One workspace's CA (never shared between workspaces), with the leaves it issued.
 ///
 /// The key stays inside: the type has no accessor for it and implements neither `Clone` nor
 /// serde's traits, and `Debug` prints only the certificate and constraints. A later dev CA that
 /// must hand its key to the guest is a separate type.
-pub struct SandboxCa {
+pub struct WorkspaceCa {
     certificate: CaCertificate,
     issuer: Issuer<'static, KeyPair>,
     constraints: NameConstraints,
@@ -179,16 +179,16 @@ pub struct SandboxCa {
     cache: Mutex<LeafCache>,
 }
 
-impl fmt::Debug for SandboxCa {
+impl fmt::Debug for WorkspaceCa {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SandboxCa")
+        f.debug_struct("WorkspaceCa")
             .field("constraints", &self.constraints)
             .field("not_after", &self.not_after)
             .finish_non_exhaustive()
     }
 }
 
-impl SandboxCa {
+impl WorkspaceCa {
     /// The CA certificate, for the guest's trust bundle.
     #[must_use]
     pub fn certificate(&self) -> &CaCertificate {
@@ -392,8 +392,8 @@ mod tests {
             .unwrap()
     }
 
-    fn ca(constraints: NameConstraints) -> SandboxCa {
-        CaBuilder::new("puddle proxy CA (sandbox test)", constraints)
+    fn ca(constraints: NameConstraints) -> WorkspaceCa {
+        CaBuilder::new("puddle proxy CA (workspace test)", constraints)
             .build()
             .unwrap()
     }
@@ -536,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn a_leaf_from_one_sandbox_does_not_verify_under_another() {
+    fn a_leaf_from_one_workspace_does_not_verify_under_another() {
         let a = ca(github());
         let b = ca(github());
         assert_ne!(a.certificate(), b.certificate());
@@ -743,8 +743,8 @@ mod tests {
 
     #[test]
     fn the_ca_can_be_neither_serialised_nor_cloned() {
-        const { assert!(!Probe::<SandboxCa>::IMPLS) };
-        const { assert!(!CloneProbe::<SandboxCa>::IMPLS) };
+        const { assert!(!Probe::<WorkspaceCa>::IMPLS) };
+        const { assert!(!CloneProbe::<WorkspaceCa>::IMPLS) };
         // The probes do see the traits where they exist.
         const { assert!(Probe::<String>::IMPLS) };
         const { assert!(CloneProbe::<CaCertificate>::IMPLS) };

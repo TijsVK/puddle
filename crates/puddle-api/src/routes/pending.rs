@@ -8,14 +8,14 @@ use std::collections::HashMap;
 use puddle_netpolicy::{Target, classify_ip};
 use puddle_settings::resolve;
 use puddle_store::{Actor, PendingRow, PendingState};
-use puddle_types::{Host, LocalCategory, PendingId, SandboxName};
+use puddle_types::{Host, LocalCategory, PendingId, WorkspaceName};
 use serde::Deserialize;
 
 use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
-use crate::routes::settings::{load_global, load_sandbox};
+use crate::routes::settings::{load_global, load_workspace};
 use crate::wire::{
     DecisionOutcome, DecisionRequest, Effect, Inbox, InboxGroup, PendingList, PendingRequest,
     Suppression,
@@ -25,8 +25,8 @@ use crate::wire::{
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PendingQuery {
-    /// Only this sandbox's requests. All sandboxes if left out.
-    sandbox: Option<SandboxName>,
+    /// Only this workspace's requests. All workspaces if left out.
+    workspace: Option<WorkspaceName>,
 }
 
 /// The local category a destination is in by itself: an IP literal's class, or a name such as
@@ -49,10 +49,10 @@ async fn present(state: &AppState, rows: Vec<PendingRow>) -> Result<Vec<PendingR
     let blocked: HashMap<PendingId, LocalCategory> = if wanted {
         let _lock = state.settings_lock.lock().await;
         let settings = state.settings.clone();
-        let candidates: Vec<(PendingId, SandboxName, LocalCategory)> = rows
+        let candidates: Vec<(PendingId, WorkspaceName, LocalCategory)> = rows
             .iter()
             .filter(|r| r.state == PendingState::Requested)
-            .filter_map(|r| Some((r.id, r.sandbox.clone(), local_category(&r.host)?)))
+            .filter_map(|r| Some((r.id, r.workspace.clone(), local_category(&r.host)?)))
             .collect();
         blocking(move || {
             let repo = settings.as_ref();
@@ -60,12 +60,12 @@ async fn present(state: &AppState, rows: Vec<PendingRow>) -> Result<Vec<PendingR
                 tracing::warn!("global settings unreadable; no pending request is marked blocked");
                 return Ok(HashMap::new());
             };
-            let mut per_sandbox = HashMap::new();
+            let mut per_workspace = HashMap::new();
             let mut blocked = HashMap::new();
-            for (id, sandbox, category) in candidates {
-                let loaded = per_sandbox
-                    .entry(sandbox.clone())
-                    .or_insert_with(|| load_sandbox(repo, &sandbox).ok());
+            for (id, workspace, category) in candidates {
+                let loaded = per_workspace
+                    .entry(workspace.clone())
+                    .or_insert_with(|| load_workspace(repo, &workspace).ok());
                 let Some(loaded) = loaded else { continue };
                 let effective = resolve(&global.settings, Some(&loaded.settings));
                 if !effective.local_toggles.get(category).value {
@@ -93,10 +93,10 @@ async fn present(state: &AppState, rows: Vec<PendingRow>) -> Result<Vec<PendingR
     get,
     path = "/api/pending",
     tag = "pending",
-    params(("sandbox" = Option<SandboxName>, Query, description = "only this sandbox's requests")),
+    params(("workspace" = Option<WorkspaceName>, Query, description = "only this workspace's requests")),
     responses(
         (status = OK, description = "open requests", body = PendingList),
-        (status = BAD_REQUEST, description = "invalid sandbox name", body = ApiErrorBody)
+        (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn list_pending(
@@ -104,7 +104,7 @@ pub(crate) async fn list_pending(
     Query(query): Query<PendingQuery>,
 ) -> Result<Json<PendingList>, ApiError> {
     let store = state.store.clone();
-    let rows = blocking(move || Ok(store.open_pending(query.sandbox.as_ref())?)).await?;
+    let rows = blocking(move || Ok(store.open_pending(query.workspace.as_ref())?)).await?;
     Ok(Json(PendingList {
         requests: present(&state, rows).await?,
     }))
@@ -150,7 +150,7 @@ pub(crate) async fn get_pending(
     Ok(Json(present(&state, vec![row]).await?.remove(0)))
 }
 
-/// Approves an open request: creates an allow rule (this sandbox, exact host, permanent unless
+/// Approves an open request: creates an allow rule (this workspace, exact host, permanent unless
 /// the body says otherwise) and closes the other open requests it now decides.
 #[utoipa::path(
     post,
@@ -173,7 +173,7 @@ pub(crate) async fn approve(
     decide(state, id, body, Effect::Allow).await
 }
 
-/// Denies an open request: creates a deny rule (this sandbox, exact host, permanent unless the
+/// Denies an open request: creates a deny rule (this workspace, exact host, permanent unless the
 /// body says otherwise) and closes the other open requests it now decides.
 #[utoipa::path(
     post,
@@ -212,25 +212,25 @@ async fn decide(
     Ok(Json(DecisionOutcome::from_store(decided)?))
 }
 
-/// Whether a sandbox's new pending requests are being suppressed (R-13), for the inbox's
+/// Whether a workspace's new pending requests are being suppressed (R-13), for the inbox's
 /// "N requests suppressed" line.
 #[utoipa::path(
     get,
-    path = "/api/sandboxes/{sandbox}/suppression",
+    path = "/api/workspaces/{workspace}/suppression",
     tag = "pending",
-    params(("sandbox" = SandboxName, Path, description = "sandbox name")),
+    params(("workspace" = WorkspaceName, Path, description = "workspace name")),
     responses(
-        (status = OK, description = "the sandbox's suppression state", body = Suppression),
-        (status = BAD_REQUEST, description = "invalid sandbox name", body = ApiErrorBody)
+        (status = OK, description = "the workspace's suppression state", body = Suppression),
+        (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn suppression(
     State(state): State<AppState>,
-    Path(sandbox): Path<SandboxName>,
+    Path(workspace): Path<WorkspaceName>,
 ) -> Json<Suppression> {
-    let s = state.store.suppression(&sandbox);
+    let s = state.store.suppression(&workspace);
     Json(Suppression {
-        sandbox,
+        workspace,
         active: s.active,
         count: s.count,
     })

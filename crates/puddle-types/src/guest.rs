@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! What puddle puts into a guest: paths, files and environment variables.
 //!
-//! Providers (proxy config, corporate roots, the per-sandbox CA) produce [`GuestFile`]s and
+//! Providers (proxy config, corporate roots, the per-workspace CA) produce [`GuestFile`]s and
 //! [`GuestEnv`]; the boot hook applies them as a list and holds no provider logic itself.
 
 use std::collections::BTreeMap;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! L2 end to end, no VM: a DNS client → the guest agent's stub DNS → a `resolve` stream over the
-//! sandbox's real endpoint (a Unix socket) → the real proxy with the real SQLite rules engine.
+//! workspace's real endpoint (a Unix socket) → the real proxy with the real SQLite rules engine.
 //!
 //! The doubles are the host's resolvers (they count their lookups) and the address check.
 //! Hostile cases speak to the route directly, without the agent.
@@ -28,7 +28,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticRecords, StaticResolver};
 use puddle_proxy::{Proxy, ProxyConfig, Route, Upstream};
 use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
-use puddle_types::{NullSink, SandboxName};
+use puddle_types::{NullSink, WorkspaceName};
 use puddle_upstream::{Chain, Config as UpstreamConfig, Discovery, FakeOs, Hop, NoAuth, ProxyAddr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
@@ -41,8 +41,8 @@ const TYPE_TXT: u16 = 16;
 const TYPE_AAAA: u16 = 28;
 const TYPE_SRV: u16 = 33;
 
-fn sandbox() -> SandboxName {
-    SandboxName::new("dns").unwrap()
+fn workspace() -> WorkspaceName {
+    WorkspaceName::new("dns").unwrap()
 }
 
 /// Counts what the host's resolvers were asked.
@@ -129,7 +129,7 @@ async fn rig_with(options: Options) -> Rig {
         proxy = proxy.with_upstream(upstream);
     }
     let root = IpcRoot::new().unwrap();
-    let route = Arc::new(proxy).serve_route(root.listen().unwrap(), sandbox());
+    let route = Arc::new(proxy).serve_route(root.listen().unwrap(), workspace());
     let config = Config {
         listen: SocketAddr::new(LOCAL, 0),
         target: Target::Unix(route.endpoint().path().to_path_buf()),
@@ -158,7 +158,7 @@ async fn rig() -> Rig {
 fn allow(store: &Store, host: &str) {
     store
         .add_rule(&NewRule {
-            scope: Scope::Sandbox(sandbox()),
+            scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),
             effect: Effect::Allow,
             expires_at: None,
@@ -170,7 +170,7 @@ fn allow(store: &Store, host: &str) {
 fn deny(store: &Store, host: &str) {
     store
         .add_rule(&NewRule {
-            scope: Scope::Sandbox(sandbox()),
+            scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),
             effect: Effect::Deny,
             expires_at: None,
@@ -584,7 +584,7 @@ async fn a_guest_that_speaks_to_the_route_directly_gets_the_same_answers_and_no_
             .unwrap(),
         ResolveAnswer::NoData { .. }
     ));
-    // Names that are not names, and the sandbox is never the guest's to choose.
+    // Names that are not names, and the workspace is never the guest's to choose.
     for odd in ["", "1.2.3.4", "a b.example", "\u{1b}[2K.example"] {
         assert!(matches!(
             ask(odd, RecordType::A).await.unwrap(),
@@ -616,7 +616,7 @@ async fn a_guest_that_speaks_to_the_route_directly_gets_the_same_answers_and_no_
 
 #[tokio::test]
 async fn a_guest_that_floods_lookups_of_an_allowed_name_over_a_stuck_resolver_hits_the_caps() {
-    // A resolver that never answers: the sandbox's lookup cap (32) and the session cap (64) hold.
+    // A resolver that never answers: the workspace's lookup cap (32) and the session cap (64) hold.
     struct Stuck;
     impl puddle_proxy::Resolver for Stuck {
         fn resolve<'a>(
@@ -634,7 +634,7 @@ async fn a_guest_that_floods_lookups_of_an_allowed_name_over_a_stuck_resolver_hi
         .with_address_check(Arc::new(AnyAddress))
         .with_config(ProxyConfig::default().with_lookup_limits(Duration::from_secs(2), 32));
     let root = IpcRoot::new().unwrap();
-    let route = Arc::new(proxy).serve_route(root.listen().unwrap(), sandbox());
+    let route = Arc::new(proxy).serve_route(root.listen().unwrap(), workspace());
     let (control, driver) = raw_guest(&route).await;
     let mut set = tokio::task::JoinSet::new();
     for i in 0..200 {

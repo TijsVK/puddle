@@ -33,8 +33,8 @@
   const id = $props.id();
   let pattern = $state("");
   let effect = $state<"allow" | "deny">("allow");
-  // "sandbox", "global", or "set:<id>".
-  let scope = $state("sandbox");
+  // "workspace", "global", or "set:<id>".
+  let scope = $state("workspace");
   let workspace = $state("");
   let duration = $state("0");
   let busy = $state(false);
@@ -49,7 +49,7 @@
   function reset() {
     pattern = "";
     effect = "allow";
-    scope = "sandbox";
+    scope = "workspace";
     workspace = "";
     duration = "0";
     patternProblem = null;
@@ -65,7 +65,7 @@
         ? "Enter a host, such as example.com or *.example.com."
         : null;
     workspaceProblem =
-      scope === "sandbox" ? workspaceNameError(workspace.trim()) : null;
+      scope === "workspace" ? workspaceNameError(workspace.trim()) : null;
     if (patternProblem || workspaceProblem) return;
     const secs = duration === "0" ? null : Number(duration);
     const expires = expiryFrom(now(), secs);
@@ -87,7 +87,7 @@
     const set = sets.find((s) => `set:${s.id}` === choice);
     if (set) return { type: "set", set: set.id };
     if (choice === "global") return { type: "global" };
-    return { type: "sandbox", sandbox: workspace.trim() as never };
+    return { type: "workspace", workspace: workspace.trim() as never };
   }
 
   /** Empties the form and puts the rule into this set; the page calls it from a set's card. */
@@ -161,7 +161,7 @@
         <input
           type="radio"
           name="{id}-scope"
-          value="sandbox"
+          value="workspace"
           bind:group={scope}
         />
         One workspace
@@ -188,7 +188,7 @@
             >{/if}
         </label>
       {/each}
-      {#if scope === "sandbox"}
+      {#if scope === "workspace"}
         <div class="field">
           <label for="{id}-workspace">Workspace name</label>
           <input

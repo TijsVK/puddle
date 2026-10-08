@@ -12,7 +12,7 @@ use puddle_agent_proto::resolve::{Record, RecordType, ResolveAnswer, ResolveQuer
 use puddle_netpolicy::{LocalAccess, NetPolicy};
 use puddle_types::{
     Decision, DomainName, EgressRequest, Host, NullSink, PatternKind, Policy, PolicyError, RuleId,
-    SandboxName, SuffixAllows,
+    SuffixAllows, WorkspaceName,
 };
 use puddle_upstream::{
     Chain, Config, Discovery, FakeOs, Hop, NoAuth, ProxyAddr, ProxyConfig as OsProxyConfig,
@@ -20,10 +20,10 @@ use puddle_upstream::{
 
 use crate::destination::{BoxFuture, Resolver};
 use crate::testing::{AnyAddress, StaticPolicy, StaticRecords, StaticResolver};
-use crate::{Proxy, ProxyConfig, SandboxHandler, Upstream};
+use crate::{Proxy, ProxyConfig, Upstream, WorkspaceHandler};
 
-fn sandbox() -> SandboxName {
-    SandboxName::new("box").unwrap()
+fn workspace() -> WorkspaceName {
+    WorkspaceName::new("box").unwrap()
 }
 
 fn host(h: &str) -> Host {
@@ -55,7 +55,7 @@ struct Rig {
     policy: Arc<StaticPolicy>,
     resolver: Arc<StaticResolver>,
     records: Arc<StaticRecords>,
-    handler: SandboxHandler,
+    handler: WorkspaceHandler,
 }
 
 fn rig_with(
@@ -75,7 +75,7 @@ fn rig_with(
         policy,
         resolver,
         records,
-        handler: proxy.handler(sandbox()),
+        handler: proxy.handler(workspace()),
     }
 }
 
@@ -409,7 +409,7 @@ impl Resolver for Stuck {
 fn stuck_rig(
     config: ProxyConfig,
     upstream: Option<Upstream>,
-) -> (Arc<StaticPolicy>, Arc<Stuck>, SandboxHandler) {
+) -> (Arc<StaticPolicy>, Arc<Stuck>, WorkspaceHandler) {
     let policy = Arc::new(StaticPolicy::new());
     let stuck = Arc::new(Stuck::default());
     let mut proxy = Proxy::new(policy.clone(), Arc::new(NullSink))
@@ -419,7 +419,7 @@ fn stuck_rig(
     if let Some(upstream) = upstream {
         proxy = proxy.with_upstream(upstream);
     }
-    (policy, stuck, Arc::new(proxy).handler(sandbox()))
+    (policy, stuck, Arc::new(proxy).handler(workspace()))
 }
 
 #[tokio::test(start_paused = true)]
@@ -441,7 +441,7 @@ async fn a_lookup_that_times_out_is_unavailable_or_left_to_the_company_proxy() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn lookups_over_the_per_sandbox_cap_are_unavailable_and_free_their_slot_when_done() {
+async fn lookups_over_the_per_workspace_cap_are_unavailable_and_free_their_slot_when_done() {
     let config = ProxyConfig::default().with_lookup_limits(Duration::from_secs(5), 2);
     let (policy, stuck, handler) = stuck_rig(config, None);
     for name in ["a.example", "b.example", "c.example"] {
@@ -496,7 +496,7 @@ async fn a_policy_that_only_knows_decide_allows_nothing() {
             .with_resolver(resolver.clone())
             .with_address_check(Arc::new(AnyAddress)),
     );
-    let handler = proxy.handler(sandbox());
+    let handler = proxy.handler(workspace());
     assert_eq!(
         handler.resolve_name(a("example.com")).await,
         stand_in(StandInReason::NotAllowed)

@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 
 use hyper::client::conn::http1::{self, SendRequest};
 use hyper_util::rt::TokioIo;
-use puddle_types::{HttpRequestLine, SandboxName};
+use puddle_types::{HttpRequestLine, WorkspaceName};
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::task::JoinHandle;
@@ -53,7 +53,7 @@ pub(crate) struct Context<'a> {
     pub(crate) proxy: &'a crate::proxy::Proxy,
     pub(crate) termination: &'a Termination,
     pub(crate) tls: &'a TlsClient,
-    pub(crate) sandbox: &'a SandboxName,
+    pub(crate) workspace: &'a WorkspaceName,
     pub(crate) target: &'a Target,
     pub(crate) admitted: &'a Admitted,
 }
@@ -242,7 +242,7 @@ where
         }
         let decision = {
             let context = InjectContext {
-                sandbox: self.cx.sandbox,
+                workspace: self.cx.workspace,
                 host: &self.cx.target.host,
             };
             let view = RequestView {

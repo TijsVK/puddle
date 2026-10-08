@@ -40,7 +40,7 @@ impl CaCertificate {
     }
 }
 
-/// The puddle CAs one sandbox's guest trusts: a list, so a later dev CA is one more
+/// The puddle CAs one workspace's guest trusts: a list, so a later dev CA is one more
 /// entry next to the proxy CA rather than a second mechanism.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TrustBundle {

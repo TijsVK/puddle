@@ -2,7 +2,7 @@
 //! The workspaces the API serves: the [`WorkspaceService`] trait the routes call, the domain
 //! types it speaks, and the [`Launcher`] that opens a desktop editor.
 //!
-//! The routes know nothing about volumes, sandboxes or the runtime. The real service (over
+//! The routes know nothing about volumes, workspaces or the runtime. The real service (over
 //! `puddle-workspace` and `puddle-lifecycle`) is wired in by the application; [`crate::FakeWorkspaces`]
 //! is the in-memory one for tests and the UI fixture. Every method returns promptly: a long
 //! operation (create, start, stop, reclaim, delete) is *accepted* by the call, returns the
@@ -12,7 +12,7 @@
 use std::fmt;
 
 use futures_util::future::BoxFuture;
-use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus, WorkspaceId};
+use puddle_types::{ImageRef, MemoryMib, SandboxName, WorkspaceId, WorkspaceName, WorkspaceStatus};
 use sha2::{Digest, Sha256};
 
 /// The long operation a workspace is in the middle of.
@@ -48,16 +48,16 @@ impl fmt::Display for Operation {
 pub struct WorkspaceRecord {
     /// The workspace's id (its volume is `ws-<id>`).
     pub id: WorkspaceId,
-    /// The sandbox that runs it; events and settings use this name.
-    pub name: SandboxName,
+    /// The workspace that runs it; events and settings use this name.
+    pub name: WorkspaceName,
     /// The repository it was created from (HTTPS, no credentials).
     pub repo_url: String,
-    /// The image its sandbox boots.
+    /// The image its workspace boots.
     pub image: String,
     /// Its memory, applied at the next start.
     pub memory: MemoryMib,
-    /// The sandbox's state.
-    pub status: SandboxStatus,
+    /// The workspace's state.
+    pub status: WorkspaceStatus,
     /// The operation in progress, if any.
     pub busy: Option<Operation>,
     /// Epoch ms it was created.
@@ -71,14 +71,14 @@ pub struct WorkspaceRecord {
 impl WorkspaceRecord {
     /// A record with the defaults the fake and the tests start from.
     #[must_use]
-    pub fn new(id: WorkspaceId, name: SandboxName, repo_url: impl Into<String>) -> Self {
+    pub fn new(id: WorkspaceId, name: WorkspaceName, repo_url: impl Into<String>) -> Self {
         Self {
             id,
             name,
             repo_url: repo_url.into(),
             image: DEFAULT_IMAGE.to_owned(),
             memory: MemoryMib::DEFAULT,
-            status: SandboxStatus::Created,
+            status: WorkspaceStatus::Created,
             busy: None,
             created_at: 0,
             disk_size_mib: DEFAULT_DISK_MIB,
@@ -164,8 +164,8 @@ fn is_scp_like(url: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NewWorkspace {
-    /// The workspace's sandbox name; its id is derived from it.
-    pub name: SandboxName,
+    /// The workspace's workspace name; its id is derived from it.
+    pub name: WorkspaceName,
     /// Where to clone from.
     pub repo_url: RepoUrl,
     /// The image, or the default.
@@ -177,7 +177,7 @@ pub struct NewWorkspace {
 impl NewWorkspace {
     /// A request for a workspace with the defaults.
     #[must_use]
-    pub fn new(name: SandboxName, repo_url: RepoUrl) -> Self {
+    pub fn new(name: WorkspaceName, repo_url: RepoUrl) -> Self {
         Self {
             name,
             repo_url,
@@ -237,7 +237,7 @@ pub struct DeleteCheck {
     pub other: Listing,
     /// What could not be checked. A check that could not run counts as unsafe.
     pub errors: Vec<String>,
-    /// The stopped sandbox that is removed together with the workspace.
+    /// The stopped workspace that is removed together with the workspace.
     pub removes_sandbox: Option<SandboxName>,
     /// A digest of exactly this report. A delete that passes it is refused when the workspace
     /// has changed since.
@@ -647,7 +647,7 @@ mod tests {
     async fn the_empty_service_says_it_is_unavailable() {
         let svc = NoWorkspaces;
         let id = WorkspaceId::new("w").unwrap();
-        let name = SandboxName::new("w").unwrap();
+        let name = WorkspaceName::new("w").unwrap();
         let url = RepoUrl::parse("https://example.com/a").unwrap();
         let all = [
             svc.list().await.map(|_| ()),

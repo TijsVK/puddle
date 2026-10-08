@@ -73,7 +73,7 @@ describe("OptionsPopover", () => {
     );
     expect(onDecide).toHaveBeenCalledWith({
       effect: "allow",
-      scope: "sandbox",
+      scope: "workspace",
       ruleSet: { id: 5, name: "Local", everywhere: false },
       match: "exact",
       durationSecs: null,

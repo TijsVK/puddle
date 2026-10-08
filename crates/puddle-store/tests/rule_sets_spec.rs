@@ -16,7 +16,7 @@ use puddle_store::{
 };
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, Decision, EgressRequest, Host, PatternKind,
-    PendingId, PendingOutcome, RuleId, RuleSetId, SandboxName, SuffixAllows,
+    PendingId, PendingOutcome, RuleId, RuleSetId, SuffixAllows, WorkspaceName,
 };
 use serde_json::Value;
 
@@ -28,17 +28,17 @@ fn fixture() -> (Arc<ManualClock>, Store) {
     (clock, store)
 }
 
-fn sb(id: &str) -> SandboxName {
-    SandboxName::new(id).unwrap()
+fn sb(id: &str) -> WorkspaceName {
+    WorkspaceName::new(id).unwrap()
 }
 
-fn req(sandbox: &str, host: &str) -> EgressRequest {
-    EgressRequest::new(sb(sandbox), Host::parse_normalised(host).unwrap(), 443)
+fn req(workspace: &str, host: &str) -> EgressRequest {
+    EgressRequest::new(sb(workspace), Host::parse_normalised(host).unwrap(), 443)
 }
 
-fn decide(store: &Store, sandbox: &str, host: &str) -> Decision {
+fn decide(store: &Store, workspace: &str, host: &str) -> Decision {
     store
-        .decide(&req(sandbox, host), SuffixAllows::Count)
+        .decide(&req(workspace, host), SuffixAllows::Count)
         .unwrap()
 }
 
@@ -79,7 +79,7 @@ fn user_set(store: &Store, name: &str) -> i64 {
 fn plan(everywhere: &[SystemReason], per: &[(&str, &[SystemReason])]) -> SystemPlan {
     SystemPlan {
         everywhere: everywhere.iter().copied().collect(),
-        sandboxes: per
+        workspaces: per
             .iter()
             .map(|(s, r)| (sb(s), r.iter().copied().collect::<BTreeSet<_>>()))
             .collect::<BTreeMap<_, _>>(),
@@ -148,7 +148,7 @@ fn r36_an_update_that_changes_a_built_in_set_is_recorded() {
 }
 
 #[test]
-fn r37_switches_apply_globally_with_a_per_sandbox_override_and_close_waiting_requests() {
+fn r37_switches_apply_globally_with_a_per_workspace_override_and_close_waiting_requests() {
     let (_, store) = fixture();
     let github = RuleSetId::BuiltIn("github");
     let waiting_a = pending(decide(&store, "a", "api.github.com"));
@@ -190,7 +190,7 @@ fn r37_switches_apply_globally_with_a_per_sandbox_override_and_close_waiting_req
     assert_eq!((info.global, info.overrides.clone()), (Some(true), vec![]));
     let switched = audit_of(&store, "rule_set_switched");
     assert_eq!(switched.len(), 3);
-    assert_eq!(switched[1]["sandbox_id"], Value::Null);
+    assert_eq!(switched[1]["workspace_id"], Value::Null);
     assert_eq!(switched[1]["enabled"], true);
     assert_eq!(switched[2]["enabled"], Value::Null);
     assert_eq!(switched[2]["actor"], "ui");
@@ -245,7 +245,7 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
         Decision::SetAllow { set: RuleSetId::User(id), rule_id: Some(r), pattern: PatternKind::Suffix }
             if id == azure && r == entry.id
     ));
-    // Approve into the set from the inbox: the rule joins the set, and other sandboxes' rows close.
+    // Approve into the set from the inbox: the rule joins the set, and other workspaces' rows close.
     let in_a = pending(decide(&store, "a", "login.microsoftonline.com"));
     let in_b = pending(decide(&store, "b", "login.microsoftonline.com"));
     let mut into_set = Resolution::allow();
@@ -261,7 +261,7 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
             .len(),
         2
     );
-    // Not into a set that is off for the row's sandbox: that would allow nothing.
+    // Not into a set that is off for the row's workspace: that would allow nothing.
     store
         .switch_rule_set(
             RuleSetId::User(azure),
@@ -273,7 +273,7 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
     let in_c = pending(decide(&store, "c", "graph.microsoft.com"));
     assert!(matches!(
         store.resolve_pending(in_c, &into_set, Actor::Ui),
-        Err(StoreError::RuleSetOff { set, sandbox }) if set == format!("user:{azure}") && sandbox == "c"
+        Err(StoreError::RuleSetOff { set, workspace }) if set == format!("user:{azure}") && workspace == "c"
     ));
     assert_eq!(store.pending(in_c).unwrap().state, PendingState::Requested);
     // Nor into a set that doesn't exist.
@@ -398,7 +398,7 @@ fn r39_your_own_rules_decide_before_any_set() {
     );
     let mine = store
         .add_rule(&new_rule(
-            Scope::Sandbox(sb("a")),
+            Scope::Workspace(sb("a")),
             "ads.example.com",
             Effect::Allow,
         ))
@@ -457,10 +457,10 @@ fn r41_system_managed_follows_the_plan_and_records_each_change() {
     let hosts = store.system_managed().unwrap();
     assert!(hosts.iter().any(|h| h.pattern == "open-vsx.org"
         && h.reason == SystemReason::CodeServer
-        && h.sandbox.is_none()));
+        && h.workspace.is_none()));
     assert!(hosts.iter().any(|h| h.pattern == "*.gallery.vsassets.io"
         && h.reason == SystemReason::DirectSsh
-        && h.sandbox == Some(sb("ssh"))));
+        && h.workspace == Some(sb("ssh"))));
     // The same plan again changes and records nothing.
     let before = audit_of(&store, "system_managed_changed").len();
     assert_eq!(before, 2);
@@ -481,11 +481,11 @@ fn r41_system_managed_follows_the_plan_and_records_each_change() {
     let records = audit_of(&store, "system_managed_changed");
     let last_two: Vec<_> = records.iter().rev().take(2).collect();
     assert!(
-        last_two
-            .iter()
-            .any(|r| r["sandbox_id"] == "ssh" && r["removed"] == serde_json::json!(["direct_ssh"]))
+        last_two.iter().any(
+            |r| r["workspace_id"] == "ssh" && r["removed"] == serde_json::json!(["direct_ssh"])
+        )
     );
-    assert!(last_two.iter().any(|r| r["sandbox_id"].is_null()
+    assert!(last_two.iter().any(|r| r["workspace_id"].is_null()
         && r["added"] == serde_json::json!(["microsoft_server"])
         && r["removed"] == serde_json::json!(["code_server"])));
     assert!(matches!(
@@ -503,7 +503,7 @@ fn r41_system_managed_follows_the_plan_and_records_each_change() {
 }
 
 #[test]
-fn r41_deleting_a_sandbox_removes_its_switches_and_system_reasons() {
+fn r41_deleting_a_workspace_removes_its_switches_and_system_reasons() {
     let (_, store) = fixture();
     store
         .set_system_managed(&plan(&[], &[("gone", &[SystemReason::DirectSsh])]))
@@ -516,7 +516,7 @@ fn r41_deleting_a_sandbox_removes_its_switches_and_system_reasons() {
             Actor::Ui,
         )
         .unwrap();
-    store.delete_sandbox(&sb("gone")).unwrap();
+    store.delete_workspace(&sb("gone")).unwrap();
     assert_eq!(store.system_managed().unwrap(), Vec::new());
     let github = store.rule_set(RuleSetId::BuiltIn("github")).unwrap();
     assert_eq!(github.overrides, Vec::new());
@@ -578,7 +578,7 @@ fn r40_system_managed_lists_every_host_with_its_reason_and_no_rule_rows() {
     assert_eq!(hosts.len(), SystemReason::MicrosoftServer.hosts().len());
     for host in &hosts {
         assert_eq!(host.reason, SystemReason::MicrosoftServer);
-        assert_eq!(host.sandbox, None);
+        assert_eq!(host.workspace, None);
         assert_ne!(host.note, "");
     }
     assert!(
@@ -642,11 +642,11 @@ fn r37_stored_switches_and_reasons_this_version_cannot_read_are_ignored() {
     drop(Store::open(&path, clock.clone(), Limits::default()).unwrap());
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch(
-        "INSERT INTO rule_set_switches (rule_set, sandbox_id, enabled, changed_at) VALUES
+        "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at) VALUES
             ('builtin:gone', NULL, 1, 1),
             ('builtin:github', 'Not A Name', 1, 1),
             ('builtin:github', 'a', 1, 1);
-         INSERT INTO system_reasons (sandbox_id, reason) VALUES
+         INSERT INTO system_reasons (workspace_id, reason) VALUES
             (NULL, 'a_later_reason'),
             ('Not A Name', 'code_server'),
             ('a', 'code_server');",
@@ -658,6 +658,6 @@ fn r37_stored_switches_and_reasons_this_version_cannot_read_are_ignored() {
     assert!(decide(&store, "a", "github.com").is_allow());
     assert!(!decide(&store, "b", "github.com").is_allow());
     let hosts = store.system_managed().unwrap();
-    assert!(hosts.iter().all(|h| h.sandbox == Some(sb("a"))));
+    assert!(hosts.iter().all(|h| h.workspace == Some(sb("a"))));
     assert!(decide(&store, "a", "open-vsx.org").is_allow());
 }

@@ -4,7 +4,7 @@
 use axum::Json;
 use axum::extract::State;
 use puddle_store::{AuditCursor, AuditFilter};
-use puddle_types::SandboxName;
+use puddle_types::WorkspaceName;
 use serde::Deserialize;
 
 use crate::ApiErrorBody;
@@ -27,7 +27,7 @@ pub(crate) struct AuditQuery {
     after: Option<i64>,
     before: Option<i64>,
     limit: Option<u32>,
-    sandbox: Option<String>,
+    workspace: Option<String>,
     #[serde(rename = "type")]
     kind: Option<AuditType>,
     outcome: Option<AuditOutcome>,
@@ -53,11 +53,11 @@ impl AuditQuery {
             (Some(after), None) => AuditCursor::After(after),
             (None, before) => AuditCursor::Before(before),
         };
-        let sandbox = self
-            .sandbox
+        let workspace = self
+            .workspace
             .filter(|s| !s.is_empty())
             .map(|s| {
-                SandboxName::new(&s).map_err(|err| ApiError::invalid(format!("sandbox: {err}")))
+                WorkspaceName::new(&s).map_err(|err| ApiError::invalid(format!("workspace: {err}")))
             })
             .transpose()?;
         let host_contains = self.host_contains.filter(|h| !h.is_empty());
@@ -75,7 +75,7 @@ impl AuditQuery {
             return Err(ApiError::invalid("from must be before to"));
         }
         let filter = AuditFilter {
-            sandbox,
+            workspace,
             kind: self.kind.map(AuditType::tag),
             outcome: self.outcome.map(Into::into),
             origin: self.origin.map(Into::into),
@@ -98,10 +98,10 @@ impl AuditQuery {
         ("after" = Option<i64>, Query, description = "records after this id, oldest first (to follow the tail)"),
         ("before" = Option<i64>, Query, description = "records before this id, newest first (to page back); can't be combined with `after`"),
         ("limit" = Option<u32>, Query, minimum = 1, maximum = 500, description = "records per page (default 100)"),
-        ("sandbox" = Option<String>, Query, description = "records about this sandbox"),
+        ("workspace" = Option<String>, Query, description = "records about this workspace"),
         ("type" = Option<AuditType>, Query, description = "records of this type"),
         ("outcome" = Option<AuditOutcome>, Query, description = "records with this outcome; types that have none never match"),
-        ("origin" = Option<ConnectionOrigin>, Query, description = "`connection` records of this origin (`sandbox` or `puddle`); other types have none and never match"),
+        ("origin" = Option<ConnectionOrigin>, Query, description = "`connection` records of this origin (`workspace` or `puddle`); other types have none and never match"),
         ("host_contains" = Option<String>, Query, description = "records whose host (a rule's pattern) contains this text, case-insensitive"),
         ("from" = Option<u64>, Query, description = "records at or after this epoch ms"),
         ("to" = Option<u64>, Query, description = "records before this epoch ms")

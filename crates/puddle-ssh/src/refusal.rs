@@ -146,8 +146,8 @@ mod tests {
     #[test]
     fn the_line_has_the_prefix_and_crlf() {
         assert_eq!(
-            refusal_line("sandbox \"a\": sandbox is not running\n"),
-            "puddle-refused: sandbox \"a\": sandbox is not running\r\n"
+            refusal_line("workspace \"a\": workspace is not running\n"),
+            "puddle-refused: workspace \"a\": workspace is not running\r\n"
         );
     }
 
@@ -201,11 +201,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_refusal_is_read_to_its_line_end_in_any_chunking() {
-        let line = refusal_line("sandbox is not running");
+        let line = refusal_line("workspace is not running");
         for chunked in [false, true] {
             assert_eq!(
                 head_of(line.as_bytes(), chunked).await,
-                Head::Refused("sandbox is not running".into())
+                Head::Refused("workspace is not running".into())
             );
         }
         // No line end before the stream ends: what came is the reason.

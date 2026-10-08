@@ -9,7 +9,7 @@ use puddle_netpolicy::{
     AddressClass, AddressVerdict, LocalAccess, LocalCategory, NameError, NetPolicy, classify_ip,
     normalise_host,
 };
-use puddle_types::{Host, SandboxName};
+use puddle_types::{Host, WorkspaceName};
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2000))]
@@ -76,16 +76,16 @@ proptest! {
     /// a local address is at most exact-only.
     #[test]
     fn only_public_addresses_pass_without_toggles(ip in any::<IpAddr>(), port in any::<u16>()) {
-        let sandbox = SandboxName::new("box").unwrap();
+        let workspace = WorkspaceName::new("box").unwrap();
         let addr = SocketAddr::new(ip, port);
         let off = NetPolicy::new(Arc::new(LocalAccess::NONE));
         let class = classify_ip(ip);
-        let verdict = off.check_address(&sandbox, addr);
+        let verdict = off.check_address(&workspace, addr);
         prop_assert_eq!(verdict == AddressVerdict::Allow, class == AddressClass::Public);
         let all_on = LocalCategory::ALL.into_iter().fold(LocalAccess::NONE, |a, c| a.with_toggle(c, true));
         let on = NetPolicy::new(Arc::new(all_on));
         if let Some(category) = class.category() {
-            prop_assert_eq!(on.check_address(&sandbox, addr), AddressVerdict::ExactOnly(category));
+            prop_assert_eq!(on.check_address(&workspace, addr), AddressVerdict::ExactOnly(category));
         }
     }
 }

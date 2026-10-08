@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use microsandbox::sandbox::{SandboxConfig, VolumeMount};
 use microsandbox::volume::VolumeHandle;
 use puddle_compute::{DiskSize, VolumeInfo};
-use puddle_types::SandboxStatus;
+use puddle_types::WorkspaceStatus;
 
 /// One sandbox as the holder lookup needs it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +17,7 @@ pub(crate) struct Mounter {
     /// The sandbox.
     pub name: String,
     /// Its state.
-    pub status: SandboxStatus,
+    pub status: WorkspaceStatus,
     /// The named volumes its configuration mounts.
     pub volumes: Vec<String>,
 }
@@ -40,7 +40,7 @@ pub(crate) fn named_volumes(config: &SandboxConfig) -> Vec<String> {
 pub(crate) fn holders(mounters: &[Mounter]) -> BTreeMap<String, String> {
     let mut sorted: Vec<&Mounter> = mounters
         .iter()
-        .filter(|m| m.status == SandboxStatus::Running)
+        .filter(|m| m.status == WorkspaceStatus::Running)
         .collect();
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
     let mut out = BTreeMap::new();
@@ -74,7 +74,7 @@ pub(crate) fn info(handle: &VolumeHandle, holders: &BTreeMap<String, String>) ->
 mod tests {
     use super::*;
 
-    fn m(name: &str, status: SandboxStatus, volumes: &[&str]) -> Mounter {
+    fn m(name: &str, status: WorkspaceStatus, volumes: &[&str]) -> Mounter {
         Mounter {
             name: name.into(),
             status,
@@ -85,9 +85,9 @@ mod tests {
     #[test]
     fn only_running_sandboxes_hold_volumes() {
         let h = holders(&[
-            m("stopped", SandboxStatus::Stopped, &["ws-a"]),
-            m("crashed", SandboxStatus::Crashed, &["ws-b"]),
-            m("running", SandboxStatus::Running, &["ws-a", "ws-c"]),
+            m("stopped", WorkspaceStatus::Stopped, &["ws-a"]),
+            m("crashed", WorkspaceStatus::Crashed, &["ws-b"]),
+            m("running", WorkspaceStatus::Running, &["ws-a", "ws-c"]),
         ]);
         assert_eq!(h.get("ws-a").map(String::as_str), Some("running"));
         assert_eq!(h.get("ws-c").map(String::as_str), Some("running"));
@@ -97,8 +97,8 @@ mod tests {
     #[test]
     fn two_running_holders_report_the_first_by_name() {
         let h = holders(&[
-            m("zeta", SandboxStatus::Running, &["ws-a"]),
-            m("alpha", SandboxStatus::Running, &["ws-a"]),
+            m("zeta", WorkspaceStatus::Running, &["ws-a"]),
+            m("alpha", WorkspaceStatus::Running, &["ws-a"]),
         ]);
         assert_eq!(h.get("ws-a").map(String::as_str), Some("alpha"));
     }

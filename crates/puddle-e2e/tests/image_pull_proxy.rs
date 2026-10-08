@@ -342,7 +342,7 @@ fn decoy_environment() -> std::net::TcpListener {
     decoy
 }
 
-/// The pulls are in the audit as puddle's own connections: no sandbox, the address connected to,
+/// The pulls are in the audit as puddle's own connections: no workspace, the address connected to,
 /// and the bytes that went through.
 async fn assert_pulls_are_audited(store: &Store, token: &str) {
     // connected to, and the bytes that went through.
@@ -360,7 +360,7 @@ async fn assert_pulls_are_audited(store: &Store, token: &str) {
     }
     assert!(!records.is_empty(), "the pull proxy wrote no audit record");
     for record in &records {
-        assert_eq!(record.sandbox_id, None);
+        assert_eq!(record.workspace_id, None);
         assert_eq!(record.origin, ConnectionOrigin::Puddle);
         assert_eq!(record.host.as_deref(), Some(REGISTRY));
         assert_eq!(record.port, Some(443));
@@ -374,11 +374,11 @@ async fn assert_pulls_are_audited(store: &Store, token: &str) {
         records.iter().any(|r| r.bytes_up > 0 && r.bytes_down > 0),
         "{records:?}"
     );
-    let sandbox_only = AuditFilter {
-        origin: Some(ConnectionOrigin::Sandbox),
+    let workspace_only = AuditFilter {
+        origin: Some(ConnectionOrigin::Workspace),
         ..AuditFilter::default()
     };
-    assert_eq!(connection_records(store, &sandbox_only).len(), 0);
+    assert_eq!(connection_records(store, &workspace_only).len(), 0);
 }
 
 /// The `connection` records `filter` matches, oldest first.

@@ -12,7 +12,7 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlockReason, Decision, EgressRequest, Host, PendingId, RuleId, RuleSetId, SandboxName,
+    BlockReason, Decision, EgressRequest, Host, PendingId, RuleId, RuleSetId, WorkspaceName,
 };
 
 /// How the proxy handled a connection (R-24).
@@ -31,26 +31,27 @@ pub enum ConnectionDecision {
     Blocked,
 }
 
-/// Who the connection belongs to (R-24): a sandbox's traffic, or puddle's own (image pulls
-/// through the pull proxy, which have no sandbox). Records written before this existed read as
-/// [`ConnectionOrigin::Sandbox`].
+/// Who the connection belongs to (R-24): a workspace's traffic, or puddle's own (image pulls
+/// through the pull proxy, which have no workspace). Records written before this existed read as
+/// [`ConnectionOrigin::Workspace`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ConnectionOrigin {
-    /// A sandbox's connection.
+    /// A workspace's connection. Older records name it `sandbox`.
     #[default]
-    Sandbox,
-    /// puddle's own connection, made on the host and not for any sandbox.
+    #[serde(alias = "sandbox")]
+    Workspace,
+    /// puddle's own connection, made on the host and not for any workspace.
     Puddle,
 }
 
 impl ConnectionOrigin {
-    /// The stored and wire name: `sandbox` or `puddle`.
+    /// The stored and wire name: `workspace` or `puddle`.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Sandbox => "sandbox",
+            Self::Workspace => "workspace",
             Self::Puddle => "puddle",
         }
     }
@@ -81,7 +82,7 @@ pub enum ConnectionReason {
     /// A terminated TLS connection's client asked for a name other than the one it
     /// `CONNECT`ed to (or none): the handshake was refused and nothing went upstream.
     SniMismatch,
-    /// Summary of connection records over the per-sandbox limit (R-26).
+    /// Summary of connection records over the per-workspace limit (R-26).
     Suppressed,
 }
 
@@ -163,8 +164,8 @@ impl HttpRequestLine {
 pub struct ConnectionEvent {
     /// Whose connection it is.
     pub origin: ConnectionOrigin,
-    /// The sandbox it came from (the route's); `None` for puddle's own connections.
-    pub sandbox: Option<SandboxName>,
+    /// The workspace it came from (the route's); `None` for puddle's own connections.
+    pub workspace: Option<WorkspaceName>,
     /// The requested host.
     pub host: Host,
     /// The requested port.
@@ -206,8 +207,8 @@ impl ConnectionEvent {
         reason: ConnectionReason,
     ) -> Self {
         Self {
-            origin: ConnectionOrigin::Sandbox,
-            sandbox: Some(request.sandbox.clone()),
+            origin: ConnectionOrigin::Workspace,
+            workspace: Some(request.workspace.clone()),
             host: request.host.clone(),
             port: request.port,
             resolved_ip: None,
@@ -225,7 +226,7 @@ impl ConnectionEvent {
         }
     }
 
-    /// An event for a connection puddle makes itself (no sandbox, origin
+    /// An event for a connection puddle makes itself (no workspace, origin
     /// [`ConnectionOrigin::Puddle`]), with no row, credential, request line or bytes.
     #[must_use]
     pub fn puddle(
@@ -236,7 +237,7 @@ impl ConnectionEvent {
     ) -> Self {
         Self {
             origin: ConnectionOrigin::Puddle,
-            sandbox: None,
+            workspace: None,
             host,
             port,
             resolved_ip: None,
@@ -260,7 +261,7 @@ impl ConnectionEvent {
     /// ```
     /// use puddle_types::*;
     /// let request = EgressRequest::new(
-    ///     SandboxName::new("box").unwrap(),
+    ///     WorkspaceName::new("box").unwrap(),
     ///     Host::parse_normalised("example.com").unwrap(),
     ///     443,
     /// );
@@ -348,7 +349,7 @@ mod tests {
 
     fn request() -> EgressRequest {
         EgressRequest::new(
-            SandboxName::new("box").unwrap(),
+            WorkspaceName::new("box").unwrap(),
             Host::parse_normalised("api.example.com").unwrap(),
             443,
         )
@@ -488,7 +489,7 @@ mod tests {
         );
         assert_eq!(
             (
-                blocked.sandbox.as_ref().map(SandboxName::as_str),
+                blocked.workspace.as_ref().map(WorkspaceName::as_str),
                 blocked.host.to_string(),
                 blocked.port
             ),
@@ -522,7 +523,7 @@ mod tests {
     }
 
     #[test]
-    fn puddle_events_have_an_origin_and_no_sandbox() {
+    fn puddle_events_have_an_origin_and_no_workspace() {
         let event = ConnectionEvent::puddle(
             Host::parse_normalised("registry.example").unwrap(),
             443,
@@ -530,7 +531,7 @@ mod tests {
             ConnectionReason::PuddleRequest,
         );
         assert_eq!(event.origin, ConnectionOrigin::Puddle);
-        assert_eq!(event.sandbox, None);
+        assert_eq!(event.workspace, None);
         assert_eq!(event.reason.to_string(), "puddle_request");
         assert_eq!(
             ConnectionEvent::new(
@@ -539,13 +540,14 @@ mod tests {
                 ConnectionReason::Rule
             )
             .origin,
-            ConnectionOrigin::Sandbox
+            ConnectionOrigin::Workspace
         );
-        assert_eq!(ConnectionOrigin::default(), ConnectionOrigin::Sandbox);
+        assert_eq!(ConnectionOrigin::default(), ConnectionOrigin::Workspace);
         assert_eq!(ConnectionOrigin::Puddle.to_string(), "puddle");
         assert_eq!(
-            serde_json::to_string(&[ConnectionOrigin::Sandbox, ConnectionOrigin::Puddle]).unwrap(),
-            r#"["sandbox","puddle"]"#
+            serde_json::to_string(&[ConnectionOrigin::Workspace, ConnectionOrigin::Puddle])
+                .unwrap(),
+            r#"["workspace","puddle"]"#
         );
     }
 

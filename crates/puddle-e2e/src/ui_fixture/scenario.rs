@@ -82,7 +82,7 @@ pub struct RuleSeed {
     pub pattern: String,
     /// The one workspace it applies to; left out is every workspace.
     #[serde(default)]
-    pub sandbox: Option<String>,
+    pub workspace: Option<String>,
     /// Created this long before now (ms).
     #[serde(default)]
     pub ago_ms: u64,
@@ -197,7 +197,7 @@ pub enum WorkspaceOperationSeed {
 #[serde(deny_unknown_fields)]
 pub struct RequestSeed {
     /// The workspace's name.
-    pub sandbox: String,
+    pub workspace: String,
     /// The host asked for.
     pub host: String,
     /// The port; 443 when left out.
@@ -216,7 +216,7 @@ pub struct RequestSeed {
 #[serde(deny_unknown_fields)]
 pub struct ConnectionSeed {
     /// The workspace's name.
-    pub sandbox: String,
+    pub workspace: String,
     /// The host.
     pub host: String,
     /// The port; 443 when left out.
@@ -263,7 +263,7 @@ pub struct SettingsSeed {
     pub global: Option<serde_json::Value>,
     /// Per-workspace documents by name.
     #[serde(default)]
-    pub sandboxes: BTreeMap<String, serde_json::Value>,
+    pub workspaces: BTreeMap<String, serde_json::Value>,
 }
 
 /// One thing a script (or `POST /control/step`) does. `{"do": "<name>", ...}` in JSON.
@@ -291,7 +291,7 @@ pub enum Step {
     /// `count` workspaces-worth of requests to `n0.<domain>` .. `n<count-1>.<domain>`.
     Bulk {
         /// The workspace's name.
-        sandbox: String,
+        workspace: String,
         /// How many hosts.
         count: u64,
         /// The shared domain; `bulk.example.org` when left out.

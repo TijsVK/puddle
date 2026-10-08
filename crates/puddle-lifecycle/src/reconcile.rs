@@ -20,7 +20,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use puddle_compute::{ComputeError, Runtime, SandboxInfo};
-use puddle_types::{SandboxName, SandboxStatus, VolumeName, WorkspaceId};
+use puddle_types::{SandboxName, VolumeName, WorkspaceId, WorkspaceStatus};
 use puddle_workspace::{Workspaces, is_maintenance_name};
 
 use crate::shutdown::{ShutdownConfig, StopOutcome, trim_and_stop};
@@ -204,7 +204,7 @@ async fn reconcile_sandbox<R: Runtime>(
     inventory: &Inventory,
     config: &ShutdownConfig,
     name: SandboxName,
-    status: SandboxStatus,
+    status: WorkspaceStatus,
     report: &mut ReconcileReport,
 ) {
     let mut down = status.is_down();
@@ -231,7 +231,7 @@ async fn reconcile_sandbox<R: Runtime>(
         }
     }
     if inventory.sandboxes.contains(&name) && !is_maintenance_name(name.as_str()) {
-        if status == SandboxStatus::Crashed {
+        if status == WorkspaceStatus::Crashed {
             report.crashed.push(name);
         }
         return;

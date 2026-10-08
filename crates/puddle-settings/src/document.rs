@@ -16,7 +16,7 @@ pub enum SettingsError {
     /// The document isn't a JSON object.
     #[error("{kind} settings must be an object")]
     NotAnObject {
-        /// The document kind (`global`, `sandbox`).
+        /// The document kind (`global`, `workspace`).
         kind: &'static str,
     },
     /// `schema_version` isn't a whole number from 1 up.
@@ -68,7 +68,7 @@ pub struct Loaded<T> {
     /// The version the document was stored in, if older than the current one: the caller
     /// should store the upgraded document (`to_document`) so the migration runs once.
     pub migrated_from: Option<u32>,
-    /// Fields this version doesn't know, as dotted paths (`sandbox_defaults.cpus`). They are kept
+    /// Fields this version doesn't know, as dotted paths (`workspace_defaults.cpus`). They are kept
     /// and written back unchanged; the caller logs them at `warn`.
     pub unknown_fields: Vec<String>,
 }

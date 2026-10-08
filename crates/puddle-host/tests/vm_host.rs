@@ -25,7 +25,7 @@ use puddle_host::{
 };
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
-use puddle_types::{SandboxName, SandboxStatus};
+use puddle_types::{WorkspaceName, WorkspaceStatus};
 use puddle_upstream::Mode;
 use puddle_vm_tests::Settings;
 use serde_json::json;
@@ -115,10 +115,10 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
 
     // The workspace's sandbox may reach the repository host, and nothing else.
     let name = format!("{}-host", settings.prefix.as_str());
-    let sandbox = SandboxName::new(&name).unwrap();
+    let sandbox = WorkspaceName::new(&name).unwrap();
     host.store()
         .add_rule(&NewRule {
-            scope: Scope::Sandbox(sandbox.clone()),
+            scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(REPO_HOST).unwrap(),
             effect: Effect::Allow,
             expires_at: None,
@@ -157,7 +157,7 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
     assert_eq!(workspace["status"], "running", "{workspace}");
 
     // The clone is on the volume, in the guest.
-    let handle = runtime.get(&sandbox).await.unwrap();
+    let handle = runtime.get(&sandbox.sandbox_name()).await.unwrap();
     let out = handle
         .exec(
             ExecRequest::sh(format!(
@@ -194,7 +194,7 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
         .into_iter()
         .find(|s| s.name == name)
         .unwrap();
-    assert_eq!(record.status, SandboxStatus::Stopped);
+    assert_eq!(record.status, WorkspaceStatus::Stopped);
 
     // Start again, then shut the host down with the workspace running: the shutdown trims and
     // stops it, and msb records it Stopped, not Crashed.
@@ -213,5 +213,5 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
         .into_iter()
         .find(|s| s.name == name)
         .unwrap();
-    assert_eq!(record.status, SandboxStatus::Stopped);
+    assert_eq!(record.status, WorkspaceStatus::Stopped);
 }

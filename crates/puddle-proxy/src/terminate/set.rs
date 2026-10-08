@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Which hosts a sandbox's proxy decrypts.
+//! Which hosts a workspace's proxy decrypts.
 
 use std::collections::BTreeSet;
 
 use puddle_netpolicy::normalise_host;
 use puddle_types::Host;
 
-/// The hosts whose TLS a sandbox's proxy terminates: exact names (`github.com`) and
+/// The hosts whose TLS a workspace's proxy terminates: exact names (`github.com`) and
 /// every-name-below patterns (`*.visualstudio.com`). Anything else is spliced untouched.
 ///
 /// A pattern covers names *below* its suffix, never the suffix itself, and needs at least two
-/// labels (`*.com` is refused): the set is what the per-sandbox certificate authority is allowed
+/// labels (`*.com` is refused): the set is what the per-workspace certificate authority is allowed
 /// to certify, so a wide pattern would widen what puddle can impersonate.
 ///
 /// ```
@@ -111,7 +111,7 @@ impl TerminationSet {
         self.exact.is_empty() && self.below.is_empty()
     }
 
-    /// The name constraints for the sandbox's certificate authority: exactly this set (a name
+    /// The name constraints for the workspace's certificate authority: exactly this set (a name
     /// and everything below it, per pattern), no IP addresses.
     ///
     /// # Errors

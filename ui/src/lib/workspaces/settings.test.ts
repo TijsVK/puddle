@@ -86,7 +86,7 @@ describe("clipboard", () => {
 
 describe("sources", () => {
   it("are said in words", () => {
-    expect(sourceLabel("sandbox")).toBe("this workspace");
+    expect(sourceLabel("workspace")).toBe("this workspace");
     expect(sourceLabel("global")).toBe("global setting");
     expect(sourceLabel("default")).toBe("puddle's default");
   });

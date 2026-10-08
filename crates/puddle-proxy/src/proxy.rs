@@ -19,7 +19,7 @@ use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
     EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, PatternKind,
-    PendingOutcome, Policy, PolicyError, ProtocolHint, RuleId, SandboxName, SuffixAllows,
+    PendingOutcome, Policy, PolicyError, ProtocolHint, RuleId, SuffixAllows, WorkspaceName,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -48,9 +48,9 @@ pub struct ProxyConfig {
     pub resolve_timeout: Duration,
     /// How long connecting to one address may take before the next is tried. All failed: `502`.
     pub connect_timeout: Duration,
-    /// Proxied connections one sandbox may have open at once. Over it: `503`. Far above what
+    /// Proxied connections one workspace may have open at once. Over it: `503`. Far above what
     /// real tools open (pnpm, `BuildKit` and `NuGet` peak in the hundreds).
-    pub max_streams_per_sandbox: usize,
+    pub max_streams_per_workspace: usize,
     /// Agent connections (yamux sessions) one route accepts at once. The agent opens 1 to 64.
     pub max_sessions_per_route: usize,
     /// Per-session limits of the agent protocol.
@@ -67,9 +67,9 @@ pub struct ProxyConfig {
     /// How long one name lookup for the guest's stub DNS may take. Over it, the stub gets
     /// `SERVFAIL` (or, with a company proxy in the route, a stand-in address).
     pub lookup_timeout: Duration,
-    /// Name lookups (of allowed names) one sandbox may run at once. Over it, the stub gets
+    /// Name lookups (of allowed names) one workspace may run at once. Over it, the stub gets
     /// `SERVFAIL` and its client retries.
-    pub max_lookups_per_sandbox: usize,
+    pub max_lookups_per_workspace: usize,
 }
 
 impl Default for ProxyConfig {
@@ -78,7 +78,7 @@ impl Default for ProxyConfig {
             head_timeout: Duration::from_secs(30),
             resolve_timeout: Duration::from_secs(10),
             connect_timeout: Duration::from_secs(10),
-            max_streams_per_sandbox: 4096,
+            max_streams_per_workspace: 4096,
             max_sessions_per_route: 128,
             session: HostConfig::default(),
             tls_handshake_timeout: Duration::from_secs(10),
@@ -86,17 +86,17 @@ impl Default for ProxyConfig {
             upstream_head_timeout: Duration::from_secs(300),
             body_idle_timeout: Duration::from_secs(120),
             lookup_timeout: Duration::from_secs(3),
-            max_lookups_per_sandbox: 32,
+            max_lookups_per_workspace: 32,
         }
     }
 }
 
 impl ProxyConfig {
-    /// The default limits with another name-lookup timeout and per-sandbox lookup cap.
+    /// The default limits with another name-lookup timeout and per-workspace lookup cap.
     #[must_use]
-    pub fn with_lookup_limits(mut self, timeout: Duration, max_per_sandbox: usize) -> Self {
+    pub fn with_lookup_limits(mut self, timeout: Duration, max_per_workspace: usize) -> Self {
         self.lookup_timeout = timeout;
-        self.max_lookups_per_sandbox = max_per_sandbox;
+        self.max_lookups_per_workspace = max_per_workspace;
         self
     }
 
@@ -107,10 +107,10 @@ impl ProxyConfig {
         self
     }
 
-    /// The default limits with another per-sandbox stream cap.
+    /// The default limits with another per-workspace stream cap.
     #[must_use]
-    pub fn with_max_streams_per_sandbox(mut self, max: usize) -> Self {
-        self.max_streams_per_sandbox = max;
+    pub fn with_max_streams_per_workspace(mut self, max: usize) -> Self {
+        self.max_streams_per_workspace = max;
         self
     }
 
@@ -154,7 +154,7 @@ impl ProxyConfig {
     }
 }
 
-/// The egress proxy: one per puddle process, shared by every sandbox's route.
+/// The egress proxy: one per puddle process, shared by every workspace's route.
 ///
 /// ```
 /// # use std::sync::Arc;
@@ -250,8 +250,8 @@ impl Proxy {
         self
     }
 
-    /// Terminates the TLS of the hosts each sandbox has a credential for (`source` says which
-    /// sandbox terminates what) and verifies the real servers with `tls`. Everything else is
+    /// Terminates the TLS of the hosts each workspace has a credential for (`source` says which
+    /// workspace terminates what) and verifies the real servers with `tls`. Everything else is
     /// spliced as before. See [`crate::terminate`] for what a terminated connection does.
     #[must_use]
     pub fn with_termination(
@@ -276,15 +276,15 @@ impl Proxy {
         &self.config
     }
 
-    /// The [`StreamHandler`] for one sandbox's route. `sandbox` comes from the route, never from
+    /// The [`StreamHandler`] for one workspace's route. `workspace` comes from the route, never from
     /// the guest. Each handler has its own stream cap, so give each route one handler.
     #[must_use]
-    pub fn handler(self: &Arc<Self>, sandbox: SandboxName) -> SandboxHandler {
-        SandboxHandler {
+    pub fn handler(self: &Arc<Self>, workspace: WorkspaceName) -> WorkspaceHandler {
+        WorkspaceHandler {
             proxy: Arc::clone(self),
-            streams: Arc::new(Semaphore::new(self.config.max_streams_per_sandbox)),
-            lookups: Arc::new(Semaphore::new(self.config.max_lookups_per_sandbox)),
-            sandbox,
+            streams: Arc::new(Semaphore::new(self.config.max_streams_per_workspace)),
+            lookups: Arc::new(Semaphore::new(self.config.max_lookups_per_workspace)),
+            workspace,
         }
     }
 
@@ -292,8 +292,8 @@ impl Proxy {
         self.upstream.as_ref()
     }
 
-    /// The termination of `request`'s sandbox, if this connection is to be terminated: a
-    /// `CONNECT` to a name of the sandbox's termination set on port 443.
+    /// The termination of `request`'s workspace, if this connection is to be terminated: a
+    /// `CONNECT` to a name of the workspace's termination set on port 443.
     fn terminating(
         &self,
         request: &EgressRequest,
@@ -302,7 +302,7 @@ impl Proxy {
         if request.port != terminate::request::HTTPS_PORT {
             return None;
         }
-        let termination = terminations.source.termination(&request.sandbox)?;
+        let termination = terminations.source.termination(&request.workspace)?;
         termination
             .set()
             .contains(&request.host)
@@ -391,31 +391,31 @@ impl std::fmt::Debug for TerminationConfig {
     }
 }
 
-/// Serves the proxied connections of one sandbox. Made by [`Proxy::handler`].
+/// Serves the proxied connections of one workspace. Made by [`Proxy::handler`].
 #[derive(Debug, Clone)]
-pub struct SandboxHandler {
+pub struct WorkspaceHandler {
     pub(crate) proxy: Arc<Proxy>,
     streams: Arc<Semaphore>,
     pub(crate) lookups: Arc<Semaphore>,
-    pub(crate) sandbox: SandboxName,
+    pub(crate) workspace: WorkspaceName,
 }
 
-impl SandboxHandler {
-    /// The sandbox this handler serves.
+impl WorkspaceHandler {
+    /// The workspace this handler serves.
     #[must_use]
-    pub fn sandbox(&self) -> &SandboxName {
-        &self.sandbox
+    pub fn workspace(&self) -> &WorkspaceName {
+        &self.workspace
     }
 }
 
-impl StreamHandler for SandboxHandler {
+impl StreamHandler for WorkspaceHandler {
     async fn handle(&self, stream: GuestStream) {
-        let span = tracing::debug_span!("conn", sandbox = %self.sandbox);
+        let span = tracing::debug_span!("conn", workspace = %self.workspace);
         serve(self, stream).instrument(span).await;
     }
 
     async fn resolve(&self, query: ResolveQuery) -> ResolveAnswer {
-        let span = tracing::debug_span!("resolve", sandbox = %self.sandbox);
+        let span = tracing::debug_span!("resolve", workspace = %self.workspace);
         self.resolve_name(query).instrument(span).await
     }
 }
@@ -476,19 +476,19 @@ pub(crate) async fn refuse<S: AsyncWrite + Unpin>(stream: &mut S, refusal: &Refu
     }
 }
 
-async fn serve(handler: &SandboxHandler, stream: GuestStream) {
+async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
     let proxy = &handler.proxy;
     let (stream, counts) = Counted::new(stream);
     let mut reader = BufReader::new(stream);
     let Ok(_permit) = Arc::clone(&handler.streams).try_acquire_owned() else {
         tracing::warn!(
-            limit = proxy.config.max_streams_per_sandbox,
-            "connection refused: sandbox over its connection limit"
+            limit = proxy.config.max_streams_per_workspace,
+            "connection refused: workspace over its connection limit"
         );
-        let limit = proxy.config.max_streams_per_sandbox;
+        let limit = proxy.config.max_streams_per_workspace;
         let refusal = Refusal::new(
             "503 Service Unavailable",
-            format!("too many open connections from this sandbox (limit {limit})"),
+            format!("too many open connections from this workspace (limit {limit})"),
         );
         refuse(reader.get_mut(), &refusal).await;
         return;
@@ -508,7 +508,8 @@ async fn serve(handler: &SandboxHandler, stream: GuestStream) {
             return;
         }
     };
-    let mut request = EgressRequest::new(handler.sandbox.clone(), target.host.clone(), target.port);
+    let mut request =
+        EgressRequest::new(handler.workspace.clone(), target.host.clone(), target.port);
     if path.is_some() {
         request = request.with_protocol(ProtocolHint::Http);
     }
@@ -549,7 +550,7 @@ async fn relay(
             proxy,
             termination: &termination,
             tls,
-            sandbox: &request.sandbox,
+            workspace: &request.workspace,
             target,
             admitted: &admitted,
         };
@@ -705,7 +706,7 @@ async fn admit_into(
     let target = puddle_netpolicy::Target::from_host(host.clone());
     if let Some(reason) = proxy
         .addresses
-        .check_target(&request.sandbox, &target, port)
+        .check_target(&request.workspace, &target, port)
     {
         note_block(event, reason);
         return Err(block(request, &[reason]));
@@ -748,7 +749,7 @@ async fn admit_into(
     let mut categories: Vec<LocalCategory> = Vec::new();
     let mut blocked = Vec::new();
     for addr in addrs {
-        match proxy.addresses.check(&request.sandbox, addr) {
+        match proxy.addresses.check(&request.workspace, addr) {
             AddressVerdict::Allow => usable.push(addr),
             AddressVerdict::ExactOnly(category) => {
                 exact_only.push(addr);
@@ -770,7 +771,7 @@ async fn admit_into(
         let (by_ip, rest): (Vec<_>, Vec<_>) = exact_only.into_iter().partition(|addr| {
             let rule = ip_allows.iter().find(|(allowed, _)| allowed == addr);
             if let Some((_, rule_id)) = rule {
-                tracing::info!(sandbox = %request.sandbox, host = %request.host, %addr, rule = %rule_id, "local address allowed by its IP rule");
+                tracing::info!(workspace = %request.workspace, host = %request.host, %addr, rule = %rule_id, "local address allowed by its IP rule");
             }
             rule.is_some()
         });
@@ -867,13 +868,13 @@ enum IpRule {
     Deny(RuleId),
 }
 
-/// The rule that decides `addr`'s IP for `request`'s sandbox. Looks only; a miss records nothing.
+/// The rule that decides `addr`'s IP for `request`'s workspace. Looks only; a miss records nothing.
 fn ip_rule(
     proxy: &Proxy,
     request: &EgressRequest,
     addr: SocketAddr,
 ) -> Result<IpRule, PolicyError> {
-    let by_ip = EgressRequest::new(request.sandbox.clone(), Host::Ip(addr.ip()), request.port);
+    let by_ip = EgressRequest::new(request.workspace.clone(), Host::Ip(addr.ip()), request.port);
     Ok(match proxy.policy.lookup(&by_ip, SuffixAllows::Ignore)? {
         Some(Decision::Allow {
             rule_id,
@@ -899,7 +900,7 @@ fn ip_denied(
         .map(|(addr, rule_id)| format!("{} (rule {rule_id})", addr.ip()))
         .collect::<Vec<_>>()
         .join(", ");
-    tracing::info!(sandbox = %request.sandbox, %host, port = request.port, addresses = %list, "every address denied by its IP rule");
+    tracing::info!(workspace = %request.workspace, %host, port = request.port, addresses = %list, "every address denied by its IP rule");
     let first = denies.first();
     event.decision = ConnectionDecision::Deny;
     event.reason = ConnectionReason::Rule;
@@ -944,14 +945,14 @@ fn allowed(
 ) -> Result<PatternKind, Refusal> {
     let host = &request.host;
     let port = request.port;
-    let sandbox = &request.sandbox;
+    let workspace = &request.workspace;
     match decision {
         Ok(Decision::Allow { rule_id, pattern }) => {
-            tracing::info!(%sandbox, %host, port, rule = %rule_id, "allowed");
+            tracing::info!(%workspace, %host, port, rule = %rule_id, "allowed");
             Ok(pattern)
         }
         Ok(Decision::Deny { rule_id, .. }) => {
-            tracing::info!(%sandbox, %host, port, rule = %rule_id, "denied by rule");
+            tracing::info!(%workspace, %host, port, rule = %rule_id, "denied by rule");
             Err(Refusal::new(
                 "403 Forbidden",
                 format!("{host} is denied by a rule (rule {rule_id})"),
@@ -961,11 +962,11 @@ fn allowed(
         }
         // A set's allow counts like a wildcard allow for local destinations (R-42).
         Ok(Decision::SetAllow { set, .. }) => {
-            tracing::info!(%sandbox, %host, port, %set, "allowed by a rule set");
+            tracing::info!(%workspace, %host, port, %set, "allowed by a rule set");
             Ok(PatternKind::Suffix)
         }
         Ok(Decision::SetDeny { set, rule_id, .. }) => {
-            tracing::info!(%sandbox, %host, port, %set, rule = %rule_id, "denied by a rule set");
+            tracing::info!(%workspace, %host, port, %set, rule = %rule_id, "denied by a rule set");
             Err(Refusal::new(
                 "403 Forbidden",
                 format!(
@@ -977,12 +978,12 @@ fn allowed(
             .header("x-puddle-rule-set", set.to_string()))
         }
         Ok(Decision::Pending(outcome)) => {
-            tracing::info!(%sandbox, %host, port, pending = ?outcome.pending_id(), "pending approval");
+            tracing::info!(%workspace, %host, port, pending = ?outcome.pending_id(), "pending approval");
             let refusal = Refusal::new(
                 "403 Forbidden",
                 match outcome {
                     PendingOutcome::Suppressed => format!(
-                        "{host} is not allowed; too many new requests from this sandbox, so this one wasn't added to the inbox (retry later)"
+                        "{host} is not allowed; too many new requests from this workspace, so this one wasn't added to the inbox (retry later)"
                     ),
                     _ => format!(
                         "{host} is not allowed yet; approve it in puddle and retry"
@@ -997,14 +998,14 @@ fn allowed(
         }
         Ok(Decision::Blocked { reason }) => Err(block(request, &[reason])),
         Ok(other) => {
-            tracing::warn!(%sandbox, %host, port, decision = ?other, "unknown decision, refused");
+            tracing::warn!(%workspace, %host, port, decision = ?other, "unknown decision, refused");
             Err(
                 Refusal::new("403 Forbidden", format!("{host} is not allowed"))
                     .header("x-puddle-decision", "deny"),
             )
         }
         Err(err) => {
-            tracing::error!(%sandbox, %host, port, error = %err, "policy unavailable, refused");
+            tracing::error!(%workspace, %host, port, error = %err, "policy unavailable, refused");
             Err(unavailable())
         }
     }
@@ -1015,10 +1016,10 @@ fn allowed(
 fn block(request: &EgressRequest, reasons: &[BlockReason]) -> Refusal {
     let host = &request.host;
     let reason = shown_reason(reasons);
-    tracing::info!(sandbox = %request.sandbox, %host, port = request.port, %reason, "blocked");
+    tracing::info!(workspace = %request.workspace, %host, port = request.port, %reason, "blocked");
     Refusal::new(
         "403 Forbidden",
-        block_message(host, &request.sandbox, reasons),
+        block_message(host, &request.workspace, reasons),
     )
     .header("x-puddle-decision", "blocked")
     .header("x-puddle-blocked", reason.code())

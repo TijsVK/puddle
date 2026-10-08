@@ -12,7 +12,7 @@ export type SystemReason = Schemas["SystemReason"];
 /** Whether `set` is on for `workspace`, or for every workspace when `workspace` is `null`. */
 export function isOn(set: RuleSet, workspace: string | null): boolean {
   if (workspace !== null) {
-    const own = set.overrides.find((o) => o.sandbox === workspace);
+    const own = set.overrides.find((o) => o.workspace === workspace);
     if (own) return own.enabled;
   }
   return set.global ?? set.default_on;
@@ -29,7 +29,7 @@ export function globalState(set: RuleSet): string {
 
 /** "On here", "Off, as for every workspace": a set's state for one workspace and where it comes from. */
 export function stateFor(set: RuleSet, workspace: string): string {
-  const own = set.overrides.find((o) => o.sandbox === workspace);
+  const own = set.overrides.find((o) => o.workspace === workspace);
   if (own) return own.enabled ? "On here" : "Off here";
   return isOn(set, null)
     ? "On, as for every workspace"
@@ -38,7 +38,7 @@ export function stateFor(set: RuleSet, workspace: string): string {
 
 /** Whether `workspace` switches the set for itself. */
 export function overrides(set: RuleSet, workspace: string): boolean {
-  return set.overrides.some((o) => o.sandbox === workspace);
+  return set.overrides.some((o) => o.workspace === workspace);
 }
 
 /** The System managed hosts that apply to `workspace`. */
@@ -46,13 +46,13 @@ export function systemFor(
   hosts: readonly SystemHost[],
   workspace: string,
 ): SystemHost[] {
-  return hosts.filter((h) => h.sandbox === null || h.sandbox === workspace);
+  return hosts.filter((h) => h.workspace === null || h.workspace === workspace);
 }
 
 /** "On in demo; off in api": the workspaces that switch the set for themselves. */
 export function overridesLabel(set: RuleSet): string {
   return set.overrides
-    .map((o) => `${o.enabled ? "on" : "off"} in ${o.sandbox}`)
+    .map((o) => `${o.enabled ? "on" : "off"} in ${o.workspace}`)
     .join("; ");
 }
 
@@ -81,15 +81,15 @@ export function setsOnFor(
 }
 
 /** "Every workspace" or the one workspace a System managed host is allowed for. */
-export function systemScope(host: Pick<SystemHost, "sandbox">): string {
-  return host.sandbox === null ? "Every workspace" : host.sandbox;
+export function systemScope(host: Pick<SystemHost, "workspace">): string {
+  return host.workspace === null ? "Every workspace" : host.workspace;
 }
 
 export interface ReasonGroup {
   reason: SystemReason;
   text: string;
   /** `null` for every workspace. */
-  sandbox: string | null;
+  workspace: string | null;
   hosts: SystemHost[];
 }
 
@@ -98,14 +98,14 @@ export function byReason(hosts: readonly SystemHost[]): ReasonGroup[] {
   const groups: ReasonGroup[] = [];
   for (const host of hosts) {
     const group = groups.find(
-      (g) => g.reason === host.reason && g.sandbox === host.sandbox,
+      (g) => g.reason === host.reason && g.workspace === host.workspace,
     );
     if (group) group.hosts.push(host);
     else
       groups.push({
         reason: host.reason,
         text: host.reason_text,
-        sandbox: host.sandbox,
+        workspace: host.workspace,
         hosts: [host],
       });
   }

@@ -80,7 +80,7 @@ export function clipboardOptions(
 }
 
 const SOURCE_WORDS: Record<Source, string> = {
-  sandbox: "this workspace",
+  workspace: "this workspace",
   global: "global setting",
   default: "puddle's default",
 };

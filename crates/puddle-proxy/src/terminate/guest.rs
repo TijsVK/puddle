@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The guest's side of a terminated connection: a TLS server whose one certificate is the
-//! sandbox CA's leaf for the host the guest `CONNECT`ed to.
+//! workspace CA's leaf for the host the guest `CONNECT`ed to.
 
 use std::io;
 use std::pin::Pin;
@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 
-use puddle_ca::SandboxCa;
+use puddle_ca::WorkspaceCa;
 use puddle_netpolicy::normalise_host;
 use puddle_types::Host;
 use rustls::ServerConfig;
@@ -33,7 +33,7 @@ fn provider() -> Arc<CryptoProvider> {
 /// upstream. Only the one leaf is ever reachable through it, whatever the client asks.
 #[derive(Debug)]
 struct SniGate {
-    ca: Arc<SandboxCa>,
+    ca: Arc<WorkspaceCa>,
     host: String,
     mismatch: Arc<AtomicBool>,
 }
@@ -62,7 +62,7 @@ impl ResolvesServerCert for SniGate {
 /// An acceptor for one connection to `host`, and the flag that says the client asked for another
 /// name.
 pub(crate) fn acceptor(
-    ca: &Arc<SandboxCa>,
+    ca: &Arc<WorkspaceCa>,
     host: &Host,
 ) -> Result<(TlsAcceptor, Arc<AtomicBool>), rustls::Error> {
     let mismatch = Arc::new(AtomicBool::new(false));

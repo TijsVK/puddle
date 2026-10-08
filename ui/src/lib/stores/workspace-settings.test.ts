@@ -55,7 +55,7 @@ describe("loading", () => {
       init?: { params?: { path?: Record<string, unknown> } },
     ) => {
       const result = await real(path, init);
-      if (slow && path === "/api/settings/sandboxes/{sandbox}") {
+      if (slow && path === "/api/settings/workspaces/{workspace}") {
         slow = false;
         await new Promise((r) => setTimeout(r, 20));
       }
@@ -78,7 +78,7 @@ describe("saving", () => {
     expect(settings.overrides?.memory).toBe(4096);
     expect(settings.effective?.memory).toEqual({
       value: 4096,
-      source: "sandbox",
+      source: "workspace",
     });
     await settings.change({ memory: null });
     expect(settings.effective?.memory.source).toBe("global");
@@ -86,7 +86,7 @@ describe("saving", () => {
 
   it("keeps what it had when the service refuses, and says why", async () => {
     await settings.load("demo");
-    api.refuse.set("PUT /api/settings/sandboxes/{sandbox}", {
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
       status: 422,
       message: "memory is too small",
     });

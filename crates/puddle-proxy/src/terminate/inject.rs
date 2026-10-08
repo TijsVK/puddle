@@ -10,7 +10,7 @@
 use std::fmt;
 
 use ::http::{HeaderName, HeaderValue};
-use puddle_types::{Host, SandboxName};
+use puddle_types::{Host, WorkspaceName};
 
 use crate::destination::BoxFuture;
 
@@ -169,8 +169,8 @@ pub enum InjectDecision {
 /// The connection a request arrived on.
 #[derive(Debug, Clone, Copy)]
 pub struct InjectContext<'a> {
-    /// The sandbox, from the route.
-    pub sandbox: &'a SandboxName,
+    /// The workspace, from the route.
+    pub workspace: &'a WorkspaceName,
     /// The host the guest `CONNECT`ed to, which the certificate, the `Host` header and the
     /// upstream connection are all pinned to.
     pub host: &'a Host,
@@ -231,7 +231,7 @@ impl<'a> RequestView<'a> {
 
 /// Decides, per terminated request, whether a credential goes with it.
 ///
-/// One injector serves one sandbox. `decide` runs after the upstream's certificate has been
+/// One injector serves one workspace. `decide` runs after the upstream's certificate has been
 /// verified, so a failed verification never reaches it, and before any request byte is sent
 /// upstream. It may take its time (a secret source), but the guest is waiting.
 pub trait Injector: Send + Sync + fmt::Debug {

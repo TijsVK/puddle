@@ -41,7 +41,7 @@ test("an out-of-memory kill shows a notice on any screen, without taking focus",
   await emitUntilShown(
     backend,
     page,
-    { type: "oom_kill", sandbox: "web-shop", pid: 4242, process: "node" },
+    { type: "oom_kill", workspace: "web-shop", pid: 4242, process: "node" },
     /web-shop ran out of memory/,
   );
   await expect(notices(page).getByText(/node \(process 4242\)/)).toBeVisible();
@@ -62,30 +62,30 @@ test("a workspace that stops on its own is reported, and one that is stopped on 
   await emitUntilShown(
     backend,
     page,
-    { type: "oom_kill", sandbox: "data-tools", pid: 1, process: "ld" },
+    { type: "oom_kill", workspace: "data-tools", pid: 1, process: "ld" },
     /data-tools ran out of memory/,
   );
   // Asked for: stopping, then stopped.
   await backend.control.emit({
     type: "workspace_progress",
-    sandbox: "web-shop",
+    workspace: "web-shop",
     step: "stopping",
     detail: null,
   });
   await backend.control.emit({
     type: "status_changed",
-    sandbox: "web-shop",
+    workspace: "web-shop",
     status: "stopped",
   });
   await backend.control.emit({
     type: "status_changed",
-    sandbox: "web-shop",
+    workspace: "web-shop",
     status: "running",
   });
   // Events arrive in order: once this one is shown, the three above were handled.
   await backend.control.emit({
     type: "oom_kill",
-    sandbox: "docs-site",
+    workspace: "docs-site",
     pid: 2,
     process: "ld",
   });
@@ -103,20 +103,20 @@ test("a workspace that stops on its own is reported, and one that is stopped on 
     ).toBeVisible({ timeout: 500 });
     await backend.control.emit({
       type: "status_changed",
-      sandbox: "web-shop",
+      workspace: "web-shop",
       status: "running",
     });
   }).toPass();
   await backend.control.emit({
     type: "status_changed",
-    sandbox: "web-shop",
+    workspace: "web-shop",
     status: "crashed",
   });
   await expect(notices(page).getByText("web-shop crashed.")).toBeVisible();
   // Running again withdraws the notice.
   await backend.control.emit({
     type: "status_changed",
-    sandbox: "web-shop",
+    workspace: "web-shop",
     status: "running",
   });
   await expect(notices(page).getByText("web-shop crashed.")).toHaveCount(0);
@@ -129,13 +129,13 @@ test("notices can be dismissed by keyboard, and a repeat replaces the old notice
   await open(page, backend);
   const oom = {
     type: "oom_kill",
-    sandbox: "docs-site",
+    workspace: "docs-site",
     pid: 7,
     process: "cc1plus",
   };
   await emitUntilShown(backend, page, oom, /docs-site ran out of memory/);
   await backend.control.emit(oom);
-  await backend.control.emit({ ...oom, sandbox: "data-tools" });
+  await backend.control.emit({ ...oom, workspace: "data-tools" });
   await expect(
     notices(page).getByText(/data-tools ran out of memory/),
   ).toBeVisible();
@@ -166,17 +166,17 @@ for (const scheme of ["light", "dark"] as const) {
   }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await open(page, backend);
-    for (const sandbox of ["web-shop", "docs-site", "data-tools"]) {
+    for (const workspace of ["web-shop", "docs-site", "data-tools"]) {
       await backend.control.emit({
         type: "oom_kill",
-        sandbox,
+        workspace,
         pid: 1,
         process: "node",
       });
     }
     await backend.control.emit({
       type: "status_changed",
-      sandbox: "web-shop",
+      workspace: "web-shop",
       status: "crashed",
     });
     await expect(notices(page).getByText("web-shop crashed.")).toBeVisible();

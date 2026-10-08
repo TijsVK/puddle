@@ -27,7 +27,7 @@ use puddle_host::{
 };
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
-use puddle_types::{SandboxName, WorkspaceId};
+use puddle_types::{SandboxName, WorkspaceId, WorkspaceName};
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
 use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH};
 use serde_json::json;
@@ -822,7 +822,7 @@ async fn a_new_workspace_gets_the_memory_the_settings_name() {
         .request(
             "PUT",
             "/api/settings",
-            Some(&json!({"sandbox_defaults": {"memory": 2048}}).to_string()),
+            Some(&json!({"workspace_defaults": {"memory": 2048}}).to_string()),
             true,
         )
         .await;
@@ -1395,7 +1395,7 @@ async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
     let mut events = api.events().await;
     allow_direct_ssh(&api, "acme", true).await;
     create(&api, &mut events, "acme").await;
-    let name = SandboxName::new("acme").unwrap();
+    let name = WorkspaceName::new("acme").unwrap();
     let endpoint: PathBuf = host.workspaces().ssh_endpoint(&name).await.unwrap();
     assert_ne!(endpoint.as_os_str(), "");
     api.post("/api/workspaces/acme/stop", "").await;
@@ -1407,7 +1407,7 @@ async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
 async fn allow_direct_ssh(api: &Api, name: &str, on: bool) {
     let reply = api
         .put(
-            &format!("/api/settings/sandboxes/{name}"),
+            &format!("/api/settings/workspaces/{name}"),
             &json!({"overrides": {"direct_ssh": on}}).to_string(),
         )
         .await;
@@ -1421,7 +1421,7 @@ async fn with_direct_ssh_off_there_is_no_ssh_endpoint_and_the_gate_says_no() {
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let name = SandboxName::new("acme").unwrap();
+    let name = WorkspaceName::new("acme").unwrap();
     assert_eq!(
         api.get("/api/workspaces/acme").await.json()["status"],
         "running"
@@ -1448,7 +1448,7 @@ async fn turning_direct_ssh_on_and_off_opens_and_closes_the_endpoint_at_once() {
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let name = SandboxName::new("acme").unwrap();
+    let name = WorkspaceName::new("acme").unwrap();
 
     allow_direct_ssh(&api, "acme", true).await;
     assert!(host.workspaces().direct_ssh_allowed(&name));
@@ -1482,12 +1482,12 @@ async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
     let reply = api
         .put(
             "/api/settings",
-            &json!({"sandbox_defaults": {"direct_ssh": true}}).to_string(),
+            &json!({"workspace_defaults": {"direct_ssh": true}}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     create(&api, &mut events, "acme").await;
-    let name = SandboxName::new("acme").unwrap();
+    let name = WorkspaceName::new("acme").unwrap();
     assert!(host.workspaces().ssh_endpoint(&name).await.is_some());
     // Its own switch wins over the default.
     allow_direct_ssh(&api, "acme", false).await;
@@ -1557,7 +1557,7 @@ async fn an_image_pull_is_audited_as_puddles_own_connection() {
             .filter(|v: &serde_json::Value| v["type"] == "connection")
             .collect();
         if let Some(record) = records.first() {
-            assert!(record["sandbox"].is_null(), "{record}");
+            assert!(record["workspace"].is_null(), "{record}");
             assert_eq!(record["origin"], "puddle", "{record}");
             break;
         }

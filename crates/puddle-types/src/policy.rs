@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use crate::{Host, LocalCategory, SandboxName};
+use crate::{Host, LocalCategory, WorkspaceName};
 
 /// A rule's row id. Never reused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -74,9 +74,9 @@ pub enum PatternKind {
 pub enum PendingOutcome {
     /// A new pending row was written.
     New(PendingId),
-    /// An open row for the same `(sandbox, host, port)` already existed; it was updated.
+    /// An open row for the same `(workspace, host, port)` already existed; it was updated.
     Repeat(PendingId),
-    /// The sandbox is over its rate limit or open-row cap; no row was written.
+    /// The workspace is over its rate limit or open-row cap; no row was written.
     Suppressed,
 }
 
@@ -224,13 +224,13 @@ pub enum SuffixAllows {
     Ignore,
 }
 
-/// One connection attempt as the proxy sees it: `(sandbox, host, port)`, plus an optional
+/// One connection attempt as the proxy sees it: `(workspace, host, port)`, plus an optional
 /// protocol hint. Non-exhaustive: build it with [`EgressRequest::new`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct EgressRequest {
-    /// The sandbox, from the route the connection arrived on.
-    pub sandbox: SandboxName,
+    /// The workspace, from the route the connection arrived on.
+    pub workspace: WorkspaceName,
     /// The normalised destination.
     pub host: Host,
     /// The destination port. Rules ignore it (R-2); pending rows and the audit record it.
@@ -242,9 +242,9 @@ pub struct EgressRequest {
 impl EgressRequest {
     /// A request with no protocol hint.
     #[must_use]
-    pub fn new(sandbox: SandboxName, host: Host, port: u16) -> Self {
+    pub fn new(workspace: WorkspaceName, host: Host, port: u16) -> Self {
         Self {
-            sandbox,
+            workspace,
             host,
             port,
             protocol: None,
@@ -377,9 +377,9 @@ mod tests {
 
     #[test]
     fn requests_carry_an_optional_protocol_hint() {
-        let sandbox = SandboxName::new("box").unwrap();
+        let workspace = WorkspaceName::new("box").unwrap();
         let host = Host::parse_normalised("example.com").unwrap();
-        let plain = EgressRequest::new(sandbox, host, 443);
+        let plain = EgressRequest::new(workspace, host, 443);
         assert_eq!(plain.protocol, None);
         let ssh = plain.clone().with_protocol(ProtocolHint::Ssh);
         assert_eq!(ssh.protocol, Some(ProtocolHint::Ssh));

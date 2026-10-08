@@ -37,7 +37,7 @@ async fn direct_ssh_of(state: &AppState, records: &[WorkspaceRecord]) -> Vec<boo
         Ok(names
             .iter()
             .map(|name| {
-                crate::routes::settings::load_sandbox(repo, name).is_ok_and(|own| {
+                crate::routes::settings::load_workspace(repo, name).is_ok_and(|own| {
                     resolve(&global.settings, Some(&own.settings))
                         .direct_ssh
                         .value
@@ -273,7 +273,7 @@ pub(crate) async fn attach_workspace(
         // Desktop editors connect over SSH, which puddle only opens when the user allowed it.
         // A workspace that is not up gets the service's own "start it first" answer.
         let record = state.workspaces.get(&id).await?;
-        let up = record.busy.is_none() && record.status == puddle_types::SandboxStatus::Running;
+        let up = record.busy.is_none() && record.status == puddle_types::WorkspaceStatus::Running;
         if up && !direct_ssh_on(&state, record).await {
             return Err(crate::WorkspaceError::Conflict(
                 "direct SSH is off for this workspace; allow it first".to_owned(),

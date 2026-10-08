@@ -27,7 +27,7 @@ export const DEFAULT_RANGE: RangeKey = "24h";
 
 export interface Filter {
   /** A workspace's name; empty for all. */
-  sandbox: string;
+  workspace: string;
   type: AuditType | "";
   outcome: AuditOutcome | "";
   /** Text the host (or a rule's pattern) contains; empty for all. */
@@ -36,7 +36,7 @@ export interface Filter {
 }
 
 export const NO_FILTER: Filter = {
-  sandbox: "",
+  workspace: "",
   type: "",
   outcome: "",
   host: "",
@@ -84,7 +84,7 @@ export function outcomeLabel(outcome: AuditOutcome): string {
 /** True when any filter differs from the screen's defaults (the "Clear filters" button shows). */
 export function isFiltered(filter: Filter): boolean {
   return (
-    filter.sandbox !== "" ||
+    filter.workspace !== "" ||
     filter.type !== "" ||
     filter.outcome !== "" ||
     filter.host.trim() !== "" ||
@@ -95,7 +95,7 @@ export function isFiltered(filter: Filter): boolean {
 /** True when the filter leaves out part of the log (so "no records" may just mean "none match"). */
 export function isNarrowed(filter: Filter): boolean {
   return (
-    filter.sandbox !== "" ||
+    filter.workspace !== "" ||
     filter.type !== "" ||
     filter.outcome !== "" ||
     filter.host.trim() !== "" ||
@@ -105,7 +105,7 @@ export function isNarrowed(filter: Filter): boolean {
 
 /** The server-side filters of `GET /api/audit`; `now` fixes a relative range. */
 export interface AuditQuery {
-  sandbox?: string;
+  workspace?: string;
   type?: AuditType;
   outcome?: AuditOutcome;
   host_contains?: string;
@@ -114,7 +114,7 @@ export interface AuditQuery {
 
 export function toQuery(filter: Filter, now: number): AuditQuery {
   const query: AuditQuery = {};
-  if (filter.sandbox !== "") query.sandbox = filter.sandbox;
+  if (filter.workspace !== "") query.workspace = filter.workspace;
   if (filter.type !== "") query.type = filter.type;
   if (filter.outcome !== "") query.outcome = filter.outcome;
   const host = filter.host.trim();
@@ -127,7 +127,7 @@ export function toQuery(filter: Filter, now: number): AuditQuery {
 /** The page address's query string for a filter (`""` when it is the default view). */
 export function toSearch(filter: Filter): string {
   const params = new URLSearchParams();
-  if (filter.sandbox !== "") params.set("workspace", filter.sandbox);
+  if (filter.workspace !== "") params.set("workspace", filter.workspace);
   if (filter.type !== "") params.set("type", filter.type);
   if (filter.outcome !== "") params.set("outcome", filter.outcome);
   if (filter.host.trim() !== "") params.set("host", filter.host.trim());
@@ -143,7 +143,7 @@ export function fromSearch(search: string): Filter {
   const outcome = params.get("outcome");
   const range = params.get("range");
   return {
-    sandbox: params.get("workspace") ?? "",
+    workspace: params.get("workspace") ?? "",
     type: TYPES.some((t) => t.value === type) ? (type as AuditType) : "",
     outcome: OUTCOMES.some((o) => o.value === outcome)
       ? (outcome as AuditOutcome)
@@ -212,7 +212,7 @@ function ruleLabel(rule: Schemas["AuditRule"]): string {
   const where =
     rule.scope === "global"
       ? "every workspace"
-      : `workspace ${rule.sandbox_id ?? "?"}`;
+      : `workspace ${rule.workspace_id ?? "?"}`;
   return `${rule.effect} for ${where}`;
 }
 
@@ -273,7 +273,7 @@ export function describe(record: AuditRecord): RowView {
     case "connection":
       return {
         ts: record.ts,
-        workspace: record.sandbox_id,
+        workspace: record.workspace_id,
         type,
         destination: endpoint(record.host, record.port),
         outcome:
@@ -296,7 +296,7 @@ export function describe(record: AuditRecord): RowView {
               : "";
       return {
         ts: record.ts,
-        workspace: p.sandbox_id,
+        workspace: p.workspace_id,
         type,
         destination: endpoint(p.host, p.port),
         outcome:
@@ -311,7 +311,7 @@ export function describe(record: AuditRecord): RowView {
     case "pending_suppressed":
       return {
         ts: record.ts,
-        workspace: record.sandbox_id,
+        workspace: record.workspace_id,
         type,
         destination: null,
         outcome: null,
@@ -329,7 +329,7 @@ export function describe(record: AuditRecord): RowView {
             : `${ruleLabel(record.rule)}${record.type === "rule_created" ? `, by ${record.rule.created_by}` : ""}`;
       return {
         ts: record.ts,
-        workspace: record.rule.sandbox_id,
+        workspace: record.rule.workspace_id,
         type,
         destination: record.rule.pattern,
         outcome: null,
@@ -350,11 +350,11 @@ export function describe(record: AuditRecord): RowView {
     case "rule_set_switched":
       return {
         ts: record.ts,
-        workspace: record.sandbox_id,
+        workspace: record.workspace_id,
         type,
         destination: record.set_id,
         outcome: null,
-        detail: `${switchLabel(record.enabled)} for ${record.sandbox_id === null ? "every workspace" : `workspace ${record.sandbox_id}`}, by ${record.actor}`,
+        detail: `${switchLabel(record.enabled)} for ${record.workspace_id === null ? "every workspace" : `workspace ${record.workspace_id}`}, by ${record.actor}`,
       };
     case "rule_set_changed":
       return {
@@ -375,7 +375,7 @@ export function describe(record: AuditRecord): RowView {
     case "system_managed_changed":
       return {
         ts: record.ts,
-        workspace: record.sandbox_id,
+        workspace: record.workspace_id,
         type,
         destination: null,
         outcome: null,

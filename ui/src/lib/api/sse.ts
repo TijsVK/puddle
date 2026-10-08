@@ -16,7 +16,7 @@ export interface EventStreamOptions {
   /** Ends the stream; the iterator then returns without throwing. */
   signal: AbortSignal;
   /** Only this workspace's events (global ones always come through). */
-  sandbox?: string;
+  workspace?: string;
   /** Looked up per connection attempt. */
   getToken?: () => string | undefined;
   /** Called when events were or may have been missed: refetch what the screen shows. */
@@ -62,9 +62,9 @@ function parseEvent(data: string): PuddleEvent | undefined {
 
 function streamUrl(options: EventStreamOptions): string {
   const base = options.url ?? "/api/events";
-  return options.sandbox === undefined
+  return options.workspace === undefined
     ? base
-    : `${base}?sandbox=${encodeURIComponent(options.sandbox)}`;
+    : `${base}?workspace=${encodeURIComponent(options.workspace)}`;
 }
 
 /** Yields events until `signal` aborts. Never throws for network or HTTP errors: it retries. */

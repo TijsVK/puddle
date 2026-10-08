@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Wire types of the workspaces resource.
 
-use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus};
+use puddle_types::{ImageRef, MemoryMib, SandboxName, WorkspaceName, WorkspaceStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -37,21 +37,21 @@ impl From<domain::Operation> for WorkspaceOperation {
     }
 }
 
-/// A workspace: a repository checkout on its own disk, and the sandbox that runs it.
+/// A workspace: a repository checkout on its own disk, and the workspace that runs it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Workspace {
     /// The id used in paths. Today it is the workspace's name.
     pub id: String,
-    /// The name of the sandbox that runs it; events and per-sandbox settings use this name.
-    pub name: SandboxName,
+    /// The name of the workspace that runs it; events and per-workspace settings use this name.
+    pub name: WorkspaceName,
     /// The HTTPS URL it was cloned from.
     pub repo_url: String,
-    /// The image its sandbox boots.
+    /// The image its workspace boots.
     pub image: String,
     /// Memory in MiB, applied at the next start.
     pub memory_mib: u32,
-    /// The sandbox's state.
-    pub status: SandboxStatus,
+    /// The workspace's state.
+    pub status: WorkspaceStatus,
     /// The operation in progress; `null` when idle.
     #[schema(required = true)]
     pub busy: Option<WorkspaceOperation>,
@@ -118,8 +118,8 @@ pub struct WorkspaceList {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewWorkspaceRequest {
-    /// The workspace's name, which is also its sandbox's name.
-    pub name: SandboxName,
+    /// The workspace's name, which is also its workspace's name.
+    pub name: WorkspaceName,
     /// The repository to clone, as an `https://` URL without credentials. SSH remotes
     /// (`git@host:path`, `ssh://`) are refused with a message saying so.
     pub repo_url: String,
@@ -132,7 +132,7 @@ pub struct NewWorkspaceRequest {
     pub memory_mib: Option<u32>,
 }
 
-/// Names starting with this are puddle's own short-lived maintenance sandboxes.
+/// Names starting with this are puddle's own short-lived maintenance workspaces.
 const RESERVED_PREFIX: &str = "m--";
 
 impl NewWorkspaceRequest {
@@ -210,7 +210,7 @@ pub struct DeleteCheck {
     pub other: FindingList,
     /// What could not be checked. Anything here makes `clean` false.
     pub errors: Vec<String>,
-    /// The stopped sandbox that is removed together with the workspace.
+    /// The stopped workspace that is removed together with the workspace.
     #[schema(required = true)]
     pub removes_sandbox: Option<SandboxName>,
     /// Identifies exactly this report: send it back in the delete request, which is refused if

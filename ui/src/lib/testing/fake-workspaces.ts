@@ -76,7 +76,7 @@ const noLayer = (): Layer => ({
   zoom_hotkeys: null,
 });
 
-const resolved = <T>(value: T, source: "sandbox" | "global" | "default") => ({
+const resolved = <T>(value: T, source: "workspace" | "global" | "default") => ({
   value,
   source,
 });
@@ -129,12 +129,12 @@ export class FakeWorkspaces {
   private effective(name: string) {
     const o = this.overrides[name] ?? noLayer();
     const pick = (v: boolean | null) =>
-      v === null ? resolved(false, "default") : resolved(v, "sandbox");
+      v === null ? resolved(false, "default") : resolved(v, "workspace");
     return {
       clipboard_read:
         o.clipboard_read === null
           ? resolved("ask" as const, "default")
-          : resolved(o.clipboard_read, "sandbox"),
+          : resolved(o.clipboard_read, "workspace"),
       local_toggles: {
         link_local: pick(o.local_toggles.link_local),
         loopback: pick(o.local_toggles.loopback),
@@ -145,7 +145,7 @@ export class FakeWorkspaces {
       memory:
         o.memory === null
           ? resolved(this.globalMemory, "global")
-          : resolved(o.memory, "sandbox"),
+          : resolved(o.memory, "workspace"),
       reconnection_grace: resolved(300, "default"),
       wildcards_reach_local: resolved(false, "default"),
       zoom_hotkeys: resolved(true, "default"),
@@ -161,7 +161,7 @@ export class FakeWorkspaces {
     if (this.down) throw new TypeError("down");
     const refused = this.refusal(`GET ${path}`);
     if (refused) return refused;
-    const id = init?.params?.path?.["id"] ?? init?.params?.path?.["sandbox"];
+    const id = init?.params?.path?.["id"] ?? init?.params?.path?.["workspace"];
     switch (path) {
       case "/api/workspaces":
         return this.reply(200, { workspaces: this.list });
@@ -172,14 +172,14 @@ export class FakeWorkspaces {
       case "/api/settings":
         return this.reply(200, {
           effective: this.effective("-"),
-          sandbox_defaults: noLayer(),
+          workspace_defaults: noLayer(),
           unknown_fields: [],
           vscode_server: {},
         });
-      case "/api/settings/sandboxes/{sandbox}": {
+      case "/api/settings/workspaces/{workspace}": {
         const name = String(id);
         return this.reply(200, {
-          sandbox: name,
+          workspace: name,
           overrides: this.overrides[name] ?? noLayer(),
           effective: this.effective(name),
           unknown_fields: [],
@@ -252,14 +252,17 @@ export class FakeWorkspaces {
 
   PUT = async (
     path: string,
-    init: { params: { path: { sandbox: string } }; body: { overrides: Layer } },
+    init: {
+      params: { path: { workspace: string } };
+      body: { overrides: Layer };
+    },
   ) => {
     this.calls.push(`PUT ${path}`);
     this.bodies.push(init.body);
     if (this.down) throw new TypeError("down");
     const refused = this.refusal(`PUT ${path}`);
     if (refused) return refused;
-    const name = init.params.path.sandbox;
+    const name = init.params.path.workspace;
     this.overrides[name] = init.body.overrides;
     this.list = this.list.map((w) =>
       w.name === name
@@ -267,7 +270,7 @@ export class FakeWorkspaces {
         : w,
     );
     return this.reply(200, {
-      sandbox: name,
+      workspace: name,
       overrides: this.overrides[name],
       effective: this.effective(name),
       unknown_fields: [],

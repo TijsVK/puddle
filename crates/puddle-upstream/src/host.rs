@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Connections puddle makes for itself: telemetry upload, downloads, anything the
-//! host program fetches. They take the same route and authentication as a sandbox's traffic.
+//! host program fetches. They take the same route and authentication as a workspace's traffic.
 //!
 //! Unlike a guest's request there is nothing to guard: the destination is a fixed endpoint of
 //! puddle's own choosing, so every resolved address counts as checked. A name that cannot be

@@ -92,7 +92,7 @@ describe("RequestRow", () => {
     await fireEvent.click(screen.getByRole("button", { name: /^Deny/ }));
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({ request: expect.objectContaining({ id: 1 }) }),
-      expect.objectContaining({ effect: "deny", scope: "sandbox" }),
+      expect.objectContaining({ effect: "deny", scope: "workspace" }),
     );
   });
 

@@ -11,7 +11,7 @@ interface Rule {
   effect: "allow" | "deny";
   pattern: string;
   pattern_kind: "exact" | "suffix";
-  scope: { type: "global" } | { type: "sandbox"; sandbox: string };
+  scope: { type: "global" } | { type: "workspace"; workspace: string };
   expires_at: number | null;
 }
 
@@ -195,7 +195,7 @@ test.describe("adding", () => {
     const rule = (await rules(request, backend)).find(
       (r) => r.pattern === "tracker.example.org",
     );
-    expect(rule?.scope).toEqual({ type: "sandbox", sandbox: "docs-site" });
+    expect(rule?.scope).toEqual({ type: "workspace", workspace: "docs-site" });
     const now = (await backend.control.state()).now_ms;
     expect((rule?.expires_at ?? 0) - now).toBeGreaterThanOrEqual(3_600_000);
     expect((rule?.expires_at ?? 0) - now).toBeLessThan(3_600_000 + 60_000);
@@ -300,7 +300,7 @@ test.describe("adding", () => {
   }) => {
     await backend.control.step({
       do: "request",
-      sandbox: "web-shop",
+      workspace: "web-shop",
       host: "closes.example.org",
     });
     await openRules(page, backend);

@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use puddle_types::{Event, PendingId, RuleId, RuleSetId, SandboxName, SuffixAllows};
+use puddle_types::{Event, PendingId, RuleId, RuleSetId, SuffixAllows, WorkspaceName};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{
@@ -34,10 +34,10 @@ pub struct RuleSetInfo {
     pub description: String,
     /// Whether it is on where nobody switched it.
     pub default_on: bool,
-    /// The switch for every sandbox, if set.
+    /// The switch for every workspace, if set.
     pub global: Option<bool>,
-    /// Sandboxes that override the switch, by name.
-    pub overrides: Vec<(SandboxName, bool)>,
+    /// Workspaces that override the switch, by name.
+    pub overrides: Vec<(WorkspaceName, bool)>,
     /// Its entries.
     pub entries: Vec<RuleSetEntryInfo>,
     /// Built-in sets: when a puddle update last changed the entries (R-36), else `None`.
@@ -47,18 +47,18 @@ pub struct RuleSetInfo {
 }
 
 impl RuleSetInfo {
-    /// Whether the set is on for `sandbox` (R-37).
+    /// Whether the set is on for `workspace` (R-37).
     #[must_use]
-    pub fn is_on(&self, sandbox: &SandboxName) -> bool {
+    pub fn is_on(&self, workspace: &WorkspaceName) -> bool {
         self.overrides
             .iter()
-            .find(|(s, _)| s == sandbox)
+            .find(|(s, _)| s == workspace)
             .map(|(_, on)| *on)
             .or(self.global)
             .unwrap_or(self.default_on)
     }
 
-    /// Whether the set is on where no sandbox overrides it.
+    /// Whether the set is on where no workspace overrides it.
     #[must_use]
     pub fn on_by_default(&self) -> bool {
         self.global.unwrap_or(self.default_on)
@@ -89,17 +89,17 @@ pub struct SystemHost {
     pub note: &'static str,
     /// Why it is allowed.
     pub reason: SystemReason,
-    /// The one sandbox it is allowed for, or `None` for every sandbox.
-    pub sandbox: Option<SandboxName>,
+    /// The one workspace it is allowed for, or `None` for every workspace.
+    pub workspace: Option<WorkspaceName>,
 }
 
 /// Which System managed reasons apply where, as derived from the user's setup (R-41).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SystemPlan {
-    /// Reasons for every sandbox (global choices).
+    /// Reasons for every workspace (global choices).
     pub everywhere: BTreeSet<SystemReason>,
-    /// Reasons for one sandbox each (per-workspace choices).
-    pub sandboxes: BTreeMap<SandboxName, BTreeSet<SystemReason>>,
+    /// Reasons for one workspace each (per-workspace choices).
+    pub workspaces: BTreeMap<WorkspaceName, BTreeSet<SystemReason>>,
 }
 
 /// The set with this wire id (`builtin:<slug>`, `user:<id>`, `system`), if it parses. A built-in
@@ -138,16 +138,16 @@ pub(super) fn load_index(conn: &Connection) -> Result<RuleIndex, StoreError> {
             entries.push(SetEntry {
                 set: RuleSetId::BuiltIn(set.slug),
                 pattern,
-                sandbox: None,
+                workspace: None,
             });
         }
     }
-    for (sandbox, reason) in load_reasons(conn)? {
+    for (workspace, reason) in load_reasons(conn)? {
         for pattern in catalogue::patterns(reason.hosts()) {
             entries.push(SetEntry {
                 set: RuleSetId::System,
                 pattern,
-                sandbox: sandbox.clone(),
+                workspace: workspace.clone(),
             });
         }
     }
@@ -155,7 +155,7 @@ pub(super) fn load_index(conn: &Connection) -> Result<RuleIndex, StoreError> {
 }
 
 fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
-    let mut stmt = conn.prepare("SELECT rule_set, sandbox_id, enabled FROM rule_set_switches")?;
+    let mut stmt = conn.prepare("SELECT rule_set, workspace_id, enabled FROM rule_set_switches")?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -165,45 +165,47 @@ fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
     })?;
     let mut switches = Switches::default();
     for row in rows {
-        let (set, sandbox, enabled) = row?;
+        let (set, workspace, enabled) = row?;
         // A switch of a built-in set this version no longer ships is kept but means nothing.
         let Some(set) = parse_rule_set(&set) else {
             continue;
         };
-        let sandbox = match sandbox {
-            Some(name) => match SandboxName::new(&name) {
+        let workspace = match workspace {
+            Some(name) => match WorkspaceName::new(&name) {
                 Ok(name) => Some(name),
                 Err(_) => continue,
             },
             None => None,
         };
-        switches.insert(set, sandbox, enabled != 0);
+        switches.insert(set, workspace, enabled != 0);
     }
     Ok(switches)
 }
 
-fn load_reasons(conn: &Connection) -> Result<Vec<(Option<SandboxName>, SystemReason)>, StoreError> {
-    let mut stmt =
-        conn.prepare("SELECT sandbox_id, reason FROM system_reasons ORDER BY sandbox_id, reason")?;
+fn load_reasons(
+    conn: &Connection,
+) -> Result<Vec<(Option<WorkspaceName>, SystemReason)>, StoreError> {
+    let mut stmt = conn
+        .prepare("SELECT workspace_id, reason FROM system_reasons ORDER BY workspace_id, reason")?;
     let rows = stmt.query_map([], |row| {
         Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (sandbox, reason) = row?;
+        let (workspace, reason) = row?;
         // Reasons are derived again from the settings at every start; one this version doesn't
         // know is dropped then.
         let Some(reason) = SystemReason::parse(&reason) else {
             continue;
         };
-        let sandbox = match sandbox {
-            Some(name) => match SandboxName::new(&name) {
+        let workspace = match workspace {
+            Some(name) => match WorkspaceName::new(&name) {
                 Ok(name) => Some(name),
                 Err(_) => continue,
             },
             None => None,
         };
-        out.push((sandbox, reason));
+        out.push((workspace, reason));
     }
     Ok(out)
 }
@@ -283,20 +285,20 @@ pub(super) fn require_user_set(conn: &Connection, id: i64) -> Result<RuleSetWire
     })
 }
 
-/// Fails unless the set the user made is on for `sandbox`: approving into a set that is off
+/// Fails unless the set the user made is on for `workspace`: approving into a set that is off
 /// there would not allow the request (R-38).
 pub(super) fn require_on(
     conn: &Connection,
     id: i64,
-    sandbox: &SandboxName,
+    workspace: &WorkspaceName,
 ) -> Result<(), StoreError> {
     require_user_set(conn, id)?;
-    if load_switches(conn)?.is_on(RuleSetId::User(id), sandbox) {
+    if load_switches(conn)?.is_on(RuleSetId::User(id), workspace) {
         Ok(())
     } else {
         Err(StoreError::RuleSetOff {
             set: RuleSetId::User(id).to_string(),
-            sandbox: sandbox.to_string(),
+            workspace: workspace.to_string(),
         })
     }
 }
@@ -345,28 +347,28 @@ fn checked_names(
     Ok((name.to_owned(), description.to_owned()))
 }
 
-/// Closes the open rows (in `sandbox`, or in any sandbox) that `index` now decides, the way it
+/// Closes the open rows (in `workspace`, or in any workspace) that `index` now decides, the way it
 /// decides them (R-37: like a new rule, R-16). Returns the rows it closed.
 fn close_rows_now_decided(
     tx: &Transaction<'_>,
     index: &RuleIndex,
-    sandbox: Option<&SandboxName>,
+    workspace: Option<&WorkspaceName>,
     actor: Actor,
     now: u64,
     fx: &mut Vec<Event>,
 ) -> Result<Vec<PendingId>, StoreError> {
     let mut stmt = tx.prepare(&format!(
         "SELECT {PENDING_COLUMNS} FROM pending
-         WHERE state = 'requested' AND (?1 IS NULL OR sandbox_id = ?1) ORDER BY id"
+         WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1) ORDER BY id"
     ))?;
     let open = stmt
-        .query_map([sandbox.map(SandboxName::as_str)], raw_pending)?
+        .query_map([workspace.map(WorkspaceName::as_str)], raw_pending)?
         .map(|raw| pending_from_raw(&raw?))
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
     let mut closed = Vec::new();
     for row in &open {
-        let Some(hit) = index.decide(&row.sandbox, &row.host, now, SuffixAllows::Count) else {
+        let Some(hit) = index.decide(&row.workspace, &row.host, now, SuffixAllows::Count) else {
             continue;
         };
         decide_row_by(tx, row, hit, actor, now, fx)?;
@@ -558,7 +560,7 @@ impl Store {
         Ok(info)
     }
 
-    /// Switches a set on or off for every sandbox (`sandbox` `None`) or for one, or back to
+    /// Switches a set on or off for every workspace (`workspace` `None`) or for one, or back to
     /// following the next level (`enabled` `None`), and closes the open requests the set now
     /// decides (R-37). Returns the rows it closed.
     ///
@@ -568,7 +570,7 @@ impl Store {
     pub fn switch_rule_set(
         &self,
         set: RuleSetId,
-        sandbox: Option<&SandboxName>,
+        workspace: Option<&WorkspaceName>,
         enabled: Option<bool>,
         actor: Actor,
     ) -> Result<Vec<PendingId>, StoreError> {
@@ -588,14 +590,14 @@ impl Store {
                 _ => return Err(StoreError::UnknownRuleSet(set.to_string())),
             }
             let key = set.to_string();
-            let name = sandbox.map(SandboxName::as_str);
+            let name = workspace.map(WorkspaceName::as_str);
             tx.execute(
-                "DELETE FROM rule_set_switches WHERE rule_set = ?1 AND sandbox_id IS ?2",
+                "DELETE FROM rule_set_switches WHERE rule_set = ?1 AND workspace_id IS ?2",
                 params![key, name],
             )?;
             if let Some(on) = enabled {
                 tx.execute(
-                    "INSERT INTO rule_set_switches (rule_set, sandbox_id, enabled, changed_at)
+                    "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at)
                      VALUES (?1, ?2, ?3, ?4)",
                     params![key, name, i64::from(on), sql_ts(now)],
                 )?;
@@ -603,17 +605,17 @@ impl Store {
             let record = AuditRecord::RuleSetSwitched {
                 ts: now,
                 set_id: key,
-                sandbox_id: name.map(str::to_owned),
+                workspace_id: name.map(str::to_owned),
                 enabled,
                 actor: actor_str(actor),
             };
             append(tx, &record)?;
             let index = load_index(tx)?;
-            let closed = close_rows_now_decided(tx, &index, sandbox, actor, now, fx)?;
+            let closed = close_rows_now_decided(tx, &index, workspace, actor, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok(closed)
         })?;
-        tracing::info!(%set, sandbox = ?sandbox.map(SandboxName::as_str), ?enabled, closed = closed.len(), "rule set switched");
+        tracing::info!(%set, workspace = ?workspace.map(WorkspaceName::as_str), ?enabled, closed = closed.len(), "rule set switched");
         Ok(closed)
     }
 
@@ -625,12 +627,12 @@ impl Store {
         let reasons = load_reasons(&lock(&self.conn))?;
         Ok(reasons
             .into_iter()
-            .flat_map(|(sandbox, reason)| {
+            .flat_map(|(workspace, reason)| {
                 reason.hosts().iter().map(move |entry| SystemHost {
                     pattern: entry.pattern,
                     note: entry.note,
                     reason,
-                    sandbox: sandbox.clone(),
+                    workspace: workspace.clone(),
                 })
             })
             .collect())
@@ -644,19 +646,19 @@ impl Store {
     /// # Errors
     /// A database error; nothing changes then.
     pub fn set_system_managed(&self, plan: &SystemPlan) -> Result<Vec<PendingId>, StoreError> {
-        let mut wanted: BTreeMap<Option<SandboxName>, BTreeSet<SystemReason>> = BTreeMap::new();
+        let mut wanted: BTreeMap<Option<WorkspaceName>, BTreeSet<SystemReason>> = BTreeMap::new();
         if !plan.everywhere.is_empty() {
             wanted.insert(None, plan.everywhere.clone());
         }
-        for (sandbox, reasons) in &plan.sandboxes {
+        for (workspace, reasons) in &plan.workspaces {
             if !reasons.is_empty() {
-                wanted.insert(Some(sandbox.clone()), reasons.clone());
+                wanted.insert(Some(workspace.clone()), reasons.clone());
             }
         }
-        let current: BTreeMap<Option<SandboxName>, BTreeSet<SystemReason>> = {
+        let current: BTreeMap<Option<WorkspaceName>, BTreeSet<SystemReason>> = {
             let mut map: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
-            for (sandbox, reason) in load_reasons(&lock(&self.conn))? {
-                map.entry(sandbox).or_default().insert(reason);
+            for (workspace, reason) in load_reasons(&lock(&self.conn))? {
+                map.entry(workspace).or_default().insert(reason);
             }
             map
         };
@@ -665,15 +667,18 @@ impl Store {
         }
         let closed = self.change(|tx, now, fx| {
             tx.execute("DELETE FROM system_reasons", [])?;
-            for (sandbox, reasons) in &wanted {
+            for (workspace, reasons) in &wanted {
                 for reason in reasons {
                     tx.execute(
-                        "INSERT INTO system_reasons (sandbox_id, reason) VALUES (?1, ?2)",
-                        params![sandbox.as_ref().map(SandboxName::as_str), reason.as_str()],
+                        "INSERT INTO system_reasons (workspace_id, reason) VALUES (?1, ?2)",
+                        params![
+                            workspace.as_ref().map(WorkspaceName::as_str),
+                            reason.as_str()
+                        ],
                     )?;
                 }
             }
-            let scopes: BTreeSet<&Option<SandboxName>> =
+            let scopes: BTreeSet<&Option<WorkspaceName>> =
                 current.keys().chain(wanted.keys()).collect();
             let empty = BTreeSet::new();
             for scope in scopes {
@@ -684,7 +689,7 @@ impl Store {
                 }
                 let record = AuditRecord::SystemManagedChanged {
                     ts: now,
-                    sandbox_id: scope.as_ref().map(ToString::to_string),
+                    workspace_id: scope.as_ref().map(ToString::to_string),
                     added: after
                         .difference(before)
                         .map(|r| r.as_str().to_owned())

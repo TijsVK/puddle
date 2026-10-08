@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! L2 end to end against a real Squid with Basic proxy authentication: a guest
-//! TCP client → the real guest agent → yamux over the sandbox's real endpoint → the real proxy
+//! TCP client → the real guest agent → yamux over the workspace's real endpoint → the real proxy
 //! (real SQLite rules and audit) → upstream chaining (route from a PAC, dead hop, `407` Basic) →
 //! Squid → a local server. The audit must name the hop, and Squid's own access log is the witness
 //! that traffic went through it as the configured user.
@@ -31,7 +31,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticResolver};
 use puddle_proxy::{Proxy, Route, Upstream};
 use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
-use puddle_types::{NullSink, SandboxName};
+use puddle_types::{NullSink, WorkspaceName};
 use puddle_upstream::{
     BasicAuth, Chain, Config as DiscoveryConfig, Credentials, Discovery, FakeOs, Hop, ProxyAddr,
     ProxyAuth, ProxyConfig,
@@ -253,8 +253,8 @@ impl Squid {
     }
 }
 
-fn sandbox() -> SandboxName {
-    SandboxName::new("e2e").unwrap()
+fn workspace() -> WorkspaceName {
+    WorkspaceName::new("e2e").unwrap()
 }
 
 struct Rig {
@@ -282,7 +282,7 @@ async fn rig(hops: Vec<Hop>, auth: Arc<dyn ProxyAuth>) -> Rig {
             .with_upstream(Upstream::new(chain)),
     );
     let root = IpcRoot::new().unwrap();
-    let route = proxy.serve_route(root.listen().unwrap(), sandbox());
+    let route = proxy.serve_route(root.listen().unwrap(), workspace());
     let config = Config {
         listen: SocketAddr::new(LOCAL, 0),
         target: Target::Unix(route.endpoint().path().to_path_buf()),
@@ -302,7 +302,7 @@ async fn rig(hops: Vec<Hop>, auth: Arc<dyn ProxyAuth>) -> Rig {
 fn allow(store: &Store, host: &str) {
     store
         .add_rule(&NewRule {
-            scope: Scope::Sandbox(sandbox()),
+            scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),
             effect: Effect::Allow,
             expires_at: None,

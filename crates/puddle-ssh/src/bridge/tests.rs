@@ -244,16 +244,16 @@ async fn a_refusal_is_an_error_and_nothing_reaches_the_client() {
     let (mut rig, i, o, s) = rig().await;
     let relay = tokio::spawn(relay(i, o, s));
     rig.server
-        .write_all(refusal_line("sandbox \"a\": sandbox is not running").as_bytes())
+        .write_all(refusal_line("workspace \"a\": workspace is not running").as_bytes())
         .await
         .unwrap();
     drop(rig.server);
     let err = timeout(WAIT, relay).await.unwrap().unwrap().unwrap_err();
     assert!(
-        matches!(&err, BridgeError::Refused { reason } if reason == "sandbox \"a\": sandbox is not running"),
+        matches!(&err, BridgeError::Refused { reason } if reason == "workspace \"a\": workspace is not running"),
         "{err:?}"
     );
-    assert_eq!(err.to_string(), "sandbox \"a\": sandbox is not running");
+    assert_eq!(err.to_string(), "workspace \"a\": workspace is not running");
     let mut out = Vec::new();
     rig.stdout.read_to_end(&mut out).await.unwrap();
     assert!(out.is_empty(), "{out:?}");
@@ -294,7 +294,7 @@ async fn a_server_read_error_is_reported() {
     let (o, _stdout) = duplex(64);
     let err = relay(i, o, Broken).await.unwrap_err();
     assert!(matches!(err, BridgeError::ServerRead(_)), "{err:?}");
-    assert_eq!(err.to_string(), "the connection to the sandbox broke");
+    assert_eq!(err.to_string(), "the connection to the workspace broke");
 }
 
 #[tokio::test]

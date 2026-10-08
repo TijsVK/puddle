@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Test rig for terminated connections: a fake TLS upstream with a recording handler, a sandbox
+//! Test rig for terminated connections: a fake TLS upstream with a recording handler, a workspace
 //! proxy with a termination, and a guest that speaks TLS through the route.
 #![expect(
     clippy::unwrap_used,
@@ -18,7 +18,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use puddle_agent_proto::tokio_yamux::{Control, Session, StreamHandle};
 use puddle_agent_proto::yamux::client_config;
-use puddle_ca::{CaBuilder, SandboxCa};
+use puddle_ca::{CaBuilder, WorkspaceCa};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy};
 use puddle_proxy::{
@@ -26,7 +26,7 @@ use puddle_proxy::{
     Proxy, ProxyConfig, RequestView, Resolver, Route, SecretValue, Termination, TerminationSet,
     Terminations,
 };
-use puddle_types::{ConnectionEvent, DomainName, Host, NullSink, SandboxName};
+use puddle_types::{ConnectionEvent, DomainName, Host, NullSink, WorkspaceName};
 use puddle_upstream::TlsClient;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -516,12 +516,12 @@ pub(crate) fn host(h: &str) -> Host {
     Host::parse_normalised(h).unwrap()
 }
 
-pub(crate) fn sandbox(name: &str) -> SandboxName {
-    SandboxName::new(name).unwrap()
+pub(crate) fn workspace(name: &str) -> WorkspaceName {
+    WorkspaceName::new(name).unwrap()
 }
 
-/// A sandbox's CA for `names`.
-pub(crate) fn sandbox_ca(name: &str, names: &[&str]) -> Arc<SandboxCa> {
+/// A workspace's CA for `names`.
+pub(crate) fn workspace_ca(name: &str, names: &[&str]) -> Arc<WorkspaceCa> {
     let set = TerminationSet::parse(names.iter().copied()).unwrap();
     Arc::new(
         CaBuilder::new(
@@ -603,10 +603,10 @@ impl RigBuilder {
         for (name, addr) in &self.names {
             resolver = resolver.with(name, *addr);
         }
-        let ca = sandbox_ca("box", &self.bound);
+        let ca = workspace_ca("box", &self.bound);
         let terminations = Arc::new(Terminations::new());
         terminations.insert(
-            sandbox("box"),
+            workspace("box"),
             Termination::new(
                 TerminationSet::parse(self.bound.iter().copied()).unwrap(),
                 Arc::clone(&ca),
@@ -614,10 +614,10 @@ impl RigBuilder {
             )
             .unwrap(),
         );
-        // A second sandbox with its own CA for the same names (HO-4).
-        let other_ca = sandbox_ca("other", &self.bound);
+        // A second workspace with its own CA for the same names (HO-4).
+        let other_ca = workspace_ca("other", &self.bound);
         terminations.insert(
-            sandbox("other"),
+            workspace("other"),
             Termination::new(
                 TerminationSet::parse(self.bound.iter().copied()).unwrap(),
                 Arc::clone(&other_ca),
@@ -636,9 +636,9 @@ impl RigBuilder {
         }
         let proxy = Arc::new(proxy);
         let root = IpcRoot::new().unwrap();
-        let route = proxy.serve_route(root.listen().unwrap(), sandbox("box"));
+        let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
         let other_root = IpcRoot::new().unwrap();
-        let other_route = proxy.serve_route(other_root.listen().unwrap(), sandbox("other"));
+        let other_route = proxy.serve_route(other_root.listen().unwrap(), workspace("other"));
         Rig {
             policy,
             log,
@@ -656,8 +656,8 @@ pub(crate) struct Rig {
     pub(crate) log: Arc<CollectingConnectionLog>,
     pub(crate) route: Route,
     pub(crate) other_route: Route,
-    pub(crate) ca: Arc<SandboxCa>,
-    pub(crate) other_ca: Arc<SandboxCa>,
+    pub(crate) ca: Arc<WorkspaceCa>,
+    pub(crate) other_ca: Arc<WorkspaceCa>,
     _roots: (IpcRoot, IpcRoot),
 }
 
@@ -680,7 +680,7 @@ impl Rig {
 pub(crate) struct Guest {
     pub(crate) control: Control,
     driver: JoinHandle<()>,
-    ca: Arc<SandboxCa>,
+    ca: Arc<WorkspaceCa>,
 }
 
 impl Drop for Guest {
@@ -690,7 +690,7 @@ impl Drop for Guest {
 }
 
 impl Guest {
-    async fn connect(route: &Route, ca: Arc<SandboxCa>) -> Self {
+    async fn connect(route: &Route, ca: Arc<WorkspaceCa>) -> Self {
         let conn = puddle_ipc::connect(route.endpoint().path()).await.unwrap();
         let mut session = Session::new_client(conn, client_config());
         let control = session.control();
@@ -742,7 +742,7 @@ impl Guest {
         }
     }
 
-    /// `CONNECT authority`, then a TLS handshake that trusts the sandbox CA, with `sni` as the
+    /// `CONNECT authority`, then a TLS handshake that trusts the workspace CA, with `sni` as the
     /// name asked for (the authority's host by default).
     pub(crate) async fn tls(&mut self, authority: &str, sni: Option<&str>) -> io::Result<Client> {
         self.tls_with(authority, sni, &[b"http/1.1"], true).await

@@ -42,7 +42,7 @@ export interface RuleSetChoice {
 export interface Choice {
   effect: Effect;
   scope: Scope;
-  /** Put the rule into this set instead (`scope` stays `sandbox`); `null` for a plain rule. */
+  /** Put the rule into this set instead (`scope` stays `workspace`); `null` for a plain rule. */
   ruleSet: RuleSetChoice | null;
   match: Match;
   durationSecs: DurationSecs;
@@ -59,7 +59,7 @@ export interface Target {
 export function narrowest(effect: Effect): Choice {
   return {
     effect,
-    scope: "sandbox",
+    scope: "workspace",
     ruleSet: null,
     match: "exact",
     durationSecs: null,
@@ -112,7 +112,7 @@ export function build(
   const body: DecisionBody =
     choice.ruleSet === null
       ? { scope: choice.scope }
-      : { scope: "sandbox", rule_set: choice.ruleSet.id };
+      : { scope: "workspace", rule_set: choice.ruleSet.id };
   if (choice.match === "suffix") {
     const suffix = suffixFor(target);
     if (suffix === null) return { ok: false, error: "no_suffix" };

@@ -4,7 +4,7 @@
 use std::cmp::Reverse;
 use std::collections::HashMap;
 
-use puddle_types::{Decision, Host, RuleId, RuleSetId, SandboxName, SuffixAllows};
+use puddle_types::{Decision, Host, RuleId, RuleSetId, SuffixAllows, WorkspaceName};
 
 use crate::catalogue;
 use crate::pattern::Pattern;
@@ -17,25 +17,30 @@ pub(crate) struct SetEntry {
     pub set: RuleSetId,
     /// What it matches.
     pub pattern: Pattern,
-    /// For System managed: the one sandbox it applies to, or `None` for every sandbox. Built-in
+    /// For System managed: the one workspace it applies to, or `None` for every workspace. Built-in
     /// entries apply where their set is switched on.
-    pub sandbox: Option<SandboxName>,
+    pub workspace: Option<WorkspaceName>,
 }
 
-/// Which rule sets are switched on where (R-37): an override per sandbox, a value for every
-/// sandbox, and the set's own default, in that order.
+/// Which rule sets are switched on where (R-37): an override per workspace, a value for every
+/// workspace, and the set's own default, in that order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Switches {
     global: HashMap<RuleSetId, bool>,
-    sandbox: HashMap<(RuleSetId, SandboxName), bool>,
+    workspace: HashMap<(RuleSetId, WorkspaceName), bool>,
 }
 
 impl Switches {
     /// Records one stored switch.
-    pub(crate) fn insert(&mut self, set: RuleSetId, sandbox: Option<SandboxName>, enabled: bool) {
-        match sandbox {
-            Some(sandbox) => {
-                self.sandbox.insert((set, sandbox), enabled);
+    pub(crate) fn insert(
+        &mut self,
+        set: RuleSetId,
+        workspace: Option<WorkspaceName>,
+        enabled: bool,
+    ) {
+        match workspace {
+            Some(workspace) => {
+                self.workspace.insert((set, workspace), enabled);
             }
             None => {
                 self.global.insert(set, enabled);
@@ -43,27 +48,27 @@ impl Switches {
         }
     }
 
-    /// The switch for every sandbox, if set.
+    /// The switch for every workspace, if set.
     pub(crate) fn global(&self, set: RuleSetId) -> Option<bool> {
         self.global.get(&set).copied()
     }
 
-    /// The sandboxes that override `set`, sorted by name.
-    pub(crate) fn overrides(&self, set: RuleSetId) -> Vec<(SandboxName, bool)> {
+    /// The workspaces that override `set`, sorted by name.
+    pub(crate) fn overrides(&self, set: RuleSetId) -> Vec<(WorkspaceName, bool)> {
         let mut out: Vec<_> = self
-            .sandbox
+            .workspace
             .iter()
             .filter(|((s, _), _)| *s == set)
-            .map(|((_, sandbox), on)| (sandbox.clone(), *on))
+            .map(|((_, workspace), on)| (workspace.clone(), *on))
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     }
 
-    /// Whether `set` is on for `sandbox`.
-    pub(crate) fn is_on(&self, set: RuleSetId, sandbox: &SandboxName) -> bool {
-        self.sandbox
-            .get(&(set, sandbox.clone()))
+    /// Whether `set` is on for `workspace`.
+    pub(crate) fn is_on(&self, set: RuleSetId, workspace: &WorkspaceName) -> bool {
+        self.workspace
+            .get(&(set, workspace.clone()))
             .or_else(|| self.global.get(&set))
             .copied()
             .unwrap_or_else(|| default_on(set))
@@ -246,17 +251,17 @@ impl RuleIndex {
         &self.switches
     }
 
-    /// What decides `host` requested by `sandbox` at `now`, or `None`.
+    /// What decides `host` requested by `workspace` at `now`, or `None`.
     ///
-    /// The user's own rules: non-expired global rules and non-expired rules of `sandbox` (R-5,
-    /// R-7), ranked by R-6. Set entries: those of sets switched on for `sandbox` (R-37), and
-    /// System managed entries for every sandbox or for `sandbox`. Then R-39: when an own rule
+    /// The user's own rules: non-expired global rules and non-expired rules of `workspace` (R-5,
+    /// R-7), ranked by R-6. Set entries: those of sets switched on for `workspace` (R-37), and
+    /// System managed entries for every workspace or for `workspace`. Then R-39: when an own rule
     /// matches, it decides, unless a set's deny is strictly more specific; when none does, the
     /// most specific set entry decides, deny over allow. With [`SuffixAllows::Ignore`], own
     /// suffix allows and every set allow are treated as no match (R-14, R-42).
     pub(crate) fn decide(
         &self,
-        sandbox: &SandboxName,
+        workspace: &WorkspaceName,
         host: &Host,
         now: u64,
         suffix_allows: SuffixAllows,
@@ -273,7 +278,7 @@ impl RuleIndex {
                     }
                     match &rule.scope {
                         Scope::Set(set) => {
-                            if !self.switches.is_on(RuleSetId::User(*set), sandbox)
+                            if !self.switches.is_on(RuleSetId::User(*set), workspace)
                                 || (ignore && rule.effect == Effect::Allow)
                             {
                                 continue;
@@ -281,7 +286,7 @@ impl RuleIndex {
                             Hit::Rule(rule)
                         }
                         scope => {
-                            let applies = scope.sandbox().is_none_or(|s| s == sandbox);
+                            let applies = scope.workspace().is_none_or(|s| s == workspace);
                             let dropped = ignore
                                 && rule.effect == Effect::Allow
                                 && matches!(rule.pattern, Pattern::Suffix(_));
@@ -294,10 +299,10 @@ impl RuleIndex {
                     }
                 }
                 Hit::Entry(entry) => {
-                    let applies = match (&entry.set, &entry.sandbox) {
+                    let applies = match (&entry.set, &entry.workspace) {
                         (RuleSetId::System, None) => true,
-                        (RuleSetId::System, Some(s)) => s == sandbox,
-                        (set, _) => self.switches.is_on(*set, sandbox),
+                        (RuleSetId::System, Some(s)) => s == workspace,
+                        (set, _) => self.switches.is_on(*set, workspace),
                     };
                     if ignore || !applies {
                         continue;
@@ -368,7 +373,7 @@ mod tests {
         Rule {
             id: RuleId(id),
             scope: scope.map_or(Scope::Global, |s| {
-                Scope::Sandbox(SandboxName::new(s).unwrap())
+                Scope::Workspace(WorkspaceName::new(s).unwrap())
             }),
             pattern: Pattern::parse(pattern).unwrap(),
             effect,
@@ -379,8 +384,8 @@ mod tests {
         }
     }
 
-    fn sb(s: &str) -> SandboxName {
-        SandboxName::new(s).unwrap()
+    fn sb(s: &str) -> WorkspaceName {
+        WorkspaceName::new(s).unwrap()
     }
 
     fn host(s: &str) -> Host {
@@ -391,8 +396,8 @@ mod tests {
         RuleIndex::new(rules, Vec::new(), Switches::default())
     }
 
-    fn winner(set: &RuleIndex, sandbox: &str, h: &str) -> Option<i64> {
-        set.decide(&sb(sandbox), &host(h), 1_000, SuffixAllows::Count)
+    fn winner(set: &RuleIndex, workspace: &str, h: &str) -> Option<i64> {
+        set.decide(&sb(workspace), &host(h), 1_000, SuffixAllows::Count)
             .and_then(Hit::rule_id)
             .map(|id| id.0)
     }
@@ -405,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn r05_other_sandboxes_rules_never_apply() {
+    fn r05_other_workspaces_rules_never_apply() {
         let set = index(vec![
             rule(1, Some("other"), "example.com", Effect::Allow),
             rule(2, None, "global.example", Effect::Allow),
@@ -428,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn r06_sandbox_beats_global_at_equal_specificity() {
+    fn r06_workspace_beats_global_at_equal_specificity() {
         let set = index(vec![
             rule(1, None, ".example.com", Effect::Deny),
             rule(2, Some("a"), ".example.com", Effect::Allow),
@@ -438,7 +443,7 @@ mod tests {
     }
 
     #[test]
-    fn r06_broader_sandbox_allow_never_overrides_narrower_global_deny() {
+    fn r06_broader_workspace_allow_never_overrides_narrower_global_deny() {
         let set = index(vec![
             rule(1, None, ".api.example.com", Effect::Deny),
             rule(2, Some("a"), ".example.com", Effect::Allow),
@@ -459,7 +464,7 @@ mod tests {
     #[test]
     fn scope_rank_leaves_room_below_global() {
         assert_eq!(Scope::Global.rank(), 1);
-        assert!(Scope::Sandbox(sb("a")).rank() > Scope::Global.rank());
+        assert!(Scope::Workspace(sb("a")).rank() > Scope::Global.rank());
         assert!(Scope::Set(1).rank() < Scope::Global.rank());
     }
 
@@ -469,11 +474,11 @@ mod tests {
         r
     }
 
-    fn system(pattern: &str, sandbox: Option<&str>) -> SetEntry {
+    fn system(pattern: &str, workspace: Option<&str>) -> SetEntry {
         SetEntry {
             set: RuleSetId::System,
             pattern: Pattern::parse(pattern).unwrap(),
-            sandbox: sandbox.map(sb),
+            workspace: workspace.map(sb),
         }
     }
 
@@ -481,13 +486,13 @@ mod tests {
         SetEntry {
             set: RuleSetId::BuiltIn(slug),
             pattern: Pattern::parse(pattern).unwrap(),
-            sandbox: None,
+            workspace: None,
         }
     }
 
-    fn decision(index: &RuleIndex, sandbox: &str, h: &str) -> Option<Decision> {
+    fn decision(index: &RuleIndex, workspace: &str, h: &str) -> Option<Decision> {
         index
-            .decide(&sb(sandbox), &host(h), 1_000, SuffixAllows::Count)
+            .decide(&sb(workspace), &host(h), 1_000, SuffixAllows::Count)
             .map(Hit::decision)
     }
 
@@ -608,7 +613,7 @@ mod tests {
         let index = RuleIndex::new(rules.clone(), entries.clone(), switches.clone());
         assert!(decision(&index, "a", "example.com").is_some());
         assert_eq!(decision(&index, "a", "github.com"), None);
-        // Global on, one sandbox off; the sandbox's value wins there.
+        // Global on, one workspace off; the workspace's value wins there.
         switches.insert(RuleSetId::BuiltIn("github"), None, true);
         switches.insert(RuleSetId::BuiltIn("github"), Some(sb("b")), false);
         switches.insert(RuleSetId::User(5), None, false);
@@ -631,7 +636,7 @@ mod tests {
     }
 
     #[test]
-    fn r41_system_entries_for_one_sandbox_stay_there() {
+    fn r41_system_entries_for_one_workspace_stay_there() {
         let index = RuleIndex::new(
             Vec::new(),
             vec![system("marketplace.visualstudio.com", Some("ssh"))],
@@ -726,12 +731,12 @@ mod tests {
     }
 
     /// The precedence of R-6, written as plainly as possible, for the property test below.
-    fn reference(rules: &[Rule], sandbox: &SandboxName, h: &Host, now: u64) -> Option<RuleId> {
+    fn reference(rules: &[Rule], workspace: &WorkspaceName, h: &Host, now: u64) -> Option<RuleId> {
         let mut best: Option<&Rule> = None;
         for r in rules {
             let applies = r.pattern.matches(h)
                 && !r.is_expired(now)
-                && r.scope.sandbox().is_none_or(|s| s == sandbox);
+                && r.scope.workspace().is_none_or(|s| s == workspace);
             if !applies {
                 continue;
             }
@@ -777,7 +782,7 @@ mod tests {
     /// checked one by one.
     fn reference_p3(
         index: &RuleIndex,
-        sandbox: &SandboxName,
+        workspace: &WorkspaceName,
         h: &Host,
         now: u64,
         suffix_allows: SuffixAllows,
@@ -787,7 +792,7 @@ mod tests {
             .rules()
             .iter()
             .filter(|r| r.pattern.matches(h) && !r.is_expired(now))
-            .filter(|r| matches!(r.scope, Scope::Global) || r.scope.sandbox() == Some(sandbox))
+            .filter(|r| matches!(r.scope, Scope::Global) || r.scope.workspace() == Some(workspace))
             .filter(|r| {
                 !(ignore && r.effect == Effect::Allow && r.pattern.kind() == PatternKind::Suffix)
             })
@@ -797,7 +802,7 @@ mod tests {
             if let Scope::Set(set) = r.scope
                 && r.pattern.matches(h)
                 && !r.is_expired(now)
-                && index.switches().is_on(RuleSetId::User(set), sandbox)
+                && index.switches().is_on(RuleSetId::User(set), workspace)
                 && !(ignore && r.effect == Effect::Allow)
             {
                 sets.push(Hit::Rule(r));
@@ -805,8 +810,8 @@ mod tests {
         }
         for e in index.entries() {
             let on = match e.set {
-                RuleSetId::System => e.sandbox.as_ref().is_none_or(|s| s == sandbox),
-                set => index.switches().is_on(set, sandbox),
+                RuleSetId::System => e.workspace.as_ref().is_none_or(|s| s == workspace),
+                set => index.switches().is_on(set, workspace),
             };
             if on && !ignore && e.pattern.matches(h) {
                 sets.push(Hit::Entry(e));
@@ -832,8 +837,8 @@ mod tests {
     fn arb_scope() -> impl Strategy<Value = Scope> {
         prop_oneof![
             Just(Scope::Global),
-            Just(Scope::Sandbox(sb("a"))),
-            Just(Scope::Sandbox(sb("b"))),
+            Just(Scope::Workspace(sb("a"))),
+            Just(Scope::Workspace(sb("b"))),
             Just(Scope::Set(1)),
             Just(Scope::Set(2)),
         ]
@@ -894,19 +899,19 @@ mod tests {
                 .collect();
             let entries = entries
                 .into_iter()
-                .map(|(set, pattern, sandbox)| SetEntry {
+                .map(|(set, pattern, workspace)| SetEntry {
                     set,
                     pattern: Pattern::parse(pattern).unwrap(),
-                    sandbox: if set == RuleSetId::System {
-                        sandbox.map(sb)
+                    workspace: if set == RuleSetId::System {
+                        workspace.map(sb)
                     } else {
                         None
                     },
                 })
                 .collect();
             let mut on = Switches::default();
-            for (set, sandbox, enabled) in switches {
-                on.insert(set, sandbox.map(sb), enabled);
+            for (set, workspace, enabled) in switches {
+                on.insert(set, workspace.map(sb), enabled);
             }
             RuleIndex::new(rules, entries, on)
         })
@@ -916,7 +921,7 @@ mod tests {
         #[test]
         fn index_agrees_with_the_plain_precedence(
             rules in proptest::collection::vec(arb_rule(), 0..12),
-            sandbox in prop_oneof![Just("a"), Just("b")],
+            workspace in prop_oneof![Just("a"), Just("b")],
             h in prop_oneof![
                 Just("x.y.example.com"), Just("y.example.com"), Just("example.com"),
                 Just("z.example.com"), Just("10.0.0.1"),
@@ -924,14 +929,14 @@ mod tests {
             now in 0..25u64,
         ) {
             let set = index(rules.clone());
-            let got = set.decide(&sb(sandbox), &host(h), now, SuffixAllows::Count).and_then(Hit::rule_id);
-            prop_assert_eq!(got, reference(&rules, &sb(sandbox), &host(h), now));
+            let got = set.decide(&sb(workspace), &host(h), now, SuffixAllows::Count).and_then(Hit::rule_id);
+            prop_assert_eq!(got, reference(&rules, &sb(workspace), &host(h), now));
         }
 
         #[test]
         fn r39_index_agrees_with_the_plain_precedence_with_sets(
             index in arb_index(),
-            sandbox in prop_oneof![Just("a"), Just("b")],
+            workspace in prop_oneof![Just("a"), Just("b")],
             h in prop_oneof![
                 Just("x.y.example.com"), Just("y.example.com"), Just("example.com"),
                 Just("z.example.com"), Just("10.0.0.1"),
@@ -940,14 +945,14 @@ mod tests {
             ignore in any::<bool>(),
         ) {
             let mode = if ignore { SuffixAllows::Ignore } else { SuffixAllows::Count };
-            let got = index.decide(&sb(sandbox), &host(h), now, mode).map(Hit::decision);
-            prop_assert_eq!(got, reference_p3(&index, &sb(sandbox), &host(h), now, mode));
+            let got = index.decide(&sb(workspace), &host(h), now, mode).map(Hit::decision);
+            prop_assert_eq!(got, reference_p3(&index, &sb(workspace), &host(h), now, mode));
         }
 
         #[test]
         fn r39_a_set_never_opens_what_an_own_rule_closes(
             index in arb_index(),
-            sandbox in prop_oneof![Just("a"), Just("b")],
+            workspace in prop_oneof![Just("a"), Just("b")],
             h in prop_oneof![Just("x.y.example.com"), Just("y.example.com"), Just("example.com")],
         ) {
             let own_only = RuleIndex::new(
@@ -955,8 +960,8 @@ mod tests {
                 Vec::new(),
                 Switches::default(),
             );
-            let mine = own_only.decide(&sb(sandbox), &host(h), 5, SuffixAllows::Count).map(Hit::effect);
-            let all = index.decide(&sb(sandbox), &host(h), 5, SuffixAllows::Count).map(Hit::effect);
+            let mine = own_only.decide(&sb(workspace), &host(h), 5, SuffixAllows::Count).map(Hit::effect);
+            let all = index.decide(&sb(workspace), &host(h), 5, SuffixAllows::Count).map(Hit::effect);
             if mine == Some(Effect::Deny) {
                 prop_assert_eq!(all, Some(Effect::Deny));
             }

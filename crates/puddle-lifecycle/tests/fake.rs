@@ -16,7 +16,7 @@ use puddle_compute::{
 use puddle_lifecycle::{
     Inventory, Lifecycle, ShutdownConfig, StopOutcome, TrimOutcome, adopt_workspaces, reconcile,
 };
-use puddle_types::{GuestPath, ImageRef, SandboxName, SandboxStatus, VolumeName, WorkspaceId};
+use puddle_types::{GuestPath, ImageRef, SandboxName, VolumeName, WorkspaceId, WorkspaceStatus};
 use puddle_workspace::{WorkspaceError, Workspaces};
 
 fn name(s: &str) -> SandboxName {
@@ -64,7 +64,7 @@ fn ops_for(rt: &FakeRuntime, target: &str) -> Vec<Op> {
         .collect()
 }
 
-async fn status_of(rt: &FakeRuntime, n: &str) -> Option<SandboxStatus> {
+async fn status_of(rt: &FakeRuntime, n: &str) -> Option<WorkspaceStatus> {
     rt.list()
         .await
         .unwrap()
@@ -99,7 +99,7 @@ async fn every_sandbox_is_trimmed_then_stopped_and_records_stopped() {
         assert_eq!(outcome.sandbox, name(n));
         assert_eq!(outcome.trim, TrimOutcome::Trimmed);
         assert_eq!(outcome.stop, StopOutcome::Stopped);
-        assert_eq!(status_of(&rt, n).await, Some(SandboxStatus::Stopped));
+        assert_eq!(status_of(&rt, n).await, Some(WorkspaceStatus::Stopped));
         // fstrim ran while the VM was up, and the stop came after it.
         let ops = ops_for(&rt, n);
         let exec = ops.iter().position(|o| *o == Op::Exec).unwrap();
@@ -183,10 +183,10 @@ async fn a_failed_trim_or_stop_does_not_hold_up_the_others() {
     );
     assert_eq!(by_name("fine").stop, StopOutcome::Stopped);
     assert!(!report.all_stopped());
-    assert_eq!(status_of(&rt, "fine").await, Some(SandboxStatus::Stopped));
+    assert_eq!(status_of(&rt, "fine").await, Some(WorkspaceStatus::Stopped));
     assert_eq!(
         status_of(&rt, "badexec").await,
-        Some(SandboxStatus::Stopped)
+        Some(WorkspaceStatus::Stopped)
     );
     drop(trims);
 }
@@ -232,7 +232,7 @@ async fn released_and_replaced_handles_are_not_stopped_by_shutdown() {
     assert!(format!("{lc:?}").contains("mine"));
     let report = lc.shutdown().await;
     assert!(report.all_stopped());
-    assert_eq!(status_of(&rt, "mine").await, Some(SandboxStatus::Stopped));
+    assert_eq!(status_of(&rt, "mine").await, Some(WorkspaceStatus::Stopped));
     drop(older);
 }
 
@@ -261,8 +261,8 @@ async fn killed_puddle_world() -> World {
     assert!(rt.crash(&name("known-crashed")));
     drop(crashed);
     // Foreign sandboxes: one with a valid name, one with a name puddle can't even parse.
-    rt.add_foreign_sandbox("other-tool", SandboxStatus::Running);
-    rt.add_foreign_sandbox("Other_Tool", SandboxStatus::Stopped);
+    rt.add_foreign_sandbox("other-tool", WorkspaceStatus::Running);
+    rt.add_foreign_sandbox("Other_Tool", WorkspaceStatus::Stopped);
     // Stale directories.
     rt.add_stale_dir("failed-create");
     rt.add_stale_dir("Foreign_Dir");
@@ -331,15 +331,15 @@ async fn reconcile_cleans_up_only_what_puddle_owns() {
     // Known sandboxes keep their records; the running one is stopped, not crashed.
     assert_eq!(
         status_of(rt, "known-running").await,
-        Some(SandboxStatus::Stopped)
+        Some(WorkspaceStatus::Stopped)
     );
     assert_eq!(
         status_of(rt, "known-stopped").await,
-        Some(SandboxStatus::Stopped)
+        Some(WorkspaceStatus::Stopped)
     );
     assert_eq!(
         status_of(rt, "known-crashed").await,
-        Some(SandboxStatus::Crashed)
+        Some(WorkspaceStatus::Crashed)
     );
     assert_eq!(status_of(rt, "unknown-running").await, None);
     assert_eq!(status_of(rt, "unknown-stopped").await, None);
@@ -457,7 +457,10 @@ async fn an_orphan_whose_stop_fails_keeps_its_record_and_its_volume() {
         .collect();
     assert_eq!(failed, [("holder", "stop"), ("ws-held", "remove volume")]);
     assert!(report.failures[1].error.contains("holder"));
-    assert_eq!(status_of(&rt, "holder").await, Some(SandboxStatus::Running));
+    assert_eq!(
+        status_of(&rt, "holder").await,
+        Some(WorkspaceStatus::Running)
+    );
     drop(holder);
 }
 
@@ -470,7 +473,7 @@ async fn an_orphan_whose_get_says_it_is_down_is_not_stopped() {
         Fault::once(ComputeError::InvalidState {
             sandbox: "racing".into(),
             op: "connect to",
-            status: SandboxStatus::Crashed,
+            status: WorkspaceStatus::Crashed,
         }),
     );
     // The VM went down between list and get (the fault stands in for that race): no stop.
@@ -525,7 +528,7 @@ async fn leftover_maintenance_sandboxes_go_even_when_listed() {
         .stop()
         .await
         .unwrap();
-    rt.add_foreign_sandbox("m--other", SandboxStatus::Running);
+    rt.add_foreign_sandbox("m--other", WorkspaceStatus::Running);
     let inventory = Inventory {
         // Even a store that lists one doesn't keep it.
         sandboxes: BTreeSet::from([name("m--beta")]),
@@ -543,7 +546,7 @@ async fn leftover_maintenance_sandboxes_go_even_when_listed() {
     assert_eq!(status_of(&rt, "m--acme").await, None);
     assert_eq!(
         status_of(&rt, "m--other").await,
-        Some(SandboxStatus::Running)
+        Some(WorkspaceStatus::Running)
     );
     drop(running);
 }
@@ -579,7 +582,7 @@ async fn adopted_workspaces_refuse_a_second_sandbox_after_a_restart() {
     let adopted = adopt_workspaces(&workspaces, &inventory);
 
     assert_eq!(adopted, [(acme.clone(), name("one"))]);
-    assert_eq!(status_of(&rt, "one").await, Some(SandboxStatus::Stopped));
+    assert_eq!(status_of(&rt, "one").await, Some(WorkspaceStatus::Stopped));
     let refused = workspaces
         .create(&rt, &acme, spec("two"), None)
         .await

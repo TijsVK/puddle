@@ -3,7 +3,7 @@
 //!
 //! Node `fetch` (`NODE_USE_ENV_PROXY`) and Yarn Berry send a plain `http://` request as
 //! `CONNECT host:80` followed by the request itself, not as an absolute-form request. The tunnel is
-//! decided like any other request (the rules see `(sandbox, host, port)` either way, R-2), and its
+//! decided like any other request (the rules see `(workspace, host, port)` either way, R-2), and its
 //! bytes are relayed unchanged; [`RequestTap`] only watches the start of the upload so the
 //! `connection` record can name the method and path, as it does for an absolute-form request.
 //!

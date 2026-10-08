@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use puddle_store::Clock;
-use puddle_types::{Event, EventSink, SandboxStatus, WorkspaceId, WorkspaceStep};
+use puddle_types::{Event, EventSink, WorkspaceId, WorkspaceStatus, WorkspaceStep};
 use tokio::sync::watch;
 
 use crate::workspaces::{
@@ -203,14 +203,14 @@ impl FakeWorkspaces {
 
     fn emit_status(&self, record: &WorkspaceRecord) {
         self.inner.events.emit(Event::StatusChanged {
-            sandbox: record.name.clone(),
+            workspace: record.name.clone(),
             status: record.status,
         });
     }
 
     fn progress(&self, record: &WorkspaceRecord, step: WorkspaceStep, detail: Option<String>) {
         self.inner.events.emit(Event::WorkspaceProgress {
-            sandbox: record.name.clone(),
+            workspace: record.name.clone(),
             step,
             detail,
         });
@@ -287,12 +287,12 @@ impl FakeWorkspaces {
                 }
                 Operation::Starting => {
                     status_changed = true;
-                    record.status = SandboxStatus::Crashed;
+                    record.status = WorkspaceStatus::Crashed;
                 }
                 Operation::Stopping => {
                     // A failed graceful stop leaves the VM up.
                     status_changed = true;
-                    record.status = SandboxStatus::Running;
+                    record.status = WorkspaceStatus::Running;
                 }
                 Operation::Reclaiming | Operation::Deleting => {}
             }
@@ -309,11 +309,11 @@ impl FakeWorkspaces {
         match op {
             Operation::Creating => {}
             Operation::Starting => {
-                record.status = SandboxStatus::Running;
+                record.status = WorkspaceStatus::Running;
                 status_changed = true;
             }
             Operation::Stopping => {
-                record.status = SandboxStatus::Stopped;
+                record.status = WorkspaceStatus::Stopped;
                 status_changed = true;
             }
             Operation::Reclaiming => {
@@ -351,7 +351,7 @@ fn delete_check(entry: &Entry) -> DeleteCheck {
         .record
         .status
         .is_down()
-        .then(|| entry.record.name.clone());
+        .then(|| entry.record.name.sandbox_name());
     DeleteCheck::new(
         entry.record.id.clone(),
         entry.unsaved.repos.clone(),
@@ -451,7 +451,7 @@ impl WorkspaceService for FakeWorkspaces {
                         )))
                     }
                 },
-                |r| r.status = SandboxStatus::Starting,
+                |r| r.status = WorkspaceStatus::Starting,
             )?;
             self.emit_status(&record);
             self.run(
@@ -475,7 +475,7 @@ impl WorkspaceService for FakeWorkspaces {
                 id,
                 Operation::Stopping,
                 |r| {
-                    if r.status == SandboxStatus::Running {
+                    if r.status == WorkspaceStatus::Running {
                         Ok(())
                     } else {
                         Err(WorkspaceError::Conflict(format!(
@@ -484,7 +484,7 @@ impl WorkspaceService for FakeWorkspaces {
                         )))
                     }
                 },
-                |r| r.status = SandboxStatus::Draining,
+                |r| r.status = WorkspaceStatus::Draining,
             )?;
             self.emit_status(&record);
             self.run(
@@ -508,7 +508,9 @@ impl WorkspaceService for FakeWorkspaces {
                 id,
                 Operation::Reclaiming,
                 |r| {
-                    if r.status == SandboxStatus::Starting || r.status == SandboxStatus::Draining {
+                    if r.status == WorkspaceStatus::Starting
+                        || r.status == WorkspaceStatus::Draining
+                    {
                         Err(WorkspaceError::Conflict(format!(
                             "{} is {}; try again in a moment",
                             r.name, r.status
@@ -586,7 +588,7 @@ impl WorkspaceService for FakeWorkspaces {
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
         Box::pin(async move {
             let record = self.get(id).await?;
-            if record.busy.is_some() || record.status != SandboxStatus::Running {
+            if record.busy.is_some() || record.status != WorkspaceStatus::Running {
                 return Err(WorkspaceError::Conflict(format!(
                     "{} is not running; start it first",
                     record.name
@@ -616,7 +618,7 @@ impl WorkspaceService for FakeWorkspaces {
 #[cfg(test)]
 mod tests {
     use puddle_store::ManualClock;
-    use puddle_types::{CollectingSink, SandboxName};
+    use puddle_types::{CollectingSink, WorkspaceName};
 
     use super::*;
     use crate::workspaces::RepoUrl;
@@ -633,15 +635,15 @@ mod tests {
 
     fn new_ws(name: &str) -> NewWorkspace {
         NewWorkspace::new(
-            SandboxName::new(name).unwrap(),
+            WorkspaceName::new(name).unwrap(),
             RepoUrl::parse("https://example.com/a/b").unwrap(),
         )
     }
 
-    fn seeded(fake: &FakeWorkspaces, name: &str, status: SandboxStatus) {
+    fn seeded(fake: &FakeWorkspaces, name: &str, status: WorkspaceStatus) {
         let mut record = WorkspaceRecord::new(
             id(name),
-            SandboxName::new(name).unwrap(),
+            WorkspaceName::new(name).unwrap(),
             "https://x.test/a",
         );
         record.status = status;
@@ -661,13 +663,13 @@ mod tests {
     #[tokio::test]
     async fn a_failed_stop_leaves_the_workspace_running() {
         let (fake, sink) = fake();
-        seeded(&fake, "w", SandboxStatus::Running);
+        seeded(&fake, "w", WorkspaceStatus::Running);
         fake.fail_next(Operation::Stopping, "the VM would not stop");
         fake.stop(&id("w")).await.unwrap();
         fake.idle().await;
         assert_eq!(
             fake.get(&id("w")).await.unwrap().status,
-            SandboxStatus::Running
+            WorkspaceStatus::Running
         );
         assert_eq!(steps(&sink).last(), Some(&WorkspaceStep::Failed));
     }
@@ -675,7 +677,7 @@ mod tests {
     #[tokio::test]
     async fn failed_reclaim_and_delete_change_nothing() {
         let (fake, sink) = fake();
-        seeded(&fake, "w", SandboxStatus::Stopped);
+        seeded(&fake, "w", WorkspaceStatus::Stopped);
         fake.fail_next(Operation::Reclaiming, "trim failed");
         fake.reclaim(&id("w")).await.unwrap();
         fake.idle().await;
@@ -684,7 +686,7 @@ mod tests {
         fake.idle().await;
         let record = fake.get(&id("w")).await.unwrap();
         assert_eq!(record.busy, None);
-        assert_eq!(record.status, SandboxStatus::Stopped);
+        assert_eq!(record.status, WorkspaceStatus::Stopped);
         let failed = steps(&sink)
             .iter()
             .filter(|s| **s == WorkspaceStep::Failed)
@@ -695,9 +697,9 @@ mod tests {
     #[tokio::test]
     async fn reclaim_waits_out_a_boot_or_shutdown() {
         let (fake, _) = fake();
-        seeded(&fake, "a", SandboxStatus::Starting);
-        seeded(&fake, "b", SandboxStatus::Draining);
-        seeded(&fake, "c", SandboxStatus::Running);
+        seeded(&fake, "a", WorkspaceStatus::Starting);
+        seeded(&fake, "b", WorkspaceStatus::Draining);
+        seeded(&fake, "c", WorkspaceStatus::Running);
         for name in ["a", "b"] {
             assert!(matches!(
                 fake.reclaim(&id(name)).await,
@@ -760,7 +762,7 @@ mod tests {
     #[tokio::test]
     async fn the_fingerprint_follows_every_part_of_the_report() {
         let (fake, _) = fake();
-        seeded(&fake, "w", SandboxStatus::Stopped);
+        seeded(&fake, "w", WorkspaceStatus::Stopped);
         let base = fake.delete_check(&id("w")).await.unwrap();
         let mut seen = vec![base.fingerprint.clone()];
         let variants = [
@@ -805,8 +807,11 @@ mod tests {
     #[tokio::test]
     async fn the_launcher_records_what_it_opened() {
         let launcher = FakeLauncher::new();
-        let record =
-            WorkspaceRecord::new(id("w"), SandboxName::new("w").unwrap(), "https://x.test/a");
+        let record = WorkspaceRecord::new(
+            id("w"),
+            WorkspaceName::new("w").unwrap(),
+            "https://x.test/a",
+        );
         launcher.open_desktop(&record).await.unwrap();
         launcher.fail_next("nope");
         assert_eq!(

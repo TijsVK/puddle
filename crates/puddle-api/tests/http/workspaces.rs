@@ -2,7 +2,7 @@
 //! The workspaces resource over real HTTP, against `FakeWorkspaces`.
 
 use puddle_api::{Listing, Operation, RepoFindings, Unsaved, WorkspaceRecord};
-use puddle_types::{SandboxName, SandboxStatus, WorkspaceId};
+use puddle_types::{WorkspaceId, WorkspaceName, WorkspaceStatus};
 use serde_json::{Value, json};
 
 use crate::common::{Api, START_MS, start, start_without_workspaces};
@@ -44,10 +44,10 @@ async fn running(api: &Api, name: &str) {
     api.workspaces.idle().await;
 }
 
-fn seed(api: &Api, name: &str, status: SandboxStatus, unsaved: Unsaved) {
+fn seed(api: &Api, name: &str, status: WorkspaceStatus, unsaved: Unsaved) {
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new(name).unwrap(),
-        SandboxName::new(name).unwrap(),
+        WorkspaceName::new(name).unwrap(),
         REPO,
     );
     record.status = status;
@@ -88,7 +88,7 @@ async fn an_empty_install_lists_nothing() {
 #[tokio::test]
 async fn create_is_accepted_busy_and_finishes_with_progress_events() {
     let api = start().await;
-    let mut stream = Stream::open(&api, "?sandbox=web").await;
+    let mut stream = Stream::open(&api, "?workspace=web").await;
     let ws = create(&api, "web").await;
     assert_eq!(
         ws,
@@ -176,7 +176,7 @@ async fn create_refuses_what_cannot_work_and_says_why() {
             "spaces",
         ),
         (json!({"name": "m--a", "repo_url": REPO}), "reserved"),
-        (json!({"name": "A_b", "repo_url": REPO}), "sandbox name"),
+        (json!({"name": "A_b", "repo_url": REPO}), "workspace name"),
         (
             json!({"name": long, "repo_url": REPO}),
             "can't be a workspace",
@@ -226,7 +226,7 @@ async fn create_refuses_a_taken_name_and_a_failed_create_leaves_nothing() {
     assert_eq!(again.status, 409);
     assert_eq!(again.error(), "conflict");
 
-    let mut stream = Stream::open(&api, "?sandbox=bad").await;
+    let mut stream = Stream::open(&api, "?workspace=bad").await;
     api.workspaces
         .fail_next(Operation::Creating, "clone failed: repository not found");
     create(&api, "bad").await;
@@ -243,7 +243,7 @@ async fn create_refuses_a_taken_name_and_a_failed_create_leaves_nothing() {
 async fn start_and_stop_walk_the_states_and_report_them() {
     let api = start().await;
     created(&api, "web").await;
-    let mut stream = Stream::open(&api, "?sandbox=web").await;
+    let mut stream = Stream::open(&api, "?workspace=web").await;
 
     api.workspaces.hold();
     let started = post(&api, "/api/workspaces/web/start").await;
@@ -313,10 +313,10 @@ async fn reclaim_shrinks_what_the_disk_holds() {
     let api = start().await;
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("web").unwrap(),
-        SandboxName::new("web").unwrap(),
+        WorkspaceName::new("web").unwrap(),
         REPO,
     );
-    record.status = SandboxStatus::Stopped;
+    record.status = WorkspaceStatus::Stopped;
     record.disk_used_mib = Some(1000);
     api.workspaces.seed(record, Unsaved::default());
     let reply = post(&api, "/api/workspaces/web/reclaim").await;
@@ -358,8 +358,8 @@ async fn unknown_workspaces_are_404_on_every_route() {
 #[tokio::test]
 async fn the_delete_check_lists_what_would_be_lost() {
     let api = start().await;
-    seed(&api, "web", SandboxStatus::Stopped, dirty());
-    seed(&api, "tidy", SandboxStatus::Running, Unsaved::default());
+    seed(&api, "web", WorkspaceStatus::Stopped, dirty());
+    seed(&api, "tidy", WorkspaceStatus::Running, Unsaved::default());
     let check = api.get("/api/workspaces/web/delete-check").await;
     assert_eq!(check.status, 200);
     let c = check.json();
@@ -393,7 +393,7 @@ async fn the_delete_check_lists_what_would_be_lost() {
 #[tokio::test]
 async fn delete_needs_an_explicit_confirmation() {
     let api = start().await;
-    seed(&api, "web", SandboxStatus::Stopped, Unsaved::default());
+    seed(&api, "web", WorkspaceStatus::Stopped, Unsaved::default());
     for body in [json!({"confirm": false}), json!({})] {
         let reply = api.send("DELETE", "/api/workspaces/web", Some(&body)).await;
         assert_eq!(reply.status, 422, "{body}: {}", reply.body);
@@ -411,8 +411,8 @@ async fn delete_needs_an_explicit_confirmation() {
 #[tokio::test]
 async fn a_clean_workspace_is_deleted_without_a_fingerprint() {
     let api = start().await;
-    seed(&api, "web", SandboxStatus::Stopped, Unsaved::default());
-    let mut stream = Stream::open(&api, "?sandbox=web").await;
+    seed(&api, "web", WorkspaceStatus::Stopped, Unsaved::default());
+    let mut stream = Stream::open(&api, "?workspace=web").await;
     let reply = api
         .send(
             "DELETE",
@@ -436,7 +436,7 @@ async fn a_clean_workspace_is_deleted_without_a_fingerprint() {
 #[tokio::test]
 async fn unsaved_work_is_never_deleted_unseen() {
     let api = start().await;
-    seed(&api, "web", SandboxStatus::Stopped, dirty());
+    seed(&api, "web", WorkspaceStatus::Stopped, dirty());
     let delete = |fingerprint: Value| {
         let api = &api;
         async move {
@@ -591,11 +591,11 @@ async fn desktop_attach_opens_the_editor_when_direct_ssh_is_on() {
     api.running.shutdown().await;
 }
 
-async fn allow_direct_ssh(api: &Api, sandbox: &str) {
+async fn allow_direct_ssh(api: &Api, workspace: &str) {
     let reply = api
         .send(
             "PUT",
-            &format!("/api/settings/sandboxes/{sandbox}"),
+            &format!("/api/settings/workspaces/{workspace}"),
             Some(&json!({"overrides": {"direct_ssh": true}})),
         )
         .await;
@@ -650,7 +650,7 @@ async fn a_workspace_is_trusted_by_its_own_switch_or_the_global_default() {
         .send(
             "PUT",
             "/api/settings",
-            Some(&json!({"sandbox_defaults": {"direct_ssh": true}})),
+            Some(&json!({"workspace_defaults": {"direct_ssh": true}})),
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -663,7 +663,7 @@ async fn a_workspace_is_trusted_by_its_own_switch_or_the_global_default() {
     let reply = api
         .send(
             "PUT",
-            "/api/settings/sandboxes/db",
+            "/api/settings/workspaces/db",
             Some(&json!({"overrides": {"direct_ssh": false}})),
         )
         .await;
@@ -693,7 +693,7 @@ async fn changing_settings_tells_the_workspaces_service() {
         .send(
             "PUT",
             "/api/settings",
-            Some(&json!({"sandbox_defaults": {"direct_ssh": true}})),
+            Some(&json!({"workspace_defaults": {"direct_ssh": true}})),
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);

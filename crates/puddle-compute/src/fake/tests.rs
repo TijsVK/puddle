@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use puddle_types::{GuestPath, ImageRef, SandboxName, SandboxStatus, VolumeName};
+use puddle_types::{GuestPath, ImageRef, SandboxName, VolumeName, WorkspaceStatus};
 
 use super::*;
 use crate::{FileMount, OwnedDisk, VolumeMount};
@@ -128,7 +128,7 @@ async fn every_operation_can_fail() {
     for (op, result) in ops.iter().zip(results) {
         assert_eq!(result, Some(boom("x")), "{op:?}");
     }
-    assert_eq!(sb.status().await.unwrap(), SandboxStatus::Running);
+    assert_eq!(sb.status().await.unwrap(), WorkspaceStatus::Running);
 }
 
 #[tokio::test]
@@ -320,12 +320,12 @@ async fn crash_and_drop_semantics() {
     assert!(rt.crash(&n));
     assert!(!rt.crash(&n), "already down");
     assert!(!rt.crash(&name("nope")));
-    assert_eq!(sb.status().await.unwrap(), SandboxStatus::Crashed);
+    assert_eq!(sb.status().await.unwrap(), WorkspaceStatus::Crashed);
     let restarted = rt.start(&n).await.unwrap();
     drop(sb);
     assert_eq!(
         restarted.status().await.unwrap(),
-        SandboxStatus::Running,
+        WorkspaceStatus::Running,
         "dropping the earlier boot's handle must not touch the new boot"
     );
     let err = rt.start(&n).await.unwrap_err();
@@ -482,8 +482,8 @@ async fn ssh_reports_io_errors() {
 async fn foreign_sandboxes_dirs_and_volumes_are_listed_but_not_owned() {
     let rt = FakeRuntime::new();
     let _ours = rt.create(spec("ours")).await.unwrap();
-    rt.add_foreign_sandbox("Other_Tool", SandboxStatus::Running);
-    rt.add_foreign_sandbox("valid-but-foreign", SandboxStatus::Stopped);
+    rt.add_foreign_sandbox("Other_Tool", WorkspaceStatus::Running);
+    rt.add_foreign_sandbox("valid-but-foreign", WorkspaceStatus::Stopped);
     let listed = rt.list().await.unwrap();
     let owned: Vec<(&str, bool)> = listed
         .iter()

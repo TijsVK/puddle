@@ -3,7 +3,7 @@
 //!
 //! Decisions read an in-memory rule index snapshot (rules, rule set entries and switches)
 //! without touching SQLite unless nothing matches. Every change commits to SQLite first and then swaps in a new snapshot built inside
-//! the same transaction (R-8). Lock order, where two are held: `conn`, then `sandboxes`.
+//! the same transaction (R-8). Lock order, where two are held: `conn`, then `workspaces`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,7 +13,7 @@ use std::time::Duration;
 use puddle_types::{
     ConnectionEvent, ConnectionLog, ConnectionOrigin, Decision, EgressRequest, Event, EventSink,
     Host, NullSink, PendingEnd, PendingId, PendingOutcome, PendingSummary, Policy, PolicyError,
-    RuleId, SandboxName, SuffixAllows,
+    RuleId, SuffixAllows, WorkspaceName,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
@@ -40,11 +40,11 @@ pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule
 /// Tunable limits. The defaults are the spec's *(default)* values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Limits {
-    /// New pending rows a sandbox may open in a burst (R-13).
+    /// New pending rows a workspace may open in a burst (R-13).
     pub new_rows_burst: u32,
     /// One more new row allowed per this many ms (R-13).
     pub new_rows_refill_ms: u64,
-    /// Most open rows per sandbox (R-13).
+    /// Most open rows per workspace (R-13).
     pub max_open_rows: u64,
     /// A `pending_suppressed` record at most this often while suppression lasts (R-13).
     pub suppressed_record_every_ms: u64,
@@ -54,7 +54,7 @@ pub struct Limits {
     pub audit_max_bytes: u64,
     /// A trim deletes the oldest records until this many bytes remain.
     pub audit_trim_to_bytes: u64,
-    /// `connection` records per sandbox per second (R-26).
+    /// `connection` records per workspace per second (R-26).
     pub connection_records_per_second: u32,
 }
 
@@ -78,8 +78,8 @@ impl Default for Limits {
 /// ones all have to match.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AuditFilter {
-    /// Records about this sandbox.
-    pub sandbox: Option<SandboxName>,
+    /// Records about this workspace.
+    pub workspace: Option<WorkspaceName>,
     /// Records of this `type` (one of [`AuditRecord::KINDS`]).
     pub kind: Option<&'static str>,
     /// Records with this outcome. Records that have none never match.
@@ -114,9 +114,9 @@ pub struct SweepReport {
     pub audit_records_trimmed: u64,
 }
 
-/// What deleting a sandbox removed (R-21).
+/// What deleting a workspace removed (R-21).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct SandboxDeletion {
+pub struct WorkspaceDeletion {
     /// Its rules, deleted.
     pub rules_deleted: u64,
     /// Its open pending rows, expired.
@@ -126,10 +126,10 @@ pub struct SandboxDeletion {
 /// The least time between two [`Event::SuppressionChanged`] for a growing count.
 const SUPPRESSION_EVENT_EVERY_MS: u64 = 500;
 
-/// Per-sandbox in-memory limits state (R-13, R-26). Lost on restart, which only resets the
+/// Per-workspace in-memory limits state (R-13, R-26). Lost on restart, which only resets the
 /// limits.
 #[derive(Debug)]
-struct SandboxState {
+struct WorkspaceState {
     bucket: TokenBucket,
     suppressing: bool,
     episode: u64,
@@ -139,7 +139,7 @@ struct SandboxState {
     connections: ConnectionWindow,
 }
 
-impl SandboxState {
+impl WorkspaceState {
     fn new(limits: &Limits, now: u64) -> Self {
         Self {
             bucket: TokenBucket::new(limits.new_rows_burst, limits.new_rows_refill_ms, now),
@@ -191,8 +191,8 @@ impl SandboxState {
 pub struct Store {
     conn: Mutex<Connection>,
     rules: RwLock<Arc<RuleIndex>>,
-    sandboxes: Mutex<HashMap<SandboxName, SandboxState>>,
-    /// The connection limit of puddle's own connections, which have no sandbox.
+    workspaces: Mutex<HashMap<WorkspaceName, WorkspaceState>>,
+    /// The connection limit of puddle's own connections, which have no workspace.
     puddle_connections: Mutex<ConnectionWindow>,
     clock: Arc<dyn Clock>,
     limits: Limits,
@@ -255,7 +255,7 @@ impl Store {
         Ok(Self {
             conn: Mutex::new(conn),
             rules: RwLock::new(Arc::new(rules)),
-            sandboxes: Mutex::new(HashMap::new()),
+            workspaces: Mutex::new(HashMap::new()),
             puddle_connections: Mutex::new(ConnectionWindow::default()),
             clock,
             limits,
@@ -319,7 +319,7 @@ impl Store {
     ) -> Option<Decision> {
         let index = self.snapshot();
         index
-            .decide(&request.sandbox, &request.host, now, suffix_allows)
+            .decide(&request.workspace, &request.host, now, suffix_allows)
             .map(Hit::decision)
     }
 
@@ -330,12 +330,12 @@ impl Store {
         now: u64,
         fx: &mut Vec<Event>,
     ) -> Result<PendingOutcome, StoreError> {
-        let (sandbox, host) = (request.sandbox.as_str(), request.host.to_string());
+        let (workspace, host) = (request.workspace.as_str(), request.host.to_string());
         let existing: Option<i64> = tx
             .query_row(
                 "SELECT id FROM pending
-                 WHERE sandbox_id = ?1 AND host = ?2 AND port = ?3 AND state = 'requested'",
-                params![sandbox, host, request.port],
+                 WHERE workspace_id = ?1 AND host = ?2 AND port = ?3 AND state = 'requested'",
+                params![workspace, host, request.port],
                 |row| row.get(0),
             )
             .optional()?;
@@ -347,7 +347,7 @@ impl Store {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
             fx.push(Event::PendingUpdated {
-                sandbox: request.sandbox.clone(),
+                workspace: request.workspace.clone(),
                 id,
                 attempts: stored_ts("pending", id, attempts)?,
                 last_seen: stored_ts("pending", id, last_seen)?,
@@ -355,20 +355,20 @@ impl Store {
             return Ok(PendingOutcome::Repeat(PendingId(id)));
         }
         let open: i64 = tx.query_row(
-            "SELECT count(*) FROM pending WHERE sandbox_id = ?1 AND state = 'requested'",
-            [sandbox],
+            "SELECT count(*) FROM pending WHERE workspace_id = ?1 AND state = 'requested'",
+            [workspace],
             |row| row.get(0),
         )?;
         let below_cap = u64::try_from(open).unwrap_or(u64::MAX) < self.limits.max_open_rows;
         let (admitted, to_record) = {
-            let mut sandboxes = lock(&self.sandboxes);
-            let state = sandboxes
-                .entry(request.sandbox.clone())
-                .or_insert_with(|| SandboxState::new(&self.limits, now));
+            let mut workspaces = lock(&self.workspaces);
+            let state = workspaces
+                .entry(request.workspace.clone())
+                .or_insert_with(|| WorkspaceState::new(&self.limits, now));
             if below_cap && state.bucket.try_take(now) {
                 if state.suppressing {
                     fx.push(Event::SuppressionChanged {
-                        sandbox: request.sandbox.clone(),
+                        workspace: request.workspace.clone(),
                         active: false,
                         count: state.episode,
                     });
@@ -382,7 +382,7 @@ impl Store {
                 {
                     state.last_event_at = now;
                     fx.push(Event::SuppressionChanged {
-                        sandbox: request.sandbox.clone(),
+                        workspace: request.workspace.clone(),
                         active: true,
                         count: state.episode,
                     });
@@ -395,7 +395,7 @@ impl Store {
                 tx,
                 &AuditRecord::PendingSuppressed {
                     ts: now,
-                    sandbox_id: sandbox.to_owned(),
+                    workspace_id: workspace.to_owned(),
                     count,
                 },
             )?;
@@ -404,9 +404,9 @@ impl Store {
             return Ok(PendingOutcome::Suppressed);
         }
         tx.execute(
-            "INSERT INTO pending (sandbox_id, host, port, first_seen, last_seen)
+            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen)
              VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![sandbox, host, request.port, sql_ts(now)],
+            params![workspace, host, request.port, sql_ts(now)],
         )?;
         let id = PendingId(tx.last_insert_rowid());
         let row = load_pending(tx, id)?;
@@ -420,7 +420,7 @@ impl Store {
         fx.push(Event::PendingOpened {
             request: PendingSummary {
                 id: id.0,
-                sandbox: row.sandbox.clone(),
+                workspace: row.workspace.clone(),
                 host: row.host.to_string(),
                 registrable_domain: registrable_domain(&row.host),
                 port: row.port,
@@ -586,10 +586,10 @@ impl Store {
                 PatternChoice::Suffix(suffix) => Pattern::suffix_covering(&row.host, suffix)?,
             };
             let scope = match resolution.scope {
-                ScopeChoice::Sandbox => Scope::Sandbox(row.sandbox.clone()),
+                ScopeChoice::Workspace => Scope::Workspace(row.workspace.clone()),
                 ScopeChoice::Global => Scope::Global,
                 ScopeChoice::Set(set) => {
-                    sets::require_on(tx, set, &row.sandbox)?;
+                    sets::require_on(tx, set, &row.workspace)?;
                     Scope::Set(set)
                 }
             };
@@ -612,7 +612,7 @@ impl Store {
         })?;
         tracing::info!(
             pending = %id,
-            sandbox = %decided.row.sandbox,
+            workspace = %decided.row.workspace,
             host = %decided.row.host,
             rule = %decided.rule.id,
             effect = decided.rule.effect.as_str(),
@@ -629,21 +629,21 @@ impl Store {
         load_pending(&lock(&self.conn), id)
     }
 
-    /// Open (`requested`) rows, of one sandbox or all, most recent first.
+    /// Open (`requested`) rows, of one workspace or all, most recent first.
     ///
     /// # Errors
     /// A database error, or [`StoreError::Corrupt`].
     pub fn open_pending(
         &self,
-        sandbox: Option<&SandboxName>,
+        workspace: Option<&WorkspaceName>,
     ) -> Result<Vec<PendingRow>, StoreError> {
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare(&format!(
             "SELECT {PENDING_COLUMNS} FROM pending
-             WHERE state = 'requested' AND (?1 IS NULL OR sandbox_id = ?1)
+             WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1)
              ORDER BY last_seen DESC, id DESC"
         ))?;
-        let rows = stmt.query_map([sandbox.map(SandboxName::as_str)], raw_pending)?;
+        let rows = stmt.query_map([workspace.map(WorkspaceName::as_str)], raw_pending)?;
         rows.map(|raw| pending_from_raw(&raw?)).collect()
     }
 
@@ -667,11 +667,11 @@ impl Store {
         Ok(groups)
     }
 
-    /// A sandbox's suppression state, for the inbox's "N requests suppressed" line (R-13).
+    /// A workspace's suppression state, for the inbox's "N requests suppressed" line (R-13).
     #[must_use]
-    pub fn suppression(&self, sandbox: &SandboxName) -> Suppression {
-        lock(&self.sandboxes)
-            .get(sandbox)
+    pub fn suppression(&self, workspace: &WorkspaceName) -> Suppression {
+        lock(&self.workspaces)
+            .get(workspace)
             .map(|s| Suppression {
                 active: s.suppressing,
                 count: s.episode,
@@ -679,17 +679,17 @@ impl Store {
             .unwrap_or_default()
     }
 
-    /// Writes a `connection` record (R-24), subject to the per-sandbox limit (R-26).
+    /// Writes a `connection` record (R-24), subject to the per-workspace limit (R-26).
     ///
     /// # Errors
     /// A database or audit error.
     pub fn record_connection(&self, event: &ConnectionEvent) -> Result<(), StoreError> {
         let now = self.clock.now_ms();
         let limit = self.limits.connection_records_per_second;
-        let (admitted, summary) = match &event.sandbox {
-            Some(sandbox) => lock(&self.sandboxes)
-                .entry(sandbox.clone())
-                .or_insert_with(|| SandboxState::new(&self.limits, now))
+        let (admitted, summary) = match &event.workspace {
+            Some(workspace) => lock(&self.workspaces)
+                .entry(workspace.clone())
+                .or_insert_with(|| WorkspaceState::new(&self.limits, now))
                 .connections
                 .admit(now, limit),
             None => lock(&self.puddle_connections).admit(now, limit),
@@ -701,7 +701,7 @@ impl Store {
         let tx = conn.transaction()?;
         let head = audit_head(&tx)?;
         if let Some((ts, count)) = summary {
-            let record = ConnectionRecord::suppressed_summary(ts, event.sandbox.as_ref(), count);
+            let record = ConnectionRecord::suppressed_summary(ts, event.workspace.as_ref(), count);
             append(&tx, &AuditRecord::Connection(record))?;
         }
         if admitted {
@@ -711,24 +711,27 @@ impl Store {
         self.commit(tx, head, Vec::new())
     }
 
-    /// Removes a deleted sandbox's rules and expires its open rows, in one transaction (R-21).
-    /// Call it from the transaction-equivalent step of sandbox deletion, not on stop.
+    /// Removes a deleted workspace's rules and expires its open rows, in one transaction (R-21).
+    /// Call it from the transaction-equivalent step of workspace deletion, not on stop.
     ///
     /// # Errors
     /// A database or audit error; nothing changes then.
-    pub fn delete_sandbox(&self, sandbox: &SandboxName) -> Result<SandboxDeletion, StoreError> {
+    pub fn delete_workspace(
+        &self,
+        workspace: &WorkspaceName,
+    ) -> Result<WorkspaceDeletion, StoreError> {
         let deletion = self.change(|tx, now, fx| {
             let mut stmt = tx.prepare(&format!(
-                "SELECT {RULE_COLUMNS} FROM rules WHERE sandbox_id = ?1 ORDER BY id"
+                "SELECT {RULE_COLUMNS} FROM rules WHERE workspace_id = ?1 ORDER BY id"
             ))?;
             let rules = stmt
-                .query_map([sandbox.as_str()], raw_rule)?
+                .query_map([workspace.as_str()], raw_rule)?
                 .map(|raw| rule_from_raw(&raw?))
                 .collect::<Result<Vec<_>, _>>()?;
             drop(stmt);
             tx.execute(
-                "DELETE FROM rules WHERE sandbox_id = ?1",
-                [sandbox.as_str()],
+                "DELETE FROM rules WHERE workspace_id = ?1",
+                [workspace.as_str()],
             )?;
             for rule in &rules {
                 append(
@@ -736,43 +739,43 @@ impl Store {
                     &AuditRecord::RuleDeleted {
                         ts: now,
                         rule: RuleWire::from(rule),
-                        reason: RuleDeleteReason::SandboxDeleted,
+                        reason: RuleDeleteReason::WorkspaceDeleted,
                         actor: actor_str(Actor::System),
                     },
                 )?;
             }
             let switched = tx.execute(
-                "DELETE FROM rule_set_switches WHERE sandbox_id = ?1",
-                [sandbox.as_str()],
+                "DELETE FROM rule_set_switches WHERE workspace_id = ?1",
+                [workspace.as_str()],
             )? + tx.execute(
-                "DELETE FROM system_reasons WHERE sandbox_id = ?1",
-                [sandbox.as_str()],
+                "DELETE FROM system_reasons WHERE workspace_id = ?1",
+                [workspace.as_str()],
             )?;
             let expired = expire_rows(
                 tx,
-                "sandbox_id = ?2",
-                &sandbox.as_str(),
+                "workspace_id = ?2",
+                &workspace.as_str(),
                 now,
-                PendingExpiryReason::SandboxDeleted,
+                PendingExpiryReason::WorkspaceDeleted,
                 fx,
             )?;
             if !rules.is_empty() || switched > 0 {
                 fx.push(Event::RulesChanged {});
             }
-            Ok(SandboxDeletion {
+            Ok(WorkspaceDeletion {
                 rules_deleted: rules.len() as u64,
                 pending_expired: expired,
             })
         })?;
-        let state = lock(&self.sandboxes).remove(sandbox);
+        let state = lock(&self.workspaces).remove(workspace);
         if let Some(state) = state.filter(|s| s.suppressing) {
             self.events.emit(Event::SuppressionChanged {
-                sandbox: sandbox.clone(),
+                workspace: workspace.clone(),
                 active: false,
                 count: state.episode,
             });
         }
-        tracing::info!(sandbox = %sandbox, rules = deletion.rules_deleted, "sandbox rules removed");
+        tracing::info!(workspace = %workspace, rules = deletion.rules_deleted, "workspace rules removed");
         Ok(deletion)
     }
 
@@ -838,16 +841,16 @@ impl Store {
         let now = self.clock.now_ms();
         let every = self.limits.suppressed_record_every_ms;
         let mut records = Vec::new();
-        for (sandbox, state) in lock(&self.sandboxes).iter_mut() {
+        for (workspace, state) in lock(&self.workspaces).iter_mut() {
             if let Some(count) = state.flush_due(now, every) {
                 records.push(AuditRecord::PendingSuppressed {
                     ts: now,
-                    sandbox_id: sandbox.to_string(),
+                    workspace_id: workspace.to_string(),
                     count,
                 });
             }
             if let Some((ts, count)) = state.connections.roll(now) {
-                let record = ConnectionRecord::suppressed_summary(ts, Some(sandbox), count);
+                let record = ConnectionRecord::suppressed_summary(ts, Some(workspace), count);
                 records.push(AuditRecord::Connection(record));
             }
         }
@@ -950,7 +953,7 @@ impl Store {
     /// A page of up to `limit` audit records matching `filter`, as `(id, JSONL line)`: oldest
     /// first for [`AuditCursor::After`], newest first for [`AuditCursor::Before`].
     ///
-    /// Filters run on indexed columns (`sandbox_id`, `type`, `outcome`, `ts`) and the stored
+    /// Filters run on indexed columns (`workspace_id`, `type`, `outcome`, `ts`) and the stored
     /// `host`; no JSON is parsed. Values are bound, never spliced into the SQL.
     ///
     /// # Errors
@@ -1009,8 +1012,8 @@ fn audit_query_sql(
         AuditCursor::Before(Some(id)) => clause("id < ?", Some(Value::Integer(id))),
         AuditCursor::Before(None) => {}
     }
-    if let Some(sandbox) = &filter.sandbox {
-        clause("sandbox_id = ?", Some(Value::Text(sandbox.to_string())));
+    if let Some(workspace) = &filter.workspace {
+        clause("workspace_id = ?", Some(Value::Text(workspace.to_string())));
     }
     if let Some(kind) = filter.kind {
         clause("type = ?", Some(Value::Text(kind.to_owned())));
@@ -1023,11 +1026,11 @@ fn audit_query_sql(
     }
     match filter.origin {
         None => {}
-        // A connection record names a sandbox unless puddle made the connection itself.
+        // A connection record names a workspace unless puddle made the connection itself.
         Some(ConnectionOrigin::Puddle) => {
-            clause("type = 'connection' AND sandbox_id IS NULL", None);
+            clause("type = 'connection' AND workspace_id IS NULL", None);
         }
-        Some(_) => clause("type = 'connection' AND sandbox_id IS NOT NULL", None),
+        Some(_) => clause("type = 'connection' AND workspace_id IS NOT NULL", None),
     }
     if let Some(from) = filter.from {
         clause("ts >= ?", Some(Value::Integer(sql_ts(from))));
@@ -1090,12 +1093,12 @@ fn audit_bytes(conn: &Connection) -> Result<u64, StoreError> {
 fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
     let line = record.to_line()?;
     conn.execute(
-        "INSERT INTO audit (ts, type, sandbox_id, host, outcome, line)
+        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             sql_ts(record.ts()),
             record.kind(),
-            record.sandbox_id(),
+            record.workspace_id(),
             record.host(),
             record.outcome().map(AuditOutcome::as_str),
             line
@@ -1123,18 +1126,18 @@ fn insert_rule(
     if let Some(set) = new.scope.set() {
         sets::require_user_set(tx, set)?;
     }
-    let sandbox = new.scope.sandbox().map(SandboxName::as_str);
+    let workspace = new.scope.workspace().map(WorkspaceName::as_str);
     let kind = match new.pattern {
         Pattern::Exact(_) => "exact",
         Pattern::Suffix(_) => "suffix",
     };
     tx.execute(
-        "INSERT INTO rules (scope, sandbox_id, set_id, pattern_kind, pattern, effect, expires_at,
+        "INSERT INTO rules (scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
                             created_at, created_by, source_pending_id)
          VALUES (?1, ?2, ?10, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             new.scope.as_str(),
-            sandbox,
+            workspace,
             kind,
             new.pattern.to_string(),
             new.effect.as_str(),
@@ -1199,7 +1202,7 @@ fn decide_row_by(
         },
     )?;
     fx.push(Event::PendingClosed {
-        sandbox: row.sandbox.clone(),
+        workspace: row.workspace.clone(),
         id: row.id.0,
         state: match effect {
             Effect::Allow => PendingEnd::Allowed,
@@ -1211,7 +1214,7 @@ fn decide_row_by(
 }
 
 /// Closes every other open row that `rule` now decides, the same way (R-16): rows in the rule's
-/// sandbox (any sandbox for a global rule) for which `rule` is the winning rule.
+/// workspace (any workspace for a global rule) for which `rule` is the winning rule.
 fn close_decided_rows(
     tx: &Transaction<'_>,
     rule: &Rule,
@@ -1223,10 +1226,13 @@ fn close_decided_rows(
     let set = sets::load_index(tx)?;
     let mut stmt = tx.prepare(&format!(
         "SELECT {PENDING_COLUMNS} FROM pending
-         WHERE state = 'requested' AND (?1 IS NULL OR sandbox_id = ?1) ORDER BY id"
+         WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1) ORDER BY id"
     ))?;
     let open = stmt
-        .query_map([rule.scope.sandbox().map(SandboxName::as_str)], raw_pending)?
+        .query_map(
+            [rule.scope.workspace().map(WorkspaceName::as_str)],
+            raw_pending,
+        )?
         .map(|raw| pending_from_raw(&raw?))
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
@@ -1235,7 +1241,7 @@ fn close_decided_rows(
         if Some(row.id) == except || !rule.pattern.matches(&row.host) {
             continue;
         }
-        let winner = set.decide(&row.sandbox, &row.host, now, SuffixAllows::Count);
+        let winner = set.decide(&row.workspace, &row.host, now, SuffixAllows::Count);
         if winner.is_some_and(|w| w.rule_id() == Some(rule.id)) {
             decide_row(tx, &row, rule, actor, now, fx)?;
             closed.push(row.id);
@@ -1273,7 +1279,7 @@ fn expire_rows(
             },
         )?;
         fx.push(Event::PendingClosed {
-            sandbox: row.sandbox.clone(),
+            workspace: row.workspace.clone(),
             id: row.id.0,
             state: PendingEnd::Expired,
             rule_id: None,
@@ -1282,14 +1288,14 @@ fn expire_rows(
     Ok(rows.len() as u64)
 }
 
-const RULE_COLUMNS: &str = "id, scope, sandbox_id, pattern_kind, pattern, effect, expires_at, \
+const RULE_COLUMNS: &str = "id, scope, workspace_id, pattern_kind, pattern, effect, expires_at, \
                             created_at, created_by, source_pending_id, set_id";
 
 /// A `rules` row as SQLite holds it, before validation.
 struct RawRule {
     id: i64,
     scope: String,
-    sandbox_id: Option<String>,
+    workspace_id: Option<String>,
     pattern_kind: String,
     pattern: String,
     effect: String,
@@ -1304,7 +1310,7 @@ fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
     Ok(RawRule {
         id: row.get(0)?,
         scope: row.get(1)?,
-        sandbox_id: row.get(2)?,
+        workspace_id: row.get(2)?,
         pattern_kind: row.get(3)?,
         pattern: row.get(4)?,
         effect: row.get(5)?,
@@ -1330,10 +1336,10 @@ fn stored_ts(table: &'static str, id: i64, value: i64) -> Result<u64, StoreError
 
 fn rule_from_raw(raw: &RawRule) -> Result<Rule, StoreError> {
     let bad = |reason: &str| corrupt("rules", raw.id, reason);
-    let scope = match (raw.scope.as_str(), raw.sandbox_id.as_deref(), raw.set_id) {
+    let scope = match (raw.scope.as_str(), raw.workspace_id.as_deref(), raw.set_id) {
         ("global", None, None) => Scope::Global,
-        ("sandbox", Some(id), None) => {
-            Scope::Sandbox(SandboxName::new(id).map_err(|e| bad(&e.to_string()))?)
+        ("workspace", Some(id), None) => {
+            Scope::Workspace(WorkspaceName::new(id).map_err(|e| bad(&e.to_string()))?)
         }
         ("set", None, Some(set)) => Scope::Set(set),
         _ => return Err(bad("scope")),
@@ -1387,13 +1393,13 @@ fn load_rule(conn: &Connection, id: RuleId) -> Result<Rule, StoreError> {
     rule_from_raw(&raw)
 }
 
-const PENDING_COLUMNS: &str = "id, sandbox_id, host, port, first_seen, last_seen, attempts, \
+const PENDING_COLUMNS: &str = "id, workspace_id, host, port, first_seen, last_seen, attempts, \
                                state, decided_at, decided_by, rule_id, rule_set";
 
 /// A `pending` row as SQLite holds it, before validation.
 struct RawPending {
     id: i64,
-    sandbox_id: String,
+    workspace_id: String,
     host: String,
     port: i64,
     first_seen: i64,
@@ -1409,7 +1415,7 @@ struct RawPending {
 fn raw_pending(row: &Row<'_>) -> rusqlite::Result<RawPending> {
     Ok(RawPending {
         id: row.get(0)?,
-        sandbox_id: row.get(1)?,
+        workspace_id: row.get(1)?,
         host: row.get(2)?,
         port: row.get(3)?,
         first_seen: row.get(4)?,
@@ -1428,7 +1434,7 @@ fn pending_from_raw(raw: &RawPending) -> Result<PendingRow, StoreError> {
     let ts = |value: i64| stored_ts("pending", raw.id, value);
     Ok(PendingRow {
         id: PendingId(raw.id),
-        sandbox: SandboxName::new(&raw.sandbox_id).map_err(|e| bad(&e.to_string()))?,
+        workspace: WorkspaceName::new(&raw.workspace_id).map_err(|e| bad(&e.to_string()))?,
         host: Host::parse_normalised(&raw.host).map_err(|e| bad(&e.to_string()))?,
         port: u16::try_from(raw.port).map_err(|_| bad("port"))?,
         first_seen: ts(raw.first_seen)?,
@@ -1475,7 +1481,7 @@ mod tests {
         {
             let conn = lock(&store.conn);
             conn.execute(
-                "INSERT INTO rules (scope, sandbox_id, pattern_kind, pattern, effect, created_at, created_by)
+                "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by)
                  VALUES ('global', NULL, 'exact', 'NOT A HOST', 'allow', 0, 'cli')",
                 [],
             )
@@ -1504,7 +1510,7 @@ mod tests {
         let base = || RawRule {
             id: 1,
             scope: "global".into(),
-            sandbox_id: None,
+            workspace_id: None,
             pattern_kind: "exact".into(),
             pattern: "example.com".into(),
             effect: "allow".into(),
@@ -1516,8 +1522,8 @@ mod tests {
         };
         assert!(rule_from_raw(&base()).is_ok());
         let cases: Vec<fn(&mut RawRule)> = vec![
-            |r| r.scope = "sandbox".into(),
-            |r| r.sandbox_id = Some("x".into()),
+            |r| r.scope = "workspace".into(),
+            |r| r.workspace_id = Some("x".into()),
             |r| r.pattern_kind = "suffix".into(),
             |r| r.pattern_kind = "regex".into(),
             |r| r.effect = "maybe".into(),
@@ -1546,7 +1552,7 @@ mod tests {
     fn raw_pending_rows_with_bad_fields_are_corrupt() {
         let base = || RawPending {
             id: 1,
-            sandbox_id: "sb".into(),
+            workspace_id: "sb".into(),
             host: "example.com".into(),
             port: 443,
             first_seen: 0,
@@ -1560,7 +1566,7 @@ mod tests {
         };
         assert!(pending_from_raw(&base()).is_ok());
         let cases: Vec<fn(&mut RawPending)> = vec![
-            |r| r.sandbox_id = String::new(),
+            |r| r.workspace_id = String::new(),
             |r| r.host = "Example.com".into(),
             |r| r.port = 70_000,
             |r| r.attempts = -1,
@@ -1578,7 +1584,7 @@ mod tests {
     #[test]
     fn suppression_episode_records_start_interval_and_end() {
         let limits = Limits::default();
-        let mut state = SandboxState::new(&limits, 0);
+        let mut state = WorkspaceState::new(&limits, 0);
         assert_eq!(state.end_suppression(), None);
         assert_eq!(state.suppress(0, 60_000), Some(1));
         assert_eq!(state.suppress(1_000, 60_000), None);

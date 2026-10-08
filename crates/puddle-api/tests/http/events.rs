@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use puddle_types::{Event, EventSink, SandboxName, SandboxStatus};
+use puddle_types::{Event, EventSink, WorkspaceName, WorkspaceStatus};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -72,25 +72,25 @@ impl Stream {
     }
 }
 
-fn name(s: &str) -> SandboxName {
-    SandboxName::new(s).unwrap()
+fn name(s: &str) -> WorkspaceName {
+    WorkspaceName::new(s).unwrap()
 }
 
 #[tokio::test]
-async fn a_filtered_stream_gets_only_its_sandbox() {
+async fn a_filtered_stream_gets_only_its_workspace() {
     let api = start().await;
-    let mut s = Stream::open(&api, "?sandbox=a").await;
+    let mut s = Stream::open(&api, "?workspace=a").await;
     api.events.emit(Event::oom_kill(name("b"), 1, "other"));
     api.events.emit(Event::oom_kill(name("a"), 2, "node"));
     api.events.emit(Event::StatusChanged {
-        sandbox: name("a"),
-        status: SandboxStatus::Stopped,
+        workspace: name("a"),
+        status: WorkspaceStatus::Stopped,
     });
     s.read_until(|b| b.contains("status_changed")).await;
     let data = s.data();
     assert_eq!(data.len(), 2, "{}", s.buf);
     assert_eq!(data[0]["type"], "oom_kill");
-    assert_eq!(data[0]["sandbox"], "a");
+    assert_eq!(data[0]["workspace"], "a");
     assert_eq!(data[0]["process"], "node");
     assert_eq!(data[1]["status"], "stopped");
     assert!(!s.buf.contains("other"));
@@ -98,14 +98,14 @@ async fn a_filtered_stream_gets_only_its_sandbox() {
 }
 
 #[tokio::test]
-async fn an_unfiltered_stream_gets_every_sandbox() {
+async fn an_unfiltered_stream_gets_every_workspace() {
     let api = start().await;
     let mut s = Stream::open(&api, "").await;
     api.events.emit(Event::oom_kill(name("a"), 1, "x"));
     api.events.emit(Event::oom_kill(name("b"), 2, "y"));
     s.read_until(|b| b.matches("data: ").count() >= 2).await;
-    let sandboxes: Vec<_> = s.data().iter().map(|d| d["sandbox"].clone()).collect();
-    assert_eq!(sandboxes, ["a", "b"]);
+    let workspaces: Vec<_> = s.data().iter().map(|d| d["workspace"].clone()).collect();
+    assert_eq!(workspaces, ["a", "b"]);
     api.running.shutdown().await;
 }
 
@@ -132,7 +132,7 @@ async fn a_slow_subscriber_is_told_what_it_missed() {
 #[tokio::test]
 async fn shutdown_ends_open_streams_promptly() {
     let api = start().await;
-    let mut s = Stream::open(&api, "?sandbox=a").await;
+    let mut s = Stream::open(&api, "?workspace=a").await;
     let started = std::time::Instant::now();
     tokio::time::timeout(Duration::from_secs(10), api.running.shutdown())
         .await
@@ -153,7 +153,7 @@ async fn shutdown_ends_open_streams_promptly() {
 #[tokio::test]
 async fn an_invalid_filter_is_refused() {
     let api = start().await;
-    let reply = api.get("/api/events?sandbox=NOT_VALID").await;
+    let reply = api.get("/api/events?workspace=NOT_VALID").await;
     assert_eq!(reply.status, 400);
     assert_eq!(reply.error(), "bad_request");
     assert_eq!(api.get("/api/events?other=1").await.status, 400);
@@ -176,7 +176,7 @@ async fn a_request_that_arrives_shows_up_live_and_a_decision_closes_it() {
     let data = s.data();
     assert_eq!(types(&s), ["pending_opened", "audit_appended"], "{}", s.buf);
     assert_eq!(data[0]["request"]["id"], id);
-    assert_eq!(data[0]["request"]["sandbox"], "box");
+    assert_eq!(data[0]["request"]["workspace"], "box");
     assert_eq!(data[0]["request"]["host"], "www.example.com");
     assert_eq!(data[0]["request"]["registrable_domain"], "example.com");
     assert_eq!(data[0]["request"]["port"], 443);
@@ -212,7 +212,7 @@ async fn a_request_that_arrives_shows_up_live_and_a_decision_closes_it() {
     assert_eq!(closed.len(), 2);
     for d in &closed {
         assert_eq!(
-            (&d["state"], &d["rule_id"], &d["sandbox"]),
+            (&d["state"], &d["rule_id"], &d["workspace"]),
             (&"allowed".into(), &rule_id, &"box".into())
         );
     }
@@ -224,7 +224,7 @@ async fn a_request_that_arrives_shows_up_live_and_a_decision_closes_it() {
 #[tokio::test]
 async fn rule_changes_reach_every_stream_even_a_filtered_one() {
     let api = start().await;
-    let mut filtered = Stream::open(&api, "?sandbox=other").await;
+    let mut filtered = Stream::open(&api, "?workspace=other").await;
     api.request("box", "example.com");
     let created = api
         .send(
@@ -250,7 +250,7 @@ async fn rule_changes_reach_every_stream_even_a_filtered_one() {
     filtered
         .read_until(|b| b.matches("rules_changed").count() >= 3)
         .await;
-    // The other sandbox's pending events are not for this stream; rule and audit events are.
+    // The other workspace's pending events are not for this stream; rule and audit events are.
     assert!(
         types(&filtered)
             .iter()

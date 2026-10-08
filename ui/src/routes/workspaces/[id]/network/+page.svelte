@@ -36,7 +36,7 @@
 
   const rows = $derived(
     pending.rows
-      .filter((r) => r.request.sandbox === workspace?.name)
+      .filter((r) => r.request.workspace === workspace?.name)
       .sort(
         (a, b) =>
           b.request.first_seen - a.request.first_seen ||

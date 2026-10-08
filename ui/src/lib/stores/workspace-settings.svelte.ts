@@ -34,8 +34,8 @@ export class WorkspaceSettings {
     const ticket = ++this.#ticket;
     try {
       const [mine, global] = await Promise.all([
-        this.#api.GET("/api/settings/sandboxes/{sandbox}", {
-          params: { path: { sandbox: name } },
+        this.#api.GET("/api/settings/workspaces/{workspace}", {
+          params: { path: { workspace: name } },
         }),
         this.#api.GET("/api/settings"),
       ]);
@@ -61,9 +61,9 @@ export class WorkspaceSettings {
     const ticket = ++this.#ticket;
     try {
       const { data, error } = await this.#api.PUT(
-        "/api/settings/sandboxes/{sandbox}",
+        "/api/settings/workspaces/{workspace}",
         {
-          params: { path: { sandbox: this.#name } },
+          params: { path: { workspace: this.#name } },
           body: { overrides: body },
         },
       );

@@ -5,7 +5,7 @@
 use std::future::Future;
 use std::time::{Duration, Instant};
 
-use puddle_types::{GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, SandboxStatus};
+use puddle_types::{GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, WorkspaceStatus};
 use tokio::io::AsyncReadExt;
 
 use super::{Case, STEP_TIMEOUT};
@@ -149,7 +149,7 @@ async fn read_file<S: Sandbox>(sb: &S, file: &str) -> Result<Option<String>, Str
 async fn status_in_list<R: Runtime>(
     rt: &R,
     name: &SandboxName,
-) -> Result<Option<SandboxStatus>, String> {
+) -> Result<Option<WorkspaceStatus>, String> {
     Ok(step("list", rt.list())
         .await?
         .into_iter()
@@ -208,12 +208,12 @@ async fn create_boots_and_returns_owning_handle<R: Runtime>(c: &Case<'_, R>) -> 
     check!(sb.owns_lifecycle(), "create must return an owning handle");
     let status = step("status", sb.status()).await?;
     check!(
-        status == SandboxStatus::Running,
+        status == WorkspaceStatus::Running,
         "status {status} after create"
     );
     let listed = status_in_list(c.runtime(), &name).await?;
     check!(
-        listed == Some(SandboxStatus::Running),
+        listed == Some(WorkspaceStatus::Running),
         "list shows {listed:?}"
     );
     let owned = step("list", c.runtime().list())
@@ -265,12 +265,12 @@ async fn stop_then_start_boots_again<R: Runtime>(c: &Case<'_, R>) -> Outcome {
     step("stop", first.stop()).await?;
     let status = step("status", first.status()).await?;
     check!(
-        status == SandboxStatus::Stopped,
+        status == WorkspaceStatus::Stopped,
         "status {status} after stop"
     );
     let listed = status_in_list(rt, &name).await?;
     check!(
-        listed == Some(SandboxStatus::Stopped),
+        listed == Some(WorkspaceStatus::Stopped),
         "list shows {listed:?} after stop"
     );
     step("second stop", first.stop()).await?;
@@ -281,7 +281,7 @@ async fn stop_then_start_boots_again<R: Runtime>(c: &Case<'_, R>) -> Outcome {
     );
     let status = step("status", second.status()).await?;
     check!(
-        status == SandboxStatus::Running,
+        status == WorkspaceStatus::Running,
         "status {status} after start"
     );
     let out = sh(&second, "exit 0").await?;
@@ -304,7 +304,7 @@ async fn dropping_the_owning_handle_stops_the_vm<R: Runtime>(c: &Case<'_, R>) ->
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let listed = status_in_list(rt, &name).await?;
-        if listed.is_some_and(SandboxStatus::is_down) {
+        if listed.is_some_and(WorkspaceStatus::is_down) {
             break;
         }
         check!(
@@ -333,7 +333,7 @@ async fn get_readopts_a_running_sandbox_without_owning_it<R: Runtime>(c: &Case<'
     drop(adopted);
     let status = step("status", owner.status()).await?;
     check!(
-        status == SandboxStatus::Running,
+        status == WorkspaceStatus::Running,
         "dropping a non-owning handle changed the state to {status}"
     );
     step("stop", owner.stop()).await?;
@@ -682,7 +682,7 @@ async fn second_attach_is_refused_naming_the_holder<R: Runtime>(c: &Case<'_, R>)
     );
     let leftover = status_in_list(rt, &b).await?;
     check!(
-        leftover.is_none_or(SandboxStatus::is_down),
+        leftover.is_none_or(WorkspaceStatus::is_down),
         "the refused sandbox is {leftover:?}"
     );
     step("stop first", first.stop()).await?;

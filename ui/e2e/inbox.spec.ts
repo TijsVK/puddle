@@ -11,7 +11,7 @@ interface Rule {
   effect: "allow" | "deny";
   pattern: string;
   pattern_kind: "exact" | "suffix";
-  scope: { type: "global" } | { type: "sandbox"; sandbox: string };
+  scope: { type: "global" } | { type: "workspace"; workspace: string };
   expires_at: number | null;
 }
 
@@ -30,11 +30,11 @@ async function rules(
 /** A workspace asks for a host (the fixture opens a pending request, as the proxy would). */
 async function ask(
   backend: Backend,
-  sandbox: string,
+  workspace: string,
   host: string,
   more: Record<string, unknown> = {},
 ): Promise<void> {
-  await backend.control.step({ do: "request", sandbox, host, ...more });
+  await backend.control.step({ do: "request", workspace, host, ...more });
 }
 
 const rowFor = (page: Page, host: string): Locator =>
@@ -82,7 +82,7 @@ test.describe("deciding", () => {
     expect(rule).toMatchObject({
       effect: "allow",
       pattern_kind: "exact",
-      scope: { type: "sandbox", sandbox: "shop" },
+      scope: { type: "workspace", workspace: "shop" },
       expires_at: null,
     });
     await expect(
@@ -103,7 +103,7 @@ test.describe("deciding", () => {
       ),
     ).toMatchObject({
       effect: "deny",
-      scope: { type: "sandbox", sandbox: "shop" },
+      scope: { type: "workspace", workspace: "shop" },
     });
   });
 
@@ -201,7 +201,7 @@ test.describe("deciding", () => {
     ).toMatchObject({
       pattern: ".example.com",
       effect: "allow",
-      scope: { type: "sandbox", sandbox: "shop" },
+      scope: { type: "workspace", workspace: "shop" },
     });
   });
 
@@ -422,7 +422,7 @@ test.describe("what can't be approved, and what is held back", () => {
   }) => {
     await backend.control.step({
       do: "bulk",
-      sandbox: "flood",
+      workspace: "flood",
       count: 70,
       domain: "flood.example.net",
     });

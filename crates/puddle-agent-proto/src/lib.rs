@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The wire protocol between the guest agent (`puddle-agent`) and the host.
 //!
-//! One sandbox reaches the host over a vsock route (a Unix socket or named pipe on the host).
+//! One workspace reaches the host over a vsock route (a Unix socket or named pipe on the host).
 //! The agent opens a few connections on it, and each carries one **yamux session**. The agent
 //! opens every yamux stream; the host never does.
 //!

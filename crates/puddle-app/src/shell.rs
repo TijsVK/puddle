@@ -118,7 +118,7 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<(), Sh
     Ok(())
 }
 
-/// The exit hook: stops the backend. The sandbox quit sequence will go in front.
+/// The exit hook: stops the backend. The workspace quit sequence will go in front.
 pub fn stop<R: Runtime>(app: &AppHandle<R>) {
     if let Some(backend) = app.try_state::<Backend>() {
         tauri::async_runtime::block_on(backend.shutdown());

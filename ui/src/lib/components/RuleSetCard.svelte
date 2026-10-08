@@ -95,13 +95,13 @@
 
   {#if set.overrides.length > 0}
     <ul class="overrides" aria-label="Workspaces that switch {set.name}">
-      {#each set.overrides as o (o.sandbox)}
+      {#each set.overrides as o (o.workspace)}
         <li>
-          <span><b>{o.enabled ? "On" : "Off"}</b> in <b>{o.sandbox}</b></span>
+          <span><b>{o.enabled ? "On" : "Off"}</b> in <b>{o.workspace}</b></span>
           <button
             type="button"
             class="btn"
-            onclick={() => onSwitch(set, o.sandbox, null)}
+            onclick={() => onSwitch(set, o.workspace, null)}
             >Follow every workspace</button
           >
         </li>

@@ -4,7 +4,7 @@
 //! Clients that ignore proxy settings resolve a name and connect to the answer, which the guest's
 //! network rules redirect to the agent. The stub answers every address query with a stand-in
 //! address and asks the host first, so the one thing it must learn is whether the name exists.
-//! The host decides with the sandbox's rules. An address lookup never writes a pending row: the
+//! The host decides with the workspace's rules. An address lookup never writes a pending row: the
 //! connect that follows is what produces the deny or pending row. The one exception is `SRV` (below).
 //!
 //! - **Not allowed** (no rule, or a deny): a stand-in with **no lookup at all**. DNS carries nothing
@@ -29,11 +29,11 @@ use puddle_agent_proto::resolve::{
     MAX_RECORDS, RecordType, ResolveAnswer, ResolveQuery, StandInReason,
 };
 use puddle_netpolicy::normalise_host;
-use puddle_types::{BlockReason, DomainName, EgressRequest, Host, SandboxName, SuffixAllows};
+use puddle_types::{BlockReason, DomainName, EgressRequest, Host, SuffixAllows, WorkspaceName};
 use std::net::SocketAddr;
 
 use crate::destination::AddressVerdict;
-use crate::proxy::{Proxy, SandboxHandler};
+use crate::proxy::{Proxy, WorkspaceHandler};
 use crate::records::{RecordError, valid_fqdn};
 
 /// How long a guest may cache "stand-in" and "the name exists but has nothing of this type".
@@ -43,8 +43,8 @@ const NEGATIVE_TTL: u32 = 20;
 /// The most leading service labels (`_service._proto.`) set aside before the rules look at a name.
 const MAX_SERVICE_LABELS: usize = 3;
 
-impl SandboxHandler {
-    /// Answers one lookup of this sandbox's stub DNS.
+impl WorkspaceHandler {
+    /// Answers one lookup of this workspace's stub DNS.
     pub(crate) async fn resolve_name(&self, query: ResolveQuery) -> ResolveAnswer {
         let proxy = &self.proxy;
         if !valid_fqdn(&query.name) {
@@ -62,12 +62,12 @@ impl SandboxHandler {
         let target = puddle_netpolicy::Target::from_host(host.clone());
         if proxy
             .addresses()
-            .check_target(&self.sandbox, &target, 0)
+            .check_target(&self.workspace, &target, 0)
             .is_some()
         {
             return stand_in_or_no_data(query.rtype, StandInReason::Blocked);
         }
-        match allowed(proxy, &self.sandbox, &host).await {
+        match allowed(proxy, &self.workspace, &host).await {
             Allowed::No => return stand_in_or_no_data(query.rtype, StandInReason::NotAllowed),
             Allowed::Unmatched => {
                 if query.rtype != RecordType::Srv {
@@ -78,27 +78,27 @@ impl SandboxHandler {
             Allowed::Unreadable => return ResolveAnswer::Unavailable,
             Allowed::Yes => {}
         }
-        // Only a name the rules allow gets here: bound how many lookups one sandbox runs at once.
+        // Only a name the rules allow gets here: bound how many lookups one workspace runs at once.
         let Ok(_permit) = self.lookups.try_acquire() else {
-            tracing::warn!(sandbox = %self.sandbox, limit = proxy.config().max_lookups_per_sandbox, "too many name lookups at once; answered unavailable");
+            tracing::warn!(workspace = %self.workspace, limit = proxy.config().max_lookups_per_workspace, "too many name lookups at once; answered unavailable");
             return ResolveAnswer::Unavailable;
         };
         match query.rtype {
-            RecordType::A => address_answer(proxy, &self.sandbox, &name).await,
+            RecordType::A => address_answer(proxy, &self.workspace, &name).await,
             rtype => records_answer(proxy, &query.name, rtype).await,
         }
     }
 }
 
-impl SandboxHandler {
+impl WorkspaceHandler {
     /// Raises the pending request an `SRV` query for an unmatched name stands for, and answers
     /// `NODATA` (the user has not decided yet). The port is unknown at this point, so it is 0.
     async fn request_for_srv(&self, host: Host) -> ResolveAnswer {
-        let request = EgressRequest::new(self.sandbox.clone(), host, 0);
+        let request = EgressRequest::new(self.workspace.clone(), host, 0);
         match self.proxy.decide(&request, SuffixAllows::Count).await {
             Ok(_) => ResolveAnswer::NoData { ttl: NEGATIVE_TTL },
             Err(err) => {
-                tracing::warn!(sandbox = %self.sandbox, error = %err, "rules unreadable; name lookup refused");
+                tracing::warn!(workspace = %self.workspace, error = %err, "rules unreadable; name lookup refused");
                 ResolveAnswer::Unavailable
             }
         }
@@ -141,22 +141,26 @@ enum Allowed {
     Unreadable,
 }
 
-/// Whether a rule allows `host` for `sandbox`. Asks without recording anything.
-async fn allowed(proxy: &Proxy, sandbox: &SandboxName, host: &Host) -> Allowed {
-    let request = EgressRequest::new(sandbox.clone(), host.clone(), 0);
+/// Whether a rule allows `host` for `workspace`. Asks without recording anything.
+async fn allowed(proxy: &Proxy, workspace: &WorkspaceName, host: &Host) -> Allowed {
+    let request = EgressRequest::new(workspace.clone(), host.clone(), 0);
     match proxy.look_up_rule(request, SuffixAllows::Count).await {
         Ok(Some(decision)) if decision.is_allow() => Allowed::Yes,
         Ok(Some(_)) => Allowed::No,
         Ok(None) => Allowed::Unmatched,
         Err(err) => {
-            tracing::warn!(%sandbox, %host, error = %err, "rules unreadable; name lookup refused");
+            tracing::warn!(%workspace, %host, error = %err, "rules unreadable; name lookup refused");
             Allowed::Unreadable
         }
     }
 }
 
 /// The answer to an address query for an allowed name: resolve it here, once.
-async fn address_answer(proxy: &Proxy, sandbox: &SandboxName, name: &DomainName) -> ResolveAnswer {
+async fn address_answer(
+    proxy: &Proxy,
+    workspace: &WorkspaceName,
+    name: &DomainName,
+) -> ResolveAnswer {
     let lookup = tokio::time::timeout(
         proxy.config().lookup_timeout,
         proxy.resolver().resolve(name, 0),
@@ -164,11 +168,11 @@ async fn address_answer(proxy: &Proxy, sandbox: &SandboxName, name: &DomainName)
     .await;
     match lookup {
         Ok(Ok(addrs)) if !addrs.is_empty() => ResolveAnswer::StandIn {
-            why: why_for(proxy, sandbox, &addrs),
+            why: why_for(proxy, workspace, &addrs),
             ttl: POSITIVE_TTL,
         },
         Ok(Ok(_) | Err(_)) if proxy.company_proxy_may_resolve() => {
-            tracing::info!(%sandbox, host = %name, "name not resolved here; the company proxy will resolve it");
+            tracing::info!(%workspace, host = %name, "name not resolved here; the company proxy will resolve it");
             ResolveAnswer::StandIn {
                 why: StandInReason::ViaUpstream,
                 ttl: POSITIVE_TTL,
@@ -180,7 +184,7 @@ async fn address_answer(proxy: &Proxy, sandbox: &SandboxName, name: &DomainName)
             ttl: POSITIVE_TTL,
         },
         Err(_) => {
-            tracing::info!(%sandbox, host = %name, "name lookup timed out");
+            tracing::info!(%workspace, host = %name, "name lookup timed out");
             ResolveAnswer::Unavailable
         }
     }
@@ -188,10 +192,10 @@ async fn address_answer(proxy: &Proxy, sandbox: &SandboxName, name: &DomainName)
 
 /// `Blocked` when every address of the name is refused by the address guard (the connect says why),
 /// else `Resolves`.
-fn why_for(proxy: &Proxy, sandbox: &SandboxName, addrs: &[SocketAddr]) -> StandInReason {
+fn why_for(proxy: &Proxy, workspace: &WorkspaceName, addrs: &[SocketAddr]) -> StandInReason {
     let all_blocked = addrs.iter().all(|addr| {
         matches!(
-            proxy.addresses().check(sandbox, *addr),
+            proxy.addresses().check(workspace, *addr),
             AddressVerdict::Block(reason) if !matches!(reason, BlockReason::SshUnsupported)
         )
     });

@@ -20,7 +20,8 @@ use puddle_compute::{
     ComputeError, ExecOutput, ExecRequest, FileMount, ImageConfig, Runtime, Sandbox, SandboxSpec,
 };
 use puddle_types::{
-    GuestFile, GuestPath, ImageRef, MergeEntry, MergeFormat, MergeSpec, SandboxName, SandboxStatus,
+    GuestFile, GuestPath, ImageRef, MergeEntry, MergeFormat, MergeSpec, SandboxName,
+    WorkspaceStatus,
 };
 use tokio::io::AsyncReadExt as _;
 
@@ -95,7 +96,7 @@ async fn hook_runs_after_create_before_any_user_exec() {
     assert_eq!(hook.runs(), 1);
     assert_eq!(sb.name().as_str(), "a");
     assert!(sb.boot_report().stdout.contains("ready"));
-    assert_eq!(sb.status().await.unwrap(), SandboxStatus::Running);
+    assert_eq!(sb.status().await.unwrap(), WorkspaceStatus::Running);
     let out = sb.exec(ExecRequest::sh("echo hi")).await.unwrap();
     assert_eq!(out.stdout_text(), "hi\n");
     let calls = rt.calls();
@@ -166,7 +167,7 @@ async fn a_failed_hook_stops_the_sandbox_and_shows_its_stderr() {
         Err(NotReady::Failed(failure))
     );
     let info = rt.list().await.unwrap();
-    assert_eq!(info[0].status, SandboxStatus::Stopped);
+    assert_eq!(info[0].status, WorkspaceStatus::Stopped);
 }
 
 #[tokio::test]

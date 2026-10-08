@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! A guest-side TLS client that trusts only the sandbox's CA completes a handshake with a server
+//! A guest-side TLS client that trusts only the workspace's CA completes a handshake with a server
 //! that presents the CA's leaf, the way the proxy will terminate bound hosts.
 #![expect(
     clippy::unwrap_used,
@@ -10,14 +10,14 @@
 use std::io::{Read, Write};
 use std::sync::Arc;
 
-use puddle_ca::{CaBuilder, NameConstraints, SandboxCa};
+use puddle_ca::{CaBuilder, NameConstraints, WorkspaceCa};
 use rustls::pki_types::ServerName;
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
 
 #[derive(Debug)]
-struct Resolver(Arc<SandboxCa>);
+struct Resolver(Arc<WorkspaceCa>);
 
 impl ResolvesServerCert for Resolver {
     fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
@@ -29,10 +29,10 @@ fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-fn sandbox_ca() -> Arc<SandboxCa> {
+fn workspace_ca() -> Arc<WorkspaceCa> {
     let constraints = NameConstraints::new().permit_dns("github.com").unwrap();
     Arc::new(
-        CaBuilder::new("puddle proxy CA (sandbox t)", constraints)
+        CaBuilder::new("puddle proxy CA (workspace t)", constraints)
             .build()
             .unwrap(),
     )
@@ -40,8 +40,8 @@ fn sandbox_ca() -> Arc<SandboxCa> {
 
 /// Runs a handshake for `host` and sends one message through; returns what the server read.
 fn handshake(
-    server_ca: Arc<SandboxCa>,
-    trusted: &SandboxCa,
+    server_ca: Arc<WorkspaceCa>,
+    trusted: &WorkspaceCa,
     host: &str,
 ) -> Result<Vec<u8>, rustls::Error> {
     let server_config = ServerConfig::builder_with_provider(provider())
@@ -87,16 +87,16 @@ fn handshake(
 }
 
 #[test]
-fn guest_client_trusting_the_sandbox_ca_accepts_the_proxy_leaf() {
-    let ca = sandbox_ca();
+fn guest_client_trusting_the_workspace_ca_accepts_the_proxy_leaf() {
+    let ca = workspace_ca();
     let got = handshake(Arc::clone(&ca), &ca, "api.github.com").unwrap();
     assert_eq!(got, b"GET / HTTP/1.1\r\n\r\n");
 }
 
 #[test]
-fn a_client_trusting_another_sandbox_ca_refuses_the_leaf() {
-    let ca = sandbox_ca();
-    let other = sandbox_ca();
+fn a_client_trusting_another_workspace_ca_refuses_the_leaf() {
+    let ca = workspace_ca();
+    let other = workspace_ca();
     let err = handshake(ca, &other, "github.com").unwrap_err();
     assert!(
         matches!(err, rustls::Error::InvalidCertificate(_)),
@@ -106,7 +106,7 @@ fn a_client_trusting_another_sandbox_ca_refuses_the_leaf() {
 
 #[test]
 fn a_host_outside_the_constraints_gets_no_certificate() {
-    let ca = sandbox_ca();
+    let ca = workspace_ca();
     let err = handshake(Arc::clone(&ca), &ca, "example.com").unwrap_err();
     assert!(
         !matches!(err, rustls::Error::InvalidCertificate(_)),

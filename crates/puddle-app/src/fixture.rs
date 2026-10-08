@@ -8,7 +8,7 @@ use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services, SettingsRepo,
 };
 use puddle_store::{Limits, Store, SystemClock};
-use puddle_types::{EgressRequest, Host, SandboxName, SuffixAllows};
+use puddle_types::{EgressRequest, Host, SuffixAllows, WorkspaceName};
 
 use crate::backend::{Backend, BackendError};
 
@@ -21,10 +21,13 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
         Store::open_in_memory(clock.clone(), Limits::default())
             .map_err(|e| fixture("store", &e))?,
     );
-    let sandbox = SandboxName::new("demo").map_err(|e| fixture("sandbox name", &e))?;
+    let workspace = WorkspaceName::new("demo").map_err(|e| fixture("workspace name", &e))?;
     let host = Host::parse_normalised("registry.example.org").map_err(|e| fixture("host", &e))?;
     store
-        .decide(&EgressRequest::new(sandbox, host, 443), SuffixAllows::Count)
+        .decide(
+            &EgressRequest::new(workspace, host, 443),
+            SuffixAllows::Count,
+        )
         .map_err(|e| fixture("seed", &e))?;
     let events = Arc::new(EventHub::default());
     let services = Services::new(

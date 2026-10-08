@@ -76,8 +76,8 @@ describe("NoticeWatcher", () => {
       notifier: new InAppNotifier(center),
       api: api as never,
     });
-  const status = (sandbox: string, s: string) =>
-    ({ type: "status_changed", sandbox, status: s }) as const;
+  const status = (workspace: string, s: string) =>
+    ({ type: "status_changed", workspace, status: s }) as const;
   const keys = () => center.items.map((n) => n.key);
 
   beforeEach(() => {
@@ -96,7 +96,7 @@ describe("NoticeWatcher", () => {
     const w = make();
     w.handle({
       type: "oom_kill",
-      sandbox: "my web",
+      workspace: "my web",
       pid: 42,
       process: "<b>node</b>",
     });
@@ -123,7 +123,7 @@ describe("NoticeWatcher", () => {
     await settle();
     source.emit({
       type: "workspace_progress",
-      sandbox: "web",
+      workspace: "web",
       step: "stopping",
       detail: null,
     });
@@ -134,13 +134,13 @@ describe("NoticeWatcher", () => {
     source.emit(status("never-seen", "stopped"));
     source.emit({
       type: "workspace_progress",
-      sandbox: "web",
+      workspace: "web",
       step: "cloning",
       detail: null,
     });
     source.emit({
       type: "workspace_progress",
-      sandbox: "web",
+      workspace: "web",
       step: "removing",
       detail: null,
     });

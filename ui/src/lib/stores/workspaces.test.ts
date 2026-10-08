@@ -28,14 +28,18 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-const status = (sandbox: string, state: string) => ({
+const status = (workspace: string, state: string) => ({
   type: "status_changed",
-  sandbox,
+  workspace,
   status: state,
 });
-const step = (sandbox: string, name: string, detail: string | null = null) => ({
+const step = (
+  workspace: string,
+  name: string,
+  detail: string | null = null,
+) => ({
   type: "workspace_progress",
-  sandbox,
+  workspace,
   step: name,
   detail,
 });
@@ -106,7 +110,7 @@ describe("events", () => {
   it("remembers the last out-of-memory kill with the time the page heard it", () => {
     store.handleEvent({
       type: "oom_kill",
-      sandbox: "a-shop",
+      workspace: "a-shop",
       pid: 9,
       process: "node",
     });

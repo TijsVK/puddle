@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Rules: who they apply to, what they match, what they do, until when (`docs/spec/rules.md` §1).
 
-use puddle_types::{RuleId, SandboxName};
+use puddle_types::{RuleId, WorkspaceName};
 
 use crate::pattern::Pattern;
 
@@ -9,33 +9,33 @@ use crate::pattern::Pattern;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Scope {
-    /// Every sandbox.
+    /// Every workspace.
     Global,
-    /// One sandbox.
-    Sandbox(SandboxName),
+    /// One workspace.
+    Workspace(WorkspaceName),
     /// An entry of a rule set the user made, by the set's id: it applies wherever the set is
     /// switched on, and ranks below the user's own rules (R-39).
     Set(i64),
 }
 
 impl Scope {
-    /// Precedence at equal pattern specificity (R-6 step 2): higher wins. `Sandbox` 2,
+    /// Precedence at equal pattern specificity (R-6 step 2): higher wins. `Workspace` 2,
     /// `Global` 1, `Set` 0.
     #[must_use]
     pub fn rank(&self) -> u8 {
         match self {
             Self::Set(_) => 0,
             Self::Global => 1,
-            Self::Sandbox(_) => 2,
+            Self::Workspace(_) => 2,
         }
     }
 
-    /// The sandbox, for a sandbox rule.
+    /// The workspace, for a workspace rule.
     #[must_use]
-    pub fn sandbox(&self) -> Option<&SandboxName> {
+    pub fn workspace(&self) -> Option<&WorkspaceName> {
         match self {
             Self::Global | Self::Set(_) => None,
-            Self::Sandbox(id) => Some(id),
+            Self::Workspace(id) => Some(id),
         }
     }
 
@@ -44,16 +44,16 @@ impl Scope {
     pub fn set(&self) -> Option<i64> {
         match self {
             Self::Set(id) => Some(*id),
-            Self::Global | Self::Sandbox(_) => None,
+            Self::Global | Self::Workspace(_) => None,
         }
     }
 
-    /// `global`, `sandbox` or `set`, as stored.
+    /// `global`, `workspace` or `set`, as stored.
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Global => "global",
-            Self::Sandbox(_) => "sandbox",
+            Self::Workspace(_) => "workspace",
             Self::Set(_) => "set",
         }
     }
@@ -89,7 +89,7 @@ pub enum Actor {
     Ui,
     /// The HTTP API.
     Api,
-    /// puddle itself (the sweeper, sandbox deletion). Never creates rules.
+    /// puddle itself (the sweeper, workspace deletion). Never creates rules.
     System,
 }
 
@@ -121,7 +121,7 @@ impl Actor {
 pub struct Rule {
     /// Row id, never reused.
     pub id: RuleId,
-    /// Global or one sandbox.
+    /// Global or one workspace.
     pub scope: Scope,
     /// Exact host or suffix.
     pub pattern: Pattern,
@@ -148,7 +148,7 @@ impl Rule {
 /// A rule to create.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewRule {
-    /// Global or one sandbox.
+    /// Global or one workspace.
     pub scope: Scope,
     /// Exact host or suffix.
     pub pattern: Pattern,

@@ -31,7 +31,7 @@ use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_proxy::testing::StaticResolver;
 use puddle_proxy::{Proxy, Route};
 use puddle_store::{Actor, Effect, Limits, ManualClock, NewRule, Pattern, Scope, Store};
-use puddle_types::{LocalCategory, NullSink, SandboxName};
+use puddle_types::{LocalCategory, NullSink, WorkspaceName};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
@@ -77,7 +77,10 @@ async fn rig() -> Rig {
             .with_address_check(Arc::new(guard)),
     );
     let root = IpcRoot::new().unwrap();
-    let route = proxy.serve_route(root.listen().unwrap(), SandboxName::new("e2e-api").unwrap());
+    let route = proxy.serve_route(
+        root.listen().unwrap(),
+        WorkspaceName::new("e2e-api").unwrap(),
+    );
     let agent = Agent::start(Config {
         listen: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 0),
         target: Target::Unix(route.endpoint().path().to_path_buf()),

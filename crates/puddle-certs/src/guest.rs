@@ -31,7 +31,7 @@ pub const BUNDLE_STEP_SH: &str = include_str!("../guest/ca-bundle.sh");
 /// one store set, short enough to read.
 const NAME_HEX: usize = 16;
 
-/// The guest side of root sync for one sandbox: the host's synced roots plus puddle's own CAs
+/// The guest side of root sync for one workspace: the host's synced roots plus puddle's own CAs
 /// ([`TrustBundle`], a list so a dev CA is one more entry).
 ///
 /// Hand [`GuestTrust::guest_files`], [`GuestTrust::env`] and [`GuestTrust::boot_step`] to the
@@ -52,7 +52,7 @@ pub struct GuestTrust {
 }
 
 impl GuestTrust {
-    /// The trust for a sandbox from the host's `corporate` roots and puddle's CAs.
+    /// The trust for a workspace from the host's `corporate` roots and puddle's CAs.
     #[must_use]
     pub fn new(corporate: &CorporateRoots, puddle: &TrustBundle) -> Self {
         Self {

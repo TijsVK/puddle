@@ -12,7 +12,7 @@ use puddle_api::{
     MemorySettings, NetworkHealthService, RunningApi, Services, SettingsRepo,
 };
 use puddle_store::{Limits, ManualClock, Store};
-use puddle_types::{EgressRequest, Host, PendingId, SandboxName, SuffixAllows};
+use puddle_types::{EgressRequest, Host, PendingId, SuffixAllows, WorkspaceName};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -136,13 +136,13 @@ impl Api {
         self.send("GET", path, None).await
     }
 
-    /// Makes the sandbox ask for `host:443` once, as the proxy would; returns the pending id.
-    pub(crate) fn request(&self, sandbox: &str, host: &str) -> i64 {
+    /// Makes the workspace ask for `host:443` once, as the proxy would; returns the pending id.
+    pub(crate) fn request(&self, workspace: &str, host: &str) -> i64 {
         let decision = self
             .store
             .decide(
                 &EgressRequest::new(
-                    SandboxName::new(sandbox).unwrap(),
+                    WorkspaceName::new(workspace).unwrap(),
                     Host::parse_normalised(host).unwrap(),
                     443,
                 ),

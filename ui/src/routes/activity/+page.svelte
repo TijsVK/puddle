@@ -34,8 +34,8 @@
   let cancelExport = false;
 
   const workspaces = $derived(
-    filter.sandbox !== "" && !store.workspaces.includes(filter.sandbox)
-      ? [...store.workspaces, filter.sandbox].sort()
+    filter.workspace !== "" && !store.workspaces.includes(filter.workspace)
+      ? [...store.workspaces, filter.workspace].sort()
       : store.workspaces,
   );
   const filtered = $derived(isFiltered(filter));
@@ -178,7 +178,7 @@
   </div>
   <div class="field">
     <label for="f-workspace">Workspace</label>
-    <select id="f-workspace" bind:value={filter.sandbox} onchange={apply}>
+    <select id="f-workspace" bind:value={filter.workspace} onchange={apply}>
       <option value="">All workspaces</option>
       {#each workspaces as name (name)}<option value={name}>{name}</option
         >{/each}

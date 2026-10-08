@@ -6,7 +6,7 @@ use std::convert::Infallible;
 
 use axum::response::sse;
 use futures_util::{Stream, StreamExt};
-use puddle_types::{Event, EventSink, SandboxName};
+use puddle_types::{Event, EventSink, WorkspaceName};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 use utoipa::ToSchema;
@@ -62,14 +62,14 @@ pub struct Lagged {
     pub missed: u64,
 }
 
-/// Whether a subscriber filtering on `filter` gets `event`. Global events (no sandbox) go to
+/// Whether a subscriber filtering on `filter` gets `event`. Global events (no workspace) go to
 /// every subscriber.
-pub(crate) fn wanted(event: &Event, filter: Option<&SandboxName>) -> bool {
-    wanted_for(event.sandbox(), filter)
+pub(crate) fn wanted(event: &Event, filter: Option<&WorkspaceName>) -> bool {
+    wanted_for(event.workspace(), filter)
 }
 
-fn wanted_for(sandbox: Option<&SandboxName>, filter: Option<&SandboxName>) -> bool {
-    match (filter, sandbox) {
+fn wanted_for(workspace: Option<&WorkspaceName>, filter: Option<&WorkspaceName>) -> bool {
+    match (filter, workspace) {
         (None, _) | (_, None) => true,
         (Some(want), Some(got)) => want == got,
     }
@@ -98,7 +98,7 @@ fn lagged(missed: u64) -> sse::Event {
 /// The SSE stream for one subscriber. It ends when the hub is dropped or the server shuts down.
 pub(crate) fn stream(
     rx: broadcast::Receiver<Event>,
-    filter: Option<SandboxName>,
+    filter: Option<WorkspaceName>,
     mut shutdown: watch::Receiver<bool>,
 ) -> impl Stream<Item = Result<sse::Event, Infallible>> {
     let events = futures_util::stream::unfold(rx, move |mut rx| {
@@ -128,12 +128,12 @@ pub(crate) fn stream(
 mod tests {
     use std::time::Duration;
 
-    use puddle_types::SandboxStatus;
+    use puddle_types::WorkspaceStatus;
 
     use super::*;
 
-    fn name(s: &str) -> SandboxName {
-        SandboxName::new(s).unwrap()
+    fn name(s: &str) -> WorkspaceName {
+        WorkspaceName::new(s).unwrap()
     }
 
     fn oom(s: &str) -> Event {
@@ -141,13 +141,13 @@ mod tests {
     }
 
     #[test]
-    fn filter_keeps_its_sandbox_and_global_events() {
+    fn filter_keeps_its_workspace_and_global_events() {
         let a = name("a");
         assert!(wanted(&oom("a"), Some(&a)));
         assert!(!wanted(&oom("b"), Some(&a)));
         assert!(wanted(&oom("b"), None));
-        // Global events (`Event::sandbox()` is `None`) reach filtered subscribers too. No real
-        // global variant exists yet, so the rule is checked on the sandbox alone.
+        // Global events (`Event::workspace()` is `None`) reach filtered subscribers too. No real
+        // global variant exists yet, so the rule is checked on the workspace alone.
         assert!(wanted_for(None, Some(&a)));
         assert!(wanted_for(None, None));
     }
@@ -168,8 +168,8 @@ mod tests {
         let mut s = Box::pin(stream(hub.subscribe(), Some(name("a")), shutdown));
         hub.emit(oom("b"));
         hub.emit(Event::StatusChanged {
-            sandbox: name("a"),
-            status: SandboxStatus::Running,
+            workspace: name("a"),
+            status: WorkspaceStatus::Running,
         });
         assert!(s.next().await.is_some(), "the status event for a");
         for _ in 0..5 {

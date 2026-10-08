@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The local-destination settings one sandbox runs with: a toggle per category and
+//! The local-destination settings one workspace runs with: a toggle per category and
 //! whether wildcard allows reach local addresses.
 
 use puddle_settings::Effective;
-use puddle_types::{LocalCategory, SandboxName};
+use puddle_types::{LocalCategory, WorkspaceName};
 
-/// One sandbox's local-destination settings, resolved (sandbox override over global over
+/// One workspace's local-destination settings, resolved (workspace override over global over
 /// default). [`LocalAccess::NONE`] is puddle's default: every toggle off, wildcards don't reach
 /// local addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -68,32 +68,32 @@ impl LocalAccess {
     }
 }
 
-/// Where the guard gets each sandbox's [`LocalAccess`], read per request so a settings change
+/// Where the guard gets each workspace's [`LocalAccess`], read per request so a settings change
 /// applies to the next connection. The host program implements it over the settings store; a
-/// fixed [`LocalAccess`] applies to every sandbox, and so does a closure.
+/// fixed [`LocalAccess`] applies to every workspace, and so does a closure.
 pub trait LocalAccessSource: Send + Sync {
-    /// The settings `sandbox` runs with now.
-    fn local_access(&self, sandbox: &SandboxName) -> LocalAccess;
+    /// The settings `workspace` runs with now.
+    fn local_access(&self, workspace: &WorkspaceName) -> LocalAccess;
 }
 
 impl LocalAccessSource for LocalAccess {
-    fn local_access(&self, _sandbox: &SandboxName) -> LocalAccess {
+    fn local_access(&self, _workspace: &WorkspaceName) -> LocalAccess {
         *self
     }
 }
 
 impl<F> LocalAccessSource for F
 where
-    F: Fn(&SandboxName) -> LocalAccess + Send + Sync,
+    F: Fn(&WorkspaceName) -> LocalAccess + Send + Sync,
 {
-    fn local_access(&self, sandbox: &SandboxName) -> LocalAccess {
-        self(sandbox)
+    fn local_access(&self, workspace: &WorkspaceName) -> LocalAccess {
+        self(workspace)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use puddle_settings::{GlobalSettings, SandboxSettings, resolve};
+    use puddle_settings::{GlobalSettings, WorkspaceSettings, resolve};
 
     use super::*;
 
@@ -124,10 +124,10 @@ mod tests {
             LocalAccess::NONE
         );
         let mut g = GlobalSettings::default();
-        g.sandbox_defaults.local_toggles.private = Some(true);
-        g.sandbox_defaults.local_toggles.metadata = Some(true);
-        g.sandbox_defaults.wildcards_reach_local = Some(true);
-        let mut s = SandboxSettings::default();
+        g.workspace_defaults.local_toggles.private = Some(true);
+        g.workspace_defaults.local_toggles.metadata = Some(true);
+        g.workspace_defaults.wildcards_reach_local = Some(true);
+        let mut s = WorkspaceSettings::default();
         s.overrides.local_toggles.metadata = Some(false);
         let a = LocalAccess::from_effective(&resolve(&g, Some(&s)));
         assert!(a.is_on(LocalCategory::Private));
@@ -137,15 +137,15 @@ mod tests {
     }
 
     #[test]
-    fn sources_fixed_and_per_sandbox() {
-        let sandbox = SandboxName::new("box").unwrap();
+    fn sources_fixed_and_per_workspace() {
+        let workspace = WorkspaceName::new("box").unwrap();
         let fixed = LocalAccess::NONE.with_toggle(LocalCategory::Loopback, true);
-        assert_eq!(fixed.local_access(&sandbox), fixed);
-        let per = |s: &SandboxName| {
+        assert_eq!(fixed.local_access(&workspace), fixed);
+        let per = |s: &WorkspaceName| {
             LocalAccess::NONE.with_toggle(LocalCategory::Private, s.as_str() == "box")
         };
-        assert!(per.local_access(&sandbox).is_on(LocalCategory::Private));
-        let other = SandboxName::new("other").unwrap();
+        assert!(per.local_access(&workspace).is_on(LocalCategory::Private));
+        let other = WorkspaceName::new("other").unwrap();
         assert!(!per.local_access(&other).is_on(LocalCategory::Private));
     }
 }

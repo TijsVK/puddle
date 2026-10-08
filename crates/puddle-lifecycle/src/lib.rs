@@ -53,7 +53,7 @@ mod windows;
 
 pub use error::LifecycleError;
 pub use reconcile::{Failure, Inventory, ReconcileReport, adopt_workspaces, reconcile};
-pub use shutdown::{Lifecycle, SandboxOutcome, ShutdownConfig, ShutdownReport, StopOutcome};
+pub use shutdown::{Lifecycle, ShutdownConfig, ShutdownReport, StopOutcome, WorkspaceOutcome};
 pub use signal::{ShutdownCause, ShutdownSignals, wait_for_shutdown};
 pub use supervise::{ROLE_VAR, Role, supervise};
 pub use trim::{TrimOutcome, trim_request};

@@ -2,11 +2,11 @@
 //! Schema versions and the migration runner.
 //!
 //! A document's `schema_version` names the shape it was written in. Version 1 is the first
-//! shape, so there are no migrations yet. To change a shape:
+//! shape. To change a shape:
 //!
 //! 1. bump the kind's `*_SCHEMA_VERSION`;
 //! 2. append a [`Migration`] with `from` = the old version to the kind's list (`GLOBAL` or
-//!    `SANDBOX` below); it rewrites the JSON object in place (rename a key, convert a value);
+//!    `WORKSPACE` below); it rewrites the JSON object in place (rename a key, convert a value);
 //! 3. add a test that loads a stored document of the old version and checks the result.
 //!
 //! The lists are checked by a unit test: one step per version, in order, none missing.
@@ -23,9 +23,27 @@ pub(crate) struct Migration {
 }
 
 /// Steps for [`crate::GlobalSettings`], oldest first.
-pub(crate) const GLOBAL: &[Migration] = &[];
-/// Steps for [`crate::SandboxSettings`], oldest first.
-pub(crate) const SANDBOX: &[Migration] = &[];
+pub(crate) const GLOBAL: &[Migration] = &[Migration {
+    from: 1,
+    apply: workspace_defaults,
+}];
+/// Steps for [`crate::WorkspaceSettings`], oldest first.
+pub(crate) const WORKSPACE: &[Migration] = &[];
+
+/// Version 1 called the defaults every workspace gets `sandbox_defaults`. A document that somehow
+/// has both keeps the new one, and the old stays as an unknown field.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "has the signature of Migration::apply"
+)]
+fn workspace_defaults(m: &mut Map<String, Value>) -> Result<(), String> {
+    if !m.contains_key("workspace_defaults")
+        && let Some(v) = m.remove("sandbox_defaults")
+    {
+        m.insert("workspace_defaults".to_owned(), v);
+    }
+    Ok(())
+}
 
 /// The key every document carries its version under.
 pub(crate) const VERSION_KEY: &str = "schema_version";
@@ -103,7 +121,7 @@ mod tests {
     #[test]
     fn every_kind_has_a_complete_chain() {
         complete(GLOBAL, crate::GLOBAL_SCHEMA_VERSION);
-        complete(SANDBOX, crate::SANDBOX_SCHEMA_VERSION);
+        complete(WORKSPACE, crate::WORKSPACE_SCHEMA_VERSION);
     }
 
     #[expect(

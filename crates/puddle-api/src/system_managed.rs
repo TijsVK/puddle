@@ -5,25 +5,25 @@
 
 use puddle_settings::{Consent, ConsentKind, GlobalSettings, ServerChoice};
 use puddle_store::{SystemPlan, SystemReason};
-use puddle_types::SandboxName;
+use puddle_types::WorkspaceName;
 
 use puddle_settings::resolve;
 
 use crate::error::blocking;
 use crate::routes::AppState;
-use crate::routes::settings::{load_global, load_sandbox};
+use crate::routes::settings::{load_global, load_workspace};
 
 /// The System managed reasons for a setup.
 ///
 /// - The browser editor's server is a global choice: Microsoft's server (only with the
-///   consent granted) gives Microsoft's download and Marketplace hosts to every sandbox; the
+///   consent granted) gives Microsoft's download and Marketplace hosts to every workspace; the
 ///   bundled code-server gives Open VSX.
-/// - `direct_ssh`: the sandboxes with direct SSH on, which get Microsoft's hosts for themselves
+/// - `direct_ssh`: the workspaces with direct SSH on, which get Microsoft's hosts for themselves
 ///   (desktop VS Code installs Microsoft's server and extensions there).
 ///
-/// Nothing else is derived: a sandbox used with another tool gets no host for VS Code's sake.
+/// Nothing else is derived: a workspace used with another tool gets no host for VS Code's sake.
 #[must_use]
-pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[SandboxName]) -> SystemPlan {
+pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceName]) -> SystemPlan {
     let mut plan = SystemPlan::default();
     let consented = matches!(
         global.consents.get(ConsentKind::VsCodeServer),
@@ -40,9 +40,9 @@ pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[SandboxName]) -> Syste
             plan.everywhere.insert(SystemReason::CodeServer);
         }
     }
-    for sandbox in direct_ssh {
-        plan.sandboxes
-            .entry(sandbox.clone())
+    for workspace in direct_ssh {
+        plan.workspaces
+            .entry(workspace.clone())
             .or_default()
             .insert(SystemReason::DirectSsh);
     }
@@ -56,7 +56,7 @@ pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[SandboxName]) -> Syste
 /// A failure is logged and leaves the store's reasons as they were. A workspace list that can't
 /// be read counts as no workspace with direct SSH on (an allow is only ever dropped then).
 pub(crate) async fn refresh(state: &AppState) {
-    let names: Vec<SandboxName> = match state.workspaces.list().await {
+    let names: Vec<WorkspaceName> = match state.workspaces.list().await {
         Ok(records) => records.into_iter().map(|w| w.name).collect(),
         Err(_) => Vec::new(),
     };
@@ -65,10 +65,10 @@ pub(crate) async fn refresh(state: &AppState) {
     let result = blocking(move || {
         let repo = settings.as_ref();
         let global = load_global(repo)?;
-        let direct: Vec<SandboxName> = names
+        let direct: Vec<WorkspaceName> = names
             .into_iter()
             .filter(|name| {
-                load_sandbox(repo, name).is_ok_and(|own| {
+                load_workspace(repo, name).is_ok_and(|own| {
                     resolve(&global.settings, Some(&own.settings))
                         .direct_ssh
                         .value
@@ -118,7 +118,7 @@ mod tests {
             plan.everywhere.into_iter().collect::<Vec<_>>(),
             [SystemReason::CodeServer]
         );
-        assert_eq!(plan.sandboxes.len(), 0);
+        assert_eq!(plan.workspaces.len(), 0);
     }
 
     #[test]
@@ -132,11 +132,11 @@ mod tests {
     }
 
     #[test]
-    fn r41_direct_ssh_gives_microsofts_hosts_to_that_sandbox_only() {
-        let ssh = SandboxName::new("ssh").unwrap();
+    fn r41_direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
+        let ssh = WorkspaceName::new("ssh").unwrap();
         let plan = plan(&GlobalSettings::default(), std::slice::from_ref(&ssh));
         assert_eq!(
-            plan.sandboxes
+            plan.workspaces
                 .get(&ssh)
                 .map(|r| r.iter().copied().collect::<Vec<_>>()),
             Some(vec![SystemReason::DirectSsh])

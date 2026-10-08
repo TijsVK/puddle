@@ -13,21 +13,21 @@
 //!   connection is closed. The token is 256 random bits, compared in constant time, and never
 //!   logged (`Debug` and `Display` redact it; the log lines carry host and port only).
 //! - **Guests never reach it.** It registers itself in [`PuddleEndpoints`] as
-//!   [`EndpointKind::PullProxy`], so the sandbox proxy's guard blocks it.
-//! - **No rules, but the guard.** Pulls are puddle's own requests, not a sandbox's, so the rules
+//!   [`EndpointKind::PullProxy`], so the workspace proxy's guard blocks it.
+//! - **No rules, but the guard.** Pulls are puddle's own requests, not a workspace's, so the rules
 //!   engine isn't asked and no pending row is written. The address guard still
 //!   applies: puddle's own endpoints (this listener included), cloud metadata, link-local and
 //!   special addresses are blocked. Private and loopback addresses are allowed by default, so a
 //!   company registry on an internal address and a developer's `localhost:5000` registry work
 //!   ([`PullProxy::with_local_access`] changes that).
-//! - **Same relay as the sandbox proxy.** `CONNECT` is spliced (TLS stays end to end, so the
+//! - **Same relay as the workspace proxy.** `CONNECT` is spliced (TLS stays end to end, so the
 //!   registry client verifies the certificate itself: an intercepting company proxy needs its
 //!   root passed to the client), and absolute-form `http://` is forwarded once with the proxy
 //!   credentials dropped.
 //!
 //! - **Recorded in the audit.** With a log set ([`PullProxy::with_connection_log`]), every pull
 //!   whose destination was parsed ends as one `connection` record with `origin: puddle` and no
-//!   sandbox: allowed, refused by the address guard, or failed to connect. It carries the
+//!   workspace: allowed, refused by the address guard, or failed to connect. It carries the
 //!   upstream hop and the bytes, and never a header, credential or query string.
 //!
 //! Pulls leave through the company proxy route when one is set ([`PullProxy::with_upstream`]),
@@ -192,7 +192,7 @@ impl fmt::Debug for PullProxy {
 
 impl PullProxy {
     /// Binds `127.0.0.1` on a free port, makes a fresh token, and registers the listener in
-    /// `endpoints` (the registry the sandbox proxy's guard uses), so no guest can reach it.
+    /// `endpoints` (the registry the workspace proxy's guard uses), so no guest can reach it.
     ///
     /// # Errors
     ///
@@ -235,7 +235,7 @@ impl PullProxy {
     }
 
     /// Uses `config`'s head timeout, resolve and connect timeouts, and its
-    /// `max_streams_per_sandbox` as the cap on open pull connections.
+    /// `max_streams_per_workspace` as the cap on open pull connections.
     #[must_use]
     pub fn with_config(mut self, config: ProxyConfig) -> Self {
         self.config = config;
@@ -291,7 +291,7 @@ impl PullProxy {
             guard: self.guard,
             access: self.access,
             resolver: self.resolver,
-            streams: Arc::new(Semaphore::new(self.config.max_streams_per_sandbox)),
+            streams: Arc::new(Semaphore::new(self.config.max_streams_per_workspace)),
             upstream: self.upstream,
             log: self.log,
             config: self.config,
@@ -407,7 +407,7 @@ async fn serve(shared: &Shared, stream: TcpStream) {
     let (stream, counts) = Counted::new(stream);
     let mut reader = BufReader::new(stream);
     let Ok(_permit) = Arc::clone(&shared.streams).try_acquire_owned() else {
-        let limit = shared.config.max_streams_per_sandbox;
+        let limit = shared.config.max_streams_per_workspace;
         tracing::warn!(
             limit,
             "image-pull connection refused: over the connection limit"

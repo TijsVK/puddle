@@ -28,7 +28,7 @@ export interface PendingClosed {
 }
 export interface SuppressionChanged {
   type: "suppression_changed";
-  sandbox: string;
+  workspace: string;
   active: boolean;
   count: number;
 }
@@ -46,7 +46,7 @@ function asRequest(v: unknown): PendingRequest | undefined {
   const r = v as Record<string, unknown>;
   if (
     !isNum(r["id"]) ||
-    !isStr(r["sandbox"]) ||
+    !isStr(r["workspace"]) ||
     !isStr(r["host"]) ||
     !isNum(r["port"]) ||
     !isNum(r["first_seen"]) ||
@@ -58,7 +58,7 @@ function asRequest(v: unknown): PendingRequest | undefined {
   if (isStr(r["state"])) return v as PendingRequest;
   return {
     id: r["id"],
-    sandbox: r["sandbox"] as PendingRequest["sandbox"],
+    workspace: r["workspace"] as PendingRequest["workspace"],
     host: r["host"],
     port: r["port"],
     first_seen: r["first_seen"],
@@ -117,7 +117,7 @@ export function asInboxEvent(value: unknown): InboxEvent | undefined {
       };
     case "suppression_changed":
       if (
-        !isStr(e["sandbox"]) ||
+        !isStr(e["workspace"]) ||
         typeof e["active"] !== "boolean" ||
         !isNum(e["count"])
       ) {
@@ -125,7 +125,7 @@ export function asInboxEvent(value: unknown): InboxEvent | undefined {
       }
       return {
         type: "suppression_changed",
-        sandbox: e["sandbox"],
+        workspace: e["workspace"],
         active: e["active"],
         count: e["count"],
       };

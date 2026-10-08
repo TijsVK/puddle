@@ -9,7 +9,7 @@
 use std::io;
 
 use puddle_types::{
-    ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionReason, SandboxName,
+    ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionReason, WorkspaceName,
     request_path,
 };
 use serde::{Deserialize, Serialize};
@@ -41,10 +41,11 @@ pub enum AuditError {
 pub struct ConnectionRecord {
     /// Epoch ms.
     pub ts: u64,
-    /// The sandbox; `null` for puddle's own connections (`origin: puddle`).
-    pub sandbox_id: Option<String>,
-    /// Whose connection it is: `sandbox` or `puddle`. Absent in records written before it
-    /// existed, which read as `sandbox`.
+    /// The workspace; `null` for puddle's own connections (`origin: puddle`).
+    #[serde(alias = "sandbox_id")]
+    pub workspace_id: Option<String>,
+    /// Whose connection it is: `workspace` or `puddle`. Absent in records written before it
+    /// existed, which read as `workspace`.
     #[serde(default)]
     pub origin: ConnectionOrigin,
     /// The requested host.
@@ -94,7 +95,7 @@ impl ConnectionRecord {
         });
         Self {
             ts,
-            sandbox_id: event.sandbox.as_ref().map(ToString::to_string),
+            workspace_id: event.workspace.as_ref().map(ToString::to_string),
             origin: event.origin,
             host: Some(event.host.to_string()),
             port: Some(event.port),
@@ -116,14 +117,18 @@ impl ConnectionRecord {
         }
     }
 
-    /// The `suppressed` summary for a sandbox, or for puddle's own connections when `sandbox` is
+    /// The `suppressed` summary for a workspace, or for puddle's own connections when `workspace` is
     /// `None`.
-    pub(crate) fn suppressed_summary(ts: u64, sandbox: Option<&SandboxName>, count: u64) -> Self {
+    pub(crate) fn suppressed_summary(
+        ts: u64,
+        workspace: Option<&WorkspaceName>,
+        count: u64,
+    ) -> Self {
         Self {
             ts,
-            sandbox_id: sandbox.map(ToString::to_string),
-            origin: if sandbox.is_some() {
-                ConnectionOrigin::Sandbox
+            workspace_id: workspace.map(ToString::to_string),
+            origin: if workspace.is_some() {
+                ConnectionOrigin::Workspace
             } else {
                 ConnectionOrigin::Puddle
             },
@@ -148,15 +153,28 @@ impl ConnectionRecord {
     }
 }
 
+/// Reads a stored rule scope, mapping the name `sandbox` that older records carry.
+fn scope_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let scope = String::deserialize(d)?;
+    Ok(if scope == "sandbox" {
+        "workspace".to_owned()
+    } else {
+        scope
+    })
+}
+
 /// A rule as it appears in the audit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleWire {
     /// Row id.
     pub id: i64,
-    /// `global`, `sandbox` or `set`.
+    /// `global`, `workspace` or `set`. Records written before the rename read `sandbox` as
+    /// `workspace`.
+    #[serde(deserialize_with = "scope_name")]
     pub scope: String,
-    /// The sandbox, for a sandbox rule.
-    pub sandbox_id: Option<String>,
+    /// The workspace, for a workspace rule.
+    #[serde(alias = "sandbox_id")]
+    pub workspace_id: Option<String>,
     /// The rule set the user made, for a set's entry. Absent in records written before rule
     /// sets existed.
     #[serde(default)]
@@ -182,7 +200,7 @@ impl From<&Rule> for RuleWire {
         Self {
             id: rule.id.0,
             scope: rule.scope.as_str().to_owned(),
-            sandbox_id: rule.scope.sandbox().map(ToString::to_string),
+            workspace_id: rule.scope.workspace().map(ToString::to_string),
             set_id: rule.scope.set(),
             pattern_kind: match rule.pattern {
                 Pattern::Exact(_) => "exact",
@@ -204,8 +222,9 @@ impl From<&Rule> for RuleWire {
 pub struct PendingWire {
     /// Row id.
     pub id: i64,
-    /// The sandbox.
-    pub sandbox_id: String,
+    /// The workspace.
+    #[serde(alias = "sandbox_id")]
+    pub workspace_id: String,
     /// The requested host.
     pub host: String,
     /// The requested port.
@@ -233,7 +252,7 @@ impl From<&PendingRow> for PendingWire {
     fn from(row: &PendingRow) -> Self {
         Self {
             id: row.id.0,
-            sandbox_id: row.sandbox.to_string(),
+            workspace_id: row.workspace.to_string(),
             host: row.host.to_string(),
             port: row.port,
             first_seen: row.first_seen,
@@ -254,8 +273,9 @@ impl From<&PendingRow> for PendingWire {
 pub enum PendingExpiryReason {
     /// No repeat for the stale period (R-20).
     Stale,
-    /// Its sandbox was deleted (R-21).
-    SandboxDeleted,
+    /// Its workspace was deleted (R-21).
+    #[serde(alias = "sandbox_deleted")]
+    WorkspaceDeleted,
 }
 
 /// Why a rule was deleted.
@@ -264,8 +284,9 @@ pub enum PendingExpiryReason {
 pub enum RuleDeleteReason {
     /// A user deleted it.
     User,
-    /// Its sandbox was deleted (R-21).
-    SandboxDeleted,
+    /// Its workspace was deleted (R-21).
+    #[serde(alias = "sandbox_deleted")]
+    WorkspaceDeleted,
     /// It was an entry of a rule set the user deleted (R-38).
     SetDeleted,
 }
@@ -311,15 +332,16 @@ pub enum AuditRecord {
         ts: u64,
         /// The row as expired.
         pending: PendingWire,
-        /// Stale or sandbox deleted.
+        /// Stale or workspace deleted.
         reason: PendingExpiryReason,
     },
-    /// Requests over a sandbox's limit, not written as rows (R-13).
+    /// Requests over a workspace's limit, not written as rows (R-13).
     PendingSuppressed {
         /// Epoch ms.
         ts: u64,
-        /// The sandbox.
-        sandbox_id: String,
+        /// The workspace.
+        #[serde(alias = "sandbox_id")]
+        workspace_id: String,
         /// Requests suppressed since the previous record.
         count: u64,
     },
@@ -347,7 +369,7 @@ pub enum AuditRecord {
         ts: u64,
         /// The rule as it was.
         rule: RuleWire,
-        /// User or sandbox deletion.
+        /// User or workspace deletion.
         reason: RuleDeleteReason,
         /// Who deleted it.
         actor: String,
@@ -394,8 +416,9 @@ pub enum AuditRecord {
         ts: u64,
         /// `builtin:<slug>` or `user:<id>`.
         set_id: String,
-        /// The sandbox whose override changed, or `null` for every sandbox.
-        sandbox_id: Option<String>,
+        /// The workspace whose override changed, or `null` for every workspace.
+        #[serde(alias = "sandbox_id")]
+        workspace_id: Option<String>,
         /// On, off, or `null` to follow the next level.
         enabled: Option<bool>,
         /// Who switched it.
@@ -417,8 +440,9 @@ pub enum AuditRecord {
     SystemManagedChanged {
         /// Epoch ms.
         ts: u64,
-        /// The sandbox, or `null` for every sandbox.
-        sandbox_id: Option<String>,
+        /// The workspace, or `null` for every workspace.
+        #[serde(alias = "sandbox_id")]
+        workspace_id: Option<String>,
         /// Reasons that now apply (`microsoft_server`, `code_server`, `direct_ssh`).
         added: Vec<String>,
         /// Reasons that no longer apply.
@@ -524,7 +548,7 @@ impl AuditRecord {
     }
 
     /// Whose connection the record describes: `connection` records only (every other record
-    /// has none). A puddle connection is the one with no sandbox, which is how the `origin`
+    /// has none). A puddle connection is the one with no workspace, which is how the `origin`
     /// filter finds it without a column of its own.
     #[must_use]
     pub fn origin(&self) -> Option<ConnectionOrigin> {
@@ -614,21 +638,21 @@ impl AuditRecord {
         }
     }
 
-    /// The sandbox the record is about, if any (indexed for per-sandbox reads).
+    /// The workspace the record is about, if any (indexed for per-workspace reads).
     #[must_use]
-    pub fn sandbox_id(&self) -> Option<&str> {
+    pub fn workspace_id(&self) -> Option<&str> {
         match self {
-            Self::Connection(record) => record.sandbox_id.as_deref(),
+            Self::Connection(record) => record.workspace_id.as_deref(),
             Self::PendingCreated { pending, .. }
             | Self::PendingDecided { pending, .. }
-            | Self::PendingExpired { pending, .. } => Some(&pending.sandbox_id),
-            Self::PendingSuppressed { sandbox_id, .. } => Some(sandbox_id),
+            | Self::PendingExpired { pending, .. } => Some(&pending.workspace_id),
+            Self::PendingSuppressed { workspace_id, .. } => Some(workspace_id),
             Self::RuleCreated { rule, .. }
             | Self::RuleUpdated { rule, .. }
             | Self::RuleDeleted { rule, .. }
-            | Self::RuleExpired { rule, .. } => rule.sandbox_id.as_deref(),
-            Self::RuleSetSwitched { sandbox_id, .. }
-            | Self::SystemManagedChanged { sandbox_id, .. } => sandbox_id.as_deref(),
+            | Self::RuleExpired { rule, .. } => rule.workspace_id.as_deref(),
+            Self::RuleSetSwitched { workspace_id, .. }
+            | Self::SystemManagedChanged { workspace_id, .. } => workspace_id.as_deref(),
             Self::RuleSetCreated { .. }
             | Self::RuleSetUpdated { .. }
             | Self::RuleSetDeleted { .. }
@@ -758,7 +782,7 @@ impl serde_json::ser::Formatter for EscapingFormatter {
     }
 }
 
-/// Per-sandbox limit on `connection` records (R-26): at most `limit` per wall-clock second; the
+/// Per-workspace limit on `connection` records (R-26): at most `limit` per wall-clock second; the
 /// excess is counted and written as one summary record when the second is over.
 #[derive(Debug, Default)]
 pub(crate) struct ConnectionWindow {
@@ -808,11 +832,12 @@ mod tests {
     use crate::pending::PendingState;
     use proptest::prelude::*;
     use puddle_types::{BlockReason, EgressRequest, Host, HttpRequestLine, LocalCategory, RuleId};
+    use serde_json::json;
 
     const CANARY: &str = "CANARY-7f3a9c";
 
-    fn sb() -> SandboxName {
-        SandboxName::new("sb-1").unwrap()
+    fn sb() -> WorkspaceName {
+        WorkspaceName::new("sb-1").unwrap()
     }
 
     fn event() -> ConnectionEvent {
@@ -836,8 +861,8 @@ mod tests {
     fn rule_wire() -> RuleWire {
         RuleWire {
             id: 1,
-            scope: "sandbox".into(),
-            sandbox_id: Some("sb-1".into()),
+            scope: "workspace".into(),
+            workspace_id: Some("sb-1".into()),
             pattern_kind: "exact".into(),
             pattern: "example.com".into(),
             effect: "allow".into(),
@@ -852,7 +877,7 @@ mod tests {
     fn pending_wire() -> PendingWire {
         PendingWire {
             id: 2,
-            sandbox_id: "sb-1".into(),
+            workspace_id: "sb-1".into(),
             host: "example.com".into(),
             port: 443,
             first_seen: 1,
@@ -885,7 +910,7 @@ mod tests {
             },
             AuditRecord::PendingSuppressed {
                 ts: 9,
-                sandbox_id: "sb-1".into(),
+                workspace_id: "sb-1".into(),
                 count: 3,
             },
             AuditRecord::RuleCreated {
@@ -901,7 +926,7 @@ mod tests {
             AuditRecord::RuleDeleted {
                 ts: 9,
                 rule: rule_wire(),
-                reason: RuleDeleteReason::SandboxDeleted,
+                reason: RuleDeleteReason::WorkspaceDeleted,
                 actor: "system".into(),
             },
             AuditRecord::RuleExpired {
@@ -914,6 +939,49 @@ mod tests {
                 oldest_ts_kept: None,
             },
         ]
+    }
+
+    /// Lines written before a workspace was called a sandbox in the audit still read: the owner's
+    /// key, the connection origin, the rule scope and the deletion reason, each under the old name.
+    #[test]
+    fn lines_written_with_the_old_names_still_read() {
+        let rule = |scope: &str| {
+            json!({"id": 1, "scope": scope, "sandbox_id": "sb-1", "pattern_kind": "exact",
+                "pattern": "example.com", "effect": "allow", "expires_at": null, "created_at": 5,
+                "created_by": "cli", "source_pending_id": null})
+        };
+        let pending = json!({"id": 2, "sandbox_id": "sb-1", "host": "example.com", "port": 443,
+            "first_seen": 1, "last_seen": 2, "attempts": 3, "state": "requested",
+            "decided_at": null, "decided_by": null, "rule_id": null});
+        let old = [
+            json!({"type": "connection", "ts": 9, "sandbox_id": "sb-1", "origin": "sandbox",
+                "host": "example.com", "port": 443, "resolved_ip": null, "decision": "allow",
+                "reason": "rule", "rule_id": 1, "pending_id": null, "binding_id": null,
+                "injected": false, "method": null, "path": null, "path_truncated": false,
+                "bytes_up": 0, "bytes_down": 0, "count": null}),
+            json!({"type": "pending_expired", "ts": 9, "pending": pending, "reason": "sandbox_deleted"}),
+            json!({"type": "pending_suppressed", "ts": 9, "sandbox_id": "sb-1", "count": 3}),
+            json!({"type": "rule_deleted", "ts": 9, "rule": rule("sandbox"),
+                "reason": "sandbox_deleted", "actor": "system"}),
+            json!({"type": "rule_set_switched", "ts": 9, "set_id": "builtin:x",
+                "sandbox_id": null, "enabled": true, "actor": "ui"}),
+        ];
+        for line in old {
+            let record: AuditRecord = serde_json::from_value(line.clone()).unwrap();
+            assert_eq!(
+                record.workspace_id().is_some(),
+                line["type"] != "rule_set_switched"
+            );
+            let written = serde_json::to_string(&record).unwrap();
+            assert!(!written.contains("sandbox"), "{written}");
+        }
+        let record: AuditRecord = serde_json::from_value(
+            json!({"type": "rule_created", "ts": 9, "rule": rule("sandbox")}),
+        )
+        .unwrap();
+        assert!(
+            matches!(record, AuditRecord::RuleCreated { rule, .. } if rule.scope == "workspace")
+        );
     }
 
     #[test]
@@ -977,7 +1045,7 @@ mod tests {
         for field in [
             "type",
             "ts",
-            "sandbox_id",
+            "workspace_id",
             "host",
             "port",
             "resolved_ip",
@@ -1192,13 +1260,14 @@ mod tests {
                 pending: denied,
             },
         ]);
+        // The database as version 1 left it: the owner column still has its old name.
         for record in &records {
             conn.execute(
                 "INSERT INTO audit (ts, type, sandbox_id, line) VALUES (?1, ?2, ?3, ?4)",
                 rusqlite::params![
                     i64::try_from(record.ts()).unwrap(),
                     record.kind(),
-                    record.sandbox_id(),
+                    record.workspace_id(),
                     record.to_line().unwrap()
                 ],
             )

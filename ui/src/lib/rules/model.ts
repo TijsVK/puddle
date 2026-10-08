@@ -49,7 +49,7 @@ export function isOwn(rule: Pick<Rule, "scope">): boolean {
 
 /** The workspace a rule belongs to, or `null` for every workspace (and for a set's entry). */
 export function workspaceOf(rule: Pick<Rule, "scope">): string | null {
-  return rule.scope.type === "sandbox" ? rule.scope.sandbox : null;
+  return rule.scope.type === "workspace" ? rule.scope.workspace : null;
 }
 
 export function scopeLabel(rule: Pick<Rule, "scope">): string {
@@ -74,7 +74,7 @@ export function ruleName(rule: Rule): string {
   const who =
     rule.scope.type === "global"
       ? "every workspace"
-      : `workspace ${rule.scope.sandbox}`;
+      : `workspace ${rule.scope.workspace}`;
   return `${verb} ${patternLabel(rule)} for ${who}`;
 }
 

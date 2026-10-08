@@ -104,7 +104,7 @@ export function bodyFrom(
   } = {},
 ): GlobalBody {
   return {
-    sandbox_defaults: { ...view.sandbox_defaults, ...patch.layer },
+    workspace_defaults: { ...view.workspace_defaults, ...patch.layer },
     vscode_server: { ...view.vscode_server, ...patch.server },
     ui: { ...view.ui, ...patch.ui },
   };

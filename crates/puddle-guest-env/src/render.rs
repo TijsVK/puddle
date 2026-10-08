@@ -10,7 +10,7 @@ use crate::settings::{java_ip, loopback_entries};
 use crate::{ConfigError, NoProxyEntry, ProxySettings};
 
 /// apt's proxy drop-in. apt ignores `*_proxy` under `sudo` and in its `_apt`
-/// sandbox, so it gets its own file.
+/// workspace, so it gets its own file.
 pub const APT_CONF_GUEST: &str = "/etc/apt/apt.conf.d/99puddle-proxy";
 
 /// Keeps the proxy variables under `sudo` (whose `env_reset` drops them). Mode 0440, as sudo
@@ -36,7 +36,7 @@ const GENERATED: &str = "Written by puddle at every boot; changes here are overw
 /// Java's own `http.nonProxyHosts` default, repeated because setting the property replaces it.
 const JDK_NON_PROXY_DEFAULTS: [&str; 5] = ["localhost", "127.*", "[::1]", "0.0.0.0", "[::0]"];
 
-/// What the boot hook applies: the env (also given to the sandbox spec for the exec/SSH path)
+/// What the boot hook applies: the env (also given to the workspace spec for the exec/SSH path)
 /// and the files, in a fixed order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuestProxyConfig {
@@ -614,7 +614,7 @@ http_proxy https_proxy no_proxy\"
             Some("-B -gs /etc/puddle/maven/settings.xml")
         );
 
-        // A value that already carries puddle's (an image built from a puddle sandbox) isn't doubled.
+        // A value that already carries puddle's (an image built from a puddle workspace) isn't doubled.
         let again = image(&[
             ("JAVA_TOOL_OPTIONS", java),
             ("MAVEN_ARGS", c.env.get("MAVEN_ARGS").unwrap()),

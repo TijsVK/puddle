@@ -47,7 +47,7 @@ fn operations() -> Vec<(String, String)> {
     for (path, item) in spec["paths"].as_object().unwrap() {
         let path = path
             .replace("{id}", "1")
-            .replace("{sandbox}", "box")
+            .replace("{workspace}", "box")
             .replace("{kind}", "telemetry");
         for method in item.as_object().unwrap().keys() {
             out.push((method.to_uppercase(), path.clone()));

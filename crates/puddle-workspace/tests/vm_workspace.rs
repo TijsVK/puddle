@@ -279,7 +279,7 @@ fn proxy_route(root: &IpcRoot, sandbox: &SandboxName) -> Route {
             .with_resolver(Arc::new(resolver))
             .with_address_check(Arc::new(AnyAddress)),
     );
-    proxy.serve_route(root.listen().unwrap(), sandbox.clone())
+    proxy.serve_route(root.listen().unwrap(), sandbox.workspace_name().unwrap())
 }
 
 fn proxy_env() -> GuestEnv {
@@ -451,7 +451,7 @@ async fn wait_down(rt: &MsbRuntime, name: &SandboxName) {
             .into_iter()
             .find(|s| s.name == name.as_str())
             .map(|s| s.status);
-        if status.is_some_and(puddle_types::SandboxStatus::is_down) {
+        if status.is_some_and(puddle_types::WorkspaceStatus::is_down) {
             return;
         }
         assert!(

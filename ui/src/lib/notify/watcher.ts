@@ -17,7 +17,7 @@ import { asWorkspaceEvent } from "#lib/workspaces/events.ts";
 import type { LiveSource } from "#lib/stores/live.svelte.ts";
 import { InAppNotifier, type Notifier } from "./notifier.ts";
 
-type Status = components["schemas"]["SandboxStatus"];
+type Status = components["schemas"]["WorkspaceStatus"];
 
 const RUNNING: readonly Status[] = ["starting", "running", "paused"];
 const NETWORK_KEY = "network";
@@ -63,7 +63,7 @@ export class NoticeWatcher {
   handle(raw: unknown): void {
     const event = asWorkspaceEvent(raw);
     if (!event) return;
-    const name = event.sandbox;
+    const name = event.workspace;
     switch (event.type) {
       case "oom_kill":
         this.#notifier.notify({

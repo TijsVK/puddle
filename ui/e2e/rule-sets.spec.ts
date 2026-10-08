@@ -14,7 +14,7 @@ interface RuleSetView {
   id: string;
   name: string;
   global: boolean | null;
-  overrides: { sandbox: string; enabled: boolean }[];
+  overrides: { workspace: string; enabled: boolean }[];
   entries: { pattern: string; effect: string }[];
 }
 
@@ -72,7 +72,7 @@ test("a built-in set ships off, and switches for one workspace", async ({
   const stored = (await sets(request, backend)).find(
     (s) => s.id === "builtin:github",
   );
-  expect(stored?.overrides).toEqual([{ sandbox: "demo", enabled: true }]);
+  expect(stored?.overrides).toEqual([{ workspace: "demo", enabled: true }]);
   // Every workspace asks first.
   await github.getByRole("switch", { name: "On for every workspace" }).click();
   const confirm = page.getByRole("alertdialog", {

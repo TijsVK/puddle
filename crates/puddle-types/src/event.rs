@@ -6,13 +6,13 @@ use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-use crate::SandboxName;
+use crate::WorkspaceName;
 
-/// A sandbox's state as the runtime reports it (msb's states, one for one).
+/// A workspace's state: its sandbox's state as the runtime reports it (msb's states, one for one).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub enum SandboxStatus {
+pub enum WorkspaceStatus {
     /// Created but not started.
     Created,
     /// A start was accepted; not running yet.
@@ -29,7 +29,7 @@ pub enum SandboxStatus {
     Crashed,
 }
 
-impl SandboxStatus {
+impl WorkspaceStatus {
     /// The `snake_case` name used on the wire and in messages.
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -44,14 +44,14 @@ impl SandboxStatus {
         }
     }
 
-    /// Whether the sandbox has no VM (it can be started or removed).
+    /// Whether the workspace has no VM (it can be started or removed).
     #[must_use]
     pub fn is_down(self) -> bool {
         matches!(self, Self::Created | Self::Stopped | Self::Crashed)
     }
 }
 
-impl fmt::Display for SandboxStatus {
+impl fmt::Display for WorkspaceStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -63,28 +63,28 @@ const MAX_PROCESS_NAME_CHARS: usize = 64;
 /// Something the user should hear about. Serialised as one internally tagged enum
 /// (`{"type":"oom_kill",...}`, ADR 0002).
 ///
-/// Most events are about one sandbox and carry a `sandbox` field; global ones (crash report
-/// waiting, consent needed, network change, ...) carry none, and [`Event::sandbox`] returns
+/// Most events are about one workspace and carry a `workspace` field; global ones (crash report
+/// waiting, consent needed, network change, ...) carry none, and [`Event::workspace`] returns
 /// `None` for them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[non_exhaustive]
 pub enum Event {
-    /// A sandbox changed state.
+    /// A workspace changed state.
     StatusChanged {
-        /// The sandbox.
-        sandbox: SandboxName,
+        /// The workspace.
+        workspace: WorkspaceName,
         /// Its new state.
-        status: SandboxStatus,
+        status: WorkspaceStatus,
     },
     /// The guest kernel's OOM killer ended a process (reported by the guest agent).
     ///
     /// `pid` and `process` come from the guest and are untrusted: build this variant with
     /// [`Event::oom_kill`], which bounds and cleans the name, and escape it when rendering.
     OomKill {
-        /// The sandbox whose guest killed the process.
-        sandbox: SandboxName,
+        /// The workspace whose guest killed the process.
+        workspace: WorkspaceName,
         /// The killed process's id inside the guest.
         pid: u32,
         /// The killed process's name (`comm`), cleaned by [`Event::oom_kill`].
@@ -93,8 +93,8 @@ pub enum Event {
     /// A workspace operation (create, start, stop, reclaim, delete) moved on. An operation ends
     /// with one event whose step is [`WorkspaceStep::Done`] or [`WorkspaceStep::Failed`].
     WorkspaceProgress {
-        /// The workspace's sandbox.
-        sandbox: SandboxName,
+        /// The workspace's workspace.
+        workspace: WorkspaceName,
         /// What it is doing now.
         step: WorkspaceStep,
         /// More about the step, or why it failed; `null` when there is nothing to add. It can
@@ -103,15 +103,15 @@ pub enum Event {
         #[cfg_attr(feature = "openapi", schema(required = true))]
         detail: Option<String>,
     },
-    /// A new open pending request (a sandbox asked for a host:port no rule decides).
+    /// A new open pending request (a workspace asked for a host:port no rule decides).
     PendingOpened {
         /// The request, as `GET /api/pending` shows it.
         request: PendingSummary,
     },
     /// An open pending request was seen again.
     PendingUpdated {
-        /// The sandbox.
-        sandbox: SandboxName,
+        /// The workspace.
+        workspace: WorkspaceName,
         /// The pending request's id.
         id: i64,
         /// Requests the row stands for now.
@@ -121,8 +121,8 @@ pub enum Event {
     },
     /// A pending request is no longer open: decided by a user or by a rule, or expired.
     PendingClosed {
-        /// The sandbox.
-        sandbox: SandboxName,
+        /// The workspace.
+        workspace: WorkspaceName,
         /// The pending request's id.
         id: i64,
         /// How it ended.
@@ -132,11 +132,11 @@ pub enum Event {
         #[cfg_attr(feature = "openapi", schema(required = true))]
         rule_id: Option<i64>,
     },
-    /// A sandbox's "requests held back" state (R-13) changed. Sent when suppression starts or
+    /// A workspace's "requests held back" state (R-13) changed. Sent when suppression starts or
     /// ends, and at most twice a second while its count grows.
     SuppressionChanged {
-        /// The sandbox.
-        sandbox: SandboxName,
+        /// The workspace.
+        workspace: WorkspaceName,
         /// Whether suppression is on.
         active: bool,
         /// Requests held back in this episode so far.
@@ -166,8 +166,8 @@ pub enum Event {
 pub struct PendingSummary {
     /// The pending request's id.
     pub id: i64,
-    /// The sandbox that asked.
-    pub sandbox: SandboxName,
+    /// The workspace that asked.
+    pub workspace: WorkspaceName,
     /// The requested host, normalised.
     pub host: String,
     /// The host's registrable domain (`example.co.uk` for `api.example.co.uk`; the IP literal
@@ -217,7 +217,7 @@ pub enum WorkspaceStep {
     Reclaiming,
     /// Shutting the virtual machine down.
     Stopping,
-    /// Removing the volume and the sandbox.
+    /// Removing the volume and the workspace.
     Removing,
     /// The operation finished.
     Done,
@@ -230,41 +230,41 @@ impl Event {
     /// replaced by `?`, since it comes from the guest.
     ///
     /// ```
-    /// use puddle_types::{Event, SandboxName};
-    /// let e = Event::oom_kill(SandboxName::new("a").unwrap(), 42, "node\u{1b}[2J");
+    /// use puddle_types::{Event, WorkspaceName};
+    /// let e = Event::oom_kill(WorkspaceName::new("a").unwrap(), 42, "node\u{1b}[2J");
     /// assert!(matches!(e, Event::OomKill { ref process, .. } if process == "node?[2J"));
     /// ```
     #[must_use]
-    pub fn oom_kill(sandbox: SandboxName, pid: u32, process: &str) -> Self {
+    pub fn oom_kill(workspace: WorkspaceName, pid: u32, process: &str) -> Self {
         let process = process
             .chars()
             .take(MAX_PROCESS_NAME_CHARS)
             .map(|c| if c.is_control() { '?' } else { c })
             .collect();
         Self::OomKill {
-            sandbox,
+            workspace,
             pid,
             process,
         }
     }
 
-    /// The sandbox this event is about, or `None` for a global event.
+    /// The workspace this event is about, or `None` for a global event.
     ///
     /// ```
-    /// use puddle_types::{Event, SandboxName};
-    /// let a = SandboxName::new("a").unwrap();
-    /// assert_eq!(Event::oom_kill(a.clone(), 1, "x").sandbox(), Some(&a));
+    /// use puddle_types::{Event, WorkspaceName};
+    /// let a = WorkspaceName::new("a").unwrap();
+    /// assert_eq!(Event::oom_kill(a.clone(), 1, "x").workspace(), Some(&a));
     /// ```
     #[must_use]
-    pub fn sandbox(&self) -> Option<&SandboxName> {
+    pub fn workspace(&self) -> Option<&WorkspaceName> {
         match self {
-            Self::StatusChanged { sandbox, .. }
-            | Self::OomKill { sandbox, .. }
-            | Self::WorkspaceProgress { sandbox, .. }
-            | Self::PendingUpdated { sandbox, .. }
-            | Self::PendingClosed { sandbox, .. }
-            | Self::SuppressionChanged { sandbox, .. } => Some(sandbox),
-            Self::PendingOpened { request } => Some(&request.sandbox),
+            Self::StatusChanged { workspace, .. }
+            | Self::OomKill { workspace, .. }
+            | Self::WorkspaceProgress { workspace, .. }
+            | Self::PendingUpdated { workspace, .. }
+            | Self::PendingClosed { workspace, .. }
+            | Self::SuppressionChanged { workspace, .. } => Some(workspace),
+            Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {} | Self::AuditAppended { .. } | Self::NetworkChanged { .. } => {
                 None
             }
@@ -289,9 +289,9 @@ impl EventSink for NullSink {
 /// A sink that keeps every event in memory, for tests.
 ///
 /// ```
-/// use puddle_types::{CollectingSink, Event, EventSink, SandboxName};
+/// use puddle_types::{CollectingSink, Event, EventSink, WorkspaceName};
 /// let sink = CollectingSink::default();
-/// sink.emit(Event::oom_kill(SandboxName::new("a").unwrap(), 1, "x"));
+/// sink.emit(Event::oom_kill(WorkspaceName::new("a").unwrap(), 1, "x"));
 /// assert_eq!(sink.take().len(), 1);
 /// assert!(sink.take().is_empty());
 /// ```
@@ -338,20 +338,20 @@ mod tests {
 
     use super::*;
 
-    fn name() -> SandboxName {
-        SandboxName::new("box").unwrap()
+    fn name() -> WorkspaceName {
+        WorkspaceName::new("box").unwrap()
     }
 
     #[test]
     fn status_names_and_down_states() {
         let all = [
-            (SandboxStatus::Created, "created", true),
-            (SandboxStatus::Starting, "starting", false),
-            (SandboxStatus::Running, "running", false),
-            (SandboxStatus::Draining, "draining", false),
-            (SandboxStatus::Paused, "paused", false),
-            (SandboxStatus::Stopped, "stopped", true),
-            (SandboxStatus::Crashed, "crashed", true),
+            (WorkspaceStatus::Created, "created", true),
+            (WorkspaceStatus::Starting, "starting", false),
+            (WorkspaceStatus::Running, "running", false),
+            (WorkspaceStatus::Draining, "draining", false),
+            (WorkspaceStatus::Paused, "paused", false),
+            (WorkspaceStatus::Stopped, "stopped", true),
+            (WorkspaceStatus::Crashed, "crashed", true),
         ];
         for (status, text, down) in all {
             assert_eq!(status.to_string(), text);
@@ -382,24 +382,24 @@ mod tests {
         let e = Event::oom_kill(name(), 42, "node");
         assert_eq!(
             serde_json::to_string(&e).unwrap(),
-            r#"{"type":"oom_kill","sandbox":"box","pid":42,"process":"node"}"#
+            r#"{"type":"oom_kill","workspace":"box","pid":42,"process":"node"}"#
         );
         let s = Event::StatusChanged {
-            sandbox: name(),
-            status: SandboxStatus::Crashed,
+            workspace: name(),
+            status: WorkspaceStatus::Crashed,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(
             json,
-            r#"{"type":"status_changed","sandbox":"box","status":"crashed"}"#
+            r#"{"type":"status_changed","workspace":"box","status":"crashed"}"#
         );
         assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), s);
-        assert_eq!(s.sandbox(), Some(&name()));
-        assert_eq!(e.sandbox(), Some(&name()));
+        assert_eq!(s.workspace(), Some(&name()));
+        assert_eq!(e.workspace(), Some(&name()));
     }
 
     #[test]
-    fn workspace_progress_is_per_sandbox_and_always_carries_detail() {
+    fn workspace_progress_is_per_workspace_and_always_carries_detail() {
         let steps = [
             (WorkspaceStep::PreparingVolume, "preparing_volume"),
             (WorkspaceStep::PullingImage, "pulling_image"),
@@ -415,7 +415,7 @@ mod tests {
         ];
         for (step, text) in steps {
             let e = Event::WorkspaceProgress {
-                sandbox: name(),
+                workspace: name(),
                 step,
                 detail: None,
             };
@@ -423,14 +423,14 @@ mod tests {
             assert_eq!(
                 json,
                 format!(
-                    r#"{{"type":"workspace_progress","sandbox":"box","step":"{text}","detail":null}}"#
+                    r#"{{"type":"workspace_progress","workspace":"box","step":"{text}","detail":null}}"#
                 )
             );
             assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), e);
-            assert_eq!(e.sandbox(), Some(&name()));
+            assert_eq!(e.workspace(), Some(&name()));
         }
         let with_detail: Event = serde_json::from_str(
-            r#"{"type":"workspace_progress","sandbox":"box","step":"failed","detail":"disk full"}"#,
+            r#"{"type":"workspace_progress","workspace":"box","step":"failed","detail":"disk full"}"#,
         )
         .unwrap();
         assert!(matches!(
@@ -440,9 +440,9 @@ mod tests {
     }
 
     #[test]
-    fn global_events_have_no_sandbox_and_round_trip_without_one() {
+    fn global_events_have_no_workspace_and_round_trip_without_one() {
         let g = Event::RulesChanged {};
-        assert_eq!(g.sandbox(), None);
+        assert_eq!(g.workspace(), None);
         let json = serde_json::to_string(&g).unwrap();
         assert_eq!(json, r#"{"type":"rules_changed"}"#);
         assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), g);
@@ -455,7 +455,7 @@ mod tests {
     fn pending_rule_and_audit_events_have_fixed_shapes() {
         let request = PendingSummary {
             id: 7,
-            sandbox: name(),
+            workspace: name(),
             host: "www.example.com".into(),
             registrable_domain: "example.com".into(),
             port: 443,
@@ -463,49 +463,49 @@ mod tests {
             last_seen: 2,
             attempts: 3,
         };
-        for (event, json, sandbox) in [
+        for (event, json, workspace) in [
             (
                 Event::PendingOpened { request },
-                r#"{"type":"pending_opened","request":{"id":7,"sandbox":"box","host":"www.example.com","registrable_domain":"example.com","port":443,"first_seen":1,"last_seen":2,"attempts":3}}"#,
+                r#"{"type":"pending_opened","request":{"id":7,"workspace":"box","host":"www.example.com","registrable_domain":"example.com","port":443,"first_seen":1,"last_seen":2,"attempts":3}}"#,
                 Some(name()),
             ),
             (
                 Event::PendingUpdated {
-                    sandbox: name(),
+                    workspace: name(),
                     id: 7,
                     attempts: 4,
                     last_seen: 9,
                 },
-                r#"{"type":"pending_updated","sandbox":"box","id":7,"attempts":4,"last_seen":9}"#,
+                r#"{"type":"pending_updated","workspace":"box","id":7,"attempts":4,"last_seen":9}"#,
                 Some(name()),
             ),
             (
                 Event::PendingClosed {
-                    sandbox: name(),
+                    workspace: name(),
                     id: 7,
                     state: PendingEnd::Allowed,
                     rule_id: Some(2),
                 },
-                r#"{"type":"pending_closed","sandbox":"box","id":7,"state":"allowed","rule_id":2}"#,
+                r#"{"type":"pending_closed","workspace":"box","id":7,"state":"allowed","rule_id":2}"#,
                 Some(name()),
             ),
             (
                 Event::PendingClosed {
-                    sandbox: name(),
+                    workspace: name(),
                     id: 8,
                     state: PendingEnd::Expired,
                     rule_id: None,
                 },
-                r#"{"type":"pending_closed","sandbox":"box","id":8,"state":"expired","rule_id":null}"#,
+                r#"{"type":"pending_closed","workspace":"box","id":8,"state":"expired","rule_id":null}"#,
                 Some(name()),
             ),
             (
                 Event::SuppressionChanged {
-                    sandbox: name(),
+                    workspace: name(),
                     active: true,
                     count: 12,
                 },
-                r#"{"type":"suppression_changed","sandbox":"box","active":true,"count":12}"#,
+                r#"{"type":"suppression_changed","workspace":"box","active":true,"count":12}"#,
                 Some(name()),
             ),
             (Event::RulesChanged {}, r#"{"type":"rules_changed"}"#, None),
@@ -522,36 +522,36 @@ mod tests {
         ] {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);
             assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
-            assert_eq!(event.sandbox(), sandbox.as_ref());
+            assert_eq!(event.workspace(), workspace.as_ref());
         }
         // `rule_id` may be left out by an older sender.
         let closed: Event = serde_json::from_str(
-            r#"{"type":"pending_closed","sandbox":"box","id":1,"state":"denied"}"#,
+            r#"{"type":"pending_closed","workspace":"box","id":1,"state":"denied"}"#,
         )
         .unwrap();
         assert!(matches!(closed, Event::PendingClosed { rule_id: None, .. }));
     }
 
     #[test]
-    fn per_sandbox_json_is_unchanged_by_global_events() {
+    fn per_workspace_json_is_unchanged_by_global_events() {
         // Events are not persisted today, but SSE clients parse them: the wire shape of
         // existing variants must stay exactly as it was (ADR 0002).
         for (json, want) in [
             (
-                r#"{"type":"status_changed","sandbox":"box","status":"running"}"#,
+                r#"{"type":"status_changed","workspace":"box","status":"running"}"#,
                 Event::StatusChanged {
-                    sandbox: name(),
-                    status: SandboxStatus::Running,
+                    workspace: name(),
+                    status: WorkspaceStatus::Running,
                 },
             ),
             (
-                r#"{"type":"oom_kill","sandbox":"box","pid":1,"process":"x"}"#,
+                r#"{"type":"oom_kill","workspace":"box","pid":1,"process":"x"}"#,
                 Event::oom_kill(name(), 1, "x"),
             ),
         ] {
             let got: Event = serde_json::from_str(json).unwrap();
             assert_eq!(got, want);
-            assert_eq!(got.sandbox(), Some(&name()));
+            assert_eq!(got.workspace(), Some(&name()));
             assert_eq!(serde_json::to_string(&got).unwrap(), json);
         }
         assert!(
@@ -598,12 +598,12 @@ mod tests {
             "detail is always present, null when empty: {progress}"
         );
         let global = &variants[7];
-        assert!(global["properties"].get("sandbox").is_none());
+        assert!(global["properties"].get("workspace").is_none());
         assert_eq!(
-            variants[0]["properties"]["sandbox"]["$ref"],
-            "#/components/schemas/SandboxName"
+            variants[0]["properties"]["workspace"]["$ref"],
+            "#/components/schemas/WorkspaceName"
         );
-        let status = serde_json::to_value(SandboxStatus::schema()).unwrap();
+        let status = serde_json::to_value(WorkspaceStatus::schema()).unwrap();
         assert_eq!(status["enum"].as_array().unwrap().len(), 7);
     }
 

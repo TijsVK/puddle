@@ -1,4 +1,4 @@
 {
   "name": "default",
-  "requests": [{ "sandbox": "demo", "host": "registry.example.org" }]
+  "requests": [{ "workspace": "demo", "host": "registry.example.org" }]
 }

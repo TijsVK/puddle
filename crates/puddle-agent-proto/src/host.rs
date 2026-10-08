@@ -5,7 +5,7 @@
 //! ```no_run
 //! # use std::sync::Arc;
 //! # use puddle_agent_proto::host::{serve_session, GuestStream, HostConfig, StreamHandler};
-//! # use puddle_types::{NullSink, SandboxName};
+//! # use puddle_types::{NullSink, WorkspaceName};
 //! struct Proxy;
 //! impl StreamHandler for Proxy {
 //!     async fn handle(&self, stream: GuestStream) {
@@ -16,8 +16,8 @@
 //! # async fn f(
 //! #     conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
-//! let sandbox = SandboxName::new("box")?;
-//! serve_session(conn, sandbox, Arc::new(NullSink), Arc::new(Proxy), HostConfig::default()).await?;
+//! let workspace = WorkspaceName::new("box")?;
+//! serve_session(conn, workspace, Arc::new(NullSink), Arc::new(Proxy), HostConfig::default()).await?;
 //! # Ok(()) }
 //! ```
 
@@ -30,7 +30,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use puddle_types::{Event, EventSink, SandboxName};
+use puddle_types::{Event, EventSink, WorkspaceName};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -182,7 +182,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Prefixed<S> {
 
 /// State shared by the streams of one session.
 struct Shared<H> {
-    sandbox: SandboxName,
+    workspace: WorkspaceName,
     sink: Arc<dyn EventSink>,
     handler: Arc<H>,
     config: HostConfig,
@@ -192,7 +192,7 @@ struct Shared<H> {
     resolves: Semaphore,
 }
 
-/// Serves one connection from a sandbox's agent until it closes. `sandbox` is the sandbox the
+/// Serves one connection from a workspace's agent until it closes. `workspace` is the workspace the
 /// route belongs to (the route is the identity): nothing the guest sends can change it.
 ///
 /// Every stream task is owned here and ends when the session does.
@@ -204,7 +204,7 @@ struct Shared<H> {
 /// clean close by the guest is `Ok`.
 pub async fn serve_session<IO, H>(
     mut io: IO,
-    sandbox: SandboxName,
+    workspace: WorkspaceName,
     sink: Arc<dyn EventSink>,
     handler: Arc<H>,
     config: HostConfig,
@@ -220,7 +220,7 @@ where
         return Err(SessionError::NotYamux(first));
     }
     let shared = Arc::new(Shared {
-        sandbox,
+        workspace,
         sink,
         handler,
         resolves: Semaphore::new(config.max_resolves),
@@ -248,7 +248,7 @@ where
                 if let Err(err) = done
                     && err.is_panic()
                 {
-                    tracing::error!(sandbox = %shared.sandbox, "stream task panicked");
+                    tracing::error!(workspace = %shared.workspace, "stream task panicked");
                 }
             }
         }
@@ -274,7 +274,7 @@ async fn serve_stream<H: StreamHandler>(mut stream: StreamHandle, shared: Arc<Sh
         Ok(Some(b)) => b,
         Ok(None) => return,
         Err(err) => {
-            tracing::debug!(sandbox = %shared.sandbox, error = %err, "guest stream dropped before its first byte");
+            tracing::debug!(workspace = %shared.workspace, error = %err, "guest stream dropped before its first byte");
             return;
         }
     };
@@ -297,13 +297,13 @@ async fn serve_stream<H: StreamHandler>(mut stream: StreamHandle, shared: Arc<Sh
     )
     .await;
     if !matches!(read, Ok(Ok(true))) {
-        tracing::warn!(sandbox = %shared.sandbox, "stream with an unreadable preamble closed");
+        tracing::warn!(workspace = %shared.workspace, "stream with an unreadable preamble closed");
         return;
     }
     match parse_preamble(&line) {
         Ok((StreamKind::Control, 1)) => {
             if shared.control_open.swap(true, Ordering::AcqRel) {
-                tracing::warn!(sandbox = %shared.sandbox, "second control stream on one session refused");
+                tracing::warn!(workspace = %shared.workspace, "second control stream on one session refused");
                 return;
             }
             serve_control(reader, &shared).await;
@@ -311,10 +311,10 @@ async fn serve_stream<H: StreamHandler>(mut stream: StreamHandle, shared: Arc<Sh
         }
         Ok((StreamKind::Resolve, 1)) => serve_resolve(reader, &shared).await,
         Ok((kind, version)) => {
-            tracing::warn!(sandbox = %shared.sandbox, kind = kind.name(), version, "stream kind not served by this host, closed");
+            tracing::warn!(workspace = %shared.workspace, kind = kind.name(), version, "stream kind not served by this host, closed");
         }
         Err(err) => {
-            tracing::warn!(sandbox = %shared.sandbox, error = %err, "stream closed");
+            tracing::warn!(workspace = %shared.workspace, error = %err, "stream closed");
         }
     }
 }
@@ -325,7 +325,7 @@ async fn serve_resolve<H: StreamHandler>(
     mut reader: BufReader<Prefixed<StreamHandle>>,
     shared: &Shared<H>,
 ) {
-    let sandbox = &shared.sandbox;
+    let workspace = &shared.workspace;
     let query = match tokio::time::timeout(
         shared.config.first_byte_timeout,
         resolve::read_query(&mut reader),
@@ -334,11 +334,11 @@ async fn serve_resolve<H: StreamHandler>(
     {
         Ok(Ok(query)) => query,
         Ok(Err(err)) => {
-            tracing::debug!(%sandbox, error = %err, "resolve stream with an unreadable query closed");
+            tracing::debug!(%workspace, error = %err, "resolve stream with an unreadable query closed");
             return;
         }
         Err(_) => {
-            tracing::debug!(%sandbox, "resolve stream closed: no query in time");
+            tracing::debug!(%workspace, "resolve stream closed: no query in time");
             return;
         }
     };
@@ -347,13 +347,13 @@ async fn serve_resolve<H: StreamHandler>(
             .await
             .unwrap_or(ResolveAnswer::Unavailable)
     } else {
-        tracing::warn!(%sandbox, limit = shared.config.max_resolves, "too many lookups open on one session; answered unavailable");
+        tracing::warn!(%workspace, limit = shared.config.max_resolves, "too many lookups open on one session; answered unavailable");
         ResolveAnswer::Unavailable
     };
     let line = match answer.to_line() {
         Ok(line) => line,
         Err(err) => {
-            tracing::warn!(%sandbox, error = %err, "resolve answer not sent");
+            tracing::warn!(%workspace, error = %err, "resolve answer not sent");
             return;
         }
     };
@@ -365,7 +365,7 @@ async fn serve_resolve<H: StreamHandler>(
 
 /// Reads control messages until the stream ends or misbehaves. The preamble is already read.
 async fn serve_control<H>(mut reader: BufReader<Prefixed<StreamHandle>>, shared: &Shared<H>) {
-    let sandbox = &shared.sandbox;
+    let workspace = &shared.workspace;
     let mut limit = RateLimit::new(
         shared.config.control_burst,
         shared.config.control_per_second,
@@ -377,7 +377,7 @@ async fn serve_control<H>(mut reader: BufReader<Prefixed<StreamHandle>>, shared:
             Ok(true) => {}
             Ok(false) => return,
             Err(err) => {
-                tracing::warn!(%sandbox, error = %err, "control stream ended");
+                tracing::warn!(%workspace, error = %err, "control stream ended");
                 return;
             }
         }
@@ -385,39 +385,39 @@ async fn serve_control<H>(mut reader: BufReader<Prefixed<StreamHandle>>, shared:
             continue;
         }
         if limit.suppressed > 0 {
-            tracing::warn!(%sandbox, dropped = limit.suppressed, "control messages over the rate limit were dropped");
+            tracing::warn!(%workspace, dropped = limit.suppressed, "control messages over the rate limit were dropped");
             limit.suppressed = 0;
         }
         match AgentMessage::from_line(&line) {
             Ok(msg) => on_message(msg, shared),
-            Err(err) => tracing::warn!(%sandbox, error = %err, "invalid control message ignored"),
+            Err(err) => tracing::warn!(%workspace, error = %err, "invalid control message ignored"),
         }
     }
 }
 
 fn on_message<H>(msg: AgentMessage, shared: &Shared<H>) {
-    let sandbox = &shared.sandbox;
+    let workspace = &shared.workspace;
     match msg {
         AgentMessage::Hello {
             agent_version,
             protocol,
         } => {
             let version = clean(&agent_version, MAX_VERSION_CHARS);
-            tracing::info!(%sandbox, agent_version = %version, protocol, "guest agent connected");
+            tracing::info!(%workspace, agent_version = %version, protocol, "guest agent connected");
         }
         AgentMessage::OomKill { pid, process } => {
             let event = Event::oom_kill(
-                sandbox.clone(),
+                workspace.clone(),
                 pid.unwrap_or(0),
                 process.as_deref().unwrap_or(UNKNOWN_PROCESS),
             );
             if let Event::OomKill { pid, process, .. } = &event {
-                tracing::warn!(%sandbox, pid, process = %process, "guest out of memory: process killed");
+                tracing::warn!(%workspace, pid, process = %process, "guest out of memory: process killed");
             }
             shared.sink.emit(event);
         }
         AgentMessage::Unknown => {
-            tracing::debug!(%sandbox, "unknown control message ignored");
+            tracing::debug!(%workspace, "unknown control message ignored");
         }
     }
 }

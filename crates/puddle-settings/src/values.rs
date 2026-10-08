@@ -84,9 +84,9 @@ impl From<ReconnectionGrace> for u32 {
     }
 }
 
-/// What happens when a page in a sandbox window reads the clipboard programmatically.
+/// What happens when a page in a workspace window reads the clipboard programmatically.
 ///
-/// The default asks once per sandbox; the answer is stored as that sandbox's override.
+/// The default asks once per workspace; the answer is stored as that workspace's override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipboardRead {
@@ -124,14 +124,14 @@ pub enum ThemeChoice {
     Dark,
 }
 
-/// What closing puddle's window does while a sandbox runs.
+/// What closing puddle's window does while a workspace runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseBehaviour {
-    /// Keep running in the tray, so sandboxes keep working.
+    /// Keep running in the tray, so workspaces keep working.
     #[default]
     Tray,
-    /// Quit puddle (and stop the sandboxes).
+    /// Quit puddle (and stop the workspaces).
     Quit,
 }
 

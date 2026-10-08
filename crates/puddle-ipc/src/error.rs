@@ -9,7 +9,7 @@ use std::path::PathBuf;
 #[non_exhaustive]
 pub enum IpcError {
     /// Something already exists at the endpoint's name. puddle never shares a name with another
-    /// process: the sandbox must not boot against this endpoint.
+    /// process: the workspace must not boot against this endpoint.
     #[error(
         "endpoint {endpoint} already exists; another process may be squatting it, so puddle refuses to use it"
     )]

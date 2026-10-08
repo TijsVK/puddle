@@ -203,21 +203,21 @@ impl Events {
         }
     }
 
-    /// The workspace-progress steps seen so far for `sandbox`, in order.
-    pub(crate) fn steps(&self, sandbox: &str) -> Vec<String> {
+    /// The workspace-progress steps seen so far for `workspace`, in order.
+    pub(crate) fn steps(&self, workspace: &str) -> Vec<String> {
         self.seen
             .iter()
-            .filter(|e| e["type"] == "workspace_progress" && e["sandbox"] == sandbox)
+            .filter(|e| e["type"] == "workspace_progress" && e["workspace"] == workspace)
             .filter_map(|e| e["step"].as_str().map(str::to_owned))
             .collect()
     }
 }
 
-/// Matches the `workspace_progress` event of `sandbox` that ends an operation.
-pub(crate) fn ended(sandbox: &'static str) -> impl Fn(&Value) -> bool {
+/// Matches the `workspace_progress` event of `workspace` that ends an operation.
+pub(crate) fn ended(workspace: &'static str) -> impl Fn(&Value) -> bool {
     move |e| {
         e["type"] == "workspace_progress"
-            && e["sandbox"] == sandbox
+            && e["workspace"] == workspace
             && matches!(e["step"].as_str(), Some("done" | "failed"))
     }
 }

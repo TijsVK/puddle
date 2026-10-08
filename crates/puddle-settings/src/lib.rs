@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! puddle's settings model: the global settings, per-sandbox overrides, the consent
+//! puddle's settings model: the global settings, per-workspace overrides, the consent
 //! store, and how a stored document is versioned, migrated and read back. No storage and no API:
 //! a store keeps the documents ([`GlobalSettings::to_document`] gives a JSON value), the API
 //! serves them.
 //!
 //! | Item | What |
 //! |---|---|
-//! | [`GlobalSettings`] | one per user: defaults for every sandbox, VS Code server options, consents |
-//! | [`SandboxSettings`] | one per sandbox: its overrides |
-//! | [`SandboxLayer`], [`LocalToggles`] | the settings a sandbox has, each optional; used for both levels |
-//! | [`Effective`], [`Resolved`], [`Source`] | the value a sandbox gets and which level it came from |
+//! | [`GlobalSettings`] | one per user: defaults for every workspace, VS Code server options, consents |
+//! | [`WorkspaceSettings`] | one per workspace: its overrides |
+//! | [`WorkspaceLayer`], [`LocalToggles`] | the settings a workspace has, each optional; used for both levels |
+//! | [`Effective`], [`Resolved`], [`Source`] | the value a workspace gets and which level it came from |
 //! | [`Consent`], [`Consents`], [`ConsentKind`], [`TermsVersion`], [`UnixMillis`] | what the user agreed to or declined, when, and to which version of the terms |
 //! | [`UiPrefs`] | the window's theme, notification and close preferences |
 //! | [`ReconnectionGrace`], [`ClipboardRead`], [`ServerChoice`], [`ThemeChoice`], [`CloseBehaviour`] | value types for single settings |
@@ -17,18 +17,18 @@
 //!
 //! # Resolution
 //!
-//! Every per-sandbox setting has three levels: the sandbox's override, the global value, and
+//! Every per-workspace setting has three levels: the workspace's override, the global value, and
 //! puddle's built-in default. A level that is unset (`None`, absent in the document) passes on to
 //! the next one, so a user who never touched a setting follows puddle's default even when a later
 //! version changes it. [`resolve`] is the only place that applies this rule.
 //!
 //! ```
-//! use puddle_settings::{GlobalSettings, SandboxSettings, Source, resolve};
+//! use puddle_settings::{GlobalSettings, WorkspaceSettings, Source, resolve};
 //! use puddle_types::MemoryMib;
 //!
 //! let mut global = GlobalSettings::default();
-//! global.sandbox_defaults.memory = Some(MemoryMib::new(4096).unwrap());
-//! let mut big = SandboxSettings::default();
+//! global.workspace_defaults.memory = Some(MemoryMib::new(4096).unwrap());
+//! let mut big = WorkspaceSettings::default();
 //! big.overrides.memory = Some(MemoryMib::new(16 * 1024).unwrap());
 //!
 //! assert_eq!(resolve(&global, Some(&big)).memory.value.get(), 16 * 1024);
@@ -39,7 +39,7 @@
 //! # Documents, versions and unknown fields
 //!
 //! Each document kind carries `schema_version` (currently [`GLOBAL_SCHEMA_VERSION`] and
-//! [`SANDBOX_SCHEMA_VERSION`]). Reading one ([`GlobalSettings::from_document`]):
+//! [`WORKSPACE_SCHEMA_VERSION`]). Reading one ([`GlobalSettings::from_document`]):
 //!
 //! - **Missing version** means version 1, so `{}` is a valid document with every value unset.
 //! - **Older version**: migrations run in order, one step per version; [`Loaded::migrated_from`]
@@ -63,13 +63,13 @@ mod global;
 mod layer;
 mod migrate;
 mod resolve;
-mod sandbox;
 mod values;
+mod workspace;
 
 pub use consent::{Consent, ConsentKind, Consents, TermsVersion, UnixMillis};
 pub use document::{Loaded, SettingsError};
 pub use global::{GLOBAL_SCHEMA_VERSION, GlobalSettings, UiPrefs, VsCodeServer};
-pub use layer::{LocalToggles, SandboxLayer};
+pub use layer::{LocalToggles, WorkspaceLayer};
 pub use resolve::{Effective, EffectiveToggles, Resolved, Source, resolve};
-pub use sandbox::{SANDBOX_SCHEMA_VERSION, SandboxSettings};
 pub use values::{ClipboardRead, CloseBehaviour, ReconnectionGrace, ServerChoice, ThemeChoice};
+pub use workspace::{WORKSPACE_SCHEMA_VERSION, WorkspaceSettings};

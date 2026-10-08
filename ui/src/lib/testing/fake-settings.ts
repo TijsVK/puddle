@@ -90,7 +90,7 @@ export class FakeSettings {
   private view(): S["GlobalSettingsView"] {
     const l = this.layer;
     return {
-      sandbox_defaults: l,
+      workspace_defaults: l,
       vscode_server: this.vscode,
       ui: this.ui,
       unknown_fields: [],
@@ -182,7 +182,7 @@ export class FakeSettings {
         "Microsoft's server needs the user's consent first",
       );
     }
-    this.layer = { ...noLayer(), ...b.sandbox_defaults };
+    this.layer = { ...noLayer(), ...b.workspace_defaults };
     this.vscode = {
       server: null,
       telemetry: null,

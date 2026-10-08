@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 
 use puddle_store::Clock;
-use puddle_types::{EgressRequest, Host, SandboxName};
+use puddle_types::{EgressRequest, Host, WorkspaceName};
 
 use crate::common::{START_MS, start};
 
@@ -28,12 +28,12 @@ async fn a_pending_request_is_listed_approved_and_then_allowed() {
 
     let all = api.get("/api/pending").await.json();
     assert_eq!(all["requests"].as_array().unwrap().len(), 2);
-    let mine = api.get("/api/pending?sandbox=box").await.json();
+    let mine = api.get("/api/pending?workspace=box").await.json();
     let rows = mine["requests"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     assert_eq!(row["id"], id);
-    assert_eq!(row["sandbox"], "box");
+    assert_eq!(row["workspace"], "box");
     assert_eq!(row["host"], "api.example.com");
     assert_eq!(row["port"], 443);
     assert_eq!(row["attempts"], 1);
@@ -69,7 +69,7 @@ async fn a_pending_request_is_listed_approved_and_then_allowed() {
     assert_eq!(outcome["rule"]["pattern_kind"], "exact");
     assert_eq!(
         outcome["rule"]["scope"],
-        json!({"type": "sandbox", "sandbox": "box"})
+        json!({"type": "workspace", "workspace": "box"})
     );
     assert_eq!(outcome["rule"]["expires_at"], Value::Null);
     assert_eq!(outcome["rule"]["source_pending_id"], id);
@@ -80,7 +80,7 @@ async fn a_pending_request_is_listed_approved_and_then_allowed() {
         .store
         .decide(
             &EgressRequest::new(
-                SandboxName::new("box").unwrap(),
+                WorkspaceName::new("box").unwrap(),
                 Host::parse_normalised("api.example.com").unwrap(),
                 443,
             ),
@@ -164,7 +164,10 @@ async fn bad_decisions_are_refused_without_changing_anything() {
         .send("POST", "/api/pending/abc/approve", Some(&json!({})))
         .await;
     assert_eq!(reply.status, 400);
-    assert_eq!(api.get("/api/pending?sandbox=Not_Valid").await.status, 400);
+    assert_eq!(
+        api.get("/api/pending?workspace=Not_Valid").await.status,
+        400
+    );
     assert_eq!(api.get("/api/pending?unknown=1").await.status, 400);
     let row = api.get(&format!("/api/pending/{id}")).await.json();
     assert_eq!(row["state"], "requested");
@@ -180,7 +183,7 @@ async fn rules_are_created_listed_changed_and_deleted() {
         .send(
             "POST",
             "/api/rules",
-            Some(&json!({"scope": {"type": "sandbox", "sandbox": "box"}, "pattern": ".npmjs.org", "effect": "allow"})),
+            Some(&json!({"scope": {"type": "workspace", "workspace": "box"}, "pattern": ".npmjs.org", "effect": "allow"})),
         )
         .await;
     assert_eq!(reply.status, 201, "{}", reply.body);
@@ -254,7 +257,7 @@ async fn invalid_rules_are_refused() {
         json!({"scope": {"type": "global"}, "pattern": "*.com", "effect": "allow"}),
         json!({"scope": {"type": "global"}, "pattern": "example.com", "effect": "maybe"}),
         json!({"scope": {"type": "everyone"}, "pattern": "example.com", "effect": "allow"}),
-        json!({"scope": {"type": "sandbox", "sandbox": "tauri"}, "pattern": "example.com", "effect": "allow"}),
+        json!({"scope": {"type": "workspace", "workspace": "tauri"}, "pattern": "example.com", "effect": "allow"}),
         json!({"scope": {"type": "global"}, "pattern": "example.com", "effect": "allow", "expires_at": 1}),
         json!({"scope": {"type": "global"}, "pattern": "example.com", "effect": "allow", "id": 1}),
     ] {
@@ -341,7 +344,7 @@ async fn audit_pages_back_newest_first_and_follow_the_tail_oldest_first() {
         "/api/audit?limit=0",
         "/api/audit?limit=501",
         "/api/audit?after=1&before=9",
-        "/api/audit?sandbox=Not%20A%20Name",
+        "/api/audit?workspace=Not%20A%20Name",
         "/api/audit?from=10&to=10",
         "/api/audit?type=nope",
         "/api/audit?outcome=nope",
@@ -351,7 +354,7 @@ async fn audit_pages_back_newest_first_and_follow_the_tail_oldest_first() {
     }
     assert_eq!(api.get("/api/audit?limit=0").await.status, 422);
     assert_eq!(api.get("/api/audit?after=x").await.status, 400);
-    assert_eq!(api.get("/api/audit?sandbox=a%20b").await.status, 422);
+    assert_eq!(api.get("/api/audit?workspace=a%20b").await.status, 422);
     assert_eq!(api.get("/api/audit?unknown=1").await.status, 400);
     api.running.shutdown().await;
 }
@@ -374,7 +377,7 @@ async fn audit_filters_run_on_the_server() {
             .collect()
     };
     assert_eq!(
-        types(api.get("/api/audit?sandbox=beta").await),
+        types(api.get("/api/audit?workspace=beta").await),
         ["pending_created"]
     );
     assert_eq!(
@@ -399,7 +402,7 @@ async fn audit_filters_run_on_the_server() {
     // An empty filter value is no filter (a form that sends `host_contains=`). The fifth record is
     // System managed's, written when the API started.
     assert_eq!(
-        types(api.get("/api/audit?host_contains=&sandbox=").await).len(),
+        types(api.get("/api/audit?host_contains=&workspace=").await).len(),
         5
     );
     assert_eq!(
@@ -407,7 +410,7 @@ async fn audit_filters_run_on_the_server() {
         ["pending_decided", "rule_created"]
     );
     assert_eq!(
-        types(api.get(&format!("/api/audit?to={t}&sandbox=alpha")).await),
+        types(api.get(&format!("/api/audit?to={t}&workspace=alpha")).await),
         ["pending_created"]
     );
     api.running.shutdown().await;
@@ -418,7 +421,7 @@ async fn audit_records_are_typed_including_the_upstream_hop() {
     use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason};
     let api = start().await;
     let request = EgressRequest::new(
-        SandboxName::new("box").unwrap(),
+        WorkspaceName::new("box").unwrap(),
         Host::parse_normalised("example.com").unwrap(),
         443,
     );
@@ -452,7 +455,7 @@ async fn puddles_own_connections_have_an_origin_and_the_origin_filter_finds_them
     pull.bytes_down = 1024;
     api.store.record(&pull);
     api.store.record(&ConnectionEvent::new(
-        &EgressRequest::new(SandboxName::new("box").unwrap(), host(), 443),
+        &EgressRequest::new(WorkspaceName::new("box").unwrap(), host(), 443),
         ConnectionDecision::Allow,
         ConnectionReason::Rule,
     ));
@@ -463,17 +466,20 @@ async fn puddles_own_connections_have_an_origin_and_the_origin_filter_finds_them
     assert_eq!(entries.len(), 1, "{page}");
     let record = &entries[0]["record"];
     assert_eq!(record["origin"], "puddle");
-    assert_eq!(record["sandbox_id"], json!(null));
+    assert_eq!(record["workspace_id"], json!(null));
     assert_eq!(record["reason"], "puddle_request");
     assert_eq!(record["bytes_down"], 1024);
 
-    let page = api.get("/api/audit?origin=sandbox").await.json();
+    let page = api.get("/api/audit?origin=workspace").await.json();
     let entries = page["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 1, "{page}");
-    assert_eq!(entries[0]["record"]["origin"], "sandbox");
-    assert_eq!(entries[0]["record"]["sandbox_id"], "box");
-    // Only connection records have an origin; a sandbox filter excludes puddle's own.
-    let both = api.get("/api/audit?origin=puddle&sandbox=box").await.json();
+    assert_eq!(entries[0]["record"]["origin"], "workspace");
+    assert_eq!(entries[0]["record"]["workspace_id"], "box");
+    // Only connection records have an origin; a workspace filter excludes puddle's own.
+    let both = api
+        .get("/api/audit?origin=puddle&workspace=box")
+        .await
+        .json();
     assert!(both["entries"].as_array().unwrap().is_empty(), "{both}");
     assert_eq!(api.get("/api/audit?origin=elsewhere").await.status, 400);
     api.running.shutdown().await;
@@ -521,7 +527,7 @@ async fn local_destinations_name_the_toggle_that_blocks_their_approval() {
         .send(
             "PUT",
             "/api/settings",
-            Some(&json!({"sandbox_defaults": {"local_toggles": {"private": true}}})),
+            Some(&json!({"workspace_defaults": {"local_toggles": {"private": true}}})),
         )
         .await;
     assert_eq!(put.status, 200, "{}", put.body);
@@ -621,16 +627,16 @@ async fn rule_input_is_normalised_not_refused() {
 }
 
 #[tokio::test]
-async fn suppression_reports_per_sandbox() {
+async fn suppression_reports_per_workspace() {
     let api = start().await;
-    let reply = api.get("/api/sandboxes/box/suppression").await;
+    let reply = api.get("/api/workspaces/box/suppression").await;
     assert_eq!(reply.status, 200);
     assert_eq!(
         reply.json(),
-        json!({"sandbox": "box", "active": false, "count": 0})
+        json!({"workspace": "box", "active": false, "count": 0})
     );
     assert_eq!(
-        api.get("/api/sandboxes/Bad_Name/suppression").await.status,
+        api.get("/api/workspaces/Bad_Name/suppression").await.status,
         400
     );
     api.running.shutdown().await;

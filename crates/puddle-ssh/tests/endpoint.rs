@@ -169,7 +169,7 @@ async fn a_stopped_sandbox_refuses_with_a_reason() {
     let endpoint = SshEndpoint::start(root.listen().unwrap(), sb).unwrap();
     assert_eq!(
         refusal(endpoint.endpoint().path()).await,
-        "sandbox \"box\": sandbox is not running"
+        "workspace \"box\": workspace is not running"
     );
     endpoint.close().await;
 }
@@ -192,7 +192,7 @@ async fn a_failed_boot_refuses_with_its_cleaned_stderr() {
     assert!(matches!(gate.state(), GateState::Failed(_)));
     assert_eq!(
         refusal(endpoint.endpoint().path()).await,
-        "sandbox \"box\": sandbox failed to boot: boot hook exited with status 1: apt: [31mbroken [0m second line"
+        "workspace \"box\": workspace failed to boot: boot hook exited with status 1: apt: [31mbroken [0m second line"
     );
     endpoint.close().await;
 }
@@ -490,7 +490,7 @@ async fn a_missing_endpoint_says_so() {
     assert_eq!(endpoint, &path);
     let msg = err.to_string();
     assert!(msg.starts_with("no puddle SSH endpoint at "), "{msg}");
-    assert!(msg.contains("the sandbox is not running"), "{msg}");
+    assert!(msg.contains("the workspace is not running"), "{msg}");
 }
 
 /// Sends a banner, then fails the session.

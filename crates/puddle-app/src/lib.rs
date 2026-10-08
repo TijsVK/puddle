@@ -16,7 +16,7 @@
 //! * The window stays on the API's origin ([`navigation::OriginPolicy`]). Web addresses elsewhere
 //!   go to the default browser, called from Rust; everything else is dropped.
 //! * Tray, notifications, badges and close behaviour come later: they run in Rust, driven from
-//!   [`backend::Backend::events`]. The real backend and the sandbox quit sequence come later.
+//!   [`backend::Backend::events`]. The real backend and the workspace quit sequence come later.
 #![forbid(unsafe_code)]
 
 pub mod backend;

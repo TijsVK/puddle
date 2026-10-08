@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Sandbox, SshStream};
-use puddle_types::{SandboxName, SandboxStatus};
+use puddle_types::{SandboxName, WorkspaceStatus};
 use tokio::sync::{Mutex, MutexGuard, watch};
 
 use crate::hook::{BootFailure, BootReport};
@@ -40,13 +40,13 @@ pub enum GateState {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NotReady {
     /// The sandbox isn't running.
-    #[error("sandbox is not running")]
+    #[error("workspace is not running")]
     Down,
     /// The boot hook failed.
-    #[error("sandbox failed to boot: {0}")]
+    #[error("workspace failed to boot: {0}")]
     Failed(BootFailure),
     /// Still booting after the wait limit.
-    #[error("sandbox is still booting after {waited:?}")]
+    #[error("workspace is still booting after {waited:?}")]
     Timeout {
         /// How long the call waited.
         waited: Duration,
@@ -125,7 +125,7 @@ impl Gate {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GatedError {
     /// The gate refused it.
-    #[error("sandbox {sandbox:?}: {reason}")]
+    #[error("workspace {sandbox:?}: {reason}")]
     NotReady {
         /// The sandbox.
         sandbox: String,
@@ -210,7 +210,7 @@ impl<S: Sandbox> GatedSandbox<S> {
     /// # Errors
     ///
     /// From [`Sandbox::status`].
-    pub async fn status(&self) -> Result<SandboxStatus, ComputeError> {
+    pub async fn status(&self) -> Result<WorkspaceStatus, ComputeError> {
         self.inner.status().await
     }
 
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn refusals_read_well() {
-        assert_eq!(NotReady::Down.to_string(), "sandbox is not running");
+        assert_eq!(NotReady::Down.to_string(), "workspace is not running");
         let e = GatedError::NotReady {
             sandbox: "a".into(),
             reason: NotReady::Timeout {
@@ -286,7 +286,7 @@ mod tests {
         };
         assert_eq!(
             e.to_string(),
-            r#"sandbox "a": sandbox is still booting after 2s"#
+            r#"workspace "a": workspace is still booting after 2s"#
         );
     }
 }

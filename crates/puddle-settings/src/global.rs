@@ -9,13 +9,13 @@ use serde_json::Value;
 use crate::document::{self, Document};
 use crate::migrate::{self, Migration};
 use crate::{
-    CloseBehaviour, Consents, Loaded, SandboxLayer, ServerChoice, SettingsError, ThemeChoice,
+    CloseBehaviour, Consents, Loaded, ServerChoice, SettingsError, ThemeChoice, WorkspaceLayer,
 };
 
 /// The current shape of [`GlobalSettings`] documents.
-pub const GLOBAL_SCHEMA_VERSION: u32 = 1;
+pub const GLOBAL_SCHEMA_VERSION: u32 = 2;
 
-/// puddle's settings for this user: defaults for every sandbox, options that only exist
+/// puddle's settings for this user: defaults for every workspace, options that only exist
 /// globally, and the consents.
 ///
 /// ```
@@ -23,30 +23,30 @@ pub const GLOBAL_SCHEMA_VERSION: u32 = 1;
 /// use serde_json::json;
 ///
 /// let loaded = GlobalSettings::from_document(json!({
-///     "schema_version": 1,
-///     "sandbox_defaults": { "memory": 4096, "local_toggles": { "private": true } },
+///     "schema_version": 2,
+///     "workspace_defaults": { "memory": 4096, "local_toggles": { "private": true } },
 ///     "consents": { "telemetry": { "state": "declined", "at": 1, "terms_version": "t1" } },
 /// })).unwrap();
-/// assert_eq!(loaded.settings.sandbox_defaults.memory.unwrap().get(), 4096);
+/// assert_eq!(loaded.settings.workspace_defaults.memory.unwrap().get(), 4096);
 /// assert!(loaded.unknown_fields.is_empty());
 ///
 /// let doc = loaded.settings.to_document();
-/// assert_eq!(doc["schema_version"], 1);
+/// assert_eq!(doc["schema_version"], 2);
 /// assert_eq!(GlobalSettings::from_document(doc).unwrap().settings, loaded.settings);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct GlobalSettings {
-    /// The value every sandbox gets unless it overrides it. Unset values fall back to puddle's
+    /// The value every workspace gets unless it overrides it. Unset values fall back to puddle's
     /// built-in defaults.
-    #[serde(default, skip_serializing_if = "SandboxLayer::is_empty")]
-    pub sandbox_defaults: SandboxLayer,
+    #[serde(default, skip_serializing_if = "WorkspaceLayer::is_empty")]
+    pub workspace_defaults: WorkspaceLayer,
     /// Options for Microsoft's VS Code server (global only).
     #[serde(default, skip_serializing_if = "VsCodeServer::is_empty")]
     pub vscode_server: VsCodeServer,
     /// How puddle's own window looks and behaves (global only).
     #[serde(default, skip_serializing_if = "UiPrefs::is_empty")]
     pub ui: UiPrefs,
-    /// What the user agreed to or declined (per user, never per sandbox).
+    /// What the user agreed to or declined (per user, never per workspace).
     #[serde(default, skip_serializing_if = "Consents::is_empty")]
     pub consents: Consents,
     #[serde(flatten)]
@@ -79,8 +79,8 @@ impl Document for GlobalSettings {
 
     fn collect_unknown(&self, out: &mut Vec<String>) {
         document::push_unknown("", &self.extra, out);
-        self.sandbox_defaults
-            .collect_unknown("sandbox_defaults.", out);
+        self.workspace_defaults
+            .collect_unknown("workspace_defaults.", out);
         document::push_unknown("vscode_server.", &self.vscode_server.extra, out);
         document::push_unknown("ui.", &self.ui.extra, out);
         self.consents.collect_unknown("consents.", out);
@@ -148,7 +148,7 @@ pub struct UiPrefs {
     /// Play the system sound with a notification; default off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<bool>,
-    /// What closing the window does while a sandbox runs; default keep running in the tray.
+    /// What closing the window does while a workspace runs; default keep running in the tray.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close_behaviour: Option<CloseBehaviour>,
     #[serde(flatten)]
@@ -207,10 +207,10 @@ mod tests {
     fn empty_object_is_all_defaults_and_writes_back_as_version_only() {
         let loaded = GlobalSettings::from_document(json!({})).unwrap();
         assert_eq!(loaded.settings, GlobalSettings::default());
-        assert_eq!(loaded.migrated_from, None);
+        assert_eq!(loaded.migrated_from, Some(1), "no version means version 1");
         assert_eq!(
             loaded.settings.to_document(),
-            json!({ "schema_version": 1 })
+            json!({ "schema_version": 2 })
         );
     }
 
@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(ui.close_behaviour(), CloseBehaviour::Tray);
 
         let doc = json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "vscode_server": { "server": "microsoft" },
             "ui": { "theme": "dark", "notifications": false, "sound": true, "close_behaviour": "quit" },
         });
@@ -260,13 +260,13 @@ mod tests {
 
     #[test]
     fn a_document_from_before_these_fields_loads_unchanged_and_ui_unknowns_are_kept() {
-        let old = json!({ "schema_version": 1, "vscode_server": { "telemetry": true } });
+        let old = json!({ "schema_version": 2, "vscode_server": { "telemetry": true } });
         let loaded = GlobalSettings::from_document(old.clone()).unwrap();
         assert_eq!(loaded.migrated_from, None);
         assert_eq!(loaded.settings.to_document(), old);
 
         let newer =
-            json!({ "schema_version": 1, "ui": { "density": "compact", "theme": "light" } });
+            json!({ "schema_version": 2, "ui": { "density": "compact", "theme": "light" } });
         let loaded = GlobalSettings::from_document(newer.clone()).unwrap();
         assert_eq!(loaded.unknown_fields, ["ui.density"]);
         assert_eq!(loaded.settings.to_document(), newer);
@@ -281,9 +281,9 @@ mod tests {
     #[test]
     fn unknown_fields_at_every_level_are_listed_and_written_back() {
         let doc = json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "rule_sets": ["trackers"],
-            "sandbox_defaults": { "cpus": 2, "local_toggles": { "vpn": true } },
+            "workspace_defaults": { "cpus": 2, "local_toggles": { "vpn": true } },
             "vscode_server": { "channel": "insiders" },
             "consents": {
                 "usage_survey": { "state": "granted" },
@@ -295,8 +295,8 @@ mod tests {
             loaded.unknown_fields,
             [
                 "rule_sets",
-                "sandbox_defaults.cpus",
-                "sandbox_defaults.local_toggles.vpn",
+                "workspace_defaults.cpus",
+                "workspace_defaults.local_toggles.vpn",
                 "vscode_server.channel",
                 "consents.usage_survey",
             ]
@@ -311,18 +311,59 @@ mod tests {
     }
 
     #[test]
+    fn a_version_1_document_keeps_its_defaults_under_the_new_name() {
+        let old = json!({
+            "schema_version": 1,
+            "sandbox_defaults": { "memory": 4096, "local_toggles": { "private": true } },
+            "ui": { "theme": "dark" },
+        });
+        let loaded = GlobalSettings::from_document(old).unwrap();
+        assert_eq!(loaded.migrated_from, Some(1));
+        assert_eq!(loaded.unknown_fields, Vec::<String>::new());
+        assert_eq!(
+            loaded.settings.workspace_defaults.memory.unwrap().get(),
+            4096
+        );
+        let doc = loaded.settings.to_document();
+        assert_eq!(doc["schema_version"], 2);
+        assert_eq!(doc["workspace_defaults"]["memory"], 4096);
+        assert_eq!(doc["ui"]["theme"], "dark");
+        assert!(doc.get("sandbox_defaults").is_none(), "{doc}");
+        // Written back, it loads as it is.
+        assert_eq!(
+            GlobalSettings::from_document(doc).unwrap().migrated_from,
+            None
+        );
+    }
+
+    #[test]
+    fn a_document_with_both_names_keeps_the_new_one_and_the_old_as_unknown() {
+        let both = json!({
+            "schema_version": 1,
+            "sandbox_defaults": { "memory": 1024 },
+            "workspace_defaults": { "memory": 4096 },
+        });
+        let loaded = GlobalSettings::from_document(both).unwrap();
+        assert_eq!(
+            loaded.settings.workspace_defaults.memory.unwrap().get(),
+            4096
+        );
+        assert_eq!(loaded.unknown_fields, ["sandbox_defaults"]);
+    }
+
+    #[test]
     fn errors_name_the_document_kind() {
         let err =
-            GlobalSettings::from_document(json!({"sandbox_defaults":{"memory":1}})).unwrap_err();
+            GlobalSettings::from_document(json!({"workspace_defaults":{"memory":1}})).unwrap_err();
         assert!(matches!(err, SettingsError::Invalid { kind: "global", .. }));
         assert!(err.to_string().contains("invalid memory size"), "{err}");
-        let err = GlobalSettings::from_document(json!({"schema_version":2})).unwrap_err();
+        let err = GlobalSettings::from_document(json!({"schema_version":3})).unwrap_err();
         assert!(matches!(
             err,
             SettingsError::NewerSchema {
                 kind: "global",
-                found: 2,
-                supported: 1
+                found: 3,
+                supported: 2
             }
         ));
     }

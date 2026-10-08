@@ -151,9 +151,9 @@ describe("changing", () => {
     const off = await store.switchSet("builtin:github", "api", false);
     expect(off).toEqual({ ok: true, value: 0 });
     expect(store.sets[0]?.overrides).toEqual([
-      { sandbox: "api", enabled: false },
+      { workspace: "api", enabled: false },
     ]);
     expect(changed).toBe(1);
-    expect(api.bodies.at(-1)).toEqual({ sandbox: "api", enabled: false });
+    expect(api.bodies.at(-1)).toEqual({ workspace: "api", enabled: false });
   });
 });

@@ -7,7 +7,7 @@ use std::time::Duration;
 use microsandbox::sandbox::SandboxHandle;
 use microsandbox::{MicrosandboxError, Sandbox as SdkSandbox};
 use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Sandbox, SshStream};
-use puddle_types::{SandboxName, SandboxStatus};
+use puddle_types::{SandboxName, WorkspaceStatus};
 
 use crate::error::{map, runtime};
 use crate::runtime::{MsbRuntime, status};
@@ -85,7 +85,7 @@ impl MsbSandbox {
                 sandbox: self.name.to_string(),
             })?;
         let current = status(record.status_snapshot());
-        if current != SandboxStatus::Running {
+        if current != WorkspaceStatus::Running {
             return Err(ComputeError::InvalidState {
                 sandbox: self.name.to_string(),
                 op,
@@ -112,7 +112,7 @@ impl Sandbox for MsbSandbox {
         self.sdk.owns_lifecycle()
     }
 
-    fn status(&self) -> impl Future<Output = Result<SandboxStatus, ComputeError>> + Send {
+    fn status(&self) -> impl Future<Output = Result<WorkspaceStatus, ComputeError>> + Send {
         Box::pin(async move {
             let record = self
                 .runtime

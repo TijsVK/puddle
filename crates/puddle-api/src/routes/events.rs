@@ -6,7 +6,7 @@ use std::time::Duration;
 use axum::extract::State;
 use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use puddle_types::SandboxName;
+use puddle_types::WorkspaceName;
 use serde::Deserialize;
 
 use crate::extract::Query;
@@ -19,8 +19,8 @@ const KEEP_ALIVE: Duration = Duration::from_secs(15);
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EventsQuery {
-    /// Only this sandbox's events (global events always come through). All events if left out.
-    sandbox: Option<SandboxName>,
+    /// Only this workspace's events (global events always come through). All events if left out.
+    workspace: Option<WorkspaceName>,
 }
 
 /// Server-sent events: each `data:` line is one `Event` as JSON (the `Event` schema; switch on
@@ -31,10 +31,10 @@ pub(crate) struct EventsQuery {
     get,
     path = "/api/events",
     tag = "events",
-    params(("sandbox" = Option<SandboxName>, Query, description = "only this sandbox's events; global events always come through")),
+    params(("workspace" = Option<WorkspaceName>, Query, description = "only this workspace's events; global events always come through")),
     responses(
         (status = OK, description = "the event stream", content_type = "text/event-stream", body = String),
-        (status = BAD_REQUEST, description = "invalid sandbox name", body = crate::ApiErrorBody)
+        (status = BAD_REQUEST, description = "invalid workspace name", body = crate::ApiErrorBody)
     )
 )]
 pub(crate) async fn events(
@@ -43,7 +43,7 @@ pub(crate) async fn events(
 ) -> Response {
     let stream = crate::events::stream(
         state.events.subscribe(),
-        query.sandbox,
+        query.workspace,
         state.shutdown.clone(),
     );
     Sse::new(stream)

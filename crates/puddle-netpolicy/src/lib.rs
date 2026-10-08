@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The destination guard: which destinations a sandbox may reach, decided
+//! The destination guard: which destinations a workspace may reach, decided
 //! before any connection. Pure policy, no network I/O; the proxy (`puddle-proxy`) calls it.
 //!
 //! | Stage | Item | What |
@@ -8,14 +8,14 @@
 //! | name | [`NetPolicy::check_target`] | literals and `localhost`/metadata names blocked before the rules, so a block never becomes a pending row |
 //! | address | [`classify_ip`], [`AddressClass`] | public, a [`LocalCategory`] (with the rule that put it there), or one of puddle's own endpoints |
 //! | address | [`NetPolicy::check_address`], [`AddressVerdict`] | allow, exact-allow only (toggle on), or block naming the toggle |
-//! | settings | [`LocalAccess`], [`LocalAccessSource`] | one sandbox's toggles and "wildcards reach local addresses", from `puddle-settings` |
+//! | settings | [`LocalAccess`], [`LocalAccessSource`] | one workspace's toggles and "wildcards reach local addresses", from `puddle-settings` |
 //! | endpoints | [`PuddleEndpoints`], [`EndpointKind`] | the registry every puddle listener joins when it binds |
 //! | message | [`block_message`] | the `403` text: what was found and which toggle would allow it |
 //!
 //! The rules it applies:
 //!
 //! - **Local destinations** are not forbidden, only off by default: one toggle per
-//!   [`LocalCategory`], with a global default and a per-sandbox override.
+//!   [`LocalCategory`], with a global default and a per-workspace override.
 //! - **A toggle only *permits* its category;** the destination still needs an allow rule
 //!   or an approval.
 //! - **Exact allows (R-14):** with the toggle on, only an **exact** allow (of the name, or of the

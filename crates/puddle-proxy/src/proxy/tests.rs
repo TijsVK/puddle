@@ -11,8 +11,8 @@ use tokio::net::TcpListener;
 use super::*;
 use crate::testing::{AnyAddress, StaticPolicy, StaticResolver};
 
-fn sandbox() -> SandboxName {
-    SandboxName::new("box").unwrap()
+fn workspace() -> WorkspaceName {
+    WorkspaceName::new("box").unwrap()
 }
 
 fn host(h: &str) -> Host {
@@ -20,7 +20,7 @@ fn host(h: &str) -> Host {
 }
 
 fn request(h: &str) -> EgressRequest {
-    EgressRequest::new(sandbox(), host(h), 443)
+    EgressRequest::new(workspace(), host(h), 443)
 }
 
 fn ip(s: &str) -> IpAddr {
@@ -78,7 +78,7 @@ where
 struct Toggles;
 
 impl AddressCheck for Toggles {
-    fn check(&self, _: &SandboxName, addr: SocketAddr) -> AddressVerdict {
+    fn check(&self, _: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
         match addr.ip() {
             IpAddr::V4(a) if a.octets()[0] == 10 => {
                 AddressVerdict::ExactOnly(LocalCategory::Private)
@@ -126,7 +126,7 @@ async fn an_unmatched_name_is_pending_and_never_resolved() {
     let items = policy.pending();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].attempts, 2);
-    assert_eq!(items[0].sandbox, sandbox());
+    assert_eq!(items[0].workspace, workspace());
 }
 
 #[tokio::test]
@@ -551,23 +551,23 @@ fn a_refusal_is_a_complete_response_that_closes() {
 fn config_builders_set_their_field() {
     let c = ProxyConfig::default()
         .with_head_timeout(Duration::from_secs(1))
-        .with_max_streams_per_sandbox(7)
+        .with_max_streams_per_workspace(7)
         .with_max_sessions_per_route(3)
         .with_session(HostConfig {
             control_burst: 1,
             ..HostConfig::default()
         });
     assert_eq!(c.head_timeout, Duration::from_secs(1));
-    assert_eq!(c.max_streams_per_sandbox, 7);
+    assert_eq!(c.max_streams_per_workspace, 7);
     assert_eq!(c.max_sessions_per_route, 3);
     assert_eq!(c.session.control_burst, 1);
     let p = Proxy::new(Arc::new(StaticPolicy::new()), Arc::new(NullSink))
         .with_address_check(Arc::new(AnyAddress))
         .with_config(c);
-    assert_eq!(p.config().max_streams_per_sandbox, 7);
-    assert!(format!("{p:?}").contains("max_streams_per_sandbox: 7"));
-    let handler = Arc::new(p).handler(sandbox());
-    assert_eq!(handler.sandbox(), &sandbox());
+    assert_eq!(p.config().max_streams_per_workspace, 7);
+    assert!(format!("{p:?}").contains("max_streams_per_workspace: 7"));
+    let handler = Arc::new(p).handler(workspace());
+    assert_eq!(handler.workspace(), &workspace());
 }
 
 // The real guard (`puddle_netpolicy::NetPolicy`) in the proxy: the local-destination toggles,
@@ -761,9 +761,9 @@ mod guard {
         let refusal = admit(&p, &request("10.1.2.3")).await.unwrap_err();
         assert_eq!(blocked(&refusal), Some("toggle:private"));
         assert!(
-            refusal
-                .message
-                .contains("turn on 'private' (local/private network) globally or for sandbox box"),
+            refusal.message.contains(
+                "turn on 'private' (local/private network) globally or for workspace box"
+            ),
             "{}",
             refusal.message
         );
@@ -1318,21 +1318,22 @@ mod termination {
         );
         let terminations = Arc::new(Terminations::new());
         terminations.insert(
-            sandbox(),
+            workspace(),
             Termination::new(set, ca, Arc::new(NoInjection)).unwrap(),
         );
         proxy(Arc::new(StaticPolicy::new()), StaticResolver::new())
             .with_termination(terminations, puddle_upstream::TlsClient::new([]).unwrap())
     }
 
-    fn at(h: &str, port: u16, sandbox: SandboxName) -> EgressRequest {
-        EgressRequest::new(sandbox, host(h), port)
+    fn at(h: &str, port: u16, workspace: WorkspaceName) -> EgressRequest {
+        EgressRequest::new(workspace, host(h), port)
     }
 
     #[test]
-    fn only_a_bound_name_on_443_for_a_sandbox_with_a_termination_is_terminated() {
+    fn only_a_bound_name_on_443_for_a_workspace_with_a_termination_is_terminated() {
         let proxy = terminating_proxy();
-        let terminated = |h: &str, port: u16| proxy.terminating(&at(h, port, sandbox())).is_some();
+        let terminated =
+            |h: &str, port: u16| proxy.terminating(&at(h, port, workspace())).is_some();
         for (h, port) in [
             ("github.com", 443),
             ("dev.visualstudio.com", 443),
@@ -1359,7 +1360,7 @@ mod termination {
         ] {
             assert!(!terminated(h, port), "{h}:{port}");
         }
-        let other = SandboxName::new("other").unwrap();
+        let other = WorkspaceName::new("other").unwrap();
         assert!(proxy.terminating(&at("github.com", 443, other)).is_none());
     }
 

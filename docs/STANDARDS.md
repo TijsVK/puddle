@@ -19,13 +19,13 @@ different crates and rarely collides.
 | Crate | Kind | Owns |
 |---|---|---|
 | `crates/puddle-types` | lib | Shared IDs, wire types, errors that cross crate boundaries (validated names, guest files/env, memory size, events). No I/O. |
-| `crates/puddle-settings` | lib | The settings model: global settings, per-sandbox overrides and their resolution, the consent store; versioned documents with migrations and kept unknown fields. No storage, no I/O |
+| `crates/puddle-settings` | lib | The settings model: global settings, per-workspace overrides and their resolution, the consent store; versioned documents with migrations and kept unknown fields. No storage, no I/O |
 | `crates/puddle-compute` | lib | The compute-plane contract: `Runtime`/`Sandbox` traits, `FakeRuntime` (feature `fake`), the contract suite every runtime passes (feature `contract`). Other crates build on it (msb adapter, boot hook, workspace, lifecycle, ...) |
 | `crates/puddle-compute-msb` | lib | The compute-plane traits over the msb SDK (the only crate that calls it): sandboxes, volumes, image pull (with puddle's registry roots), exec, SSH, the memory setting; `SDK_OPTIONS` lists every SDK option set or defaulted (input to a sandbox-escape review). VM tests: the contract suite and the hostile-guest cases |
 | `crates/puddle-runtime` | lib | The bundled msb runtime: runtime folder + private `MSB_HOME`, `MSB_*` environment pinning, the per-OS runtime file-name table and `GuestArch` (`check.sh platform-literals` keeps the names out of other crates), exact `<release>-puddle.N` version check from msb's embedded `.msbver`; the proxy environment that sends msb's image pulls through puddle's pull proxy |
 | `crates/puddle-boot` | lib | Boot hook (`guest/boot.sh`, `guest/agent-supervise.sh`, POSIX sh) and the readiness gate: no SSH or exec before the hook returns 0; applies provider `GuestFile`s/env as a list |
 | `crates/puddle-netpolicy` | lib | The destination guard: strict host-name normalisation (IDNA, LDH, canonical IPs), address classes, the local-destination toggles and wildcard rule, the registry of puddle's own endpoints, block messages. Pure policy, no network I/O |
-| `crates/puddle-ca` | lib | The per-sandbox CA for credential injection: name constraints as a builder input, a key that is never exported or serialised, a bounded leaf cache per sandbox, the guest trust bundle as a list of CAs. In memory only, no I/O |
+| `crates/puddle-ca` | lib | The per-workspace CA for credential injection: name constraints as a builder input, a key that is never exported or serialised, a bounded leaf cache per workspace, the guest trust bundle as a list of CAs. In memory only, no I/O |
 | `crates/puddle-workspace` | lib | Workspace volume lifecycle (ADR 0006): one named disk volume `ws-<id>` per workspace at `/workspaces/<id>` (checkouts in subdirectories, `.puddle/` beside them), puddle's own holder tracking (one writer, refusal names the holder), cleanup after failed creates, `fstrim` on stop and "reclaim space", delete only after the unsaved-work check (`guest/delete-check.sh`) and an explicit confirmation; short-lived maintenance sandboxes `m--<id>` for stopped workspaces |
 | `crates/puddle-guest-env` | lib | Boot-time proxy config: a pure function from proxy settings and the image env to the proxy `GuestEnv` and tool config `GuestFile`s (apt, sudo, Maven, Gradle, Docker CLI) the boot hook applies. No I/O |
 | `crates/puddle-certs` | lib | Corporate root sync: reads the host's admin- and user-added `Root`/`CA` stores minus `Disallowed` (Windows; its `unsafe` CryptoAPI calls are in `platform/windows.rs`), selects (expired and distrusted out, each certificate once) and turns them plus puddle's CAs into guest files, env and the bundle step `guest/ca-bundle.sh` (append to the image's bundle, never replace) |
@@ -38,8 +38,8 @@ different crates and rarely collides.
 | `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI (`doctor`, `ssh-bridge`, `serve` around `puddle-host`) |
 | `crates/xtask` | bin (dev) | `cargo xtask runtime` (runtime folder from the fork release, checksums, `licenses/`), `cargo xtask notices` (third-party notices; `--check` is a gate); never shipped |
 | `crates/puddle-fs` | lib | Per-OS file-system seams: `data_dir()` (the `dirs` crate: `%LOCALAPPDATA%\puddle`, `$XDG_DATA_HOME/puddle`, `~/Library/Application Support/puddle`) and `private` (owner-only files and folders: `0600`/`0700` on Unix; on Windows a protected ACL with one entry for the current user, set at creation). Its `unsafe` (Win32 security calls) is in one module, `win`, which `puddle-ipc` shares for its pipe descriptor. Own crate because both the API and the runtime layout need it and neither may depend on the other |
-| `crates/puddle-ipc` | lib | Per-sandbox host endpoints (named pipe / Unix socket) only the current user can open: owner-only DACL, first-instance check, random names, `0600` sockets in a `0700` dir. Its only `unsafe` is creating a pipe with a security descriptor (`windows/security.rs`); the descriptor helpers come from `puddle-fs` |
-| `crates/puddle-ssh` | lib | A sandbox's SSH endpoint (one runtime SSH connection per client, served only through the readiness gate, refusal line) and the `puddle ssh-bridge` relay |
+| `crates/puddle-ipc` | lib | Per-workspace host endpoints (named pipe / Unix socket) only the current user can open: owner-only DACL, first-instance check, random names, `0600` sockets in a `0700` dir. Its only `unsafe` is creating a pipe with a security descriptor (`windows/security.rs`); the descriptor helpers come from `puddle-fs` |
+| `crates/puddle-ssh` | lib | A workspace's SSH endpoint (one runtime SSH connection per client, served only through the readiness gate, refusal line) and the `puddle ssh-bridge` relay |
 | `crates/puddle-doctor` | lib | `puddle doctor`: host prerequisites (firmware virtualization, WHP/KVM, code integrity, job object), the bundled runtime (present, permitted, exact version), msb starting, a test boot of a 132-byte probe in a tiny root file system, Global Secure Access; each finding with its exact fix, text and JSON (`schema_version`). Checks are pure over a `Probe` (faked in tests); the Win32 calls (its only `unsafe`) are in `sys/windows.rs` |
 | `crates/puddle-lifecycle` | lib | Shutdown and reconcile: trim + stop of every sandbox when puddle exits, shutdown triggers (Ctrl-C, console close, signals), the front/worker split that keeps console events away from the VMs, the one kill-on-close job puddle and every msb child run in (resource limits for sandbox escapes go there), reconcile at start that touches only puddle-owned names. Its `unsafe` (Win32 job and console calls) is in `windows/sys.rs` |
 | `crates/puddle-host` | lib | The host process as a library, the one composition root: a synchronous `prepare` (bind the image-pull proxy, pin the process environment, check the runtime pin, read the corporate roots) and an asynchronous `Host::start` (store, settings files, upstream chain with system sign-in then Basic, runtime, reconcile, pull proxy, sweeper, workspace service, API last) with a documented `Step` order for start and for shutdown (refuse operations, finish them, trim and stop every sandbox, close routes, stop the API). Holds the real `WorkspaceService` over `puddle-workspace`, `puddle-boot`, the egress route and the SSH endpoint, and the file-backed settings and workspace list. `puddle serve` and the desktop app both embed it; the machine and the runtime are traits so the order is tested on fakes |
@@ -53,7 +53,7 @@ different crates and rarely collides.
 `netpolicy` depends on `types` and `settings`; `proxy` depends on `netpolicy` for its destination checks.
 `proxy` and `store` don't depend on each other's internals: the proxy asks for decisions through a
 trait defined in `puddle-types` (or the proxy crate) that `store` implements, and `puddle` wires
-them. `puddle-agent` depends on `puddle-types` and `puddle-agent-proto` only (it is built for the guest); the host side (`proxy`) uses `puddle-agent-proto` too, and `puddle-ipc` for the per-sandbox route it listens on. No cycles, no
+them. `puddle-agent` depends on `puddle-types` and `puddle-agent-proto` only (it is built for the guest); the host side (`proxy`) uses `puddle-agent-proto` too, and `puddle-ipc` for the per-workspace route it listens on. No cycles, no
 product crate depends on `puddle-e2e` or `puddle-vm-tests`.
 
 **New crate:** only when a component doesn't fit the table (say why in the commit). Copy an
@@ -175,7 +175,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 ## 6. Error handling
 
 - **Libraries:** typed errors with `thiserror`, one error enum per module or concern, variants
-  that say what failed and carry the context needed to act (`path`, `sandbox`, `host`). Errors
+  that say what failed and carry the context needed to act (`path`, `workspace`, `host`). Errors
   that cross crates live in `puddle-types` or are converted at the boundary.
 - **Binaries:** `puddle` maps errors to a user message and an exit code at the top; it may use
   `anyhow` only in `main`-level glue, never in the libraries.
@@ -187,8 +187,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 - `tracing` everywhere; `tracing-subscriber` is set up only in binaries. No `println!` outside CLI
   output (linted).
-- Structured fields, not formatted strings: `info!(sandbox = %id, host, "request approved")`.
-  Spans per sandbox and per proxied connection so a log line can be traced to its request.
+- Structured fields, not formatted strings: `info!(workspace = %id, host, "request approved")`.
+  Spans per workspace and per proxied connection so a log line can be traced to its request.
 - Levels: `error` = puddle can't do what the user asked; `warn` = degraded or retried; `info` =
   lifecycle and decisions (one line per approve/deny); `debug` = per-request detail; `trace` =
   bytes and protocol frames (never on by default).

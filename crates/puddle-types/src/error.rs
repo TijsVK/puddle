@@ -10,7 +10,7 @@ const MAX_ECHOED_CHARS: usize = 64;
 /// A value was rejected by one of this crate's checked constructors.
 ///
 /// The message names the kind of value, the (truncated, escaped) value itself and the rule it
-/// broke, e.g. `invalid sandbox name "Foo": may only contain a-z, 0-9 and '-'`.
+/// broke, e.g. `invalid workspace name "Foo": may only contain a-z, 0-9 and '-'`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid {what} {value:?}: {reason}")]
 pub struct ValidationError {
@@ -20,7 +20,7 @@ pub struct ValidationError {
 }
 
 impl ValidationError {
-    /// A new error for `what` (e.g. `"sandbox name"`), the rejected `value` and the `reason`.
+    /// A new error for `what` (e.g. `"workspace name"`), the rejected `value` and the `reason`.
     #[must_use]
     pub fn new(what: &'static str, value: &str, reason: impl fmt::Display) -> Self {
         let mut echoed: String = value.chars().take(MAX_ECHOED_CHARS).collect();
@@ -34,7 +34,7 @@ impl ValidationError {
         }
     }
 
-    /// What kind of value was rejected (e.g. `"sandbox name"`).
+    /// What kind of value was rejected (e.g. `"workspace name"`).
     #[must_use]
     pub fn what(&self) -> &'static str {
         self.what
@@ -53,12 +53,12 @@ mod tests {
 
     #[test]
     fn message_names_kind_value_and_reason() {
-        let e = ValidationError::new("sandbox name", "Foo", "must be lower-case");
+        let e = ValidationError::new("workspace name", "Foo", "must be lower-case");
         assert_eq!(
             e.to_string(),
-            r#"invalid sandbox name "Foo": must be lower-case"#
+            r#"invalid workspace name "Foo": must be lower-case"#
         );
-        assert_eq!(e.what(), "sandbox name");
+        assert_eq!(e.what(), "workspace name");
         assert_eq!(e.reason(), "must be lower-case");
     }
 

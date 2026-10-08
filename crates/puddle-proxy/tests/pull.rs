@@ -251,7 +251,7 @@ async fn a_tunnel_is_recorded_as_puddles_own_connection_with_its_bytes() {
     assert_eq!(events.len(), 1, "{events:?}");
     let event = &events[0];
     assert_eq!(event.origin, ConnectionOrigin::Puddle);
-    assert_eq!(event.sandbox, None);
+    assert_eq!(event.workspace, None);
     assert_eq!(
         (event.host.to_string(), event.port),
         ("registry.test".to_owned(), server.addr.port())

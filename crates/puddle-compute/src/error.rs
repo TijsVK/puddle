@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use puddle_types::SandboxStatus;
+use puddle_types::WorkspaceStatus;
 
 /// Why a compute-plane call failed. Names are plain strings because a runtime may report names
 /// puddle didn't create (a foreign sandbox, a stale directory).
@@ -40,7 +40,7 @@ pub enum ComputeError {
         /// What was attempted (`"exec"`, `"remove"`, ...).
         op: &'static str,
         /// The state it was in.
-        status: SandboxStatus,
+        status: WorkspaceStatus,
     },
     /// The handle refers to an earlier boot of the sandbox, which has since been restarted.
     #[error("handle for sandbox {sandbox:?} refers to an earlier boot")]
@@ -141,7 +141,7 @@ mod tests {
                 ComputeError::InvalidState {
                     sandbox: "a".into(),
                     op: "exec",
-                    status: SandboxStatus::Stopped,
+                    status: WorkspaceStatus::Stopped,
                 },
                 r#"cannot exec sandbox "a" while it is stopped"#,
             ),

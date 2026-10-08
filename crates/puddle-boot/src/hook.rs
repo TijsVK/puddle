@@ -61,7 +61,7 @@ pub enum BootError {
     #[error(transparent)]
     Compute(#[from] ComputeError),
     /// The hook failed; puddle stopped the sandbox (fail closed: no half-set-up VM runs).
-    #[error("sandbox {sandbox:?} failed its boot hook and was stopped: {failure}")]
+    #[error("workspace {sandbox:?} failed its boot hook and was stopped: {failure}")]
     Hook {
         /// The sandbox.
         sandbox: String,

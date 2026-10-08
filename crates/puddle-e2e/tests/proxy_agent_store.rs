@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! L2 end to end, no VM: a guest TCP client → the real guest agent → yamux over the sandbox's
+//! L2 end to end, no VM: a guest TCP client → the real guest agent → yamux over the workspace's
 //! real endpoint (`puddle-ipc`, a Unix socket) → the real proxy → local servers, with the real
 //! SQLite rules engine (`puddle-store`) as the policy and as the proxy's connection log, so every
 //! connection ends as a `connection` audit record (R-24).
@@ -25,7 +25,7 @@ use puddle_proxy::{Proxy, Route};
 use puddle_store::{
     Actor, Effect, Limits, NewRule, Pattern, PendingState, Resolution, Scope, Store, SystemClock,
 };
-use puddle_types::{NullSink, SandboxName};
+use puddle_types::{NullSink, WorkspaceName};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -33,8 +33,8 @@ use tokio::sync::{mpsc, oneshot};
 
 const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
-fn sandbox() -> SandboxName {
-    SandboxName::new("e2e").unwrap()
+fn workspace() -> WorkspaceName {
+    WorkspaceName::new("e2e").unwrap()
 }
 
 struct Rig {
@@ -57,7 +57,7 @@ async fn rig() -> Rig {
             .with_address_check(Arc::new(AnyAddress)),
     );
     let root = IpcRoot::new().unwrap();
-    let route = proxy.serve_route(root.listen().unwrap(), sandbox());
+    let route = proxy.serve_route(root.listen().unwrap(), workspace());
     let config = Config {
         listen: SocketAddr::new(LOCAL, 0),
         target: Target::Unix(route.endpoint().path().to_path_buf()),
@@ -78,7 +78,7 @@ async fn rig() -> Rig {
 fn allow(store: &Store, host: &str) {
     store
         .add_rule(&NewRule {
-            scope: Scope::Sandbox(sandbox()),
+            scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),
             effect: Effect::Allow,
             expires_at: None,
@@ -224,7 +224,7 @@ async fn parallel_connects_256_through_agent_proxy_and_store() {
     assert_eq!(rig.store.open_pending(None).unwrap().len(), 0);
 
     // Every connection is in the audit: written, or counted in a `suppressed` summary once its
-    // second is over (200 records per sandbox per second, R-26).
+    // second is over (200 records per workspace per second, R-26).
     let deadline = Instant::now() + Duration::from_secs(10);
     let accounted = loop {
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -251,7 +251,7 @@ async fn connections_land_in_the_store_audit() {
     let pending = format!("new.test:{}", echo.port());
     let (code, _) = connect_via(agent, &pending).await.unwrap();
     assert_eq!(code, 403);
-    let row = rig.store.open_pending(Some(&sandbox())).unwrap()[0].id;
+    let row = rig.store.open_pending(Some(&workspace())).unwrap()[0].id;
     wait_for_records(&rig.store, 1).await;
 
     let mut conn = TcpStream::connect(agent).await.unwrap();
@@ -282,7 +282,7 @@ async fn connections_land_in_the_store_audit() {
 
     let fields = |r: &Value| {
         (
-            r["sandbox_id"].clone(),
+            r["workspace_id"].clone(),
             r["host"].clone(),
             r["decision"].clone(),
             r["reason"].clone(),
@@ -347,7 +347,7 @@ async fn an_unknown_host_is_pending_in_the_store_and_passes_after_approval() {
     conn.read_to_string(&mut body).await.unwrap();
     assert!(body.contains("approve it in puddle"), "{body}");
 
-    let open = rig.store.open_pending(Some(&sandbox())).unwrap();
+    let open = rig.store.open_pending(Some(&workspace())).unwrap();
     assert_eq!(open.len(), 1);
     let row = &open[0];
     assert_eq!(
@@ -511,7 +511,7 @@ impl puddle_agent::bridge::Probe for BridgeUp {
 }
 
 /// A request that arrives on the Docker bridge listener meets the same policy and lands
-/// in the same audit as one on the loopback listener: same sandbox, same pending row (the
+/// in the same audit as one on the loopback listener: same workspace, same pending row (the
 /// repeat bumps `attempts`), same rule once approved, same record shape.
 #[tokio::test]
 async fn the_bridge_listener_gets_the_same_policy_and_audit_as_loopback() {
@@ -550,13 +550,13 @@ async fn the_bridge_listener_gets_the_same_policy_and_audit_as_loopback() {
     assert_eq!(code, 403);
     let (code, _) = connect_via(bridge, &authority).await.unwrap();
     assert_eq!(code, 403);
-    let pending = rig.store.open_pending(Some(&sandbox())).unwrap();
+    let pending = rig.store.open_pending(Some(&workspace())).unwrap();
     assert_eq!(pending.len(), 1, "one pending item for both listeners");
     assert_eq!(pending[0].attempts, 2);
     let records = wait_for_records(&rig.store, 2).await;
     let shape = |r: &Value| {
         (
-            r["sandbox_id"].clone(),
+            r["workspace_id"].clone(),
             r["host"].clone(),
             r["decision"].clone(),
             r["reason"].clone(),
@@ -576,5 +576,5 @@ async fn the_bridge_listener_gets_the_same_policy_and_audit_as_loopback() {
     drop(conn);
     let records = wait_for_records(&rig.store, 3).await;
     assert_eq!(records[2]["decision"], "allow");
-    assert_eq!(records[2]["sandbox_id"], "e2e");
+    assert_eq!(records[2]["workspace_id"], "e2e");
 }

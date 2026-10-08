@@ -65,7 +65,10 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(rule_sets::switch_rule_set))
         .routes(routes!(audit::audit))
         .routes(routes!(settings::get_global, settings::put_global))
-        .routes(routes!(settings::get_sandbox, settings::put_sandbox))
+        .routes(routes!(
+            settings::get_workspace_settings,
+            settings::put_workspace_settings
+        ))
         .routes(routes!(settings::get_consents))
         .routes(routes!(settings::put_consent))
         .routes(routes!(

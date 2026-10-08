@@ -5,7 +5,7 @@
 import type { components } from "#lib/api/schema.d.ts";
 
 export type Workspace = components["schemas"]["Workspace"];
-export type Status = components["schemas"]["SandboxStatus"];
+export type Status = components["schemas"]["WorkspaceStatus"];
 export type Operation = components["schemas"]["WorkspaceOperation"];
 export type Step = components["schemas"]["WorkspaceStep"];
 export type DeleteCheck = components["schemas"]["DeleteCheck"];

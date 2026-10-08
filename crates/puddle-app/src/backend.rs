@@ -112,8 +112,8 @@ impl Backend {
         Ok(self.info.write(path)?)
     }
 
-    /// Stops the backend: the shutdown hook. Today it ends the API server; the sandbox quit
-    /// sequence will go (close sandbox windows, browser-mode cleanup, stop every sandbox)
+    /// Stops the backend: the shutdown hook. Today it ends the API server; the workspace quit
+    /// sequence will go (close workspace windows, browser-mode cleanup, stop every workspace)
     /// in front of it. Safe to call twice.
     pub async fn shutdown(&self) {
         let running = self.running.lock().await.take();

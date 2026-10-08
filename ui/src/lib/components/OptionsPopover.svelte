@@ -39,8 +39,8 @@
     onClose: () => void;
   } = $props();
 
-  // "sandbox", "global", or "set:<id>".
-  let who = $state("sandbox");
+  // "workspace", "global", or "set:<id>".
+  let who = $state("workspace");
   let match = $state<Match>("exact");
   let duration = $state("0");
 
@@ -51,7 +51,7 @@
   $effect(() => {
     // Every time it opens it starts from the narrowest choice (R-15).
     if (open) {
-      who = "sandbox";
+      who = "workspace";
       match = "exact";
       duration = "0";
     }
@@ -59,7 +59,7 @@
 
   function decide(effect: Effect) {
     const ruleSet = sets.find((s) => `set:${s.id}` === who) ?? null;
-    const scope = who === "global" ? "global" : "sandbox";
+    const scope = who === "global" ? "global" : "workspace";
     onDecide({ effect, scope, ruleSet, match, durationSecs });
   }
 </script>
@@ -100,7 +100,7 @@
           <input
             type="radio"
             name="{id}-scope"
-            value="sandbox"
+            value="workspace"
             bind:group={who}
           />
           Only <b class="mono">{workspace}</b>

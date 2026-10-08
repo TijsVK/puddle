@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! I tests: a fake guest (yamux client with the agent's settings) on a real per-sandbox endpoint
+//! I tests: a fake guest (yamux client with the agent's settings) on a real per-workspace endpoint
 //! (`puddle-ipc`), the real proxy behind it, an in-memory policy and local servers.
 #![expect(
     clippy::unwrap_used,
@@ -21,7 +21,7 @@ use puddle_proxy::testing::{
 use puddle_proxy::{Proxy, ProxyConfig, Route};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, NullSink, PendingId,
-    SandboxName,
+    WorkspaceName,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -33,8 +33,8 @@ fn host(h: &str) -> Host {
     Host::parse_normalised(h).unwrap()
 }
 
-fn sandbox(name: &str) -> SandboxName {
-    SandboxName::new(name).unwrap()
+fn workspace(name: &str) -> WorkspaceName {
+    WorkspaceName::new(name).unwrap()
 }
 
 /// A proxy serving one route, its policy and IPC root.
@@ -63,7 +63,7 @@ impl Rig {
                 .with_config(config),
         );
         let root = IpcRoot::new().unwrap();
-        let route = proxy.serve_route(root.listen().unwrap(), sandbox("box"));
+        let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
         Self {
             policy,
             log,
@@ -335,12 +335,12 @@ async fn an_unknown_host_is_refused_and_pending_then_passes_once_approved() {
     assert_eq!(items.len(), 1);
     assert_eq!(
         (
-            &items[0].sandbox,
+            &items[0].workspace,
             items[0].host.to_string(),
             items[0].port,
             items[0].open
         ),
-        (&sandbox("box"), "new.test".to_owned(), echo.port(), true)
+        (&workspace("box"), "new.test".to_owned(), echo.port(), true)
     );
 
     rig.policy.approve(items[0].id).unwrap();
@@ -574,7 +574,7 @@ async fn the_default_address_check_blocks_loopback_even_when_allowed() {
     policy.allow(&host("127.0.0.1"));
     let proxy = Arc::new(Proxy::new(policy.clone(), Arc::new(NullSink)));
     let root = IpcRoot::new().unwrap();
-    let route = proxy.serve_route(root.listen().unwrap(), sandbox("box"));
+    let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
     let mut guest = Guest::connect(&route).await;
     let mut stream = guest.stream().await;
     stream
@@ -593,29 +593,29 @@ async fn the_default_address_check_blocks_loopback_even_when_allowed() {
     assert_eq!(policy.decisions(), 0);
 }
 
-/// The sandbox is the route's. Two routes, the same request: each pending item names the
-/// sandbox of the route it came in on.
+/// The workspace is the route's. Two routes, the same request: each pending item names the
+/// workspace of the route it came in on.
 #[tokio::test]
-async fn each_route_speaks_for_its_own_sandbox() {
+async fn each_route_speaks_for_its_own_workspace() {
     let policy = Arc::new(StaticPolicy::new());
     let proxy = Arc::new(Proxy::new(policy.clone(), Arc::new(NullSink)));
     let root = IpcRoot::new().unwrap();
-    let a = proxy.serve_route(root.listen().unwrap(), sandbox("alpha"));
-    let b = proxy.serve_route(root.listen().unwrap(), sandbox("beta"));
-    assert_eq!(a.sandbox(), &sandbox("alpha"));
+    let a = proxy.serve_route(root.listen().unwrap(), workspace("alpha"));
+    let b = proxy.serve_route(root.listen().unwrap(), workspace("beta"));
+    assert_eq!(a.workspace(), &workspace("alpha"));
     for route in [&a, &b] {
         let mut guest = Guest::connect(route).await;
         let (code, _) = guest.connect_to("same.test:443").await;
         assert_eq!(code, 403);
     }
-    let sandboxes: Vec<_> = policy.pending().into_iter().map(|p| p.sandbox).collect();
-    assert_eq!(sandboxes, vec![sandbox("alpha"), sandbox("beta")]);
+    let workspaces: Vec<_> = policy.pending().into_iter().map(|p| p.workspace).collect();
+    assert_eq!(workspaces, vec![workspace("alpha"), workspace("beta")]);
 }
 
 #[tokio::test]
-async fn connections_over_the_sandbox_limit_get_503_until_one_closes() {
+async fn connections_over_the_workspace_limit_get_503_until_one_closes() {
     let echo = echo_server().await;
-    let rig = Rig::new(ProxyConfig::default().with_max_streams_per_sandbox(2));
+    let rig = Rig::new(ProxyConfig::default().with_max_streams_per_workspace(2));
     rig.policy.allow(&host("127.0.0.1"));
     let mut guest = rig.guest().await;
     let target = echo.to_string();
@@ -680,7 +680,7 @@ async fn a_shut_down_route_accepts_no_one() {
     assert!(puddle_ipc::connect(&path).await.is_err());
     let _ = path;
     // The proxy itself still serves other routes.
-    let again = proxy.serve_route(root.listen().unwrap(), sandbox("box"));
+    let again = proxy.serve_route(root.listen().unwrap(), workspace("box"));
     let mut guest = Guest::connect(&again).await;
     let (code, _) = guest.connect_to("x.test:443").await;
     assert_eq!(code, 403);
@@ -810,7 +810,7 @@ async fn an_allowed_connect_is_reported_with_address_and_bytes() {
     let event = &events[0];
     assert_eq!(
         (
-            event.sandbox.as_ref().map(SandboxName::as_str),
+            event.workspace.as_ref().map(WorkspaceName::as_str),
             event.host.to_string(),
             event.port
         ),
@@ -932,7 +932,7 @@ async fn a_block_after_an_allow_is_reported_with_the_rule_and_the_toggle() {
             .with_resolver(Arc::new(StaticResolver::new().with("web.test", &[LOCAL]))),
     );
     let root = IpcRoot::new().unwrap();
-    let route = proxy.serve_route(root.listen().unwrap(), sandbox("box"));
+    let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
     let mut guest = Guest::connect(&route).await;
     let (code, _) = guest
         .request("GET http://web.test/a?token=CANARY-route-1 HTTP/1.1\r\n\r\n")

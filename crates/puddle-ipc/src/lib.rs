@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Per-sandbox host endpoints that only the current user can open.
+//! Per-workspace host endpoints that only the current user can open.
 //!
 //! msb connects each guest vsock route to a host endpoint: a named pipe on Windows, a Unix socket
-//! elsewhere. puddle gives every sandbox its own endpoint, so the endpoint a connection arrives on
-//! *is* the sandbox's identity. This crate makes those endpoints safe to rely on:
+//! elsewhere. puddle gives every workspace its own endpoint, so the endpoint a connection arrives on
+//! *is* the workspace's identity. This crate makes those endpoints safe to rely on:
 //!
 //! | Threat | Windows | Linux |
 //! |---|---|---|
@@ -16,7 +16,7 @@
 //! # async fn demo() -> Result<(), puddle_ipc::IpcError> {
 //! let root = puddle_ipc::IpcRoot::new()?;
 //! let mut listener = root.listen()?;          // bind *before* the VM boots
-//! let route_target = listener.endpoint().path(); // goes into the sandbox's vsock route
+//! let route_target = listener.endpoint().path(); // goes into the workspace's vsock route
 //! # let _ = route_target;
 //! let connection = listener.accept().await?;  // AsyncRead + AsyncWrite
 //! # drop(connection);
@@ -103,7 +103,7 @@ impl IpcRoot {
     /// # Errors
     ///
     /// - [`IpcError::NameTaken`] when something already exists at that name: nothing is
-    ///   bound and the caller must not boot the sandbox against it.
+    ///   bound and the caller must not boot the workspace against it.
     /// - [`IpcError::ForeignEndpoint`] when `endpoint` was made by another root.
     /// - [`IpcError::NoRuntime`] outside a tokio runtime.
     /// - [`IpcError::Io`] for other OS errors.
@@ -150,7 +150,7 @@ impl IpcRoot {
 }
 
 /// The name of one endpoint: a pipe path (`\\.\pipe\puddle-<32 hex>`) on Windows, a socket path
-/// (`<root dir>/<16 hex>.sock`) on Unix. This is what goes into the sandbox's vsock route.
+/// (`<root dir>/<16 hex>.sock`) on Unix. This is what goes into the workspace's vsock route.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Endpoint {
     path: PathBuf,

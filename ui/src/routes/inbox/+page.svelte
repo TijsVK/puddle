@@ -34,7 +34,7 @@
   const held = $derived(
     Object.values(pending.suppression)
       .filter((s) => s.active)
-      .sort((a, b) => a.sandbox.localeCompare(b.sandbox)),
+      .sort((a, b) => a.workspace.localeCompare(b.workspace)),
   );
 
   onMount(() => {
@@ -171,11 +171,11 @@
   </p>
 </div>
 
-{#each held as s (s.sandbox)}
+{#each held as s (s.workspace)}
   <p class="held">
     <b
       >{s.count} more {s.count === 1 ? "request" : "requests"} from
-      <span class="mono">{s.sandbox}</span>
+      <span class="mono">{s.workspace}</span>
       {s.count === 1 ? "was" : "were"} held back</b
     >
     because it asked for many new hosts at once. They show up again when it retries.

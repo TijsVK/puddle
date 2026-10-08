@@ -82,7 +82,7 @@ describe("refresh", () => {
   it("loads the groups, the held-back counters and tells the badge the count", async () => {
     const { inbox, store, counts } = setup();
     inbox.add(request(1), "example.com");
-    inbox.add(request(2, { sandbox: "other" as never }), "example.com");
+    inbox.add(request(2, { workspace: "other" as never }), "example.com");
     inbox.suppression["demo"] = { active: true, count: 12 };
     await store.refresh();
     expect(store.status).toBe("ready");
@@ -138,7 +138,7 @@ describe("refresh", () => {
     const { inbox, store } = setup();
     inbox.add(request(1, { host: "192.168.1.10" }), "192.168.1.10");
     inbox.add(
-      request(2, { host: "10.0.0.5", sandbox: "lab" as never }),
+      request(2, { host: "10.0.0.5", workspace: "lab" as never }),
       "10.0.0.5",
     );
     inbox.add(request(3, { host: "8.8.8.8" }), "8.8.8.8");
@@ -211,12 +211,16 @@ describe("events", () => {
     expect(store.rows.map((r) => r.request.id)).toEqual([2]);
     source.emit({
       type: "suppression_changed",
-      sandbox: "demo",
+      workspace: "demo",
       active: true,
       count: 3,
     });
     expect(store.suppression["demo"]).toMatchObject({ active: true, count: 3 });
-    source.emit({ type: "status_changed", sandbox: "demo", status: "running" });
+    source.emit({
+      type: "status_changed",
+      workspace: "demo",
+      status: "running",
+    });
     source.emit({
       type: "pending_opened",
       request: request(2),
@@ -366,7 +370,7 @@ describe("decide", () => {
     s.inbox.add(request(1, { host: "a.example.com" }), "example.com");
     s.inbox.add(request(2, { host: "b.example.com" }), "example.com");
     s.inbox.add(
-      request(3, { host: "a.example.com", sandbox: "other" as never }),
+      request(3, { host: "a.example.com", workspace: "other" as never }),
       "example.com",
     );
     await s.store.refresh();

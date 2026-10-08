@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The settings every sandbox has, each optional. The same type holds the global defaults
-//! ([`crate::GlobalSettings::sandbox_defaults`]) and one sandbox's overrides
-//! ([`crate::SandboxSettings::overrides`]); `None` means "not set here, ask the next level".
+//! The settings every workspace has, each optional. The same type holds the global defaults
+//! ([`crate::GlobalSettings::workspace_defaults`]) and one workspace's overrides
+//! ([`crate::WorkspaceSettings::overrides`]); `None` means "not set here, ask the next level".
 
 use std::collections::BTreeMap;
 
@@ -11,21 +11,21 @@ use serde_json::Value;
 
 use crate::{ClipboardRead, ReconnectionGrace};
 
-/// The per-sandbox settings, each optional. A setting added here gets a global default and a
-/// per-sandbox override at once, and [`crate::resolve`] must learn it (its exhaustive
+/// The per-workspace settings, each optional. A setting added here gets a global default and a
+/// per-workspace override at once, and [`crate::resolve`] must learn it (its exhaustive
 /// destructuring fails to compile until it does).
 ///
 /// ```
-/// use puddle_settings::SandboxLayer;
+/// use puddle_settings::WorkspaceLayer;
 /// use puddle_types::{LocalCategory, MemoryMib};
-/// let mut layer = SandboxLayer::default();
+/// let mut layer = WorkspaceLayer::default();
 /// layer.memory = Some(MemoryMib::new(2048).unwrap());
 /// layer.local_toggles.private = Some(true);
 /// assert!(!layer.is_empty());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct SandboxLayer {
-    /// Guest memory, msb's `--memory`; applies at the sandbox's next start.
+pub struct WorkspaceLayer {
+    /// Guest memory, msb's `--memory`; applies at the workspace's next start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<MemoryMib>,
     /// Local-destination toggles, one per address category.
@@ -37,10 +37,10 @@ pub struct SandboxLayer {
     /// Browser VS Code's reconnection grace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reconnection_grace: Option<ReconnectionGrace>,
-    /// Zoom hotkeys in sandbox windows.
+    /// Zoom hotkeys in workspace windows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zoom_hotkeys: Option<bool>,
-    /// Programmatic clipboard reads in sandbox windows.
+    /// Programmatic clipboard reads in workspace windows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clipboard_read: Option<ClipboardRead>,
     /// Whether puddle opens an SSH way into the workspace for the user's own tools (desktop
@@ -51,7 +51,7 @@ pub struct SandboxLayer {
     pub(crate) extra: BTreeMap<String, Value>,
 }
 
-impl SandboxLayer {
+impl WorkspaceLayer {
     /// Whether no setting is set at this level (unknown fields count as set, so they are kept).
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -135,15 +135,15 @@ mod tests {
     #[test]
     fn empty_layer_serialises_to_an_empty_object() {
         assert_eq!(
-            serde_json::to_string(&SandboxLayer::default()).unwrap(),
+            serde_json::to_string(&WorkspaceLayer::default()).unwrap(),
             "{}"
         );
-        assert!(SandboxLayer::default().is_empty());
+        assert!(WorkspaceLayer::default().is_empty());
     }
 
     #[test]
     fn set_values_use_the_documented_names() {
-        let l = SandboxLayer {
+        let l = WorkspaceLayer {
             memory: Some(MemoryMib::new(1024).unwrap()),
             local_toggles: LocalToggles {
                 metadata: Some(false),
@@ -161,32 +161,33 @@ mod tests {
             r#"{"memory":1024,"local_toggles":{"metadata":false},"wildcards_reach_local":true,"reconnection_grace":60,"zoom_hotkeys":false,"clipboard_read":"deny","direct_ssh":true}"#
         );
         assert_eq!(
-            serde_json::from_str::<SandboxLayer>(&serde_json::to_string(&l).unwrap()).unwrap(),
+            serde_json::from_str::<WorkspaceLayer>(&serde_json::to_string(&l).unwrap()).unwrap(),
             l
         );
     }
 
     #[test]
     fn null_means_unset() {
-        let l: SandboxLayer =
+        let l: WorkspaceLayer =
             serde_json::from_str(r#"{"memory":null,"local_toggles":{"private":null}}"#).unwrap();
         assert!(l.is_empty());
     }
 
     #[test]
     fn invalid_values_are_rejected_through_the_flattened_map() {
-        assert!(serde_json::from_str::<SandboxLayer>(r#"{"memory":1}"#).is_err());
-        assert!(serde_json::from_str::<SandboxLayer>(r#"{"memory":"8192"}"#).is_err());
+        assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"memory":1}"#).is_err());
+        assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"memory":"8192"}"#).is_err());
         assert!(
-            serde_json::from_str::<SandboxLayer>(r#"{"local_toggles":{"private":"yes"}}"#).is_err()
+            serde_json::from_str::<WorkspaceLayer>(r#"{"local_toggles":{"private":"yes"}}"#)
+                .is_err()
         );
-        assert!(serde_json::from_str::<SandboxLayer>(r#"{"clipboard_read":"maybe"}"#).is_err());
-        assert!(serde_json::from_str::<SandboxLayer>(r#"{"reconnection_grace":-1}"#).is_err());
+        assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"clipboard_read":"maybe"}"#).is_err());
+        assert!(serde_json::from_str::<WorkspaceLayer>(r#"{"reconnection_grace":-1}"#).is_err());
     }
 
     #[test]
     fn unknown_fields_are_kept_and_listed() {
-        let l: SandboxLayer = serde_json::from_str(
+        let l: WorkspaceLayer = serde_json::from_str(
             r#"{"cpus":4,"local_toggles":{"private":true,"vpn":true},"memory":2048}"#,
         )
         .unwrap();
@@ -194,12 +195,12 @@ mod tests {
         assert_eq!(l.local_toggles.private, Some(true));
         assert!(!l.is_empty());
         let mut unknown = Vec::new();
-        l.collect_unknown("sandbox_defaults.", &mut unknown);
+        l.collect_unknown("workspace_defaults.", &mut unknown);
         assert_eq!(
             unknown,
             [
-                "sandbox_defaults.cpus",
-                "sandbox_defaults.local_toggles.vpn"
+                "workspace_defaults.cpus",
+                "workspace_defaults.local_toggles.vpn"
             ]
         );
         let back = serde_json::to_value(&l).unwrap();
@@ -222,7 +223,7 @@ mod tests {
 
     #[test]
     fn a_layer_with_only_unknown_toggles_is_not_empty() {
-        let l: SandboxLayer = serde_json::from_str(r#"{"local_toggles":{"vpn":true}}"#).unwrap();
+        let l: WorkspaceLayer = serde_json::from_str(r#"{"local_toggles":{"vpn":true}}"#).unwrap();
         assert!(!l.local_toggles.is_empty());
         assert_eq!(
             serde_json::to_string(&l).unwrap(),

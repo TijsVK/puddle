@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The per-sandbox token bucket for new pending rows (R-13).
+//! The per-workspace token bucket for new pending rows (R-13).
 
 /// Up to `capacity` tokens; one more every `refill_ms`. Time only counts forward: a clock that
 /// steps back neither refills nor drains.

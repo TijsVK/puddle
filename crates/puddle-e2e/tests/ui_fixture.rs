@@ -190,7 +190,7 @@ async fn the_default_scenario_is_the_one_pending_request_the_ui_gates_count_on()
     let pending = run.get("/api/pending").await.json();
     let rows = pending["requests"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{pending}");
-    assert_eq!(rows[0]["sandbox"], "demo");
+    assert_eq!(rows[0]["workspace"], "demo");
     assert_eq!(rows[0]["host"], "registry.example.org");
     assert_eq!(run.get("/api/rules").await.json()["rules"], json!([]));
 }
@@ -202,7 +202,7 @@ async fn the_same_scenario_gives_byte_identical_responses() {
         "/api/inbox",
         "/api/rules",
         "/api/audit?limit=500",
-        "/api/sandboxes/web-shop/suppression",
+        "/api/workspaces/web-shop/suppression",
         "/api/workspaces",
         "/api/workspaces/docs-site/delete-check",
     ];
@@ -267,7 +267,7 @@ async fn emit_puts_an_event_on_the_stream_and_any_event_json_is_accepted() {
     let mut stream = run.events().await;
     read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     // The stream is subscribed once the hub has a receiver; emit until it shows up.
-    let event = json!({"type": "oom_kill", "sandbox": "web-shop", "pid": 7, "process": "node"});
+    let event = json!({"type": "oom_kill", "workspace": "web-shop", "pid": 7, "process": "node"});
     let sent = run.control("POST", "/control/emit", Some(&event)).await;
     assert_eq!(sent.status, 204);
     let seen = read_until(&mut stream, |s| s.contains("oom_kill")).await;
@@ -293,7 +293,7 @@ async fn scripts_run_in_order_and_an_unknown_one_is_404() {
         .control(
             "POST",
             "/control/step",
-            Some(&json!({"do": "request", "sandbox": "Not A Name", "host": "x.example.org"})),
+            Some(&json!({"do": "request", "workspace": "Not A Name", "host": "x.example.org"})),
         )
         .await;
     assert_eq!(bad.status, 422, "{}", bad.body);
@@ -346,7 +346,7 @@ async fn reset_starts_over_from_the_scenario_or_another_one() {
     run.control(
         "POST",
         "/control/step",
-        Some(&json!({"do": "request", "sandbox": "demo", "host": "more.example.org"})),
+        Some(&json!({"do": "request", "workspace": "demo", "host": "more.example.org"})),
     )
     .await;
     assert_eq!(run.state().await["pending"], 2);
@@ -381,8 +381,8 @@ async fn settings_in_a_scenario_are_served_with_their_unknown_fields_listed() {
     let scenario: Scenario = serde_json::from_value(json!({
         "name": "settings",
         "settings": {
-            "global": {"schema_version": 1, "sandbox_defaults": {"zoom_hotkeys": false}},
-            "sandboxes": {"web-shop": {"schema_version": 1}}
+            "global": {"schema_version": 1, "workspace_defaults": {"zoom_hotkeys": false}},
+            "workspaces": {"web-shop": {"schema_version": 1}}
         }
     }))
     .unwrap();
@@ -391,7 +391,7 @@ async fn settings_in_a_scenario_are_served_with_their_unknown_fields_listed() {
     assert_eq!(global.status, 200, "{}", global.body);
     assert_eq!(global.json()["unknown_fields"], json!([]));
     assert_eq!(
-        run.get("/api/settings/sandboxes/web-shop").await.status,
+        run.get("/api/settings/workspaces/web-shop").await.status,
         200
     );
 }
@@ -405,8 +405,8 @@ async fn a_dropped_file_makes_requests_arrive_in_the_old_serve_ui_format() {
     std::fs::write(
         dir.path().join("a.tmp"),
         json!([
-            {"sandbox": "demo", "host": "one.example.org", "repeat": 2},
-            {"sandbox": "demo", "count": 3, "domain": "many.example.org"}
+            {"workspace": "demo", "host": "one.example.org", "repeat": 2},
+            {"workspace": "demo", "count": 3, "domain": "many.example.org"}
         ])
         .to_string(),
     )
@@ -434,14 +434,14 @@ async fn a_dropped_file_makes_requests_arrive_in_the_old_serve_ui_format() {
 #[test]
 fn drop_items_without_do_are_requests_or_bulks_and_others_are_refused() {
     assert!(matches!(
-        step_from_drop(json!({"sandbox": "a", "host": "x.example.org"})),
+        step_from_drop(json!({"workspace": "a", "host": "x.example.org"})),
         Ok(Step::Request(_))
     ));
     assert!(matches!(
-        step_from_drop(json!({"sandbox": "a", "count": 2})),
+        step_from_drop(json!({"workspace": "a", "count": 2})),
         Ok(Step::Bulk { count: 2, .. })
     ));
-    assert!(step_from_drop(json!({"sandbox": "a", "hots": "x"})).is_err());
+    assert!(step_from_drop(json!({"workspace": "a", "hots": "x"})).is_err());
     assert!(step_from_drop(json!(7)).is_err());
 }
 
@@ -449,7 +449,7 @@ fn drop_items_without_do_are_requests_or_bulks_and_others_are_refused() {
 async fn a_scenario_with_a_typo_or_a_bad_value_fails_to_start() {
     assert!(serde_json::from_value::<Scenario>(json!({"rulez": []})).is_err());
     let bad_host: Scenario =
-        serde_json::from_value(json!({"requests": [{"sandbox": "a", "host": "bad host!"}]}))
+        serde_json::from_value(json!({"requests": [{"workspace": "a", "host": "bad host!"}]}))
             .unwrap();
     let err = Fixture::start(FixtureOptions {
         port: 0,
@@ -461,7 +461,7 @@ async fn a_scenario_with_a_typo_or_a_bad_value_fails_to_start() {
     .unwrap();
     assert!(err.contains("bad host!"), "{err}");
     let bad_reason: Scenario = serde_json::from_value(json!({"connections": [
-        {"sandbox": "a", "host": "x.example.org", "decision": "blocked", "reason": "mystery"}
+        {"workspace": "a", "host": "x.example.org", "decision": "blocked", "reason": "mystery"}
     ]}))
     .unwrap();
     assert!(

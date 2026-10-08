@@ -159,7 +159,7 @@ export class WorkspaceStore {
   }
 
   #apply(event: WorkspaceEvent): void {
-    const name = event.sandbox;
+    const name = event.workspace;
     switch (event.type) {
       case "status_changed": {
         const w = this.byName(name);
@@ -346,8 +346,8 @@ export class WorkspaceStore {
    */
   async setDirectSsh(name: string, on: boolean): Promise<ActionResult> {
     try {
-      const mine = await this.#api.GET("/api/settings/sandboxes/{sandbox}", {
-        params: { path: { sandbox: name } },
+      const mine = await this.#api.GET("/api/settings/workspaces/{workspace}", {
+        params: { path: { workspace: name } },
       });
       if (!mine.data) {
         return {
@@ -355,10 +355,13 @@ export class WorkspaceStore {
           message: mine.error?.message ?? "puddle couldn't read the settings.",
         };
       }
-      const saved = await this.#api.PUT("/api/settings/sandboxes/{sandbox}", {
-        params: { path: { sandbox: name } },
-        body: { overrides: { ...mine.data.overrides, direct_ssh: on } },
-      });
+      const saved = await this.#api.PUT(
+        "/api/settings/workspaces/{workspace}",
+        {
+          params: { path: { workspace: name } },
+          body: { overrides: { ...mine.data.overrides, direct_ssh: on } },
+        },
+      );
       if (!saved.data) {
         return {
           ok: false,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Validated names: sandboxes, workspaces, volumes and image references.
+//! Validated names: workspaces, sandboxes, volumes and image references.
 //!
-//! Sandbox, workspace and volume names are DNS labels (RFC 1123: `a-z`, `0-9`, `-`, 1–63
+//! Workspace, sandbox and volume names are DNS labels (RFC 1123: `a-z`, `0-9`, `-`, 1–63
 //! characters, starting and ending with a letter or digit). That is stricter than msb's own rule
 //! (it also allows upper case, `.` and `_`), so every puddle name is a valid msb name, and a name
 //! can also be used as a host label (`<name>.localhost`) and in a pipe or file name unchanged.
@@ -20,9 +20,9 @@ const MAX_LABEL_LEN: usize = 63;
 /// (ADR 0006).
 pub const WORKSPACE_VOLUME_PREFIX: &str = "ws-";
 
-/// Sandbox names puddle refuses because the desktop shell uses them as host names
+/// Workspace names puddle refuses because the desktop shell uses them as host names
 /// (`tauri.localhost`, `ipc.localhost`, `asset.localhost`).
-pub const RESERVED_SANDBOX_NAMES: [&str; 3] = ["tauri", "ipc", "asset"];
+pub const RESERVED_WORKSPACE_NAMES: [&str; 3] = ["tauri", "ipc", "asset"];
 
 /// Checks `value` against the DNS-label rule with at most `max_len` characters.
 fn check_label(what: &'static str, value: &str, max_len: usize) -> Result<(), ValidationError> {
@@ -113,13 +113,13 @@ macro_rules! string_newtype {
     };
 }
 
-/// A sandbox's name: a DNS label that isn't one of [`RESERVED_SANDBOX_NAMES`].
+/// A workspace's name: a DNS label that isn't one of [`RESERVED_WORKSPACE_NAMES`].
 ///
 /// ```
-/// use puddle_types::SandboxName;
-/// assert!(SandboxName::new("my-project").is_ok());
-/// assert!(SandboxName::new("My_Project").is_err()); // upper case and '_'
-/// assert!(SandboxName::new("tauri").is_err()); // reserved
+/// use puddle_types::WorkspaceName;
+/// assert!(WorkspaceName::new("my-project").is_ok());
+/// assert!(WorkspaceName::new("My_Project").is_err()); // upper case and '_'
+/// assert!(WorkspaceName::new("tauri").is_err()); // reserved
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -132,8 +132,60 @@ macro_rules! string_newtype {
         max_length = 63,
         pattern = "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
         example = "my-project",
-        description = "A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), \
+        description = "A workspace's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), \
                        not `tauri`, `ipc` or `asset`."
+    )
+)]
+pub struct WorkspaceName(String);
+
+impl WorkspaceName {
+    /// Checks `name` and wraps it.
+    ///
+    /// # Errors
+    ///
+    /// When `name` isn't a DNS label (empty, longer than 63, characters other than `a-z`, `0-9`
+    /// and `-`, or a leading/trailing `-`) or is reserved.
+    pub fn new(name: &str) -> Result<Self, ValidationError> {
+        check_label("workspace name", name, MAX_LABEL_LEN)?;
+        if RESERVED_WORKSPACE_NAMES.contains(&name) {
+            return Err(ValidationError::new(
+                "workspace name",
+                name,
+                "is reserved for the desktop shell",
+            ));
+        }
+        Ok(Self(name.to_owned()))
+    }
+}
+
+string_newtype!(WorkspaceName);
+
+/// The name of a sandbox in the runtime (the microVM that runs a workspace): a DNS label.
+///
+/// A workspace's sandbox has the workspace's name ([`WorkspaceName::sandbox_name`]); puddle's own
+/// helper sandboxes (such as the one that checks a stopped workspace's volume) have names no
+/// workspace can have, which is why this is a type of its own.
+///
+/// ```
+/// use puddle_types::{SandboxName, WorkspaceName};
+/// let w = WorkspaceName::new("my-project").unwrap();
+/// assert_eq!(w.sandbox_name().as_str(), "my-project");
+/// assert_eq!(w.sandbox_name().workspace_name(), Some(w));
+/// assert!(SandboxName::new("m--my-project").is_ok());
+/// assert!(SandboxName::new("My_Project").is_err());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+#[cfg_attr(
+    feature = "openapi",
+    derive(utoipa::ToSchema),
+    schema(
+        value_type = String,
+        min_length = 1,
+        max_length = 63,
+        pattern = "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+        example = "my-project",
+        description = "A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`)."
     )
 )]
 pub struct SandboxName(String);
@@ -144,21 +196,28 @@ impl SandboxName {
     /// # Errors
     ///
     /// When `name` isn't a DNS label (empty, longer than 63, characters other than `a-z`, `0-9`
-    /// and `-`, or a leading/trailing `-`) or is reserved.
+    /// and `-`, or a leading/trailing `-`).
     pub fn new(name: &str) -> Result<Self, ValidationError> {
         check_label("sandbox name", name, MAX_LABEL_LEN)?;
-        if RESERVED_SANDBOX_NAMES.contains(&name) {
-            return Err(ValidationError::new(
-                "sandbox name",
-                name,
-                "is reserved for the desktop shell",
-            ));
-        }
         Ok(Self(name.to_owned()))
+    }
+
+    /// The workspace this sandbox runs, or `None` when the name is not a valid workspace name.
+    #[must_use]
+    pub fn workspace_name(&self) -> Option<WorkspaceName> {
+        WorkspaceName::new(&self.0).ok()
     }
 }
 
 string_newtype!(SandboxName);
+
+impl WorkspaceName {
+    /// The name of the sandbox that runs this workspace: the same label.
+    #[must_use]
+    pub fn sandbox_name(&self) -> SandboxName {
+        SandboxName(self.0.clone())
+    }
+}
 
 /// A workspace's identifier: a DNS label of at most 60 characters, so its volume name
 /// (`ws-<id>`, see [`WorkspaceId::volume_name`]) is a DNS label too.
@@ -279,30 +338,30 @@ mod tests {
 
     #[cfg(feature = "openapi")]
     proptest::proptest! {
-        /// The pattern published in the API schema accepts only names `SandboxName::new` accepts
+        /// The pattern published in the API schema accepts only names `WorkspaceName::new` accepts
         /// (the reserved names aside, which a pattern can't express).
         #[test]
         fn openapi_pattern_agrees_with_the_constructor(
             name in "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
         ) {
             use utoipa::PartialSchema;
-            let schema = serde_json::to_value(SandboxName::schema()).unwrap();
+            let schema = serde_json::to_value(WorkspaceName::schema()).unwrap();
             proptest::prop_assert_eq!(&schema["pattern"], "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$");
             proptest::prop_assert_eq!(&schema["maxLength"], 63);
-            let reserved = RESERVED_SANDBOX_NAMES.contains(&name.as_str());
-            proptest::prop_assert_eq!(SandboxName::new(&name).is_ok(), !reserved);
+            let reserved = RESERVED_WORKSPACE_NAMES.contains(&name.as_str());
+            proptest::prop_assert_eq!(WorkspaceName::new(&name).is_ok(), !reserved);
         }
     }
 
     #[test]
-    fn sandbox_name_accepts_dns_labels() {
+    fn workspace_name_accepts_dns_labels() {
         for ok in ["a", "0", "my-project", "a-1-b", &"x".repeat(63)] {
-            assert_eq!(SandboxName::new(ok).unwrap().as_str(), ok);
+            assert_eq!(WorkspaceName::new(ok).unwrap().as_str(), ok);
         }
     }
 
     #[test]
-    fn sandbox_name_rejects_non_labels_with_a_reason() {
+    fn workspace_name_rejects_non_labels_with_a_reason() {
         let cases = [
             ("", "must not be empty"),
             (&*"x".repeat(64), "at most 63"),
@@ -316,19 +375,36 @@ mod tests {
             ("-", "start and end"),
         ];
         for (bad, reason) in cases {
-            let err = SandboxName::new(bad).unwrap_err();
+            let err = WorkspaceName::new(bad).unwrap_err();
             assert!(err.reason().contains(reason), "{bad:?}: {err}");
-            assert_eq!(err.what(), "sandbox name");
+            assert_eq!(err.what(), "workspace name");
         }
     }
 
     #[test]
-    fn reserved_sandbox_names_are_refused() {
-        for reserved in RESERVED_SANDBOX_NAMES {
-            let err = SandboxName::new(reserved).unwrap_err();
+    fn a_workspaces_sandbox_has_its_name_and_helper_sandboxes_have_none_of_a_workspace() {
+        let w = WorkspaceName::new("acme").unwrap();
+        let sandbox = w.sandbox_name();
+        assert_eq!(sandbox.as_str(), "acme");
+        assert_eq!(sandbox.workspace_name(), Some(w));
+        // A helper sandbox's name is valid as a sandbox name; a reserved one is no workspace's.
+        let helper = SandboxName::new("m--acme").unwrap();
+        assert_eq!(helper.workspace_name().unwrap().as_str(), "m--acme");
+        let reserved = SandboxName::new("tauri").unwrap();
+        assert_eq!(reserved.workspace_name(), None);
+        let err = SandboxName::new("Acme").unwrap_err();
+        assert_eq!(err.what(), "sandbox name");
+        assert_eq!(serde_json::to_string(&sandbox).unwrap(), r#""acme""#);
+        assert!(serde_json::from_str::<SandboxName>(r#""A""#).is_err());
+    }
+
+    #[test]
+    fn reserved_workspace_names_are_refused() {
+        for reserved in RESERVED_WORKSPACE_NAMES {
+            let err = WorkspaceName::new(reserved).unwrap_err();
             assert!(err.reason().contains("reserved"), "{err}");
         }
-        assert!(SandboxName::new("tauri-app").is_ok());
+        assert!(WorkspaceName::new("tauri-app").is_ok());
     }
 
     #[test]
@@ -365,12 +441,12 @@ mod tests {
 
     #[test]
     fn string_conversions_round_trip() {
-        let n: SandboxName = "box".parse().unwrap();
+        let n: WorkspaceName = "box".parse().unwrap();
         assert_eq!(n.to_string(), "box");
         assert_eq!(AsRef::<str>::as_ref(&n), "box");
         assert_eq!(String::from(n.clone()), "box");
-        assert_eq!(SandboxName::try_from("box").unwrap(), n);
-        assert_eq!(SandboxName::try_from(String::from("box")).unwrap(), n);
+        assert_eq!(WorkspaceName::try_from("box").unwrap(), n);
+        assert_eq!(WorkspaceName::try_from(String::from("box")).unwrap(), n);
         let w: WorkspaceId = "w".parse().unwrap();
         assert_eq!(w.to_string(), "w");
         let v: VolumeName = "v".parse().unwrap();
@@ -381,10 +457,10 @@ mod tests {
 
     #[test]
     fn serde_validates_on_the_way_in() {
-        let n: SandboxName = serde_json::from_str(r#""box""#).unwrap();
+        let n: WorkspaceName = serde_json::from_str(r#""box""#).unwrap();
         assert_eq!(serde_json::to_string(&n).unwrap(), r#""box""#);
-        assert!(serde_json::from_str::<SandboxName>(r#""Box""#).is_err());
-        assert!(serde_json::from_str::<SandboxName>(r#""ipc""#).is_err());
+        assert!(serde_json::from_str::<WorkspaceName>(r#""Box""#).is_err());
+        assert!(serde_json::from_str::<WorkspaceName>(r#""ipc""#).is_err());
         assert!(serde_json::from_str::<WorkspaceId>(r#""-""#).is_err());
         assert!(serde_json::from_str::<VolumeName>(r#""""#).is_err());
         assert!(serde_json::from_str::<ImageRef>(r#""a b""#).is_err());

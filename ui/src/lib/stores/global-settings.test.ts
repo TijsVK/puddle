@@ -76,7 +76,7 @@ describe("saving", () => {
     });
     expect(await store.save({ ui: { theme: "dark" } })).toEqual({ ok: true });
     // The second save still carries the first change.
-    expect(store.view?.sandbox_defaults.memory).toBe(4096);
+    expect(store.view?.workspace_defaults.memory).toBe(4096);
     expect(store.view?.ui.theme).toBe("dark");
   });
 

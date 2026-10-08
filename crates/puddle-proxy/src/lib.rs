@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Egress proxy: the only way out of a sandbox.
+//! Egress proxy: the only way out of a workspace.
 //!
-//! Every guest connection reaches the host as a yamux stream on the sandbox's route (a per-sandbox
+//! Every guest connection reaches the host as a yamux stream on the workspace's route (a per-workspace
 //! named pipe or Unix socket, `puddle-ipc`), carried by the guest agent (`puddle-agent-proto`).
 //! [`Proxy::serve_route`] accepts the agent's sessions on that route; each proxied stream goes
 //! through these steps:
@@ -26,8 +26,8 @@
 //!    A tunnel that carries plain HTTP (Node `fetch` and Yarn Berry send `http://` as
 //!    `CONNECT host:80`) is decided and relayed like any tunnel; only its first request line is
 //!    read, for the audit.
-//!    A `CONNECT` to a name a sandbox has a [`Termination`] for, on port 443, is different: the
-//!    proxy answers the guest's TLS handshake itself with a leaf from the sandbox's CA, parses
+//!    A `CONNECT` to a name a workspace has a [`Termination`] for, on port 443, is different: the
+//!    proxy answers the guest's TLS handshake itself with a leaf from the workspace's CA, parses
 //!    each request, asks the [`Injector`] what to do, and sends it over its own verified TLS
 //!    connection to the real server ([`Proxy::with_termination`], [`terminate`]).
 //! 6. **Audit**: every request that got as far as a destination ends as one
@@ -40,7 +40,7 @@
 //! the proxy settings): the rules decide the name, a name nothing allows is never looked up
 //! anywhere, and nothing is recorded (`docs/spec/rules.md` §6).
 //!
-//! The sandbox is the route's, never anything the guest says. Each sandbox has a cap on
+//! The workspace is the route's, never anything the guest says. Each workspace has a cap on
 //! open connections and each route on agent sessions ([`ProxyConfig`]), far above what real tools
 //! open.
 //!
@@ -70,7 +70,7 @@ pub mod testing;
 mod upstream;
 
 pub use destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver, SystemResolver};
-pub use proxy::{Proxy, ProxyConfig, SandboxHandler};
+pub use proxy::{Proxy, ProxyConfig, WorkspaceHandler};
 pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
 pub use records::{RecordError, RecordResolver, Records, SystemRecords};
 pub use route::Route;

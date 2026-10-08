@@ -2,7 +2,7 @@
 //! Rule sets and System managed on the wire (rules spec §7).
 
 use puddle_store as store;
-use puddle_types::{RuleSetId, SandboxName};
+use puddle_types::{RuleSetId, WorkspaceName};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -51,9 +51,9 @@ pub struct SystemManagedHost {
     pub reason: SystemReason,
     /// The reason in words.
     pub reason_text: String,
-    /// The one sandbox it is allowed for; `null` for every sandbox.
+    /// The one workspace it is allowed for; `null` for every workspace.
     #[schema(required = true)]
-    pub sandbox: Option<SandboxName>,
+    pub workspace: Option<WorkspaceName>,
 }
 
 impl SystemManagedHost {
@@ -63,7 +63,7 @@ impl SystemManagedHost {
             note: host.note.to_owned(),
             reason: SystemReason::from_store(host.reason)?,
             reason_text: host.reason.describe().to_owned(),
-            sandbox: host.sandbox,
+            workspace: host.workspace,
         })
     }
 }
@@ -78,11 +78,11 @@ pub enum RuleSetKind {
     User,
 }
 
-/// One sandbox's own switch for a set.
+/// One workspace's own switch for a set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RuleSetOverride {
-    /// The sandbox.
-    pub sandbox: SandboxName,
+    /// The workspace.
+    pub workspace: WorkspaceName,
     /// On or off there.
     pub enabled: bool,
 }
@@ -120,10 +120,10 @@ pub struct RuleSetView {
     pub description: String,
     /// Whether it is on where nobody switched it: built-in sets ship off, your sets start on.
     pub default_on: bool,
-    /// The switch for every sandbox; `null` follows `default_on`.
+    /// The switch for every workspace; `null` follows `default_on`.
     #[schema(required = true)]
     pub global: Option<bool>,
-    /// Sandboxes with a switch of their own.
+    /// Workspaces with a switch of their own.
     pub overrides: Vec<RuleSetOverride>,
     /// Its entries.
     pub entries: Vec<RuleSetEntry>,
@@ -160,7 +160,7 @@ impl RuleSetView {
             global,
             overrides: overrides
                 .into_iter()
-                .map(|(sandbox, enabled)| RuleSetOverride { sandbox, enabled })
+                .map(|(workspace, enabled)| RuleSetOverride { workspace, enabled })
                 .collect(),
             entries: entries.into_iter().map(RuleSetEntry::from_store).collect(),
             changed_at,
@@ -225,13 +225,13 @@ pub struct RuleSetUpdateRequest {
     pub description: String,
 }
 
-/// Switch a set on or off, for every sandbox or for one.
+/// Switch a set on or off, for every workspace or for one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuleSetSwitchRequest {
-    /// The sandbox whose own switch to set; left out or `null` for every sandbox.
+    /// The workspace whose own switch to set; left out or `null` for every workspace.
     #[serde(default)]
-    pub sandbox: Option<SandboxName>,
+    pub workspace: Option<WorkspaceName>,
     /// On or off; `null` removes the switch, so the next level decides (the global switch, then
     /// the set's default).
     #[schema(required = true)]

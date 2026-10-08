@@ -8,7 +8,7 @@ use puddle_compute::{
     ComputeError, DiskSize, Runtime, Sandbox, SandboxSpec, VolumeInfo, VolumeMount, VolumeSpec,
 };
 use puddle_types::{
-    GuestPath, ImageRef, MemoryMib, SandboxName, SandboxStatus, VolumeName, WorkspaceId,
+    GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceId, WorkspaceStatus,
 };
 use tracing::{debug, info, warn};
 
@@ -463,7 +463,7 @@ impl Workspaces {
     pub async fn stop<S: Sandbox>(&self, sandbox: &S) -> Result<StopReport, WorkspaceError> {
         let name = sandbox.name();
         let mut trims = Vec::new();
-        let running = matches!(sandbox.status().await, Ok(SandboxStatus::Running));
+        let running = matches!(sandbox.status().await, Ok(WorkspaceStatus::Running));
         if running {
             for id in self.registry.owned_by(name) {
                 let result = self.trim(sandbox, &id).await;

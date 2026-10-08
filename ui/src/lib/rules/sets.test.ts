@@ -20,7 +20,7 @@ describe("where a set is on (R-37)", () => {
   it("follows the workspace's switch, then every workspace's, then the default", () => {
     const set = builtIn("github", {
       global: true,
-      overrides: [{ sandbox: "api" as never, enabled: false }],
+      overrides: [{ workspace: "api" as never, enabled: false }],
     });
     expect(isOn(set, "api")).toBe(false);
     expect(isOn(set, "web")).toBe(true);
@@ -45,8 +45,8 @@ describe("where a set is on (R-37)", () => {
   it("names the workspaces that switch it for themselves", () => {
     const set = mine(1, {
       overrides: [
-        { sandbox: "api" as never, enabled: false },
-        { sandbox: "web" as never, enabled: true },
+        { workspace: "api" as never, enabled: false },
+        { workspace: "web" as never, enabled: true },
       ],
     });
     expect(overridesLabel(set)).toBe("off in api; on in web");
@@ -62,7 +62,7 @@ describe("where a set is on (R-37)", () => {
     const sets = [
       builtIn("github", { global: true }),
       mine(1),
-      mine(2, { overrides: [{ sandbox: "api" as never, enabled: false }] }),
+      mine(2, { overrides: [{ workspace: "api" as never, enabled: false }] }),
     ];
     expect(setsOnFor(sets, "api").map((s) => s.id)).toEqual(["user:1"]);
     expect(setsOnFor(sets, "web").map((s) => s.id)).toEqual([
@@ -99,17 +99,19 @@ describe("how entries and hosts read", () => {
       systemHost("marketplace.visualstudio.com", {
         reason: "direct_ssh",
         reason_text: "Direct SSH is on.",
-        sandbox: "ssh" as never,
+        workspace: "ssh" as never,
       }),
       systemHost("openvsx.eclipsecontent.org"),
     ];
     const groups = byReason(hosts);
-    expect(groups.map((g) => [g.reason, g.sandbox, g.hosts.length])).toEqual([
+    expect(groups.map((g) => [g.reason, g.workspace, g.hosts.length])).toEqual([
       ["code_server", null, 2],
       ["direct_ssh", "ssh", 1],
     ]);
-    expect(systemScope(groups[0] ?? { sandbox: null })).toBe("Every workspace");
-    expect(systemScope({ sandbox: "ssh" as never })).toBe("ssh");
+    expect(systemScope(groups[0] ?? { workspace: null })).toBe(
+      "Every workspace",
+    );
+    expect(systemScope({ workspace: "ssh" as never })).toBe("ssh");
     expect(systemFor(hosts, "web").map((h) => h.pattern)).toEqual([
       "open-vsx.org",
       "openvsx.eclipsecontent.org",

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use puddle_settings as settings;
 use puddle_store as store;
-use puddle_types::{MemoryMib, SandboxName};
+use puddle_types::{MemoryMib, WorkspaceName};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -96,7 +96,7 @@ pub enum Actor {
     Ui,
     /// The HTTP API.
     Api,
-    /// puddle itself (expiry, sandbox deletion).
+    /// puddle itself (expiry, workspace deletion).
     System,
 }
 
@@ -146,8 +146,8 @@ impl From<store::PendingState> for PendingState {
 pub struct PendingRequest {
     /// Row id, never reused.
     pub id: i64,
-    /// The requesting sandbox.
-    pub sandbox: SandboxName,
+    /// The requesting workspace.
+    pub workspace: WorkspaceName,
     /// The requested host: a normalised name (punycode, lower case) or an IP literal. Untrusted
     /// (it comes from the guest): escape it when rendering.
     pub host: String,
@@ -186,7 +186,7 @@ impl PendingRequest {
     pub(crate) fn from_store(row: store::PendingRow) -> Result<Self, ApiError> {
         let store::PendingRow {
             id,
-            sandbox,
+            workspace,
             host,
             port,
             first_seen,
@@ -200,7 +200,7 @@ impl PendingRequest {
         } = row;
         Ok(Self {
             id: id.0,
-            sandbox,
+            workspace,
             host: host.to_string(),
             port,
             first_seen,
@@ -239,30 +239,30 @@ pub struct Inbox {
     pub groups: Vec<InboxGroup>,
 }
 
-/// Whether a sandbox's new pending requests are being suppressed (R-13).
+/// Whether a workspace's new pending requests are being suppressed (R-13).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Suppression {
-    /// The sandbox.
-    pub sandbox: SandboxName,
+    /// The workspace.
+    pub workspace: WorkspaceName,
     /// Whether requests are being suppressed now.
     pub active: bool,
     /// Requests suppressed in the current (or last) episode.
     pub count: u64,
 }
 
-/// Which sandboxes a rule applies to.
+/// Which workspaces a rule applies to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuleScope {
-    /// Every sandbox.
+    /// Every workspace.
     Global,
-    /// One sandbox.
-    Sandbox {
-        /// The sandbox.
-        sandbox: SandboxName,
+    /// One workspace.
+    Workspace {
+        /// The workspace.
+        workspace: WorkspaceName,
     },
     /// An entry of a rule set you made: it applies wherever the set is on, and your own global
-    /// and sandbox rules decide first.
+    /// and workspace rules decide first.
     Set {
         /// The set's number (its id is `user:<set>`).
         set: i64,
@@ -273,7 +273,7 @@ impl RuleScope {
     pub(crate) fn from_store(scope: store::Scope) -> Result<Self, ApiError> {
         Ok(match scope {
             store::Scope::Global => Self::Global,
-            store::Scope::Sandbox(sandbox) => Self::Sandbox { sandbox },
+            store::Scope::Workspace(workspace) => Self::Workspace { workspace },
             store::Scope::Set(set) => Self::Set { set },
             other => {
                 return Err(ApiError::internal(&format_args!(
@@ -288,7 +288,7 @@ impl From<RuleScope> for store::Scope {
     fn from(scope: RuleScope) -> Self {
         match scope {
             RuleScope::Global => Self::Global,
-            RuleScope::Sandbox { sandbox } => Self::Sandbox(sandbox),
+            RuleScope::Workspace { workspace } => Self::Workspace(workspace),
             RuleScope::Set { set } => Self::Set(set),
         }
     }
@@ -309,7 +309,7 @@ pub enum PatternKind {
 pub struct Rule {
     /// Row id, never reused.
     pub id: i64,
-    /// Global or one sandbox.
+    /// Global or one workspace.
     pub scope: RuleScope,
     /// `example.com` (exact) or `.example.com` (suffix).
     pub pattern: String,
@@ -365,28 +365,28 @@ pub struct RuleList {
     pub rules: Vec<Rule>,
 }
 
-/// Whether an approval or denial covers only the request's sandbox or every sandbox.
+/// Whether an approval or denial covers only the request's workspace or every workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeChoice {
-    /// Only the request's sandbox (the default).
+    /// Only the request's workspace (the default).
     #[default]
-    Sandbox,
-    /// Every sandbox.
+    Workspace,
+    /// Every workspace.
     Global,
 }
 
 /// The choices of an approve or deny (R-15). Each one left out stays at its narrowest default:
-/// this sandbox, the exact host, permanent.
+/// this workspace, the exact host, permanent.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionRequest {
-    /// This sandbox (default) or every sandbox.
+    /// This workspace (default) or every workspace.
     #[serde(default)]
     pub scope: ScopeChoice,
     /// Put the rule into this rule set of yours (the number of `user:<id>`) instead: it then
-    /// applies wherever the set is on. `scope` must be left at `sandbox`. The set must be on
-    /// for the request's sandbox.
+    /// applies wherever the set is on. `scope` must be left at `workspace`. The set must be on
+    /// for the request's workspace.
     #[serde(default)]
     pub rule_set: Option<i64>,
     /// A suffix of the host (`example.com`, `.example.com` or `*.example.com`) to cover every
@@ -412,9 +412,9 @@ impl DecisionRequest {
             Effect::Deny => store::Resolution::deny(),
         };
         resolution.scope = match (scope, rule_set) {
-            (ScopeChoice::Sandbox, None) => store::ScopeChoice::Sandbox,
+            (ScopeChoice::Workspace, None) => store::ScopeChoice::Workspace,
             (ScopeChoice::Global, None) => store::ScopeChoice::Global,
-            (ScopeChoice::Sandbox, Some(set)) => store::ScopeChoice::Set(set),
+            (ScopeChoice::Workspace, Some(set)) => store::ScopeChoice::Set(set),
             (ScopeChoice::Global, Some(_)) => {
                 return Err(ApiError::invalid(
                     "rule_set: a rule set's entry applies wherever the set is on; leave scope out",
@@ -463,7 +463,7 @@ impl DecisionOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewRuleRequest {
-    /// Global or one sandbox.
+    /// Global or one workspace.
     pub scope: RuleScope,
     /// `example.com` (exact), or `.example.com` / `*.example.com` (suffix; a public suffix is
     /// refused).
@@ -543,11 +543,11 @@ pub struct RuleExpiryRequest {
 pub struct AuditRule {
     /// Row id.
     pub id: i64,
-    /// `global`, `sandbox` or `set`.
+    /// `global`, `workspace` or `set`.
     pub scope: String,
-    /// The sandbox, for a sandbox rule.
+    /// The workspace, for a workspace rule.
     #[schema(required = true)]
-    pub sandbox_id: Option<String>,
+    pub workspace_id: Option<String>,
     /// `exact` or `suffix`.
     pub pattern_kind: String,
     /// `example.com` or `.example.com`.
@@ -575,7 +575,7 @@ impl From<store::RuleWire> for AuditRule {
         let store::RuleWire {
             id,
             scope,
-            sandbox_id,
+            workspace_id,
             pattern_kind,
             pattern,
             effect,
@@ -588,7 +588,7 @@ impl From<store::RuleWire> for AuditRule {
         Self {
             id,
             scope,
-            sandbox_id,
+            workspace_id,
             pattern_kind,
             pattern,
             effect,
@@ -640,8 +640,8 @@ impl From<store::RuleSetWire> for AuditRuleSet {
 pub struct AuditPending {
     /// Row id.
     pub id: i64,
-    /// The sandbox.
-    pub sandbox_id: String,
+    /// The workspace.
+    pub workspace_id: String,
     /// The requested host.
     pub host: String,
     /// The requested port.
@@ -673,7 +673,7 @@ impl From<store::PendingWire> for AuditPending {
     fn from(row: store::PendingWire) -> Self {
         let store::PendingWire {
             id,
-            sandbox_id,
+            workspace_id,
             host,
             port,
             first_seen,
@@ -687,7 +687,7 @@ impl From<store::PendingWire> for AuditPending {
         } = row;
         Self {
             id,
-            sandbox_id,
+            workspace_id,
             host,
             port,
             first_seen,
@@ -732,10 +732,10 @@ impl From<puddle_types::ConnectionDecision> for ConnectionDecision {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionOrigin {
-    /// A sandbox's connection.
+    /// A workspace's connection.
     #[default]
-    Sandbox,
-    /// puddle's own connection on the host, such as an image pull; it has no sandbox.
+    Workspace,
+    /// puddle's own connection on the host, such as an image pull; it has no workspace.
     Puddle,
 }
 
@@ -743,8 +743,8 @@ impl From<puddle_types::ConnectionOrigin> for ConnectionOrigin {
     fn from(origin: puddle_types::ConnectionOrigin) -> Self {
         match origin {
             puddle_types::ConnectionOrigin::Puddle => Self::Puddle,
-            // An origin this API doesn't know yet is read as a sandbox's.
-            _ => Self::Sandbox,
+            // An origin this API doesn't know yet is read as a workspace's.
+            _ => Self::Workspace,
         }
     }
 }
@@ -752,7 +752,7 @@ impl From<puddle_types::ConnectionOrigin> for ConnectionOrigin {
 impl From<ConnectionOrigin> for puddle_types::ConnectionOrigin {
     fn from(origin: ConnectionOrigin) -> Self {
         match origin {
-            ConnectionOrigin::Sandbox => Self::Sandbox,
+            ConnectionOrigin::Workspace => Self::Workspace,
             ConnectionOrigin::Puddle => Self::Puddle,
         }
     }
@@ -764,8 +764,8 @@ impl From<ConnectionOrigin> for puddle_types::ConnectionOrigin {
 pub enum PendingExpiryReason {
     /// No repeat for the stale period.
     Stale,
-    /// Its sandbox was deleted.
-    SandboxDeleted,
+    /// Its workspace was deleted.
+    WorkspaceDeleted,
 }
 
 /// Why a rule was deleted.
@@ -774,8 +774,8 @@ pub enum PendingExpiryReason {
 pub enum RuleDeleteReason {
     /// A user deleted it.
     User,
-    /// Its sandbox was deleted.
-    SandboxDeleted,
+    /// Its workspace was deleted.
+    WorkspaceDeleted,
     /// It was an entry of a rule set that was deleted.
     SetDeleted,
 }
@@ -791,10 +791,10 @@ pub enum AuditRecord {
     Connection {
         /// Epoch ms.
         ts: u64,
-        /// The sandbox; `null` for puddle's own connections (`origin` is `puddle`).
+        /// The workspace; `null` for puddle's own connections (`origin` is `puddle`).
         #[schema(required = true)]
-        sandbox_id: Option<String>,
-        /// Whose connection it is. Records written before it existed read as `sandbox`.
+        workspace_id: Option<String>,
+        /// Whose connection it is. Records written before it existed read as `workspace`.
         #[serde(default)]
         #[schema(required = true)]
         origin: ConnectionOrigin,
@@ -870,12 +870,12 @@ pub enum AuditRecord {
         /// Why.
         reason: PendingExpiryReason,
     },
-    /// Requests over a sandbox's limit, not written as rows.
+    /// Requests over a workspace's limit, not written as rows.
     PendingSuppressed {
         /// Epoch ms.
         ts: u64,
-        /// The sandbox.
-        sandbox_id: String,
+        /// The workspace.
+        workspace_id: String,
         /// Requests suppressed since the previous record.
         count: u64,
     },
@@ -950,9 +950,9 @@ pub enum AuditRecord {
         ts: u64,
         /// `builtin:<slug>` or `user:<id>`.
         set_id: String,
-        /// The sandbox whose override changed; `null` for every sandbox.
+        /// The workspace whose override changed; `null` for every workspace.
         #[schema(required = true)]
-        sandbox_id: Option<String>,
+        workspace_id: Option<String>,
         /// On, off, or `null` to follow the next level.
         #[schema(required = true)]
         enabled: Option<bool>,
@@ -974,9 +974,9 @@ pub enum AuditRecord {
     SystemManagedChanged {
         /// Epoch ms.
         ts: u64,
-        /// The sandbox; `null` for every sandbox.
+        /// The workspace; `null` for every workspace.
         #[schema(required = true)]
-        sandbox_id: Option<String>,
+        workspace_id: Option<String>,
         /// Reasons that now apply.
         added: Vec<SystemReason>,
         /// Reasons that no longer apply.
@@ -998,7 +998,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
     fn from(record: store::ConnectionRecord) -> Self {
         let store::ConnectionRecord {
             ts,
-            sandbox_id,
+            workspace_id,
             origin,
             host,
             port,
@@ -1020,7 +1020,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
         } = record;
         Self::Connection {
             ts,
-            sandbox_id,
+            workspace_id,
             host,
             port,
             resolved_ip,
@@ -1069,18 +1069,18 @@ impl From<store::AuditRecord> for AuditRecord {
                 pending: pending.into(),
                 reason: match reason {
                     store::PendingExpiryReason::Stale => PendingExpiryReason::Stale,
-                    store::PendingExpiryReason::SandboxDeleted => {
-                        PendingExpiryReason::SandboxDeleted
+                    store::PendingExpiryReason::WorkspaceDeleted => {
+                        PendingExpiryReason::WorkspaceDeleted
                     }
                 },
             },
             R::PendingSuppressed {
                 ts,
-                sandbox_id,
+                workspace_id,
                 count,
             } => Self::PendingSuppressed {
                 ts,
-                sandbox_id,
+                workspace_id,
                 count,
             },
             R::RuleCreated { ts, rule } => Self::RuleCreated {
@@ -1108,7 +1108,7 @@ impl From<store::AuditRecord> for AuditRecord {
                 rule: rule.into(),
                 reason: match reason {
                     store::RuleDeleteReason::User => RuleDeleteReason::User,
-                    store::RuleDeleteReason::SandboxDeleted => RuleDeleteReason::SandboxDeleted,
+                    store::RuleDeleteReason::WorkspaceDeleted => RuleDeleteReason::WorkspaceDeleted,
                     store::RuleDeleteReason::SetDeleted => RuleDeleteReason::SetDeleted,
                 },
                 actor,
@@ -1149,13 +1149,13 @@ impl From<store::AuditRecord> for AuditRecord {
             R::RuleSetSwitched {
                 ts,
                 set_id,
-                sandbox_id,
+                workspace_id,
                 enabled,
                 actor,
             } => Self::RuleSetSwitched {
                 ts,
                 set_id,
-                sandbox_id,
+                workspace_id,
                 enabled,
                 actor,
             },
@@ -1172,12 +1172,12 @@ impl From<store::AuditRecord> for AuditRecord {
             },
             R::SystemManagedChanged {
                 ts,
-                sandbox_id,
+                workspace_id,
                 added,
                 removed,
             } => Self::SystemManagedChanged {
                 ts,
-                sandbox_id,
+                workspace_id,
                 added: SystemReason::parse_all(&added),
                 removed: SystemReason::parse_all(&removed),
             },
@@ -1258,7 +1258,7 @@ pub enum AuditType {
     PendingDecided,
     /// A pending request expired.
     PendingExpired,
-    /// Requests suppressed over a sandbox's limit.
+    /// Requests suppressed over a workspace's limit.
     PendingSuppressed,
     /// A rule created.
     RuleCreated,
@@ -1311,8 +1311,8 @@ impl AuditType {
 // ---------------------------------------------------------------------------------------------
 // Settings (puddle-settings)
 
-/// The settings every sandbox has. On a global document they are the defaults for every
-/// sandbox; on a sandbox they override those. `null` means "not set here": the next level (the
+/// The settings every workspace has. On a global document they are the defaults for every
+/// workspace; on a workspace they override those. `null` means "not set here": the next level (the
 /// global value, then puddle's default) applies.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -1349,8 +1349,8 @@ pub struct SettingsLayer {
     pub direct_ssh: Option<bool>,
 }
 
-impl From<&settings::SandboxLayer> for SettingsLayer {
-    fn from(layer: &settings::SandboxLayer) -> Self {
+impl From<&settings::WorkspaceLayer> for SettingsLayer {
+    fn from(layer: &settings::WorkspaceLayer) -> Self {
         Self {
             memory: layer.memory.map(MemoryMib::get),
             local_toggles: (&layer.local_toggles).into(),
@@ -1367,7 +1367,7 @@ impl From<&settings::SandboxLayer> for SettingsLayer {
 
 impl SettingsLayer {
     /// Writes these values into `layer`, leaving its unknown fields alone.
-    pub(crate) fn apply_to(self, layer: &mut settings::SandboxLayer) -> Result<(), ApiError> {
+    pub(crate) fn apply_to(self, layer: &mut settings::WorkspaceLayer) -> Result<(), ApiError> {
         let invalid = |err: puddle_types::ValidationError| ApiError::invalid(err.to_string());
         let Self {
             memory,
@@ -1392,7 +1392,7 @@ impl SettingsLayer {
     }
 }
 
-/// Local destination categories a sandbox may approve. `null` inherits.
+/// Local destination categories a workspace may approve. `null` inherits.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LocalToggles {
@@ -1558,7 +1558,7 @@ impl From<ThemeChoice> for settings::ThemeChoice {
     }
 }
 
-/// What closing the window does while a sandbox runs.
+/// What closing the window does while a workspace runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseBehaviour {
@@ -1602,7 +1602,7 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub sound: Option<bool>,
-    /// What closing the window does while a sandbox runs (default `tray`).
+    /// What closing the window does while a workspace runs (default `tray`).
     #[serde(default)]
     #[schema(required = true)]
     pub close_behaviour: Option<CloseBehaviour>,
@@ -1638,8 +1638,8 @@ impl UiPrefs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingSource {
-    /// The sandbox's override.
-    Sandbox,
+    /// The workspace's override.
+    Workspace,
     /// The global setting.
     Global,
     /// puddle's built-in default.
@@ -1649,7 +1649,7 @@ pub enum SettingSource {
 impl From<settings::Source> for SettingSource {
     fn from(source: settings::Source) -> Self {
         match source {
-            settings::Source::Sandbox => Self::Sandbox,
+            settings::Source::Workspace => Self::Workspace,
             settings::Source::Global => Self::Global,
             settings::Source::Default => Self::Default,
         }
@@ -1705,7 +1705,7 @@ pub struct EffectiveToggles {
     pub special: ResolvedBool,
 }
 
-/// The values a sandbox gets: its override, else the global value, else puddle's default.
+/// The values a workspace gets: its override, else the global value, else puddle's default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct EffectiveSettings {
     /// Guest memory in MiB.
@@ -1769,16 +1769,16 @@ impl From<settings::Effective> for EffectiveSettings {
     }
 }
 
-/// The global settings, and what a sandbox without overrides gets.
+/// The global settings, and what a workspace without overrides gets.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct GlobalSettingsView {
-    /// Defaults for every sandbox.
-    pub sandbox_defaults: SettingsLayer,
+    /// Defaults for every workspace.
+    pub workspace_defaults: SettingsLayer,
     /// VS Code server options.
     pub vscode_server: VsCodeServer,
     /// Preferences for puddle's window.
     pub ui: UiPrefs,
-    /// The effective values for a sandbox with no overrides.
+    /// The effective values for a workspace with no overrides.
     pub effective: EffectiveSettings,
     /// Fields in the stored document this puddle doesn't know (written by a newer one); they
     /// are kept.
@@ -1789,9 +1789,9 @@ pub struct GlobalSettingsView {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsRequest {
-    /// Defaults for every sandbox.
+    /// Defaults for every workspace.
     #[serde(default)]
-    pub sandbox_defaults: SettingsLayer,
+    pub workspace_defaults: SettingsLayer,
     /// VS Code server options.
     #[serde(default)]
     pub vscode_server: VsCodeServer,
@@ -1803,7 +1803,7 @@ pub struct GlobalSettingsRequest {
 impl GlobalSettingsRequest {
     pub(crate) fn apply_to(self, global: &mut settings::GlobalSettings) -> Result<(), ApiError> {
         let Self {
-            sandbox_defaults,
+            workspace_defaults,
             vscode_server:
                 VsCodeServer {
                     server,
@@ -1812,7 +1812,7 @@ impl GlobalSettingsRequest {
                 },
             ui,
         } = self;
-        sandbox_defaults.apply_to(&mut global.sandbox_defaults)?;
+        workspace_defaults.apply_to(&mut global.workspace_defaults)?;
         global.vscode_server.server = server.map(Into::into);
         global.vscode_server.telemetry = telemetry;
         global.vscode_server.auto_update = auto_update;
@@ -1825,7 +1825,7 @@ impl GlobalSettingsView {
     pub(crate) fn new(loaded: &settings::Loaded<settings::GlobalSettings>) -> Self {
         let global = &loaded.settings;
         Self {
-            sandbox_defaults: (&global.sandbox_defaults).into(),
+            workspace_defaults: (&global.workspace_defaults).into(),
             vscode_server: VsCodeServer {
                 server: global.vscode_server.server.map(Into::into),
                 telemetry: global.vscode_server.telemetry,
@@ -1838,11 +1838,11 @@ impl GlobalSettingsView {
     }
 }
 
-/// One sandbox's overrides and effective values.
+/// One workspace's overrides and effective values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct SandboxSettingsView {
-    /// The sandbox.
-    pub sandbox: SandboxName,
+pub struct WorkspaceSettingsView {
+    /// The workspace.
+    pub workspace: WorkspaceName,
     /// Its overrides; `null` inherits.
     pub overrides: SettingsLayer,
     /// What it gets.
@@ -1851,10 +1851,10 @@ pub struct SandboxSettingsView {
     pub unknown_fields: Vec<String>,
 }
 
-/// New overrides for one sandbox. Replaces every value listed; `null` inherits.
+/// New overrides for one workspace. Replaces every value listed; `null` inherits.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct SandboxSettingsRequest {
+pub struct WorkspaceSettingsRequest {
     /// The overrides.
     #[serde(default)]
     pub overrides: SettingsLayer,
@@ -2009,7 +2009,7 @@ mod tests {
 
     /// A storage layer with every known field set, built from JSON so a new storage field shows
     /// up here as an unknown field and fails the key comparison below.
-    fn full_layer() -> settings::SandboxLayer {
+    fn full_layer() -> settings::WorkspaceLayer {
         let doc = json!({
             "schema_version": 1,
             "overrides": {
@@ -2025,7 +2025,7 @@ mod tests {
                 "direct_ssh": true
             }
         });
-        let loaded = settings::SandboxSettings::from_document(doc).unwrap();
+        let loaded = settings::WorkspaceSettings::from_document(doc).unwrap();
         assert_eq!(loaded.unknown_fields, Vec::<String>::new());
         loaded.settings.overrides
     }
@@ -2044,7 +2044,7 @@ mod tests {
 
     #[test]
     fn settings_layer_round_trips_and_keeps_unknown_stored_fields() {
-        let mut stored = settings::SandboxSettings::from_document(
+        let mut stored = settings::WorkspaceSettings::from_document(
             json!({"overrides": {"cpus": 4, "memory": 2048}}),
         )
         .unwrap()
@@ -2065,7 +2065,7 @@ mod tests {
 
     #[test]
     fn out_of_range_settings_are_refused() {
-        let mut layer = settings::SandboxLayer::default();
+        let mut layer = settings::WorkspaceLayer::default();
         for bad in [
             SettingsLayer {
                 memory: Some(1),
@@ -2085,7 +2085,7 @@ mod tests {
     fn global_request_sets_vscode_options() {
         let mut g = settings::GlobalSettings::default();
         GlobalSettingsRequest {
-            sandbox_defaults: SettingsLayer {
+            workspace_defaults: SettingsLayer {
                 zoom_hotkeys: Some(false),
                 ..SettingsLayer::default()
             },
@@ -2172,10 +2172,10 @@ mod tests {
 
     #[test]
     fn rules_map_with_their_scope_and_pattern_kind() {
-        let sandbox = SandboxName::new("box").unwrap();
+        let workspace = WorkspaceName::new("box").unwrap();
         let rule = store::Rule {
             id: RuleId(3),
-            scope: store::Scope::Sandbox(sandbox.clone()),
+            scope: store::Scope::Workspace(workspace.clone()),
             pattern: store::Pattern::parse("*.example.com").unwrap(),
             effect: store::Effect::Deny,
             expires_at: None,
@@ -2187,7 +2187,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&wire).unwrap(),
             json!({
-                "id": 3, "scope": {"type": "sandbox", "sandbox": "box"},
+                "id": 3, "scope": {"type": "workspace", "workspace": "box"},
                 "pattern": ".example.com", "pattern_kind": "suffix", "effect": "deny",
                 "expires_at": null, "created_at": 5, "created_by": "ui",
                 "source_pending_id": 9
@@ -2234,7 +2234,7 @@ mod tests {
     fn pending_rows_always_carry_every_field() {
         let row = store::PendingRow {
             id: PendingId(1),
-            sandbox: SandboxName::new("box").unwrap(),
+            workspace: WorkspaceName::new("box").unwrap(),
             host: Host::parse_normalised("example.com").unwrap(),
             port: 443,
             first_seen: 1,
@@ -2378,7 +2378,7 @@ mod tests {
     #[test]
     fn a_decision_suffix_is_normalised_too() {
         let r = DecisionRequest {
-            scope: ScopeChoice::Sandbox,
+            scope: ScopeChoice::Workspace,
             rule_set: None,
             suffix: Some("*.GitHub.COM".into()),
             expires_in_secs: None,
@@ -2388,7 +2388,7 @@ mod tests {
         assert_eq!(r.pattern, store::PatternChoice::Suffix("github.com".into()));
         assert!(
             DecisionRequest {
-                scope: ScopeChoice::Sandbox,
+                scope: ScopeChoice::Workspace,
                 rule_set: None,
                 suffix: Some("https://github.com".into()),
                 expires_in_secs: None,
@@ -2447,12 +2447,12 @@ mod tests {
             "id": 3, "name": "Work", "description": "", "created_at": 1, "created_by": "ui"
         });
         let rule = serde_json::json!({
-            "id": 9, "scope": "set", "sandbox_id": null, "set_id": 3, "pattern_kind": "exact",
+            "id": 9, "scope": "set", "workspace_id": null, "set_id": 3, "pattern_kind": "exact",
             "pattern": "a.example", "effect": "deny", "expires_at": null, "created_at": 1,
             "created_by": "ui", "source_pending_id": null
         });
         let pending = serde_json::json!({
-            "id": 2, "sandbox_id": "box", "host": "open-vsx.org", "port": 443, "first_seen": 1,
+            "id": 2, "workspace_id": "box", "host": "open-vsx.org", "port": 443, "first_seen": 1,
             "last_seen": 1, "attempts": 1, "state": "allowed", "decided_at": 2,
             "decided_by": "system", "rule_id": null, "rule_set": "system"
         });
@@ -2461,10 +2461,10 @@ mod tests {
             serde_json::json!({"type": "rule_set_updated", "ts": 1, "before": set, "rule_set": set, "actor": "api"}),
             serde_json::json!({"type": "rule_set_deleted", "ts": 1, "rule_set": set, "actor": "ui"}),
             serde_json::json!({"type": "rule_set_switched", "ts": 1, "set_id": "builtin:github",
-                "sandbox_id": null, "enabled": null, "actor": "ui"}),
+                "workspace_id": null, "enabled": null, "actor": "ui"}),
             serde_json::json!({"type": "rule_set_changed", "ts": 1, "set_id": "builtin:github",
                 "added": ["api.github.com"], "removed": []}),
-            serde_json::json!({"type": "system_managed_changed", "ts": 1, "sandbox_id": "box",
+            serde_json::json!({"type": "system_managed_changed", "ts": 1, "workspace_id": "box",
                 "added": ["direct_ssh"], "removed": ["code_server"]}),
             serde_json::json!({"type": "rule_deleted", "ts": 1, "rule": rule, "reason": "set_deleted",
                 "actor": "ui"}),
@@ -2478,7 +2478,7 @@ mod tests {
         }
         // A reason a later puddle added is left out rather than failing the page.
         let newer = serde_json::json!({"type": "system_managed_changed", "ts": 1,
-            "sandbox_id": null, "added": ["zed"], "removed": []});
+            "workspace_id": null, "added": ["zed"], "removed": []});
         let record: store::AuditRecord = serde_json::from_value(newer).unwrap();
         assert_eq!(
             serde_json::to_value(AuditRecord::from(record)).unwrap()["added"],
@@ -2491,7 +2491,7 @@ mod tests {
     #[test]
     fn typed_audit_records_serialise_as_stored() {
         let stored = serde_json::json!({
-            "type": "connection", "ts": 5, "sandbox_id": "box", "origin": "sandbox", "host": "example.com",
+            "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
             "decision": "allow", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
             "pending_id": null, "binding_id": null, "injected": false, "method": "GET", "path": "/",
@@ -2510,7 +2510,7 @@ mod tests {
         assert_eq!(back["upstream"], Value::Null);
         back.as_object_mut().unwrap().remove("upstream");
         assert_eq!(back, old);
-        // Written before `origin` existed: a sandbox's connection.
+        // Written before `origin` existed: a workspace's connection.
         let mut older = serde_json::to_value(AuditRecord::from(
             serde_json::from_value::<store::AuditRecord>(old).unwrap(),
         ))
@@ -2518,12 +2518,12 @@ mod tests {
         older.as_object_mut().unwrap().remove("origin");
         let record: store::AuditRecord = serde_json::from_value(older).unwrap();
         let back = serde_json::to_value(AuditRecord::from(record)).unwrap();
-        assert_eq!(back["origin"], "sandbox");
-        assert_eq!(back["sandbox_id"], "box");
-        // puddle's own connection: no sandbox.
+        assert_eq!(back["origin"], "workspace");
+        assert_eq!(back["workspace_id"], "box");
+        // puddle's own connection: no workspace.
         let mut own = back;
         own["origin"] = "puddle".into();
-        own["sandbox_id"] = Value::Null;
+        own["workspace_id"] = Value::Null;
         let record: store::AuditRecord = serde_json::from_value(own.clone()).unwrap();
         assert_eq!(
             serde_json::to_value(AuditRecord::from(record)).unwrap(),

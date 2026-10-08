@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `puddle serve [--port <n>] [--connection-file <path>]`: runs the host process (store,
 //! proxies, sandbox runtime, workspaces, API) until Ctrl-C, a termination signal or the end of
-//! the console session, then stops every sandbox cleanly.
+//! the console session, then stops every workspace cleanly.
 //!
 //! The work is in [`puddle_host`]; this file is the process around it: the Windows
 //! front/worker split, logging, the order "prepare before the first thread", and the exit code.
@@ -96,7 +96,7 @@ fn log_level() -> LevelFilter {
         .unwrap_or(LevelFilter::INFO)
 }
 
-/// Runs the host. Exit code 0 after a clean stop, 1 when it could not start or a sandbox did
+/// Runs the host. Exit code 0 after a clean stop, 1 when it could not start or a workspace did
 /// not stop.
 #[must_use]
 #[expect(

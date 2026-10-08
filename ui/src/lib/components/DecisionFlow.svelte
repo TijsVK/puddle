@@ -43,7 +43,7 @@
   );
   const setChoices = $derived(
     optionsRow
-      ? setsOnFor(sets.sets, optionsRow.request.sandbox).map((set) => ({
+      ? setsOnFor(sets.sets, optionsRow.request.workspace).map((set) => ({
           id: userSetNumber(set) ?? 0,
           name: set.name,
           everywhere: isOn(set, null),
@@ -58,7 +58,7 @@
             host: confirming.row.request.host,
             registrableDomain: confirming.row.domain,
           },
-          confirming.row.request.sandbox,
+          confirming.row.request.workspace,
         )
       : "",
   );
@@ -172,7 +172,7 @@
       host: optionsRow.request.host,
       registrableDomain: optionsRow.domain,
     }}
-    workspace={optionsRow.request.sandbox}
+    workspace={optionsRow.request.workspace}
     anchor={shown?.anchor ?? null}
     exactOnly={localCategory(optionsRow.request.host) !== null}
     sets={setChoices}

@@ -30,7 +30,7 @@ function sse(chunks: string[], hold?: AbortSignal): Response {
 }
 
 const status = (name: string) =>
-  `data: {"type":"status_changed","sandbox":"${name}","status":"running"}\n\n`;
+  `data: {"type":"status_changed","workspace":"${name}","status":"running"}\n\n`;
 
 function setup(responses: Array<() => Response | Promise<Response>>) {
   const controller = new AbortController();
@@ -78,7 +78,7 @@ describe("eventStream", () => {
     const t = setup([() => sse([status("a"), status("b")])]);
     const events = await take(eventStream(t.base), 2);
     expect(
-      events.map((e) => (e.type === "status_changed" ? e.sandbox : "?")),
+      events.map((e) => (e.type === "status_changed" ? e.workspace : "?")),
     ).toEqual(["a", "b"]);
     expect(t.requests[0]?.url).toBe("/api/events");
     expect(t.requests[0]?.headers.get("authorization")).toBe("Bearer tok");
@@ -94,8 +94,8 @@ describe("eventStream", () => {
 
   it("filters by workspace in the query", async () => {
     const t = setup([() => sse([status("a")])]);
-    await take(eventStream({ ...t.base, sandbox: "my box" }), 1);
-    expect(t.requests[0]?.url).toBe("/api/events?sandbox=my%20box");
+    await take(eventStream({ ...t.base, workspace: "my box" }), 1);
+    expect(t.requests[0]?.url).toBe("/api/events?workspace=my%20box");
   });
 
   it("reassembles frames split across chunks and ignores comments", async () => {
@@ -106,7 +106,7 @@ describe("eventStream", () => {
     const events = await take(eventStream(t.base), 1);
     expect(events[0]).toMatchObject({
       type: "status_changed",
-      sandbox: "split",
+      workspace: "split",
     });
   });
 
@@ -121,7 +121,7 @@ describe("eventStream", () => {
         ]),
     ]);
     const events = await take(eventStream(t.base), 1);
-    expect(events[0]).toMatchObject({ sandbox: "ok" });
+    expect(events[0]).toMatchObject({ workspace: "ok" });
   });
 
   it("reports lagged for a refetch and keeps going", async () => {
@@ -137,7 +137,7 @@ describe("eventStream", () => {
       1,
     );
     expect(lagged).toEqual([["lagged", { missed: 3 }]]);
-    expect(events[0]).toMatchObject({ sandbox: "after" });
+    expect(events[0]).toMatchObject({ workspace: "after" });
   });
 
   it("reports lagged even when its body is malformed", async () => {

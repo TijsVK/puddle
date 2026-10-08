@@ -28,7 +28,7 @@ const ip: Target = { host: "192.168.1.10", registrableDomain: "192.168.1.10" };
 function everyChoice(): Choice[] {
   const out: Choice[] = [];
   for (const effect of ["allow", "deny"] as Effect[])
-    for (const scope of ["sandbox", "global"] as Scope[])
+    for (const scope of ["workspace", "global"] as Scope[])
       for (const match of ["exact", "suffix"] as Match[])
         for (const d of DURATIONS)
           out.push({
@@ -45,7 +45,7 @@ describe("narrowest", () => {
   it("is this workspace, the exact host, permanent (R-15), for either effect", () => {
     expect(narrowest("allow")).toEqual({
       effect: "allow",
-      scope: "sandbox",
+      scope: "workspace",
       ruleSet: null,
       match: "exact",
       durationSecs: null,
@@ -57,7 +57,7 @@ describe("narrowest", () => {
     expect(build(narrowest("allow"), target, false)).toEqual({
       ok: true,
       effect: "allow",
-      body: { scope: "sandbox" },
+      body: { scope: "workspace" },
     });
   });
 });
@@ -72,7 +72,7 @@ describe("build: no path produces scope global without the confirm step", () => 
         if (choice.scope === "global") {
           expect(result).toEqual({ ok: false, error: "confirmation_required" });
         } else if (result.ok) {
-          expect(result.body.scope).toBe("sandbox");
+          expect(result.body.scope).toBe("workspace");
         }
         const sure = build(choice, t, true);
         if (sure.ok) expect(sure.body.scope).toBe(choice.scope);
@@ -82,7 +82,7 @@ describe("build: no path produces scope global without the confirm step", () => 
 
   it("agrees with needsConfirm", () => {
     expect(needsConfirm({ scope: "global", ruleSet: null })).toBe(true);
-    expect(needsConfirm({ scope: "sandbox", ruleSet: null })).toBe(false);
+    expect(needsConfirm({ scope: "workspace", ruleSet: null })).toBe(false);
   });
 });
 
@@ -92,7 +92,7 @@ describe("build: match and duration", () => {
     expect(build(choice, target, false)).toEqual({
       ok: true,
       effect: "allow",
-      body: { scope: "sandbox", suffix: ".example.co.uk" },
+      body: { scope: "workspace", suffix: ".example.co.uk" },
     });
     expect(build(choice, bare, false)).toEqual({
       ok: false,
@@ -192,7 +192,7 @@ describe("into a rule set (R-38)", () => {
     expect(built).toEqual({
       ok: true,
       effect: "allow",
-      body: { scope: "sandbox", rule_set: 4 },
+      body: { scope: "workspace", rule_set: 4 },
     });
   });
 

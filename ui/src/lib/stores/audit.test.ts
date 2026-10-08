@@ -36,10 +36,10 @@ describe("reading the log", () => {
   it("loads the newest page first, with the filter the server applies", async () => {
     fill(250);
     const store = make();
-    await store.load({ ...ALL, sandbox: "demo", host: "h1" });
+    await store.load({ ...ALL, workspace: "demo", host: "h1" });
     expect(store.status).toBe("ready");
     expect(api.queries[0]).toEqual({
-      sandbox: "demo",
+      workspace: "demo",
       host_contains: "h1",
       limit: 200,
     });

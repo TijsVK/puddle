@@ -82,7 +82,7 @@ function seed() {
     rule(2, {
       pattern: ".github.com",
       pattern_kind: "suffix",
-      scope: { type: "sandbox", sandbox: "shop" as never },
+      scope: { type: "workspace", workspace: "shop" as never },
       effect: "deny",
       created_at: 200,
     }),
@@ -256,7 +256,7 @@ describe("adding", () => {
     expect(body).toMatchObject({
       pattern: "*.example.org",
       effect: "deny",
-      scope: { type: "sandbox", sandbox: "shop" },
+      scope: { type: "workspace", workspace: "shop" },
     });
     expect(body.expires_at).toBeGreaterThan(Date.now());
     expect(toasts.items[0]?.message).toBe(
@@ -617,7 +617,7 @@ describe("rule sets and System managed (rules spec §7)", () => {
     await waitFor(() =>
       expect(setsApi.calls).toContain("PUT /api/rule-sets/{id}/switch"),
     );
-    expect(setsApi.bodies.at(-1)).toEqual({ sandbox: null, enabled: true });
+    expect(setsApi.bodies.at(-1)).toEqual({ workspace: null, enabled: true });
   });
 
   it("adds an entry into a set and deletes one", async () => {

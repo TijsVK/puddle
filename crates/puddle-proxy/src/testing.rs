@@ -14,14 +14,14 @@ use puddle_agent_proto::resolve::{Record, RecordType};
 
 use puddle_types::{
     ConnectionEvent, ConnectionLog, Decision, DomainName, EgressRequest, Host, PatternKind,
-    PendingId, PendingOutcome, Policy, PolicyError, RuleId, SandboxName, SuffixAllows,
+    PendingId, PendingOutcome, Policy, PolicyError, RuleId, SuffixAllows, WorkspaceName,
 };
 
 use crate::destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver};
 use crate::records::{RecordError, RecordResolver, Records};
 
 /// A [`Policy`] with exact-host rules in memory: allowed hosts pass, denied hosts are refused, and
-/// anything else becomes a pending item (deduplicated per sandbox, host and port) until
+/// anything else becomes a pending item (deduplicated per workspace, host and port) until
 /// [`StaticPolicy::approve`] or [`StaticPolicy::deny`] turns it into a rule.
 #[derive(Debug, Default)]
 pub struct StaticPolicy {
@@ -42,8 +42,8 @@ struct State {
 pub struct PendingItem {
     /// Its id.
     pub id: PendingId,
-    /// The sandbox it came from.
-    pub sandbox: SandboxName,
+    /// The workspace it came from.
+    pub workspace: WorkspaceName,
     /// The host asked for.
     pub host: Host,
     /// The port asked for.
@@ -151,7 +151,7 @@ impl Policy for StaticPolicy {
         let mut state = self.state();
         let open = state.pending.iter_mut().find(|p| {
             p.open
-                && p.sandbox == request.sandbox
+                && p.workspace == request.workspace
                 && p.host == request.host
                 && p.port == request.port
         });
@@ -163,7 +163,7 @@ impl Policy for StaticPolicy {
         let id = PendingId(state.next_id);
         state.pending.push(PendingItem {
             id,
-            sandbox: request.sandbox.clone(),
+            workspace: request.workspace.clone(),
             host: request.host.clone(),
             port: request.port,
             attempts: 1,
@@ -247,14 +247,14 @@ pub struct AnyAddress;
 impl AddressCheck for AnyAddress {
     fn check_target(
         &self,
-        _sandbox: &SandboxName,
+        _workspace: &WorkspaceName,
         _target: &puddle_netpolicy::Target,
         _port: u16,
     ) -> Option<puddle_types::BlockReason> {
         None
     }
 
-    fn check(&self, _sandbox: &SandboxName, _addr: SocketAddr) -> AddressVerdict {
+    fn check(&self, _workspace: &WorkspaceName, _addr: SocketAddr) -> AddressVerdict {
         AddressVerdict::Allow
     }
 }

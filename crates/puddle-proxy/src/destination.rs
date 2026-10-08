@@ -5,7 +5,7 @@
 //! The proxy resolves a name only after a rule allowed it (R-10), checks every
 //! address it got, and connects only to an address that passed: it never resolves twice, so a
 //! DNS answer can't change between the check and the connect. The checks are
-//! `puddle-netpolicy`'s [`NetPolicy`]: address classes, the sandbox's local-destination toggles
+//! `puddle-netpolicy`'s [`NetPolicy`]: address classes, the workspace's local-destination toggles
 //! and puddle's own endpoints.
 
 use std::future::Future;
@@ -15,7 +15,7 @@ use std::pin::Pin;
 
 pub use puddle_netpolicy::AddressVerdict;
 use puddle_netpolicy::{NetPolicy, Target};
-use puddle_types::{BlockReason, DomainName, Host, SandboxName};
+use puddle_types::{BlockReason, DomainName, Host, WorkspaceName};
 
 /// Decides per destination and per resolved address (R-14). [`NetPolicy`] is the product
 /// implementation; tests use doubles.
@@ -24,12 +24,12 @@ pub trait AddressCheck: Send + Sync {
     /// pending row. The default checks an IP literal with [`Self::check`] and lets names through.
     fn check_target(
         &self,
-        sandbox: &SandboxName,
+        workspace: &WorkspaceName,
         target: &Target,
         port: u16,
     ) -> Option<BlockReason> {
         match target.host() {
-            Host::Ip(ip) => match self.check(sandbox, SocketAddr::new(*ip, port)) {
+            Host::Ip(ip) => match self.check(workspace, SocketAddr::new(*ip, port)) {
                 AddressVerdict::Block(reason) => Some(reason),
                 _ => None,
             },
@@ -37,22 +37,22 @@ pub trait AddressCheck: Send + Sync {
         }
     }
 
-    /// The verdict for connecting `sandbox` to `addr`.
-    fn check(&self, sandbox: &SandboxName, addr: SocketAddr) -> AddressVerdict;
+    /// The verdict for connecting `workspace` to `addr`.
+    fn check(&self, workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict;
 }
 
 impl AddressCheck for NetPolicy {
     fn check_target(
         &self,
-        sandbox: &SandboxName,
+        workspace: &WorkspaceName,
         target: &Target,
         port: u16,
     ) -> Option<BlockReason> {
-        NetPolicy::check_target(self, sandbox, target, port)
+        NetPolicy::check_target(self, workspace, target, port)
     }
 
-    fn check(&self, sandbox: &SandboxName, addr: SocketAddr) -> AddressVerdict {
-        self.check_address(sandbox, addr)
+    fn check(&self, workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
+        self.check_address(workspace, addr)
     }
 }
 

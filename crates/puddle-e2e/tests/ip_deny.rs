@@ -25,7 +25,7 @@ use puddle_proxy::{Proxy, Route};
 use puddle_store::{
     Actor, Effect, Limits, ManualClock, NewRule, Pattern, Resolution, Rule, Scope, Store,
 };
-use puddle_types::{NullSink, SandboxName};
+use puddle_types::{NullSink, WorkspaceName};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -34,8 +34,8 @@ const ALLOWED: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const DENIED: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
 const NOW: u64 = 1_800_000_000_000;
 
-fn sandbox() -> SandboxName {
-    SandboxName::new("e2e-r27").unwrap()
+fn workspace() -> WorkspaceName {
+    WorkspaceName::new("e2e-r27").unwrap()
 }
 
 struct Rig {
@@ -61,7 +61,7 @@ async fn rig() -> Rig {
             .with_address_check(Arc::new(AnyAddress)),
     );
     let root = IpcRoot::new().unwrap();
-    let route = proxy.serve_route(root.listen().unwrap(), sandbox());
+    let route = proxy.serve_route(root.listen().unwrap(), workspace());
     let config = Config {
         listen: SocketAddr::new(ALLOWED, 0),
         target: Target::Unix(route.endpoint().path().to_path_buf()),
@@ -203,10 +203,28 @@ async fn r27_an_ip_deny_wins_over_exact_wildcard_and_approved_name_allows() {
     let rig = rig().await;
     let (port, reached) = servers().await;
     let deny = rule(&rig.store, Scope::Global, "127.0.0.2", Effect::Deny, None);
-    let in_sandbox = || Scope::Sandbox(sandbox());
-    rule(&rig.store, in_sandbox(), "named.test", Effect::Allow, None);
-    rule(&rig.store, in_sandbox(), "mixed.test", Effect::Allow, None);
-    rule(&rig.store, in_sandbox(), "*.wild.test", Effect::Allow, None);
+    let in_workspace = || Scope::Workspace(workspace());
+    rule(
+        &rig.store,
+        in_workspace(),
+        "named.test",
+        Effect::Allow,
+        None,
+    );
+    rule(
+        &rig.store,
+        in_workspace(),
+        "mixed.test",
+        Effect::Allow,
+        None,
+    );
+    rule(
+        &rig.store,
+        in_workspace(),
+        "*.wild.test",
+        Effect::Allow,
+        None,
+    );
 
     // An exact name allow and a wildcard allow: denied by the IP rule, nothing pending.
     assert_denied_by(&rig, "named.test", port, &deny).await;
@@ -263,12 +281,12 @@ async fn r27_an_ip_deny_wins_over_exact_wildcard_and_approved_name_allows() {
 }
 
 #[tokio::test]
-async fn r27_a_sandbox_ip_deny_counts_until_it_expires() {
+async fn r27_a_workspace_ip_deny_counts_until_it_expires() {
     let rig = rig().await;
     let (port, reached) = servers().await;
     let deny = rule(
         &rig.store,
-        Scope::Sandbox(sandbox()),
+        Scope::Workspace(workspace()),
         "127.0.0.2",
         Effect::Deny,
         Some(NOW + 60_000),
@@ -286,16 +304,16 @@ async fn r27_a_sandbox_ip_deny_counts_until_it_expires() {
     assert_eq!(reached.load(Ordering::SeqCst), 1);
 }
 
-/// The IP's own rules decide with R-6 precedence: a sandbox allow of the address beats a global
+/// The IP's own rules decide with R-6 precedence: a workspace allow of the address beats a global
 /// deny of it, as it would for a request to the literal (the default).
 #[tokio::test]
-async fn r27_a_sandbox_ip_allow_overrides_a_global_ip_deny_as_for_the_literal() {
+async fn r27_a_workspace_ip_allow_overrides_a_global_ip_deny_as_for_the_literal() {
     let rig = rig().await;
     let (port, reached) = servers().await;
     rule(&rig.store, Scope::Global, "127.0.0.2", Effect::Deny, None);
     rule(
         &rig.store,
-        Scope::Sandbox(sandbox()),
+        Scope::Workspace(workspace()),
         "127.0.0.2",
         Effect::Allow,
         None,

@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use puddle_types::{Host, PendingId, RuleId, SandboxName};
+use puddle_types::{Host, PendingId, RuleId, WorkspaceName};
 
 use crate::rule::{Actor, Effect, Rule};
 
@@ -16,7 +16,7 @@ pub enum PendingState {
     Allowed,
     /// Denied; `rule_id` names the deny rule.
     Denied,
-    /// Closed without a decision: stale (R-20) or its sandbox was deleted (R-21).
+    /// Closed without a decision: stale (R-20) or its workspace was deleted (R-21).
     Expired,
 }
 
@@ -55,8 +55,8 @@ impl PendingState {
 pub struct PendingRow {
     /// Row id, never reused (R-12).
     pub id: PendingId,
-    /// The requesting sandbox.
-    pub sandbox: SandboxName,
+    /// The requesting workspace.
+    pub workspace: WorkspaceName,
     /// The requested host.
     pub host: Host,
     /// The requested port.
@@ -80,13 +80,13 @@ pub struct PendingRow {
     pub rule_set: Option<String>,
 }
 
-/// Rule scope for a decision (R-15). Defaults to the row's sandbox.
+/// Rule scope for a decision (R-15). Defaults to the row's workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScopeChoice {
-    /// Only the row's sandbox.
+    /// Only the row's workspace.
     #[default]
-    Sandbox,
-    /// Every sandbox.
+    Workspace,
+    /// Every workspace.
     Global,
     /// An entry of the rule set the user made with this id: wherever the set is on (R-38).
     Set(i64),
@@ -109,7 +109,7 @@ pub enum PatternChoice {
 pub struct Resolution {
     /// Allow or deny.
     pub effect: Effect,
-    /// This sandbox (default) or every sandbox.
+    /// This workspace (default) or every workspace.
     pub scope: ScopeChoice,
     /// Exact host (default) or a suffix.
     pub pattern: PatternChoice,
@@ -118,13 +118,13 @@ pub struct Resolution {
 }
 
 impl Resolution {
-    /// Allow, this sandbox, exact host, permanent.
+    /// Allow, this workspace, exact host, permanent.
     #[must_use]
     pub fn allow() -> Self {
         Self::with_effect(Effect::Allow)
     }
 
-    /// Deny, this sandbox, exact host, permanent.
+    /// Deny, this workspace, exact host, permanent.
     #[must_use]
     pub fn deny() -> Self {
         Self::with_effect(Effect::Deny)
@@ -160,7 +160,7 @@ pub struct InboxGroup {
     pub rows: Vec<PendingRow>,
 }
 
-/// A sandbox's pending-row suppression (R-13), for the inbox's "N suppressed" line.
+/// A workspace's pending-row suppression (R-13), for the inbox's "N suppressed" line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Suppression {
     /// Whether requests are being suppressed now.
@@ -190,7 +190,7 @@ mod tests {
     fn r15_resolution_defaults_are_narrowest() {
         let allow = Resolution::allow();
         assert_eq!(allow.effect, Effect::Allow);
-        assert_eq!(allow.scope, ScopeChoice::Sandbox);
+        assert_eq!(allow.scope, ScopeChoice::Workspace);
         assert_eq!(allow.pattern, PatternChoice::Exact);
         assert_eq!(allow.expires_in, None);
         assert_eq!(Resolution::deny().effect, Effect::Deny);

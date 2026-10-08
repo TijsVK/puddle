@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 
-use puddle_types::SandboxName;
+use puddle_types::WorkspaceName;
 use serde_json::Value;
 
 /// Storage for the two settings document kinds. Calls may block (files, `SQLite`); the API runs
@@ -26,20 +26,24 @@ pub trait SettingsRepo: Send + Sync {
     /// [`SettingsRepoError`] if the storage fails.
     fn save_global(&self, document: Value) -> Result<(), SettingsRepoError>;
 
-    /// One sandbox's document, or `None` if it has none.
+    /// One workspace's document, or `None` if it has none.
     ///
     /// # Errors
     ///
     /// [`SettingsRepoError`] if the storage fails.
-    fn load_sandbox(&self, sandbox: &SandboxName) -> Result<Option<Value>, SettingsRepoError>;
+    fn load_workspace(&self, workspace: &WorkspaceName)
+    -> Result<Option<Value>, SettingsRepoError>;
 
-    /// Replaces one sandbox's document.
+    /// Replaces one workspace's document.
     ///
     /// # Errors
     ///
     /// [`SettingsRepoError`] if the storage fails.
-    fn save_sandbox(&self, sandbox: &SandboxName, document: Value)
-    -> Result<(), SettingsRepoError>;
+    fn save_workspace(
+        &self,
+        workspace: &WorkspaceName,
+        document: Value,
+    ) -> Result<(), SettingsRepoError>;
 }
 
 /// A settings storage failure.
@@ -63,7 +67,7 @@ impl SettingsRepoError {
 #[derive(Debug, Default)]
 pub struct MemorySettings {
     global: Mutex<Option<Value>>,
-    sandboxes: Mutex<BTreeMap<SandboxName, Value>>,
+    workspaces: Mutex<BTreeMap<WorkspaceName, Value>>,
 }
 
 impl SettingsRepo for MemorySettings {
@@ -80,24 +84,27 @@ impl SettingsRepo for MemorySettings {
         Ok(())
     }
 
-    fn load_sandbox(&self, sandbox: &SandboxName) -> Result<Option<Value>, SettingsRepoError> {
+    fn load_workspace(
+        &self,
+        workspace: &WorkspaceName,
+    ) -> Result<Option<Value>, SettingsRepoError> {
         Ok(self
-            .sandboxes
+            .workspaces
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(sandbox)
+            .get(workspace)
             .cloned())
     }
 
-    fn save_sandbox(
+    fn save_workspace(
         &self,
-        sandbox: &SandboxName,
+        workspace: &WorkspaceName,
         document: Value,
     ) -> Result<(), SettingsRepoError> {
-        self.sandboxes
+        self.workspaces
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(sandbox.clone(), document);
+            .insert(workspace.clone(), document);
         Ok(())
     }
 }
@@ -111,17 +118,17 @@ mod tests {
     #[test]
     fn memory_settings_keep_what_was_saved() {
         let repo = MemorySettings::default();
-        let a = SandboxName::new("a").unwrap();
+        let a = WorkspaceName::new("a").unwrap();
         assert_eq!(repo.load_global().unwrap(), None);
-        assert_eq!(repo.load_sandbox(&a).unwrap(), None);
+        assert_eq!(repo.load_workspace(&a).unwrap(), None);
         repo.save_global(json!({"schema_version": 1})).unwrap();
-        repo.save_sandbox(&a, json!({"overrides": {}})).unwrap();
+        repo.save_workspace(&a, json!({"overrides": {}})).unwrap();
         assert_eq!(
             repo.load_global().unwrap(),
             Some(json!({"schema_version": 1}))
         );
         assert_eq!(
-            repo.load_sandbox(&a).unwrap(),
+            repo.load_workspace(&a).unwrap(),
             Some(json!({"overrides": {}}))
         );
         assert_eq!(

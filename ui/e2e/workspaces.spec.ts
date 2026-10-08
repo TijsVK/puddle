@@ -152,7 +152,7 @@ test.describe("the list and the start screen", () => {
     await expect(page.getByText(`${before} requests waiting`)).toBeVisible();
     await backend.control.step({
       do: "request",
-      sandbox: "data-tools",
+      workspace: "data-tools",
       host: "live.example.org",
     });
     await expect(
@@ -195,7 +195,7 @@ test.describe("creating", () => {
     // The service reports where it is.
     await backend.control.emit({
       type: "workspace_progress",
-      sandbox: "ledger-service",
+      workspace: "ledger-service",
       step: "cloning",
       detail: "https://github.com/acme/Ledger_Service.git",
     });
@@ -342,7 +342,7 @@ test.describe("start and stop", () => {
     await expect(docs.getByRole("status")).toBeVisible();
     await backend.control.emit({
       type: "workspace_progress",
-      sandbox: "docs-site",
+      workspace: "docs-site",
       step: "syncing",
       detail: null,
     });
@@ -425,7 +425,7 @@ test.describe("start and stop", () => {
     await openList(page, backend);
     await backend.control.emit({
       type: "status_changed",
-      sandbox: "web-shop",
+      workspace: "web-shop",
       status: "stopped",
     });
     await expect(card(page, "web-shop")).toContainText("Stopped");
@@ -864,7 +864,7 @@ test.describe("the settings tab", () => {
     await expect(
       page.locator(".chip", { hasText: "this workspace" }).first(),
     ).toBeVisible();
-    const stored = await request.get("/api/settings/sandboxes/web-shop", {
+    const stored = await request.get("/api/settings/workspaces/web-shop", {
       headers: auth(backend),
     });
     const view = (await stored.json()) as {
@@ -877,7 +877,7 @@ test.describe("the settings tab", () => {
     );
     await page.getByLabel("Memory for this workspace").selectOption("");
     await expect(page.getByText("Memory saved.")).toBeVisible();
-    const again = await request.get("/api/settings/sandboxes/web-shop", {
+    const again = await request.get("/api/settings/workspaces/web-shop", {
       headers: auth(backend),
     });
     expect(
@@ -906,7 +906,7 @@ test.describe("the settings tab", () => {
     await clipboard.selectOption("deny");
     await expect(page.getByText("Clipboard saved.")).toBeVisible();
     const stored = (await (
-      await request.get("/api/settings/sandboxes/web-shop", {
+      await request.get("/api/settings/workspaces/web-shop", {
         headers: auth(backend),
       })
     ).json()) as {
@@ -923,7 +923,7 @@ test.describe("the settings tab", () => {
     expect(stored.overrides.clipboard_read).toBe("deny");
     expect(stored.effective.local_toggles.loopback).toEqual({
       value: true,
-      source: "sandbox",
+      source: "workspace",
     });
     await loopback.selectOption("inherit");
     await expect(
@@ -936,7 +936,7 @@ test.describe("the settings tab", () => {
     backend,
   }) => {
     await openDetail(page, backend, "web-shop", "settings");
-    await page.route("**/api/settings/sandboxes/web-shop", async (route) => {
+    await page.route("**/api/settings/workspaces/web-shop", async (route) => {
       if (route.request().method() === "PUT") {
         await route.fulfill({
           status: 422,

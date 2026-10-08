@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -194,6 +194,49 @@ CREATE TABLE builtin_sets_seen (
 ) STRICT;
 ";
 
+/// The rules' owner is a workspace, not a sandbox: `sandbox_id` becomes `workspace_id` in every
+/// table that has it (SQLite rewrites the triggers and indexes that name it), and a rule's
+/// `scope` value `sandbox` becomes `workspace`. `rules` is rebuilt because SQLite can't change
+/// a `CHECK`; the `AUTOINCREMENT` high-water mark is carried over as in V3. The stored audit
+/// `line`s are not rewritten (the log is append-only and its lines are capped): the reader
+/// accepts the old key names.
+const V4: &str = r"
+ALTER TABLE pending RENAME COLUMN sandbox_id TO workspace_id;
+ALTER TABLE audit RENAME COLUMN sandbox_id TO workspace_id;
+ALTER TABLE rule_set_switches RENAME COLUMN sandbox_id TO workspace_id;
+ALTER TABLE system_reasons RENAME COLUMN sandbox_id TO workspace_id;
+DROP INDEX audit_sandbox;
+CREATE INDEX audit_workspace ON audit (workspace_id, id);
+
+CREATE TABLE rules_v4 (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope             TEXT    NOT NULL CHECK (scope IN ('global', 'workspace', 'set')),
+    workspace_id      TEXT,
+    set_id            INTEGER REFERENCES rule_sets (id),
+    pattern_kind      TEXT    NOT NULL CHECK (pattern_kind IN ('exact', 'suffix')),
+    pattern           TEXT    NOT NULL,
+    effect            TEXT    NOT NULL CHECK (effect IN ('allow', 'deny')),
+    expires_at        INTEGER,
+    created_at        INTEGER NOT NULL,
+    created_by        TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api')),
+    source_pending_id INTEGER,
+    CHECK ((scope = 'workspace') = (workspace_id IS NOT NULL)),
+    CHECK ((scope = 'set') = (set_id IS NOT NULL))
+) STRICT;
+INSERT INTO rules_v4 (id, scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
+                      created_at, created_by, source_pending_id)
+    SELECT id, CASE scope WHEN 'sandbox' THEN 'workspace' ELSE scope END, sandbox_id, set_id,
+           pattern_kind, pattern, effect, expires_at, created_at, created_by, source_pending_id
+    FROM rules;
+DELETE FROM sqlite_sequence WHERE name = 'rules_v4';
+INSERT INTO sqlite_sequence (name, seq) SELECT 'rules_v4', seq FROM sqlite_sequence WHERE name = 'rules';
+DROP TABLE rules;
+ALTER TABLE rules_v4 RENAME TO rules;
+CREATE INDEX rules_workspace ON rules (workspace_id);
+CREATE INDEX rules_expiry ON rules (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX rules_set ON rules (set_id) WHERE set_id IS NOT NULL;
+";
+
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.
 ///
 /// # Errors
@@ -261,7 +304,7 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", true).unwrap();
         migrate(&mut conn).unwrap();
         let kept: Vec<(i64, String, Option<String>, Option<i64>)> = conn
-            .prepare("SELECT id, scope, sandbox_id, set_id FROM rules ORDER BY id")
+            .prepare("SELECT id, scope, workspace_id, set_id FROM rules ORDER BY id")
             .unwrap()
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .unwrap()
@@ -271,7 +314,7 @@ mod tests {
             kept,
             vec![
                 (1, "global".into(), None, None),
-                (2, "sandbox".into(), Some("box".into()), None)
+                (2, "workspace".into(), Some("box".into()), None)
             ]
         );
         conn.execute(
@@ -306,6 +349,120 @@ mod tests {
             .query_row("SELECT rule_set FROM pending", [], |r| r.get(0))
             .unwrap();
         assert_eq!(rule_set, None);
+    }
+
+    /// A database a puddle from before the rename left behind: rows in every table that names the
+    /// owner, then migrated.
+    #[test]
+    fn v4_renames_the_owner_everywhere_and_keeps_the_rows_and_guards() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_up_to(&mut conn, 3).unwrap();
+        conn.execute_batch(
+            "INSERT INTO rules (scope, sandbox_id, pattern_kind, pattern, effect, created_at, created_by)
+                VALUES ('global', NULL, 'exact', 'a.example', 'allow', 1, 'cli'),
+                       ('sandbox', 'box', 'suffix', '.example.com', 'deny', 2, 'ui'),
+                       ('global', NULL, 'exact', 'gone.example', 'allow', 3, 'api');
+             DELETE FROM rules WHERE pattern = 'gone.example';
+             INSERT INTO rule_sets (name, created_at, created_by) VALUES ('mine', 1, 'ui');
+             INSERT INTO rules (scope, set_id, pattern_kind, pattern, effect, created_at, created_by)
+                VALUES ('set', 1, 'exact', 'set.example', 'allow', 4, 'ui');
+             INSERT INTO pending (sandbox_id, host, port, first_seen, last_seen)
+                VALUES ('box', 'x.example', 443, 1, 1);
+             INSERT INTO audit (ts, type, sandbox_id, line)
+                VALUES (5, 'connection', 'box', '{\"type\":\"connection\",\"sandbox_id\":\"box\"}');
+             INSERT INTO rule_set_switches (rule_set, sandbox_id, enabled, changed_at)
+                VALUES ('builtin:x', NULL, 1, 1), ('builtin:x', 'box', 0, 2);
+             INSERT INTO system_reasons (sandbox_id, reason) VALUES ('box', 'why');",
+        )
+        .unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 3);
+        assert_eq!(version(&conn), 4);
+
+        let rules: Vec<(i64, String, Option<String>)> = conn
+            .prepare("SELECT id, scope, workspace_id FROM rules ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rules,
+            vec![
+                (1, "global".into(), None),
+                (2, "workspace".into(), Some("box".into())),
+                (4, "set".into(), None),
+            ]
+        );
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(
+            count("SELECT count(*) FROM pending WHERE workspace_id = 'box'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT count(*) FROM audit WHERE workspace_id = 'box'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT count(*) FROM rule_set_switches WHERE workspace_id = 'box'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT count(*) FROM rule_set_switches WHERE workspace_id IS NULL"),
+            1
+        );
+        assert_eq!(
+            count("SELECT count(*) FROM system_reasons WHERE workspace_id = 'box'"),
+            1
+        );
+        // The audit line is kept as it was written.
+        let line: String = conn
+            .query_row("SELECT line FROM audit", [], |r| r.get(0))
+            .unwrap();
+        assert!(line.contains("sandbox_id"));
+        // Nothing of the old name is left in the schema, apart from the stored lines.
+        assert_eq!(
+            count("SELECT count(*) FROM sqlite_schema WHERE sql LIKE '%sandbox%'"),
+            0
+        );
+
+        // The guards still hold: a rule's owner and scope agree, a deleted rule's id is not reused,
+        // a pending row's owner never changes, and the one-open-row key still applies.
+        assert!(
+            conn.execute(
+                "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
+                 VALUES ('workspace', 'exact', 'a.example', 'allow', 4, 'cli')",
+                [],
+            )
+            .is_err()
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by)
+                 VALUES ('sandbox', 'box', 'exact', 'a.example', 'allow', 4, 'cli')",
+                [],
+            )
+            .is_err()
+        );
+        conn.execute(
+            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
+             VALUES ('global', 'exact', 'new.example', 'allow', 5, 'cli')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(conn.last_insert_rowid(), 5, "ids 3 and 4 stay used");
+        assert!(
+            conn.execute("UPDATE pending SET workspace_id = 'other'", [])
+                .is_err()
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen)
+                 VALUES ('box', 'x.example', 443, 1, 1)",
+                [],
+            )
+            .is_err()
+        );
     }
 
     #[test]

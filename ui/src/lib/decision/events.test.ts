@@ -4,7 +4,7 @@ import { asInboxEvent } from "./events.ts";
 
 const request = {
   id: 7,
-  sandbox: "demo",
+  workspace: "demo",
   host: "a.example.com",
   port: 443,
   first_seen: 1,
@@ -61,13 +61,13 @@ describe("asInboxEvent", () => {
     expect(
       asInboxEvent({
         type: "suppression_changed",
-        sandbox: "demo",
+        workspace: "demo",
         active: true,
         count: 12,
       }),
     ).toEqual({
       type: "suppression_changed",
-      sandbox: "demo",
+      workspace: "demo",
       active: true,
       count: 12,
     });
@@ -76,7 +76,7 @@ describe("asInboxEvent", () => {
   it("widens the API's short form of a request to an open one, with its domain", () => {
     const summary = {
       id: 7,
-      sandbox: "demo",
+      workspace: "demo",
       host: "a.example.com",
       port: 443,
       first_seen: 1,
@@ -88,7 +88,7 @@ describe("asInboxEvent", () => {
       type: "pending_opened",
       request: {
         id: 7,
-        sandbox: "demo",
+        workspace: "demo",
         host: "a.example.com",
         port: 443,
         first_seen: 1,
@@ -118,15 +118,20 @@ describe("asInboxEvent", () => {
       "text",
       42,
       {},
-      { type: "status_changed", sandbox: "demo", status: "running" },
+      { type: "status_changed", workspace: "demo", status: "running" },
       { type: "pending_opened" },
       { type: "pending_opened", request: { id: 1 } },
       { type: "pending_opened", request: null },
       { type: "pending_updated", id: "7", attempts: 3, last_seen: 9 },
       { type: "pending_updated", id: 7, attempts: Number.NaN, last_seen: 9 },
       { type: "pending_closed", id: 7 },
-      { type: "suppression_changed", sandbox: "demo", active: "yes", count: 1 },
-      { type: "suppression_changed", sandbox: 3, active: true, count: 1 },
+      {
+        type: "suppression_changed",
+        workspace: "demo",
+        active: "yes",
+        count: 1,
+      },
+      { type: "suppression_changed", workspace: 3, active: true, count: 1 },
     ]) {
       expect(asInboxEvent(bad)).toBeUndefined();
     }

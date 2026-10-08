@@ -30,7 +30,8 @@ use puddle_api::{
 use puddle_store::{Actor, Clock, Limits, ManualClock, NewRule, Pattern, Scope, Store};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, Event,
-    EventSink, Host, ImageRef, MemoryMib, SandboxName, SandboxStatus, SuffixAllows, WorkspaceId,
+    EventSink, Host, ImageRef, MemoryMib, SuffixAllows, WorkspaceId, WorkspaceName,
+    WorkspaceStatus,
 };
 use tokio::sync::Mutex;
 
@@ -447,9 +448,9 @@ impl State {
                 .save_global(global.clone())
                 .map_err(|err| err.to_string())?;
         }
-        for (name, document) in &scenario.settings.sandboxes {
+        for (name, document) in &scenario.settings.workspaces {
             self.settings
-                .save_sandbox(&sandbox(name)?, document.clone())
+                .save_workspace(&workspace(name)?, document.clone())
                 .map_err(|err| err.to_string())?;
         }
         if let Some(report) = &scenario.network_health {
@@ -471,7 +472,7 @@ impl State {
             Step::Wait { .. } => {}
             Step::Request(request) => self.request(request, now)?,
             Step::Bulk {
-                sandbox,
+                workspace,
                 count,
                 domain,
             } => {
@@ -479,7 +480,7 @@ impl State {
                 for i in 0..*count {
                     self.request(
                         &RequestSeed {
-                            sandbox: sandbox.clone(),
+                            workspace: workspace.clone(),
                             host: format!("n{i}.{domain}"),
                             port: 443,
                             repeat: 1,
@@ -493,7 +494,7 @@ impl State {
                 for i in 0..*count {
                     self.request(
                         &RequestSeed {
-                            sandbox: format!("bulk-{}", i % 10),
+                            workspace: format!("bulk-{}", i % 10),
                             host: format!("h{i}.d{}.example.org", i % 50),
                             port: 443,
                             repeat: 1,
@@ -515,7 +516,7 @@ impl State {
                     };
                     self.connection(
                         &ConnectionSeed {
-                            sandbox: format!("bulk-{}", i % 10),
+                            workspace: format!("bulk-{}", i % 10),
                             host: format!("h{}.d{}.example.org", i % 200, i % 50),
                             port: 443,
                             decision,
@@ -552,7 +553,7 @@ impl State {
     }
 
     fn workspace(&self, seed: &WorkspaceSeed, now: u64) -> Result<(), String> {
-        let name = sandbox(&seed.name)?;
+        let name = workspace(&seed.name)?;
         let id = WorkspaceId::new(&seed.name)
             .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
         let repo_url = RepoUrl::parse(&seed.repo_url)
@@ -569,10 +570,10 @@ impl State {
                 MemoryMib::new(mib).map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
         }
         record.status = match seed.status {
-            StatusSeed::Created => SandboxStatus::Created,
-            StatusSeed::Running => SandboxStatus::Running,
-            StatusSeed::Stopped => SandboxStatus::Stopped,
-            StatusSeed::Crashed => SandboxStatus::Crashed,
+            StatusSeed::Created => WorkspaceStatus::Created,
+            StatusSeed::Running => WorkspaceStatus::Running,
+            StatusSeed::Stopped => WorkspaceStatus::Stopped,
+            StatusSeed::Crashed => WorkspaceStatus::Crashed,
         };
         record.created_at = now.saturating_sub(seed.ago_ms);
         record.disk_used_mib = seed.disk_used_mib;
@@ -612,8 +613,8 @@ impl State {
     fn add_rule(&self, seed: &RuleSeed, now: u64) -> Result<(), String> {
         let created = now.saturating_sub(seed.ago_ms);
         let new = NewRule {
-            scope: match &seed.sandbox {
-                Some(name) => Scope::Sandbox(sandbox(name)?),
+            scope: match &seed.workspace {
+                Some(name) => Scope::Workspace(workspace(name)?),
                 None => Scope::Global,
             },
             pattern: Pattern::parse(&seed.pattern).map_err(|err| err.to_string())?,
@@ -630,7 +631,7 @@ impl State {
     }
 
     fn request(&self, seed: &RequestSeed, now: u64) -> Result<(), String> {
-        let request = EgressRequest::new(sandbox(&seed.sandbox)?, host(&seed.host)?, seed.port);
+        let request = EgressRequest::new(workspace(&seed.workspace)?, host(&seed.host)?, seed.port);
         self.at(now, seed.ago_ms, || {
             for _ in 0..seed.repeat {
                 let decision = self
@@ -646,7 +647,7 @@ impl State {
     }
 
     fn connection(&self, seed: &ConnectionSeed, now: u64) -> Result<(), String> {
-        let request = EgressRequest::new(sandbox(&seed.sandbox)?, host(&seed.host)?, seed.port);
+        let request = EgressRequest::new(workspace(&seed.workspace)?, host(&seed.host)?, seed.port);
         let (decision, default_reason) = match seed.decision {
             DecisionSeed::Allow => (ConnectionDecision::Allow, "rule"),
             DecisionSeed::Deny => (ConnectionDecision::Deny, "rule"),
@@ -669,8 +670,8 @@ impl State {
     }
 }
 
-fn sandbox(name: &str) -> Result<SandboxName, String> {
-    SandboxName::new(name).map_err(|err| format!("workspace name {name:?}: {err}"))
+fn workspace(name: &str) -> Result<WorkspaceName, String> {
+    WorkspaceName::new(name).map_err(|err| format!("workspace name {name:?}: {err}"))
 }
 
 fn host(name: &str) -> Result<Host, String> {

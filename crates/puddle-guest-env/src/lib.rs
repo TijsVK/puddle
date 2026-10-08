@@ -6,7 +6,7 @@
 //! function, [`guest_proxy_config`], from [`ProxySettings`] (and the image's `ENV`) to a
 //! [`GuestEnv`](puddle_types::GuestEnv) and a list of [`GuestFile`](puddle_types::GuestFile)s.
 //! The boot hook (`puddle-boot`) applies them like any provider's; the caller also puts the env
-//! into the sandbox spec, so exec and SSH sessions get it without a login shell.
+//! into the workspace spec, so exec and SSH sessions get it without a login shell.
 //!
 //! | Tool | Delivery |
 //! |---|---|

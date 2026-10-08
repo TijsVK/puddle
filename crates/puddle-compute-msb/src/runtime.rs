@@ -14,7 +14,7 @@ use puddle_compute::{
     Capabilities, ComputeError, ImageConfig, Runtime, SandboxInfo, SandboxSpec, VolumeInfo,
     VolumeSpec,
 };
-use puddle_types::{ImageRef, MemoryMib, SandboxName, SandboxStatus, VolumeName};
+use puddle_types::{ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
@@ -43,15 +43,15 @@ impl std::fmt::Debug for MsbRuntime {
 }
 
 /// msb's status as puddle's.
-pub(crate) fn status(s: SdkStatus) -> SandboxStatus {
+pub(crate) fn status(s: SdkStatus) -> WorkspaceStatus {
     match s {
-        SdkStatus::Created => SandboxStatus::Created,
-        SdkStatus::Starting => SandboxStatus::Starting,
-        SdkStatus::Running => SandboxStatus::Running,
-        SdkStatus::Draining => SandboxStatus::Draining,
-        SdkStatus::Paused => SandboxStatus::Paused,
-        SdkStatus::Stopped => SandboxStatus::Stopped,
-        SdkStatus::Crashed => SandboxStatus::Crashed,
+        SdkStatus::Created => WorkspaceStatus::Created,
+        SdkStatus::Starting => WorkspaceStatus::Starting,
+        SdkStatus::Running => WorkspaceStatus::Running,
+        SdkStatus::Draining => WorkspaceStatus::Draining,
+        SdkStatus::Paused => WorkspaceStatus::Paused,
+        SdkStatus::Stopped => WorkspaceStatus::Stopped,
+        SdkStatus::Crashed => WorkspaceStatus::Crashed,
     }
 }
 
@@ -435,7 +435,7 @@ impl Runtime for MsbRuntime {
         Box::pin(async move {
             let record = self.existing(name).await?;
             let current = status(record.status_snapshot());
-            if current != SandboxStatus::Running {
+            if current != WorkspaceStatus::Running {
                 return Err(ComputeError::InvalidState {
                     sandbox: name.to_string(),
                     op: "connect to",
@@ -681,13 +681,13 @@ mod tests {
     #[test]
     fn every_sdk_status_maps_one_to_one() {
         let pairs = [
-            (SdkStatus::Created, SandboxStatus::Created),
-            (SdkStatus::Starting, SandboxStatus::Starting),
-            (SdkStatus::Running, SandboxStatus::Running),
-            (SdkStatus::Draining, SandboxStatus::Draining),
-            (SdkStatus::Paused, SandboxStatus::Paused),
-            (SdkStatus::Stopped, SandboxStatus::Stopped),
-            (SdkStatus::Crashed, SandboxStatus::Crashed),
+            (SdkStatus::Created, WorkspaceStatus::Created),
+            (SdkStatus::Starting, WorkspaceStatus::Starting),
+            (SdkStatus::Running, WorkspaceStatus::Running),
+            (SdkStatus::Draining, WorkspaceStatus::Draining),
+            (SdkStatus::Paused, WorkspaceStatus::Paused),
+            (SdkStatus::Stopped, WorkspaceStatus::Stopped),
+            (SdkStatus::Crashed, WorkspaceStatus::Crashed),
         ];
         for (sdk, ours) in pairs {
             assert_eq!(status(sdk), ours);

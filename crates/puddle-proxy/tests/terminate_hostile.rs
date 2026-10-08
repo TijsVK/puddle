@@ -70,7 +70,7 @@ async fn hostile_hg15_a_request_for_another_host_is_421_and_the_injector_never_h
 
 #[tokio::test]
 async fn hostile_hg15_the_connect_name_is_what_counts_not_what_the_guest_says_next() {
-    // CONNECT to a host that is not bound, then TLS for the bound name: spliced, so the sandbox
+    // CONNECT to a host that is not bound, then TLS for the bound name: spliced, so the workspace
     // CA never gets to vouch for it and the bound upstream never sees a connection.
     let pki = Pki::new();
     let bound = upstream(&pki, ok_handler()).await;
@@ -421,7 +421,7 @@ async fn hostile_hg19_an_upstream_certificate_that_is_not_accepted_is_a_502_and_
 
 #[tokio::test]
 async fn hostile_hg19_a_root_the_host_does_not_trust_is_not_trusted_because_the_guest_does() {
-    // The sandbox CA vouches for bound.test to the guest; it must not count for the upstream.
+    // The workspace CA vouches for bound.test to the guest; it must not count for the upstream.
     let pki = Pki::new();
     let server = FakeServer::tls(
         pki.server_config("bound.test", Flaw::UnknownRoot),

@@ -26,7 +26,7 @@ pub enum AddressClass {
         rule: &'static str,
     },
     /// One of puddle's own listeners. Not host loopback: no toggle reaches it, and
-    /// a later per-sandbox unblock would key on this class. Only
+    /// a later per-workspace unblock would key on this class. Only
     /// [`crate::NetPolicy::classify`] gives it, since it needs the port and the registry.
     PuddleEndpoint(EndpointKind),
 }
@@ -146,7 +146,7 @@ fn classify_v4(a: Ipv4Addr) -> AddressClass {
 
 /// A transition prefix's embedded IPv4 address: a local one gives its category (with the
 /// prefix's rule); a public one leaves the address special (6to4, Teredo and IPv4-compatible
-/// need relays a sandbox has no reason to use).
+/// need relays a workspace has no reason to use).
 fn embedded(v4: Ipv4Addr, rule: &'static str) -> AddressClass {
     match classify_v4(v4) {
         AddressClass::Local { category, .. } => local(category, rule),

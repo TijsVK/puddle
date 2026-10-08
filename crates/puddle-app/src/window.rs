@@ -10,7 +10,7 @@ use url::Url;
 use crate::navigation::{Navigation, OriginPolicy};
 
 /// The main window's label. puddle's one capability file names this label and grants it nothing;
-/// sandbox windows get labels of their own (`vs-<sandbox>`), never this one.
+/// workspace windows get labels of their own (`vs-<workspace>`), never this one.
 pub const MAIN_LABEL: &str = "main";
 
 /// Hands a web address to the default browser. In the app this is the opener plugin called from

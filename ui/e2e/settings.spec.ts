@@ -9,7 +9,7 @@ import { axeViolations, watchCsp } from "./support";
 const TERMS = "https://code.visualstudio.com/license/server";
 
 interface Stored {
-  sandbox_defaults: Record<string, unknown> & {
+  workspace_defaults: Record<string, unknown> & {
     memory: number | null;
     local_toggles: Record<string, boolean | null>;
   };
@@ -172,9 +172,9 @@ test("changes are saved at once and survive a reload", async ({
   await done;
 
   const now = await stored(request, backend);
-  expect(now.sandbox_defaults.memory).toBe(16_384);
-  expect(now.sandbox_defaults.local_toggles["private"]).toBe(true);
-  expect(now.sandbox_defaults.local_toggles["loopback"]).toBeNull();
+  expect(now.workspace_defaults.memory).toBe(16_384);
+  expect(now.workspace_defaults.local_toggles["private"]).toBe(true);
+  expect(now.workspace_defaults.local_toggles["loopback"]).toBeNull();
   expect(now.ui["sound"]).toBe(true);
   expect(now.ui["close_behaviour"]).toBe("quit");
 
@@ -196,14 +196,14 @@ test("a reconnection grace outside the range is refused before anything is sent"
   await grace.blur();
   await expect(page.getByText(/Use between 30 and 86400/)).toBeVisible();
   expect(
-    (await stored(request, backend)).sandbox_defaults["reconnection_grace"],
+    (await stored(request, backend)).workspace_defaults["reconnection_grace"],
   ).toBeNull();
   const done = saved(page);
   await grace.fill("900");
   await grace.blur();
   await done;
   expect(
-    (await stored(request, backend)).sandbox_defaults["reconnection_grace"],
+    (await stored(request, backend)).workspace_defaults["reconnection_grace"],
   ).toBe(900);
 });
 

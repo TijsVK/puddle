@@ -44,7 +44,7 @@ pub const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 pub enum BridgeError {
     /// Nothing listens at the endpoint.
     #[error(
-        "no puddle SSH endpoint at {endpoint}: the sandbox is not running, or puddle is not (start it in puddle and connect again)"
+        "no puddle SSH endpoint at {endpoint}: the workspace is not running, or puddle is not (start it in puddle and connect again)"
     )]
     NotFound {
         /// The endpoint.
@@ -69,7 +69,7 @@ pub enum BridgeError {
     },
     /// The endpoint took the connection but didn't answer.
     #[error(
-        "the SSH endpoint did not answer within {waited:?}: puddle may be stuck or the sandbox's endpoint is gone (restart the sandbox in puddle and connect again)"
+        "the SSH endpoint did not answer within {waited:?}: puddle may be stuck or the workspace's endpoint is gone (restart the workspace in puddle and connect again)"
     )]
     NoAnswer {
         /// How long the bridge waited.
@@ -79,7 +79,7 @@ pub enum BridgeError {
     #[error("the SSH endpoint did not answer as puddle does")]
     NotPuddle,
     /// Reading from the endpoint failed mid-session.
-    #[error("the connection to the sandbox broke")]
+    #[error("the connection to the workspace broke")]
     ServerRead(#[source] io::Error),
 }
 

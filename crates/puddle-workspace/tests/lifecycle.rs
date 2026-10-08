@@ -12,7 +12,7 @@ use puddle_compute::{
     ComputeError, DiskSize, ExecOutput, ExecRequest, Runtime, Sandbox, SandboxSpec, VolumeMount,
     VolumeSpec,
 };
-use puddle_types::{GuestPath, ImageRef, SandboxName, SandboxStatus, WorkspaceId};
+use puddle_types::{GuestPath, ImageRef, SandboxName, WorkspaceId, WorkspaceStatus};
 use puddle_workspace::{DELETE_CHECK_SH, HoldKind, WorkspaceConfig, WorkspaceError, Workspaces};
 
 fn ws(s: &str) -> WorkspaceId {
@@ -56,7 +56,7 @@ async fn volumes(rt: &FakeRuntime) -> Vec<String> {
         .collect()
 }
 
-async fn status(rt: &FakeRuntime, n: &str) -> Option<SandboxStatus> {
+async fn status(rt: &FakeRuntime, n: &str) -> Option<WorkspaceStatus> {
     rt.list()
         .await
         .unwrap()
@@ -146,7 +146,7 @@ async fn a_new_workspace_gets_its_volume_mounted_with_kind_and_size() {
         (holder.sandbox, holder.kind),
         (name("box"), HoldKind::Attached)
     );
-    assert_eq!(sb.status().await.unwrap(), SandboxStatus::Running);
+    assert_eq!(sb.status().await.unwrap(), WorkspaceStatus::Running);
 }
 
 #[tokio::test]
@@ -327,7 +327,7 @@ async fn an_abort_removes_the_record_a_refused_attach_leaves_and_keeps_an_old_vo
         .unwrap();
     let err = rt.create(att.add_to(spec("box"))).await.unwrap_err();
     assert!(matches!(err, ComputeError::VolumeInUse { .. }));
-    assert_eq!(status(&rt, "box").await, Some(SandboxStatus::Stopped));
+    assert_eq!(status(&rt, "box").await, Some(WorkspaceStatus::Stopped));
     att.abort(&rt).await.unwrap();
     assert_eq!(status(&rt, "box").await, None);
     assert_eq!(
@@ -362,7 +362,7 @@ async fn an_abort_never_touches_what_existed_before() {
     let id = ws("b");
     let err = w.create(&rt, &id, spec("busy"), None).await.unwrap_err();
     assert!(err.to_string().contains("already exists"), "{err}");
-    assert_eq!(status(&rt, "busy").await, Some(SandboxStatus::Stopped));
+    assert_eq!(status(&rt, "busy").await, Some(WorkspaceStatus::Stopped));
     assert_eq!(volumes(&rt).await, NONE);
 }
 
@@ -421,7 +421,7 @@ async fn stop_trims_every_owned_workspace_first() {
         .unwrap();
     let stop = calls.iter().position(|c| c.op == Op::Stop).unwrap();
     assert!(fstrim < stop, "trim before stop");
-    assert_eq!(sb.status().await.unwrap(), SandboxStatus::Stopped);
+    assert_eq!(sb.status().await.unwrap(), WorkspaceStatus::Stopped);
 
     // Already down: nothing to trim, the stop is a no-op.
     let report = w.stop(&sb).await.unwrap();
@@ -437,7 +437,7 @@ async fn a_failed_trim_does_not_stop_the_stop() {
     let report = w.stop(&sb).await.unwrap();
     let err = report.trims[0].as_ref().unwrap_err();
     assert!(err.to_string().contains("not supported"), "{err}");
-    assert_eq!(sb.status().await.unwrap(), SandboxStatus::Stopped);
+    assert_eq!(sb.status().await.unwrap(), WorkspaceStatus::Stopped);
 
     // No fstrim in the image at all.
     let rt = FakeRuntime::new();
@@ -681,7 +681,7 @@ async fn delete_refuses_when_an_owner_appeared_since_the_confirmation() {
     sb.stop().await.unwrap();
     let err = w.delete(&rt, &id, &report.confirm()).await.unwrap_err();
     assert!(matches!(err, WorkspaceError::Changed { .. }), "{err:?}");
-    assert_eq!(status(&rt, "new").await, Some(SandboxStatus::Stopped));
+    assert_eq!(status(&rt, "new").await, Some(WorkspaceStatus::Stopped));
 }
 
 #[tokio::test]

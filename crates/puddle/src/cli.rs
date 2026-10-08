@@ -8,9 +8,9 @@ pub enum Command {
     Version,
     /// Print usage.
     Help,
-    /// Relay stdio to a sandbox's SSH endpoint (`ProxyCommand`), see [`crate::cmd::ssh_bridge`].
+    /// Relay stdio to a workspace's SSH endpoint (`ProxyCommand`), see [`crate::cmd::ssh_bridge`].
     SshBridge {
-        /// The sandbox's endpoint (named pipe or Unix socket path).
+        /// The workspace's endpoint (named pipe or Unix socket path).
         endpoint: std::path::PathBuf,
     },
     /// Check this machine's prerequisites, see [`crate::cmd::doctor`].

@@ -24,7 +24,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticResolver};
 use puddle_proxy::{Proxy, Route};
 use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
-use puddle_types::{NullSink, SandboxName};
+use puddle_types::{NullSink, WorkspaceName};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -33,8 +33,8 @@ use tokio::sync::mpsc;
 const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const CANARY: &str = "CANARY-node-9c1e";
 
-fn sandbox() -> SandboxName {
-    SandboxName::new("node").unwrap()
+fn workspace() -> WorkspaceName {
+    WorkspaceName::new("node").unwrap()
 }
 
 struct Rig {
@@ -56,7 +56,7 @@ async fn rig() -> Rig {
             .with_address_check(Arc::new(AnyAddress)),
     );
     let root = IpcRoot::new().unwrap();
-    let route = proxy.serve_route(root.listen().unwrap(), sandbox());
+    let route = proxy.serve_route(root.listen().unwrap(), workspace());
     let config = Config {
         listen: SocketAddr::new(LOCAL, 0),
         target: Target::Unix(route.endpoint().path().to_path_buf()),
@@ -194,7 +194,7 @@ async fn node_fetch_of_plain_http_is_pending_then_allowed_and_audited_with_metho
     // Unknown name: Node's CONNECT is refused and the name is waiting in the inbox.
     let (ok, out) = node_fetch(agent, url.clone()).await;
     assert!(!ok, "fetch passed before any rule: {out}");
-    let pending = rig.store.open_pending(Some(&sandbox())).unwrap();
+    let pending = rig.store.open_pending(Some(&workspace())).unwrap();
     assert_eq!(pending.len(), 1, "{pending:?}");
     let records = connection_records(&rig.store, 1).await;
     assert_eq!(
@@ -215,7 +215,7 @@ async fn node_fetch_of_plain_http_is_pending_then_allowed_and_audited_with_metho
     // Allowed: the request reaches the server unchanged and is audited with method and path.
     rig.store
         .add_rule(&NewRule {
-            scope: Scope::Sandbox(sandbox()),
+            scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse("node.test").unwrap(),
             effect: Effect::Allow,
             expires_at: None,

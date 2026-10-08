@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use puddle_compute::{ComputeError, Runtime, Sandbox};
-use puddle_types::{GuestPath, SandboxName, SandboxStatus};
+use puddle_types::{GuestPath, SandboxName, WorkspaceStatus};
 use tokio::task::JoinSet;
 
 use crate::trim::{TrimOutcome, trim_request};
@@ -33,7 +33,7 @@ impl Default for ShutdownConfig {
 
 /// What happened to one sandbox at shutdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SandboxOutcome {
+pub struct WorkspaceOutcome {
     /// The sandbox.
     pub sandbox: SandboxName,
     /// The trim before the stop.
@@ -59,7 +59,7 @@ pub enum StopOutcome {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ShutdownReport {
     /// Per sandbox.
-    pub sandboxes: Vec<SandboxOutcome>,
+    pub sandboxes: Vec<WorkspaceOutcome>,
 }
 
 impl ShutdownReport {
@@ -177,7 +177,7 @@ impl<R: Runtime> Lifecycle<R> {
             let config = self.config.clone();
             tasks.spawn(async move {
                 let (trim, stop) = trim_and_stop(&managed.handle, &managed.trim, &config).await;
-                SandboxOutcome {
+                WorkspaceOutcome {
                     sandbox: name,
                     trim,
                     stop,
@@ -207,7 +207,7 @@ pub(crate) async fn trim_and_stop<S: Sandbox>(
 ) -> (TrimOutcome, StopOutcome) {
     let name = sandbox.name().clone();
     let trim = match sandbox.status().await {
-        Ok(SandboxStatus::Running) => {
+        Ok(WorkspaceStatus::Running) => {
             let request = trim_request(paths, config.trim_timeout);
             // The exec has its own timeout; the outer one also covers a runtime that hangs.
             match tokio::time::timeout(config.trim_timeout, sandbox.exec(request)).await {
@@ -260,8 +260,8 @@ mod tests {
             true
         }
 
-        fn status(&self) -> impl Future<Output = Result<SandboxStatus, ComputeError>> + Send {
-            std::future::ready(Ok(SandboxStatus::Running))
+        fn status(&self) -> impl Future<Output = Result<WorkspaceStatus, ComputeError>> + Send {
+            std::future::ready(Ok(WorkspaceStatus::Running))
         }
 
         fn stop(&self) -> impl Future<Output = Result<(), ComputeError>> + Send {

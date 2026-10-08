@@ -229,7 +229,7 @@ describe("deciding with the buttons", () => {
     expect(inbox.rules[0]).toMatchObject({
       effect: "allow",
       pattern: "a.example.com",
-      scope: { type: "sandbox" },
+      scope: { type: "workspace" },
     });
     expect(screen.getByRole("status")).toHaveTextContent(
       "Allowed a.example.com for workspace demo, permanently.",
@@ -307,7 +307,7 @@ describe("deciding with the buttons", () => {
       mine(4, { name: "Client X" }),
       mine(5, {
         name: "Elsewhere",
-        overrides: [{ sandbox: "demo" as never, enabled: false }],
+        overrides: [{ workspace: "demo" as never, enabled: false }],
       }),
     ];
     inbox.add(request(1, { host: "a.example.com" }), "example.com");
@@ -582,8 +582,8 @@ describe("keyboard", () => {
     await press("a");
     await vi.waitFor(() =>
       expect(inbox.rules[0]?.scope).toEqual({
-        type: "sandbox",
-        sandbox: "demo",
+        type: "workspace",
+        workspace: "demo",
       }),
     );
   });

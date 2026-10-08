@@ -53,8 +53,8 @@ struct Harness {
     _driver: JoinHandle<()>,
 }
 
-fn name() -> SandboxName {
-    SandboxName::new("box").unwrap()
+fn name() -> WorkspaceName {
+    WorkspaceName::new("box").unwrap()
 }
 
 fn start_with(config: HostConfig) -> Harness {
@@ -124,7 +124,7 @@ async fn a_proxied_stream_reaches_the_handler_with_its_first_byte() {
 }
 
 #[tokio::test]
-async fn oom_kills_on_the_control_stream_become_events_for_the_routes_sandbox() {
+async fn oom_kills_on_the_control_stream_become_events_for_the_routes_workspace() {
     let mut h = start();
     let mut c = h.control_stream().await;
     send(&mut c, &AgentMessage::hello()).await;

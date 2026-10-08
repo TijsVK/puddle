@@ -121,8 +121,8 @@ describe("bodyFrom", () => {
       server: { telemetry: true },
       ui: { sound: true },
     });
-    expect(body.sandbox_defaults.memory).toBe(4096);
-    expect(body.sandbox_defaults.zoom_hotkeys).toBeNull();
+    expect(body.workspace_defaults.memory).toBe(4096);
+    expect(body.workspace_defaults.zoom_hotkeys).toBeNull();
     expect(body.vscode_server).toEqual({
       server: null,
       telemetry: true,
@@ -130,7 +130,7 @@ describe("bodyFrom", () => {
     });
     expect(body.ui.sound).toBe(true);
     expect(bodyFrom(v)).toEqual({
-      sandbox_defaults: v.sandbox_defaults,
+      workspace_defaults: v.workspace_defaults,
       vscode_server: v.vscode_server,
       ui: v.ui,
     });

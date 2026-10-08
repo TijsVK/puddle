@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "puddle-ipc"
-description = "Per-sandbox host endpoints (named pipe / Unix socket) that only the current user can open"
+description = "Per-workspace host endpoints (named pipe / Unix socket) that only the current user can open"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

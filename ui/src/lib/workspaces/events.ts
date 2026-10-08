@@ -14,7 +14,7 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 
 /** The event if it is one the workspace screens use and its fields have the right types. */
 export function asWorkspaceEvent(raw: unknown): WorkspaceEvent | null {
-  if (!isObject(raw) || typeof raw["sandbox"] !== "string") return null;
+  if (!isObject(raw) || typeof raw["workspace"] !== "string") return null;
   switch (raw["type"]) {
     case "status_changed":
       return typeof raw["status"] === "string" ? (raw as StatusChanged) : null;

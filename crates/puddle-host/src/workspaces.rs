@@ -33,11 +33,12 @@ use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_compute::{ComputeError, DiskSize, Runtime};
 use puddle_lifecycle::Lifecycle;
 use puddle_proxy::Route;
-use puddle_settings::{GlobalSettings, SandboxSettings, resolve};
+use puddle_settings::{GlobalSettings, WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
-    Event, EventSink, ImageRef, MemoryMib, SandboxName, SandboxStatus, WorkspaceId, WorkspaceStep,
+    Event, EventSink, ImageRef, MemoryMib, WorkspaceId, WorkspaceName, WorkspaceStatus,
+    WorkspaceStep,
 };
 use puddle_workspace::{Findings, Layout, Workspaces};
 use tokio::sync::watch;
@@ -111,7 +112,7 @@ struct Inner<R: Runtime + Clone> {
     launcher: Arc<dyn Launcher>,
     book: WorkspaceBook,
     state: Mutex<State>,
-    live: tokio::sync::Mutex<BTreeMap<SandboxName, Live<R>>>,
+    live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
     running: watch::Sender<usize>,
 }
@@ -209,7 +210,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(crate) fn new(
         parts: Parts<R>,
         restored: Vec<Stored>,
-        status: &BTreeMap<SandboxName, SandboxStatus>,
+        status: &BTreeMap<WorkspaceName, WorkspaceStatus>,
     ) -> Result<Self, HostError> {
         let mut slots = BTreeMap::new();
         let mut interrupted = false;
@@ -226,15 +227,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 reason: e.to_string(),
             };
             let id = WorkspaceId::new(&stored.id).map_err(|e| state(&e))?;
-            let name = SandboxName::new(&stored.name).map_err(|e| state(&e))?;
+            let name = WorkspaceName::new(&stored.name).map_err(|e| state(&e))?;
             let mut record = WorkspaceRecord::new(id.clone(), name.clone(), stored.repo_url);
             record.image = stored.image;
             record.memory = MemoryMib::new(stored.memory_mib).unwrap_or(MemoryMib::DEFAULT);
             record.created_at = stored.created_at;
             record.disk_size_mib = stored.disk_size_mib;
             record.status = match status.get(&name) {
-                Some(SandboxStatus::Crashed) => SandboxStatus::Crashed,
-                _ => SandboxStatus::Stopped,
+                Some(WorkspaceStatus::Crashed) => WorkspaceStatus::Crashed,
+                _ => WorkspaceStatus::Stopped,
             };
             slots.insert(
                 id,
@@ -319,14 +320,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     fn status_event(&self, record: &WorkspaceRecord) {
         self.inner.events.emit(Event::StatusChanged {
-            sandbox: record.name.clone(),
+            workspace: record.name.clone(),
             status: record.status,
         });
     }
 
-    fn progress(&self, name: &SandboxName, step: WorkspaceStep, detail: Option<String>) {
+    fn progress(&self, name: &WorkspaceName, step: WorkspaceStep, detail: Option<String>) {
         self.inner.events.emit(Event::WorkspaceProgress {
-            sandbox: name.clone(),
+            workspace: name.clone(),
             step,
             detail,
         });
@@ -367,9 +368,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// The SSH endpoint of a running workspace's sandbox.
-    pub async fn ssh_endpoint(&self, sandbox: &SandboxName) -> Option<std::path::PathBuf> {
+    pub async fn ssh_endpoint(&self, workspace: &WorkspaceName) -> Option<std::path::PathBuf> {
         let live = self.inner.live.lock().await;
-        let ssh = live.get(sandbox)?.ssh.as_ref()?;
+        let ssh = live.get(workspace)?.ssh.as_ref()?;
         Some(ssh.endpoint().path().to_path_buf())
     }
 
@@ -440,22 +441,22 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 state.slots.remove(id);
             }
             (Err(_), Operation::Starting) => {
-                slot.record.status = SandboxStatus::Crashed;
+                slot.record.status = WorkspaceStatus::Crashed;
                 status_changed = true;
             }
             (Err(_), Operation::Stopping) => {
-                slot.record.status = SandboxStatus::Running;
+                slot.record.status = WorkspaceStatus::Running;
                 status_changed = true;
             }
             (Err(_), Operation::Reclaiming | Operation::Deleting)
             | (Ok(()), Operation::Reclaiming) => {}
             (Ok(()), Operation::Creating | Operation::Starting) => {
-                slot.record.status = SandboxStatus::Running;
+                slot.record.status = WorkspaceStatus::Running;
                 slot.creating = false;
                 status_changed = true;
             }
             (Ok(()), Operation::Stopping) => {
-                slot.record.status = SandboxStatus::Stopped;
+                slot.record.status = WorkspaceStatus::Stopped;
                 status_changed = true;
             }
         }
@@ -495,7 +496,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .and_then(|doc| GlobalSettings::from_document(doc).ok())
             .map(|loaded| loaded.settings)
             .unwrap_or_default();
-        resolve(&global, None::<&SandboxSettings>).memory.value
+        resolve(&global, None::<&WorkspaceSettings>).memory.value
     }
 
     /// The image config of `image`, pulling it if needed.
@@ -522,7 +523,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         let attachment = inner
             .workspaces
-            .prepare(&inner.runtime, id, name, Some(size))
+            .prepare(&inner.runtime, id, &name.sandbox_name(), Some(size))
             .await
             .map_err(|e| e.to_string())?;
         *created_volume = attachment.created_volume();
@@ -613,7 +614,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 |report| tracing::debug!(workspace = %id, ?report, "after boot"),
             );
         let mount = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
-        let handle = inner.runtime.get(name).await.map_err(|e| e.to_string())?;
+        let handle = inner
+            .runtime
+            .get(&name.sandbox_name())
+            .await
+            .map_err(|e| e.to_string())?;
         if inner.lifecycle.manage(handle, vec![mount]).is_err() {
             return Err("puddle is shutting down".to_owned());
         }
@@ -630,7 +635,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// It is its override over the global default over
     /// off. A settings document that cannot be read counts as off.
     #[must_use]
-    pub fn direct_ssh_allowed(&self, name: &SandboxName) -> bool {
+    pub fn direct_ssh_allowed(&self, name: &WorkspaceName) -> bool {
         let settings = self.inner.settings.as_ref();
         let Some(global) = settings
             .load_global()
@@ -641,10 +646,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             return false;
         };
         let own = settings
-            .load_sandbox(name)
+            .load_workspace(name)
             .ok()
             .map(|doc| doc.unwrap_or_else(|| serde_json::json!({})))
-            .and_then(|doc| SandboxSettings::from_document(doc).ok());
+            .and_then(|doc| WorkspaceSettings::from_document(doc).ok());
         match own {
             Some(own) => {
                 resolve(&global.settings, Some(&own.settings))
@@ -657,19 +662,19 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Opens the SSH endpoint of a running sandbox Failures are logged: the workspace
     /// runs without direct SSH.
-    async fn open_ssh(&self, name: &SandboxName, gated: Arc<GatedSandbox<R::Sandbox>>) {
+    async fn open_ssh(&self, name: &WorkspaceName, gated: Arc<GatedSandbox<R::Sandbox>>) {
         let inner = &self.inner;
         let listener = match inner.kit.ipc().listen() {
             Ok(listener) => listener,
             Err(e) => {
-                tracing::warn!(sandbox = %name, error = %e, "no SSH endpoint");
+                tracing::warn!(workspace = %name, error = %e, "no SSH endpoint");
                 return;
             }
         };
         let ssh = match SshEndpoint::start(listener, gated) {
             Ok(ssh) => ssh,
             Err(e) => {
-                tracing::warn!(sandbox = %name, error = %e, "no SSH endpoint");
+                tracing::warn!(workspace = %name, error = %e, "no SSH endpoint");
                 return;
             }
         };
@@ -691,7 +696,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Makes every running sandbox's SSH endpoint and ssh config entry match its direct SSH
     /// setting, at once and without a restart.
     async fn apply_direct_ssh(&self) {
-        type Running<S> = (SandboxName, Option<Arc<GatedSandbox<S>>>, bool);
+        type Running<S> = (WorkspaceName, Option<Arc<GatedSandbox<S>>>, bool);
         let running: Vec<Running<R::Sandbox>> = {
             let live = self.inner.live.lock().await;
             live.iter()
@@ -727,8 +732,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Stops what a failed boot or a finished stop leaves: the SSH endpoint and the lifecycle's
     /// handle. The route stays (the sandbox may start again); `drop_route` ends it too.
-    async fn quiesce(&self, name: &SandboxName, drop_route: bool) {
-        self.inner.lifecycle.release(name);
+    async fn quiesce(&self, name: &WorkspaceName, drop_route: bool) {
+        self.inner.lifecycle.release(&name.sandbox_name());
         let (ssh, route) = {
             let mut live = self.inner.live.lock().await;
             if drop_route {
@@ -767,17 +772,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Some(gated) = gated
             && let Err(e) = gated.stop().await
         {
-            tracing::warn!(sandbox = %name, error = %e, "stopping a failed workspace failed");
+            tracing::warn!(workspace = %name, error = %e, "stopping a failed workspace failed");
         }
         self.quiesce(name, remove).await;
         if remove {
-            match inner.runtime.remove(name).await {
+            match inner.runtime.remove(&name.sandbox_name()).await {
                 Ok(()) | Err(ComputeError::NotFound { .. }) => {}
                 Err(e) => {
-                    tracing::warn!(sandbox = %name, error = %e, "removing a failed sandbox failed");
+                    tracing::warn!(workspace = %name, error = %e, "removing a failed sandbox failed");
                 }
             }
-            inner.workspaces.sandbox_removed(name);
+            inner.workspaces.sandbox_removed(&name.sandbox_name());
         }
         if created_volume
             && let Err(e) = inner.runtime.remove_volume(&record.id.volume_name()).await
@@ -819,7 +824,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
-    async fn gated(&self, name: &SandboxName) -> Result<Arc<GatedSandbox<R::Sandbox>>, String> {
+    async fn gated(&self, name: &WorkspaceName) -> Result<Arc<GatedSandbox<R::Sandbox>>, String> {
         self.inner
             .live
             .lock()
@@ -847,10 +852,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             if exists {
                 inner
                     .runtime
-                    .remove(name)
+                    .remove(&name.sandbox_name())
                     .await
                     .map_err(|e| e.to_string())?;
-                inner.workspaces.sandbox_removed(name);
+                inner.workspaces.sandbox_removed(&name.sandbox_name());
             }
             // A route left from an earlier boot belongs to a sandbox that no longer exists.
             self.quiesce(name, true).await;
@@ -880,13 +885,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         // The memory setting applies at the next start (ADR 0006 and the memory setting).
         inner
             .runtime
-            .set_memory(name, record.memory)
+            .set_memory(&name.sandbox_name(), record.memory)
             .await
             .map_err(|e| e.to_string())?;
         let gated = inner
             .kit
             .hook()
-            .start(&inner.runtime, name, &plan, &gate)
+            .start(&inner.runtime, &name.sandbox_name(), &plan, &gate)
             .await
             .map_err(|e| boot_message(&e))?;
         if let Some(live) = inner.live.lock().await.get_mut(name) {
@@ -1036,7 +1041,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         )))
                     }
                 },
-                |r| r.status = SandboxStatus::Starting,
+                |r| r.status = WorkspaceStatus::Starting,
             )?;
             self.status_event(&record);
             let this = self.clone();
@@ -1058,7 +1063,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 id,
                 Operation::Stopping,
                 |r| {
-                    if r.status == SandboxStatus::Running {
+                    if r.status == WorkspaceStatus::Running {
                         Ok(())
                     } else {
                         Err(WorkspaceError::Conflict(format!(
@@ -1067,7 +1072,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         )))
                     }
                 },
-                |r| r.status = SandboxStatus::Draining,
+                |r| r.status = WorkspaceStatus::Draining,
             )?;
             self.status_event(&record);
             let this = self.clone();
@@ -1089,7 +1094,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 id,
                 Operation::Reclaiming,
                 |r| {
-                    if matches!(r.status, SandboxStatus::Starting | SandboxStatus::Draining) {
+                    if matches!(
+                        r.status,
+                        WorkspaceStatus::Starting | WorkspaceStatus::Draining
+                    ) {
                         Err(WorkspaceError::Conflict(format!(
                             "{} is {}; try again in a moment",
                             r.name, r.status
@@ -1221,7 +1229,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
         Box::pin(async move {
             let record = self.get(id).await?;
-            if record.busy.is_some() || record.status != SandboxStatus::Running {
+            if record.busy.is_some() || record.status != WorkspaceStatus::Running {
                 return Err(WorkspaceError::Conflict(format!(
                     "{} is not running; start it first",
                     record.name

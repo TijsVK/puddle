@@ -4,11 +4,11 @@
 //!
 //! | Item | What |
 //! |---|---|
-//! | [`SandboxName`], [`WorkspaceId`], [`VolumeName`], [`ImageRef`] | validated names; sandbox, workspace and volume names are DNS labels |
+//! | [`WorkspaceName`], [`SandboxName`], [`WorkspaceId`], [`VolumeName`], [`ImageRef`] | validated names; workspace, sandbox and volume names are DNS labels |
 //! | [`GuestPath`], [`GuestFile`], [`GuestEnv`] | what providers put into a guest; the boot hook applies them |
 //! | [`ApplyKind`], [`MergeSpec`], [`unmerge`] | merged files: puddle owns only some keys of a user's file; the engine `puddle-agent` runs in the guest |
 //! | [`MemoryMib`] | guest memory size: 256 MiB to 1 TiB, default 8 GiB (the setting is in `puddle-settings`) |
-//! | [`SandboxStatus`], [`Event`], [`EventSink`] | sandbox states and the user-facing event stream (incl. [`Event::OomKill`]) |
+//! | [`WorkspaceStatus`], [`Event`], [`EventSink`] | workspace states and the user-facing event stream (incl. [`Event::OomKill`]) |
 //! | [`Host`], [`DomainName`] | a normalised egress destination (the proxy normalises, everyone else validates) |
 //! | [`EgressRequest`], [`Decision`], [`Policy`] | what the proxy asks the rules engine and what it gets back |
 //! | [`ConnectionEvent`], [`ConnectionLog`] | one connection as the proxy reports it for the audit, and where it goes (the store) |
@@ -36,7 +36,7 @@ pub use connection::{
 };
 pub use error::ValidationError;
 pub use event::{
-    CollectingSink, Event, EventSink, NullSink, PendingEnd, PendingSummary, SandboxStatus,
+    CollectingSink, Event, EventSink, NullSink, PendingEnd, PendingSummary, WorkspaceStatus,
     WorkspaceStep,
 };
 pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};
@@ -47,7 +47,8 @@ pub use merge::{
     MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged, unmerge,
 };
 pub use name::{
-    ImageRef, RESERVED_SANDBOX_NAMES, SandboxName, VolumeName, WORKSPACE_VOLUME_PREFIX, WorkspaceId,
+    ImageRef, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName, WORKSPACE_VOLUME_PREFIX,
+    WorkspaceId, WorkspaceName,
 };
 
 pub use policy::{

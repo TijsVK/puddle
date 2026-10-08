@@ -39,18 +39,18 @@ function seed() {
   api.workspaces = ["shop", "api"];
   api.entries = [
     connection(1, {
-      sandbox_id: "shop",
+      workspace_id: "shop",
       host: "github.com",
       ts: now - 1000,
     }),
     connection(2, {
-      sandbox_id: "api",
+      workspace_id: "api",
       host: "evil.test",
       decision: "deny",
       ts: now - 900,
     }),
     connection(3, {
-      sandbox_id: "shop",
+      workspace_id: "shop",
       host: "crates.io",
       ts: now - 800,
     }),
@@ -109,7 +109,7 @@ describe("the activity page", () => {
     );
     await open();
     expect(api.queries[0]).toMatchObject({
-      sandbox: "shop",
+      workspace: "shop",
       type: "connection",
       outcome: "allow",
       host_contains: "git",
@@ -304,7 +304,7 @@ describe("the activity page", () => {
       expect(
         lines.map((l) => (JSON.parse(l) as { host: string }).host),
       ).toEqual(["github.com", "crates.io"]);
-      expect(api.queries.at(-1)).toMatchObject({ sandbox: "shop", after: 0 });
+      expect(api.queries.at(-1)).toMatchObject({ workspace: "shop", after: 0 });
     });
     it("says so when nothing matches, and saves no file", async () => {
       api.entries = [];

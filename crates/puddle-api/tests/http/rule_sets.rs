@@ -3,17 +3,17 @@
 
 use serde_json::{Value, json};
 
-use puddle_types::{Decision, EgressRequest, Host, SandboxName, SuffixAllows};
+use puddle_types::{Decision, EgressRequest, Host, SuffixAllows, WorkspaceName};
 
 use puddle_api::SettingsRepo as _;
 
 use crate::common::{Api, start};
 
-fn decide(api: &Api, sandbox: &str, host: &str) -> Decision {
+fn decide(api: &Api, workspace: &str, host: &str) -> Decision {
     api.store
         .decide(
             &EgressRequest::new(
-                SandboxName::new(sandbox).unwrap(),
+                WorkspaceName::new(workspace).unwrap(),
                 Host::parse_normalised(host).unwrap(),
                 443,
             ),
@@ -45,7 +45,7 @@ async fn system_managed_follows_the_editor_server_choice() {
     assert!(hosts.contains(&("open-vsx.org".into(), "code_server".into())));
     assert!(hosts.iter().all(|(_, reason)| reason == "code_server"));
     let first = &list["system_managed"][0];
-    assert_eq!(first["sandbox"], Value::Null);
+    assert_eq!(first["workspace"], Value::Null);
     assert!(
         first["reason_text"]
             .as_str()
@@ -116,7 +116,7 @@ async fn built_in_sets_switch_per_workspace_and_stay_read_only() {
         .send(
             "PUT",
             "/api/rule-sets/builtin:github/switch",
-            Some(&json!({"sandbox": "box", "enabled": true})),
+            Some(&json!({"workspace": "box", "enabled": true})),
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -124,7 +124,7 @@ async fn built_in_sets_switch_per_workspace_and_stay_read_only() {
     assert_eq!(switched["closed"], json!([waiting]));
     assert_eq!(
         switched["set"]["overrides"],
-        json!([{"sandbox": "box", "enabled": true}])
+        json!([{"workspace": "box", "enabled": true}])
     );
     assert!(decide(&api, "box", "github.com").is_allow());
     assert!(!decide(&api, "other", "github.com").is_allow());
@@ -231,7 +231,7 @@ async fn your_own_sets_take_rules_and_inbox_approvals() {
     api.send(
         "PUT",
         &format!("/api/rule-sets/{id}/switch"),
-        Some(&json!({"sandbox": "off", "enabled": false})),
+        Some(&json!({"workspace": "off", "enabled": false})),
     )
     .await;
     let reply = api
@@ -296,7 +296,7 @@ async fn direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
     let reply = api
         .send(
             "PUT",
-            "/api/settings/sandboxes/ssh",
+            "/api/settings/workspaces/ssh",
             Some(&json!({"overrides": {"direct_ssh": true}})),
         )
         .await;
@@ -309,20 +309,20 @@ async fn direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|h| { h["reason"] == "direct_ssh" && h["sandbox"] == "ssh" })
+            .any(|h| { h["reason"] == "direct_ssh" && h["workspace"] == "ssh" })
     );
     // The global default on: a workspace made afterwards gets them too.
     api.send(
         "PUT",
         "/api/settings",
-        Some(&json!({"sandbox_defaults": {"direct_ssh": true}})),
+        Some(&json!({"workspace_defaults": {"direct_ssh": true}})),
     )
     .await;
     assert!(decide(&api, "other", "marketplace.visualstudio.com").is_allow());
     // Off again for one: gone there.
     api.send(
         "PUT",
-        "/api/settings/sandboxes/ssh",
+        "/api/settings/workspaces/ssh",
         Some(&json!({"overrides": {"direct_ssh": false}})),
     )
     .await;
