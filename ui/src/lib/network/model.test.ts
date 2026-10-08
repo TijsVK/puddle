@@ -33,6 +33,31 @@ describe("findings", () => {
     expect(f?.fix).toMatch(/network settings/);
   });
 
+  it("lists a proxy setting puddle cannot use, and changes it cannot see, with the detail and what to do", () => {
+    const r = report();
+    r.proxy.problems = [
+      {
+        kind: "unusable_setting",
+        detail: 'the HTTPS_PROXY variable ("socks5://p:1080"): unsupported',
+      },
+      { kind: "changes_not_noticed", detail: "the registry watch stopped" },
+      { kind: "other", detail: "something new" },
+    ];
+    const found = findings(r);
+    expect(found.map((f) => f.id)).toEqual([
+      "proxy-problem-0",
+      "proxy-problem-1",
+      "proxy-problem-2",
+    ]);
+    expect(found.every((f) => f.level === "problem")).toBe(true);
+    expect(found[0]?.title).toContain("HTTPS_PROXY");
+    expect(found[0]?.fix).toMatch(/straight out/);
+    expect(found[1]?.title).toContain("the registry watch stopped");
+    expect(found[1]?.fix).toMatch(/start it again/);
+    expect(found[2]?.title).toContain("something new");
+    expect(found[2]?.fix).toBeNull();
+  });
+
   it("names a PAC that does not answer, with or without its address", () => {
     const r = report();
     r.proxy.pac_state = "unreachable";

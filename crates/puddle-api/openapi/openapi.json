@@ -8332,6 +8332,34 @@
           "manual"
         ]
       },
+      "ProxyProblem": {
+        "type": "object",
+        "description": "One thing in the proxy setup that does not work as the user set it up.",
+        "required": [
+          "kind",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Which setting or part, and why, as a sentence fragment; contains no credential."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProxyProblemKind",
+            "description": "What kind of trouble."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProxyProblemKind": {
+        "type": "string",
+        "description": "What kind of trouble a [`ProxyProblem`] is.",
+        "enum": [
+          "unusable_setting",
+          "changes_not_noticed",
+          "other"
+        ]
+      },
       "ProxyReport": {
         "type": "object",
         "description": "The proxy setup puddle sees.",
@@ -8345,6 +8373,7 @@
           "https_proxy",
           "bypass_entries",
           "settings_error",
+          "problems",
           "epoch",
           "last_change_at",
           "dead_proxies"
@@ -8415,12 +8444,19 @@
             ],
             "description": "The PAC script's address, without user info, query or fragment; `null` when none."
           },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProxyProblem"
+            },
+            "description": "What in the setup does not work as set, one entry each; empty when all does."
+          },
           "settings_error": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Why the system settings could not be read; `null` when they could."
+            "description": "Why the system settings, or a part of them, could not be read; `null` when they could."
           }
         },
         "additionalProperties": false

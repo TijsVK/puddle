@@ -15,15 +15,16 @@ use puddle_certs::{CertKind, CorporateRoots};
 use puddle_store::Clock;
 use puddle_types::{Event, EventSink};
 use puddle_upstream::{
-    Chain, DeadProxy as UpstreamDead, Detected, Discovery, ModeKind, ProxyHealth, RouteSample,
-    SignIn, SignInOutcome, redact_text,
+    Chain, DeadProxy as UpstreamDead, Detected, Discovery, ModeKind, ProxyHealth,
+    ProxyProblem as UpstreamProblem, ProxyProblemKind as UpstreamKind, RouteSample, SignIn,
+    SignInOutcome, redact_text,
 };
 use tokio::task::JoinHandle;
 
 use crate::wire::{
-    DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyReport, PullProxyReport,
-    RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt, SignInReport, SignInResult,
-    SkippedRoot, SyncedRoot,
+    DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,
+    ProxyReport, PullProxyReport, RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt,
+    SignInReport, SignInResult, SkippedRoot, SyncedRoot,
 };
 
 /// Why a report could not be made.
@@ -196,9 +197,21 @@ fn proxy_report(health: &ProxyHealth) -> ProxyReport {
         https_proxy: health.https_proxy.as_ref().map(ToString::to_string),
         bypass_entries: u32::try_from(health.bypass_entries).unwrap_or(u32::MAX),
         settings_error: health.settings_error.clone(),
+        problems: health.problems.iter().map(problem).collect(),
         epoch: health.epoch,
         last_change_at: health.changed_at.map(millis),
         dead_proxies: health.dead.iter().map(dead).collect(),
+    }
+}
+
+fn problem(problem: &UpstreamProblem) -> ProxyProblem {
+    ProxyProblem {
+        kind: match problem.kind {
+            UpstreamKind::UnusableSetting => ProxyProblemKind::UnusableSetting,
+            UpstreamKind::ChangesNotNoticed => ProxyProblemKind::ChangesNotNoticed,
+            _ => ProxyProblemKind::Other,
+        },
+        detail: problem.detail.clone(),
     }
 }
 

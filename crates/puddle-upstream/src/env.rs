@@ -5,9 +5,11 @@
 use std::ffi::OsString;
 use std::sync::Arc;
 
+use crate::health::ProxyProblem;
 use crate::hop::ProxyAddr;
 use crate::os::{
-    ChangeCallback, Origin, OsProxy, PacError, PacQuery, ProxyConfig, SettingsError, WatchGuard,
+    ChangeCallback, Origin, OsProxy, PacError, PacQuery, ProblemCallback, ProxyConfig,
+    SettingsError, WatchGuard,
 };
 use crate::parse::{BypassList, ProxyRules};
 
@@ -18,6 +20,7 @@ use crate::parse::{BypassList, ProxyRules};
 pub struct EnvOs {
     rules: ProxyRules,
     bypass: BypassList,
+    problems: Vec<ProxyProblem>,
 }
 
 impl EnvOs {
@@ -28,7 +31,9 @@ impl EnvOs {
     }
 
     /// Reads `vars`. Upper- and lower-case names both count; the lower-case one wins (curl's rule).
-    /// A value puddle cannot use (`socks5://`, `https://`, no host) is ignored with a debug line.
+    /// A value puddle cannot use (`socks5://`, `https://`, no host) is ignored: it is listed in
+    /// [`ProxyConfig::problems`], which discovery logs and the network-health report shows (the
+    /// connections it was meant for go direct).
     #[must_use]
     pub fn from_vars(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Self {
         let vars: Vec<(String, String)> = vars
@@ -44,25 +49,31 @@ impl EnvOs {
             };
             pick(&lower).or_else(|| pick(name))
         };
-        let proxy = |name: &str| -> Option<ProxyAddr> {
+        let mut problems = Vec::new();
+        let mut proxy = |name: &str| -> Option<ProxyAddr> {
             let value = get(name)?;
             match ProxyAddr::parse(value) {
                 Ok(addr) => Some(addr),
                 Err(err) => {
-                    tracing::debug!(variable = name, error = %err, "ignoring unusable proxy variable");
+                    let shown = crate::redact::entry_text(value);
+                    problems.push(ProxyProblem::unusable(format!(
+                        "the {name} variable (\"{shown}\"): {err}"
+                    )));
                     None
                 }
             }
         };
+        let rules = ProxyRules::new(
+            proxy("HTTP_PROXY"),
+            proxy("HTTPS_PROXY"),
+            proxy("ALL_PROXY"),
+        );
         Self {
-            rules: ProxyRules::new(
-                proxy("HTTP_PROXY"),
-                proxy("HTTPS_PROXY"),
-                proxy("ALL_PROXY"),
-            ),
+            rules,
             bypass: get("NO_PROXY")
                 .map(BypassList::parse_no_proxy)
                 .unwrap_or_default(),
+            problems,
         }
     }
 
@@ -71,6 +82,7 @@ impl EnvOs {
             rules: self.rules.clone(),
             bypass: self.bypass.clone(),
             origin: Origin::Environment,
+            problems: self.problems.clone(),
             ..ProxyConfig::default()
         }
     }
@@ -87,7 +99,12 @@ impl OsProxy for EnvOs {
         ))
     }
 
-    fn watch(&self, _on_change: ChangeCallback) -> Option<Box<dyn WatchGuard>> {
+    fn watch(
+        &self,
+        _on_change: ChangeCallback,
+        _on_problem: ProblemCallback,
+    ) -> Option<Box<dyn WatchGuard>> {
+        // Nothing notifies a process of a changed environment; not a failure to report.
         None
     }
 }
@@ -114,7 +131,10 @@ impl OsProxy for EnvFallback {
             Ok(config) => config,
             Err(err) => {
                 tracing::warn!(error = %err, "system proxy settings unreadable; using the environment");
-                ProxyConfig::default()
+                ProxyConfig {
+                    read_error: Some(err.0),
+                    ..ProxyConfig::default()
+                }
             }
         };
         // PAC settings stay the primary's (and are tried first); the environment backs them up
@@ -124,6 +144,7 @@ impl OsProxy for EnvFallback {
             config.rules = env.rules;
             config.bypass = env.bypass;
             config.origin = Origin::Environment;
+            config.problems.extend(env.problems);
         }
         Ok(config)
     }
@@ -132,8 +153,12 @@ impl OsProxy for EnvFallback {
         self.primary.resolve_pac(query)
     }
 
-    fn watch(&self, on_change: ChangeCallback) -> Option<Box<dyn WatchGuard>> {
-        self.primary.watch(on_change)
+    fn watch(
+        &self,
+        on_change: ChangeCallback,
+        on_problem: ProblemCallback,
+    ) -> Option<Box<dyn WatchGuard>> {
+        self.primary.watch(on_change, on_problem)
     }
 }
 
@@ -186,6 +211,64 @@ mod tests {
     }
 
     #[test]
+    fn an_unusable_variable_is_listed_as_a_problem_with_its_name_and_no_credential() {
+        let e = env(&[
+            ("HTTPS_PROXY", "socks5://user:hunter2@p:1080"),
+            ("HTTP_PROXY", "http://good.corp:3128"),
+            ("ALL_PROXY", "p:notaport"),
+        ]);
+        let config = e.config();
+        assert_eq!(config.problems.len(), 2, "{:?}", config.problems);
+        let shown = format!("{:?}", config.problems);
+        assert!(
+            shown.contains("HTTPS_PROXY") && shown.contains("socks5"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("ALL_PROXY") && shown.contains("p:notaport"),
+            "{shown}"
+        );
+        assert!(!shown.contains("hunter2"), "{shown}");
+        assert!(
+            config
+                .problems
+                .iter()
+                .all(|p| p.kind == crate::health::ProxyProblemKind::UnusableSetting)
+        );
+        assert_eq!(env(&[("HTTPS_PROXY", "p:1")]).config().problems, vec![]);
+    }
+
+    #[test]
+    fn a_system_layer_that_cannot_be_read_is_replaced_by_the_environment_and_says_so() {
+        let os = crate::FakeOs::new(ProxyConfig::default());
+        os.fail_config("registry access denied");
+        let fallback = EnvFallback::new(os, env(&[("HTTPS_PROXY", "e.corp:3128")]));
+        let config = fallback.config().unwrap();
+        assert_eq!(config.origin, Origin::Environment);
+        assert_eq!(
+            config.rules.for_scheme(Scheme::Https),
+            Some(&ProxyAddr::new("e.corp", 3128))
+        );
+        assert_eq!(config.read_error.as_deref(), Some("registry access denied"));
+    }
+
+    #[test]
+    fn environment_problems_count_only_when_the_environment_is_used() {
+        let unusable = [("HTTPS_PROXY", "socks5://p:1")];
+        let os = crate::FakeOs::new(ProxyConfig::default());
+        let used = EnvFallback::new(os, env(&unusable)).config().unwrap();
+        assert_eq!(used.problems.len(), 1);
+        let system = ProxyConfig {
+            rules: ProxyRules::new(Some(ProxyAddr::new("sys", 1)), None, None),
+            ..ProxyConfig::default()
+        };
+        let os = crate::FakeOs::new(system);
+        let unused = EnvFallback::new(os, env(&unusable)).config().unwrap();
+        assert_eq!(unused.problems, vec![]);
+        assert!(unused.read_error.is_none());
+    }
+
+    #[test]
     fn no_proxy_becomes_the_bypass_list() {
         let e = env(&[("NO_PROXY", "corp.test"), ("HTTPS_PROXY", "p:1")]);
         let config = e.config();
@@ -221,7 +304,7 @@ mod tests {
             e.resolve_pac(&query),
             Err(PacError::Unavailable(_))
         ));
-        assert!(e.watch(Arc::new(|| {})).is_none());
+        assert!(e.watch(Arc::new(|| {}), Arc::new(|_| {})).is_none());
         let _ = EnvOs::from_process();
     }
 }

@@ -6,8 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_upstream::{
-    BypassList, Config, Destination, Detected, Discovery, EnvOs, FakeOs, Hop, ManualProxy, Mode,
-    ModeKind, Origin, PacError, ProxyAddr, ProxyConfig, ProxyRules, Scheme,
+    BypassList, Config, Destination, Detected, Discovery, EnvFallback, EnvOs, FakeOs, Hop,
+    ManualProxy, Mode, ModeKind, Origin, PacError, ProxyAddr, ProxyConfig, ProxyProblem,
+    ProxyProblemKind, ProxyRules, RouteSource, Scheme,
 };
 
 fn https(host: &str) -> Destination {
@@ -172,6 +173,151 @@ async fn dead_proxies_and_the_last_network_change_are_reported() {
     assert!(health.changed_at.is_some());
     assert!(health.dead.is_empty(), "a new epoch forgets dead marks");
     assert_eq!(health.routes.len(), 0);
+}
+
+#[tokio::test]
+async fn a_proxy_typed_into_puddles_settings_that_cannot_be_used_is_reported_not_just_bypassed() {
+    for (typed, mentions) in [
+        ("socks5://corp-socks:1080", "socks5"),
+        ("proxy.corp:eighty", "eighty"),
+        ("  ", "empty"),
+    ] {
+        let d = Discovery::new(
+            FakeOs::new(ProxyConfig::default()),
+            Config {
+                mode: Mode::Manual(ManualProxy {
+                    proxy_server: typed.into(),
+                    bypass: String::new(),
+                }),
+                ..Config::default()
+            },
+        );
+        let decision = d.route(&https("github.com")).await;
+        assert_eq!(decision.route.to_string(), "DIRECT", "{typed}");
+        assert_eq!(decision.source, RouteSource::Manual, "{typed}");
+        let health = d.health().await;
+        assert_eq!(health.mode, ModeKind::Manual);
+        assert_eq!(health.problems.len(), 1, "{typed}: {:?}", health.problems);
+        assert_eq!(health.problems[0].kind, ProxyProblemKind::UnusableSetting);
+        assert!(
+            health.problems[0].detail.contains("puddle's settings")
+                && health.problems[0].detail.contains(mentions),
+            "{typed}: {:?}",
+            health.problems
+        );
+    }
+    let fine = Discovery::new(
+        FakeOs::new(ProxyConfig::default()),
+        Config {
+            mode: Mode::Manual(ManualProxy {
+                proxy_server: "http=a:1;https=b:2;socks=s:3".into(),
+                bypass: String::new(),
+            }),
+            ..Config::default()
+        },
+    );
+    assert_eq!(fine.health().await.problems, vec![]);
+}
+
+#[tokio::test]
+async fn what_the_os_layer_could_not_use_is_in_the_report_without_credentials() {
+    let (_, d) = discovery(ProxyConfig {
+        rules: ProxyRules::parse("http=h:80"),
+        problems: vec![ProxyProblem::unusable(
+            "the HTTPS_PROXY variable (\"socks5://p:1080\"): unsupported proxy scheme, token Basic dXNlcjpwYXNzd29yZA==",
+        )],
+        ..ProxyConfig::default()
+    });
+    let health = d.health().await;
+    assert_eq!(health.problems.len(), 1);
+    assert!(health.problems[0].detail.contains("HTTPS_PROXY"));
+    assert!(
+        !health.problems[0].detail.contains("dXNlcjpwYXNzd29yZA"),
+        "{:?}",
+        health.problems
+    );
+    let (_, plain) = discovery(ProxyConfig::default());
+    assert_eq!(plain.health().await.problems, vec![]);
+}
+
+#[tokio::test]
+async fn a_system_layer_replaced_by_the_environment_still_shows_why() {
+    let os = FakeOs::new(ProxyConfig::default());
+    os.fail_config("registry access denied");
+    let env = EnvOs::from_vars([(
+        OsString::from("HTTPS_PROXY"),
+        OsString::from("http://e.corp:3128"),
+    )]);
+    let d = Discovery::new(Arc::new(EnvFallback::new(os, env)), Config::default());
+    let decision = d.route(&https("github.com")).await;
+    assert_eq!(decision.source, RouteSource::Env);
+    let health = d.health().await;
+    assert_eq!(health.detected, Detected::Env);
+    let why = health.settings_error.expect("the read failure is reported");
+    assert!(why.contains("registry access denied"), "{why}");
+}
+
+#[tokio::test]
+async fn a_machine_proxy_that_could_not_be_read_is_reported_though_the_rest_is_used() {
+    let (_, d) = discovery(ProxyConfig {
+        pac_url: Some("http://pac.corp/p.pac".into()),
+        read_error: Some("the machine-wide WinHTTP proxy could not be read: access denied".into()),
+        ..ProxyConfig::default()
+    });
+    let health = d.health().await;
+    assert_eq!(health.detected, Detected::Pac);
+    assert!(health.settings_error.unwrap().contains("machine-wide"));
+}
+
+#[tokio::test]
+async fn changes_the_os_layer_cannot_watch_are_reported_when_the_watch_fails_and_when_it_stops() {
+    // A layer that tried and failed says why, and there is no watch.
+    let os = FakeOs::failing_watch(ProxyConfig::default(), "registry key could not be opened");
+    let d = Discovery::new(os, Config::default());
+    assert!(d.watch().is_none());
+    let health = d.health().await;
+    assert_eq!(health.problems.len(), 1, "{:?}", health.problems);
+    assert_eq!(health.problems[0].kind, ProxyProblemKind::ChangesNotNoticed);
+    assert!(
+        health.problems[0]
+            .detail
+            .contains("registry key could not be opened")
+    );
+
+    // A layer that cannot by nature (no watch, no word) is not a problem.
+    let quiet = Discovery::new(
+        FakeOs::without_watch(ProxyConfig::default()),
+        Config::default(),
+    );
+    assert!(quiet.watch().is_none());
+    assert_eq!(quiet.health().await.problems, vec![]);
+
+    // A watch that stops later: the report says so, and a new watch starts clean.
+    let os = FakeOs::new(ProxyConfig::default());
+    let d = Discovery::new(os.clone(), Config::default());
+    let watching = d.watch().expect("fake can watch");
+    assert_eq!(d.health().await.problems, vec![]);
+    assert!(os.fire_watch_problem("the registry watch stopped (error 6)"));
+    let health = d.health().await;
+    assert_eq!(health.problems.len(), 1);
+    assert_eq!(health.problems[0].kind, ProxyProblemKind::ChangesNotNoticed);
+    drop(watching);
+    let _again = d.watch().expect("fake can watch again");
+    assert_eq!(d.health().await.problems, vec![]);
+}
+
+#[tokio::test]
+async fn only_the_system_mode_cares_about_changes_it_cannot_watch() {
+    let os = FakeOs::failing_watch(ProxyConfig::default(), "no registry");
+    let d = Discovery::new(
+        os,
+        Config {
+            mode: Mode::Direct,
+            ..Config::default()
+        },
+    );
+    assert!(d.watch().is_none());
+    assert_eq!(d.health().await.problems, vec![]);
 }
 
 #[test]

@@ -13,6 +13,7 @@ use windows_sys::Win32::System::Registry::{
 };
 
 use super::{read_wide, wide};
+use crate::health::ProxyProblem;
 use crate::os::{Origin, ProxyConfig, SettingsError};
 use crate::parse::{BypassList, ProxyRules};
 
@@ -36,6 +37,8 @@ struct WinSettings {
     /// The machine-wide WinHTTP proxy list and bypass (`netsh winhttp`).
     machine_proxy: Option<String>,
     machine_bypass: Option<String>,
+    /// Why the machine-wide proxy could not be read (`None`: it could, or there is none).
+    machine_error: Option<String>,
     /// Group policy `ProxySettingsPerUser=0`: WinINet should read the machine's settings.
     per_machine_policy: bool,
 }
@@ -52,12 +55,23 @@ fn to_config(win: WinSettings) -> ProxyConfig {
         (None, Some(machine)) => (Some(machine), win.machine_bypass),
         (None, None) => (None, None),
     };
+    let (rules, problems) = list
+        .as_deref()
+        .map(ProxyRules::parse_with_problems)
+        .unwrap_or_default();
     ProxyConfig {
         auto_detect: win.auto_detect,
         pac_url: win.auto_config_url,
-        rules: list.as_deref().map(ProxyRules::parse).unwrap_or_default(),
+        rules,
         bypass: bypass.as_deref().map(BypassList::parse).unwrap_or_default(),
         origin: Origin::System,
+        problems: problems
+            .into_iter()
+            .map(|why| ProxyProblem::unusable(format!("the system's proxy server list: {why}")))
+            .collect(),
+        read_error: win.machine_error.map(|why| {
+            format!("the machine-wide WinHTTP proxy could not be read, so it is ignored: {why}")
+        }),
     }
 }
 
@@ -88,7 +102,10 @@ fn read_win() -> Result<WinSettings, SettingsError> {
     if registry_dword(HKEY_CURRENT_USER, INTERNET_SETTINGS, "ProxyEnable") == Some(0) {
         proxy_server = None;
     }
-    let (machine_proxy, machine_bypass) = machine_proxy();
+    let (machine_proxy, machine_bypass, machine_error) = match machine_proxy() {
+        Ok((proxy, bypass)) => (proxy, bypass, None),
+        Err(why) => (None, None, Some(why)),
+    };
     Ok(WinSettings {
         auto_detect: config.fAutoDetect != 0,
         auto_config_url: pac_url,
@@ -96,6 +113,7 @@ fn read_win() -> Result<WinSettings, SettingsError> {
         proxy_override: bypass,
         machine_proxy,
         machine_bypass,
+        machine_error,
         per_machine_policy: registry_dword(
             HKEY_LOCAL_MACHINE,
             POLICY_SETTINGS,
@@ -116,7 +134,8 @@ fn take(ptr: *mut u16) -> Option<String> {
     text
 }
 
-fn machine_proxy() -> (Option<String>, Option<String>) {
+/// The machine-wide WinHTTP proxy and bypass list (`netsh winhttp`), or why they could not be read.
+fn machine_proxy() -> Result<(Option<String>, Option<String>), String> {
     let mut info = WINHTTP_PROXY_INFO {
         dwAccessType: 0,
         lpszProxy: std::ptr::null_mut(),
@@ -124,14 +143,17 @@ fn machine_proxy() -> (Option<String>, Option<String>) {
     };
     // SAFETY: `info` is a valid out-structure; its strings are freed below.
     if unsafe { WinHttpGetDefaultProxyConfiguration(&raw mut info) } == 0 {
-        return (None, None);
+        return Err(format!(
+            "WinHttpGetDefaultProxyConfiguration: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     let (proxy, bypass) = (take(info.lpszProxy), take(info.lpszProxyBypass));
-    if info.dwAccessType == WINHTTP_ACCESS_TYPE_NAMED_PROXY {
+    Ok(if info.dwAccessType == WINHTTP_ACCESS_TYPE_NAMED_PROXY {
         (proxy, bypass)
     } else {
         (None, None)
-    }
+    })
 }
 
 pub(super) fn registry_dword(
@@ -172,6 +194,7 @@ mod tests {
             auto_config_url: Some("http://pac/p.pac".into()),
             auto_detect: true,
             per_machine_policy: true,
+            ..WinSettings::default()
         });
         assert_eq!(config.pac_url.as_deref(), Some("http://pac/p.pac"));
         assert!(config.auto_detect);
@@ -208,5 +231,39 @@ mod tests {
                 .matches(&Destination::new(Scheme::Https, "a.m.test", 443))
         );
         assert!(to_config(WinSettings::default()).rules.is_empty());
+    }
+
+    #[test]
+    fn a_machine_proxy_that_could_not_be_read_is_reported_not_just_ignored() {
+        let config = to_config(WinSettings {
+            machine_error: Some("access denied".into()),
+            ..WinSettings::default()
+        });
+        assert!(config.rules.is_empty());
+        let why = config.read_error.expect("the read error is carried");
+        assert!(
+            why.contains("machine-wide") && why.contains("access denied"),
+            "{why}"
+        );
+        assert!(to_config(WinSettings::default()).read_error.is_none());
+    }
+
+    #[test]
+    fn a_proxy_server_entry_puddle_cannot_use_is_reported_with_the_entry() {
+        let config = to_config(WinSettings {
+            proxy_server: Some("http=good:8080;https=bad:port".into()),
+            ..WinSettings::default()
+        });
+        assert_eq!(
+            config.rules.for_scheme(Scheme::Http),
+            Some(&ProxyAddr::new("good", 8080))
+        );
+        assert_eq!(config.problems.len(), 1, "{:?}", config.problems);
+        assert!(config.problems[0].detail.contains("https=bad:port"));
+        let socks = to_config(WinSettings {
+            proxy_server: Some("socks=s:1080".into()),
+            ..WinSettings::default()
+        });
+        assert_eq!(socks.problems.len(), 1, "{:?}", socks.problems);
     }
 }

@@ -61,6 +61,30 @@ pub struct DeadProxy {
     pub retry_in_secs: u64,
 }
 
+/// What kind of trouble a [`ProxyProblem`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyProblemKind {
+    /// A proxy setting puddle cannot use (a SOCKS proxy, a malformed entry, a list with nothing
+    /// usable in it). What it covers goes direct, or through the entries that are fine.
+    UnusableSetting,
+    /// puddle cannot, or can no longer, see changes of the proxy settings or the network, so its
+    /// routes stay as they are until it restarts.
+    ChangesNotNoticed,
+    /// A kind this version of the API does not know; the detail says what it is.
+    Other,
+}
+
+/// One thing in the proxy setup that does not work as the user set it up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyProblem {
+    /// What kind of trouble.
+    pub kind: ProxyProblemKind,
+    /// Which setting or part, and why, as a sentence fragment; contains no credential.
+    pub detail: String,
+}
+
 /// The proxy setup puddle sees.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -84,9 +108,11 @@ pub struct ProxyReport {
     pub https_proxy: Option<String>,
     /// How many destinations the fixed settings exempt (the bypass list's length).
     pub bypass_entries: u32,
-    /// Why the system settings could not be read; `null` when they could.
+    /// Why the system settings, or a part of them, could not be read; `null` when they could.
     #[schema(required = true)]
     pub settings_error: Option<String>,
+    /// What in the setup does not work as set, one entry each; empty when all does.
+    pub problems: Vec<ProxyProblem>,
     /// The network epoch; it grows each time a network or settings change is noticed.
     pub epoch: u64,
     /// Epoch ms when the last change was noticed; `null` when none since puddle started.
@@ -286,6 +312,7 @@ impl NetworkHealth {
                 https_proxy: None,
                 bypass_entries: 0,
                 settings_error: None,
+                problems: Vec::new(),
                 epoch: 0,
                 last_change_at: None,
                 dead_proxies: Vec::new(),

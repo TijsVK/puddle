@@ -15,6 +15,7 @@ export function report(over: Partial<NetworkHealth> = {}): NetworkHealth {
       https_proxy: null,
       bypass_entries: 0,
       settings_error: null,
+      problems: [],
       epoch: 3,
       last_change_at: null,
       dead_proxies: [],

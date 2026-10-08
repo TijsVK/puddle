@@ -12,6 +12,7 @@
       "https_proxy": "fallback.corp.example:3128",
       "bypass_entries": 2,
       "settings_error": null,
+      "problems": [],
       "epoch": 7,
       "last_change_at": 1791374100000,
       "dead_proxies": [

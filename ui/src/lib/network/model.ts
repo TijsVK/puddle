@@ -99,6 +99,29 @@ export function fixedProxies(proxy: S["ProxyReport"]): string[] {
   ];
 }
 
+/** One entry of `proxy.problems` as a sentence and what to do about it. */
+function problemWords(
+  problem: S["ProxyProblem"],
+): Pick<Finding, "title" | "fix"> {
+  switch (problem.kind) {
+    case "unusable_setting":
+      return {
+        title: `puddle can't use part of the proxy settings: ${problem.detail}.`,
+        fix: "puddle sends traffic through plain HTTP proxies (host:port) only. What that setting was meant for is not sent through it: it goes straight out, or through the other settings that are fine. Change it to an HTTP proxy or remove it, then press Check again.",
+      };
+    case "changes_not_noticed":
+      return {
+        title: `puddle can't see changes to the proxy settings or the network: ${problem.detail}.`,
+        fix: "puddle keeps the routes it has worked out until it is restarted. After you change the proxy settings or move to another network, quit puddle and start it again.",
+      };
+    default:
+      return {
+        title: `puddle found a problem with the proxy setup: ${problem.detail}.`,
+        fix: null,
+      };
+  }
+}
+
 /** Everything in the report that is wrong or worth knowing, problems first. */
 export function findings(report: NetworkHealth): Finding[] {
   const out: Finding[] = [];
@@ -112,6 +135,13 @@ export function findings(report: NetworkHealth): Finding[] {
       fix: "Check the proxy page of the operating system's network settings, or set the proxy for puddle in its own settings. Then press Check again.",
     });
   }
+  proxy.problems.forEach((problem, i) => {
+    out.push({
+      id: `proxy-problem-${i}`,
+      level: "problem",
+      ...problemWords(problem),
+    });
+  });
   if (proxy.pac_state === "unreachable") {
     const address = proxy.pac_url ?? "the proxy script";
     out.push({

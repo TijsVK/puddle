@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::hop::Hop;
 use crate::os::{
-    ChangeCallback, OsProxy, PacError, PacQuery, ProxyConfig, SettingsError, WatchGuard,
+    ChangeCallback, OsProxy, PacError, PacQuery, ProblemCallback, ProxyConfig, SettingsError,
+    WatchGuard,
 };
 
 type PacFn = dyn Fn(&PacQuery) -> Result<Vec<Hop>, PacError> + Send + Sync;
@@ -16,10 +17,20 @@ type PacFn = dyn Fn(&PacQuery) -> Result<Vec<Hop>, PacError> + Send + Sync;
 pub struct FakeOs {
     config: Mutex<Result<ProxyConfig, SettingsError>>,
     pac: Mutex<Arc<PacFn>>,
-    callback: Arc<Mutex<Option<ChangeCallback>>>,
+    callback: Arc<Mutex<Callbacks>>,
     config_calls: AtomicUsize,
     pac_calls: AtomicUsize,
     can_watch: bool,
+    /// Why `watch` fails, told to the problem callback; `None`: it fails without a word (an OS
+    /// layer that cannot watch by nature).
+    watch_failure: Option<String>,
+}
+
+/// What a live watch registered.
+#[derive(Default)]
+struct Callbacks {
+    on_change: Option<ChangeCallback>,
+    on_problem: Option<ProblemCallback>,
 }
 
 impl std::fmt::Debug for FakeOs {
@@ -43,6 +54,7 @@ impl FakeOs {
             config_calls: AtomicUsize::new(0),
             pac_calls: AtomicUsize::new(0),
             can_watch,
+            watch_failure: None,
         }
     }
 
@@ -50,6 +62,15 @@ impl FakeOs {
     #[must_use]
     pub fn without_watch(config: ProxyConfig) -> Arc<Self> {
         Arc::new(Self::build(config, false))
+    }
+
+    /// Like [`FakeOs::without_watch`], but `watch` tells the problem callback `why` first, as an OS
+    /// layer does that tried to register for changes and failed.
+    #[must_use]
+    pub fn failing_watch(config: ProxyConfig, why: &str) -> Arc<Self> {
+        let mut os = Self::build(config, false);
+        os.watch_failure = Some(why.to_owned());
+        Arc::new(os)
     }
 
     /// Replaces the config.
@@ -77,8 +98,20 @@ impl FakeOs {
             .callback
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .on_change
             .clone();
         callback.map(|cb| cb()).is_some()
+    }
+
+    /// Plays a watcher that stopped working (`why`). Returns false when nobody is watching.
+    pub fn fire_watch_problem(&self, why: &str) -> bool {
+        let callback = self
+            .callback
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .on_problem
+            .clone();
+        callback.map(|cb| cb(why.to_owned())).is_some()
     }
 
     /// How often `config()` was called.
@@ -99,11 +132,12 @@ impl FakeOs {
         self.callback
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .on_change
             .is_some()
     }
 }
 
-struct FakeGuard(Arc<Mutex<Option<ChangeCallback>>>);
+struct FakeGuard(Arc<Mutex<Callbacks>>);
 
 impl std::fmt::Debug for FakeGuard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -115,7 +149,7 @@ impl WatchGuard for FakeGuard {}
 
 impl Drop for FakeGuard {
     fn drop(&mut self) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Callbacks::default();
     }
 }
 
@@ -138,11 +172,21 @@ impl OsProxy for FakeOs {
         pac(query)
     }
 
-    fn watch(&self, on_change: ChangeCallback) -> Option<Box<dyn WatchGuard>> {
+    fn watch(
+        &self,
+        on_change: ChangeCallback,
+        on_problem: ProblemCallback,
+    ) -> Option<Box<dyn WatchGuard>> {
         if !self.can_watch {
+            if let Some(why) = &self.watch_failure {
+                on_problem(why.clone());
+            }
             return None;
         }
-        *self.callback.lock().unwrap_or_else(PoisonError::into_inner) = Some(on_change);
+        *self.callback.lock().unwrap_or_else(PoisonError::into_inner) = Callbacks {
+            on_change: Some(on_change),
+            on_problem: Some(on_problem),
+        };
         Some(Box::new(FakeGuard(Arc::clone(&self.callback))))
     }
 }

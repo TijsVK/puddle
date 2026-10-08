@@ -25,7 +25,8 @@
 //!   the corporate roots ([`tls_connect`]).
 //!
 //! [`Discovery`] never fails: when it cannot learn a route it answers "direct", and says why in
-//! [`Decision::source`]. The caller connects hop by hop and calls [`Discovery::report_failure`]
+//! [`Decision::source`]; a setting it cannot use, or changes it cannot see, are listed in
+//! [`ProxyHealth::problems`] and logged, never dropped without a word. The caller connects hop by hop and calls [`Discovery::report_failure`]
 //! for a proxy that did not answer.
 //!
 //! ```
@@ -66,16 +67,19 @@ pub use env::{EnvFallback, EnvOs};
 pub use fake::FakeOs;
 #[cfg(any(test, feature = "testing"))]
 pub use fake_proxy::{Behaviour, FakeProxy, Seen};
-pub use health::{DeadProxy, Detected, MAX_ROUTE_SAMPLES, ModeKind, ProxyHealth, RouteSample};
+pub use health::{
+    DeadProxy, Detected, MAX_ROUTE_SAMPLES, ModeKind, ProxyHealth, ProxyProblem, ProxyProblemKind,
+    RouteSample,
+};
 pub use hop::{Destination, Hop, ParseError, ProxyAddr, Route, Scheme};
 pub use negotiate::{Leg, NegotiateAuth, Package, SecurityContext, TokenSource};
 pub use os::{
-    ChangeCallback, Origin, OsProxy, PacError, PacQuery, ProxyConfig, SettingsError, WatchGuard,
-    system_os,
+    ChangeCallback, Origin, OsProxy, PacError, PacQuery, ProblemCallback, ProxyConfig,
+    SettingsError, WatchGuard, system_os,
 };
 pub use parse::{BypassList, PacAnswer, ProxyRules, parse_pac_answer};
 pub use redact::{redact_text, redact_url};
 pub use signin::{SignIn, SignInOutcome};
-pub use tls::{TlsClient, TlsConnectError, TlsSetupError, tls_connect};
+pub use tls::{RejectedRoot, TlsClient, TlsConnectError, TlsSetupError, tls_connect};
 #[cfg(windows)]
 pub use windows::WinOs;

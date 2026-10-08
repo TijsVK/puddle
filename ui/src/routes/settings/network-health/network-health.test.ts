@@ -208,6 +208,25 @@ describe("network health page", () => {
     ).toBeInTheDocument();
   });
 
+  it("lists a proxy setting puddle cannot use among the problems, drawn as text", () => {
+    const r = report();
+    r.proxy.problems = [
+      {
+        kind: "unusable_setting",
+        detail:
+          'the HTTPS_PROXY variable ("<b>socks5://p:1080</b>"): unsupported',
+      },
+    ];
+    store.report = r;
+    render(Page);
+    expect(screen.getByText("1 problem found.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /puddle can't use part of the proxy settings: the HTTPS_PROXY variable \("<b>socks5/,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("draws text from outside as text, and checks again on request", async () => {
     const r = report();
     r.routes = [

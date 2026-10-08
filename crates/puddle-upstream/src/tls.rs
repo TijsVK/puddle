@@ -63,10 +63,20 @@ impl TlsConnectError {
     }
 }
 
+/// An extra root certificate [`TlsClient::new`] could not use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedRoot {
+    /// The certificate as it was passed in, so the caller can name it (subject, fingerprint).
+    pub der: CertificateDer<'static>,
+    /// Why the verifier refused it, in rustls's words.
+    pub reason: String,
+}
+
 /// A TLS client with puddle's verification policy. Cheap to clone; build one per process.
 #[derive(Clone)]
 pub struct TlsClient {
     config: Arc<ClientConfig>,
+    rejected: Arc<[RejectedRoot]>,
 }
 
 impl std::fmt::Debug for TlsClient {
@@ -77,8 +87,9 @@ impl std::fmt::Debug for TlsClient {
 
 impl TlsClient {
     /// A client that trusts what the platform trusts plus `extra_roots` (the corporate roots
-    /// puddle syncs into the guest, and any the caller adds). A root that does not parse is
-    /// skipped, with a warning, rather than failing every connection.
+    /// puddle syncs into the guest, and any the caller adds). A root the verifier cannot use is
+    /// left out, with a warning, rather than failing every connection: it is listed in
+    /// [`TlsClient::rejected_roots`], and a site that chains to it fails with an unknown issuer.
     ///
     /// # Errors
     /// [`TlsSetupError`] when the platform's trust store cannot be read at all.
@@ -106,18 +117,22 @@ impl TlsClient {
     ) -> Result<Self, TlsSetupError> {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let mut kept = Vec::new();
-        let mut skipped = 0_usize;
+        let mut rejected = Vec::new();
         for root in extra_roots {
-            if RootCertStore::empty().add(root.clone()).is_ok() {
-                kept.push(root);
-            } else {
-                skipped += 1;
+            match RootCertStore::empty().add(root.clone()) {
+                Ok(()) => kept.push(root),
+                Err(err) => rejected.push(RejectedRoot {
+                    der: root,
+                    reason: err.to_string(),
+                }),
             }
         }
-        if skipped > 0 {
+        if !rejected.is_empty() {
+            let reasons: Vec<&str> = rejected.iter().map(|r| r.reason.as_str()).collect();
             tracing::warn!(
-                skipped,
-                "extra root certificates that did not parse were ignored"
+                rejected = rejected.len(),
+                reasons = %reasons.join("; "),
+                "extra root certificates the verifier cannot use were left out; servers that chain to them will fail with an unknown issuer"
             );
         }
         let verifier = Verifier::new_with_extra_roots(kept, Arc::clone(&provider))
@@ -136,7 +151,14 @@ impl TlsClient {
         config.resumption = Resumption::disabled();
         Ok(Self {
             config: Arc::new(config),
+            rejected: rejected.into(),
         })
+    }
+
+    /// The extra roots [`TlsClient::new`] left out, and why. Empty when every one was used.
+    #[must_use]
+    pub fn rejected_roots(&self) -> &[RejectedRoot] {
+        &self.rejected
     }
 
     /// Runs the handshake with `server_name` over `stream` (any connection already made: direct,
@@ -356,9 +378,28 @@ mod tests {
     }
 
     #[test]
-    fn roots_that_do_not_parse_are_skipped() {
+    fn roots_that_do_not_parse_are_skipped_and_listed_with_the_reason() {
         let junk = CertificateDer::from(vec![0_u8, 1, 2, 3]);
-        assert!(TlsClient::new([junk]).is_ok());
+        let client = TlsClient::new([junk.clone()]).unwrap();
+        let rejected = client.rejected_roots();
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(rejected[0].der, junk);
+        assert_ne!(rejected[0].reason, "");
         let _ = format!("{:?}", TlsClient::new([]).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_root_the_verifier_can_use_is_not_listed_and_a_bad_one_beside_it_does_not_spoil_it() {
+        let server = server("host.test", (-1, 1)).await;
+        let junk = CertificateDer::from(vec![9_u8; 12]);
+        let client = TlsClient::new([junk, server.root.clone()]).unwrap();
+        assert_eq!(client.rejected_roots().len(), 1);
+        assert_eq!(dial(&server, &client, "host.test").await.unwrap(), "hello");
+        assert_eq!(
+            TlsClient::new([server.root.clone()])
+                .unwrap()
+                .rejected_roots(),
+            []
+        );
     }
 }

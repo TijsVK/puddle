@@ -61,30 +61,56 @@ impl ProxyRules {
         self.all.is_none() && self.http.is_none() && self.https.is_none()
     }
 
-    /// Reads the list syntax. Entries puddle cannot use (`ftp=`, `socks=`, bad ports) are ignored.
+    /// Reads the list syntax. Entries puddle cannot use (`ftp=`, `socks=`, bad ports) are ignored;
+    /// [`ProxyRules::parse_with_problems`] says which and why.
     #[must_use]
     pub fn parse(text: &str) -> Self {
+        Self::parse_with_problems(text).0
+    }
+
+    /// Reads the list syntax like [`ProxyRules::parse`], and says what it left out: one text per
+    /// `http=`, `https=` or bare entry that is not a usable proxy address, and one when the list
+    /// names no usable proxy at all (it holds only SOCKS or FTP proxies, or nothing readable).
+    /// `ftp=` and `socks=` entries next to a usable one are not problems: a WinINet list names
+    /// them as a matter of course and puddle only proxies HTTP and HTTPS. The texts carry no
+    /// credential.
+    #[must_use]
+    pub fn parse_with_problems(text: &str) -> (Self, Vec<String>) {
         let mut server = Self::default();
+        let mut problems = Vec::new();
+        let mut note = |entry: &str, err: crate::hop::ParseError| {
+            problems.push(format!("\"{}\": {err}", crate::redact::entry_text(entry)));
+        };
         for entry in text
             .split([';', ' '])
             .map(str::trim)
             .filter(|e| !e.is_empty())
         {
             match entry.split_once('=') {
-                None => server.all = server.all.take().or_else(|| ProxyAddr::parse(entry).ok()),
+                None => match ProxyAddr::parse(entry) {
+                    Ok(addr) => server.all = server.all.take().or(Some(addr)),
+                    Err(err) => note(entry, err),
+                },
                 Some((key, value)) => {
-                    let Ok(addr) = ProxyAddr::parse(value) else {
-                        continue;
+                    let slot = match key.to_ascii_lowercase().as_str() {
+                        "http" => &mut server.http,
+                        "https" => &mut server.https,
+                        _ => continue,
                     };
-                    match key.to_ascii_lowercase().as_str() {
-                        "http" => server.http = Some(addr),
-                        "https" => server.https = Some(addr),
-                        _ => {}
+                    match ProxyAddr::parse(value) {
+                        Ok(addr) => *slot = Some(addr),
+                        Err(err) => note(entry, err),
                     }
                 }
             }
         }
-        server
+        if server.is_empty() && problems.is_empty() && !text.trim().is_empty() {
+            problems.push(format!(
+                "\"{}\" names no HTTP or HTTPS proxy (SOCKS and FTP proxies are not supported)",
+                crate::redact::entry_text(text)
+            ));
+        }
+        (server, problems)
     }
 
     /// The proxy for `scheme`, if the value names one.
@@ -307,6 +333,58 @@ mod tests {
 
     fn dest(host: &str) -> Destination {
         Destination::new(Scheme::Https, host, 443)
+    }
+
+    #[test]
+    fn a_proxy_list_says_which_entries_it_could_not_use() {
+        let (rules, problems) =
+            ProxyRules::parse_with_problems("http=good:8080;https=bad:port;ftp=f:21;socks=s:1080");
+        assert_eq!(
+            rules.for_scheme(Scheme::Http),
+            Some(&ProxyAddr::new("good", 8080))
+        );
+        assert_eq!(rules.for_scheme(Scheme::Https), None);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].contains("https=bad:port") && problems[0].contains("bad port"),
+            "{problems:?}"
+        );
+        // A bare entry that is not an address is a problem too; the first good one still wins.
+        let (rules, problems) = ProxyRules::parse_with_problems("a:1 b:x c:3");
+        assert_eq!(
+            rules.for_scheme(Scheme::Https),
+            Some(&ProxyAddr::new("a", 1))
+        );
+        assert_eq!(problems.len(), 1, "{problems:?}");
+    }
+
+    #[test]
+    fn a_list_with_nothing_usable_in_it_says_so_once() {
+        for text in [
+            "socks=s:1080",
+            "ftp=f:21;socks=s:1080",
+            ";",
+            "socks5://s:1080",
+        ] {
+            let (rules, problems) = ProxyRules::parse_with_problems(text);
+            assert!(rules.is_empty(), "{text}");
+            assert_eq!(problems.len(), 1, "{text}: {problems:?}");
+        }
+        for quiet in ["", "   ", "http=a:1", "a:1;socks=s:1"] {
+            assert!(
+                ProxyRules::parse_with_problems(quiet).1.is_empty(),
+                "{quiet:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_entry_in_a_problem_text_carries_no_user_info() {
+        let (_, problems) = ProxyRules::parse_with_problems("http=user:hunter2@bad host:80x");
+        let shown = format!("{problems:?}");
+        assert!(!shown.contains("hunter2"), "{shown}");
+        let (_, problems) = ProxyRules::parse_with_problems("user:hunter2@p:port");
+        assert!(!format!("{problems:?}").contains("hunter2"), "{problems:?}");
     }
 
     #[test]

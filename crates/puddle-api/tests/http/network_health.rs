@@ -12,7 +12,7 @@ use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_store::{Clock, ManualClock};
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Destination, Discovery, FakeOs,
-    FakeProxy, Form, Hop, ProxyConfig, ProxyRules, Request, Scheme,
+    FakeProxy, Form, Hop, ProxyConfig, ProxyProblem, ProxyRules, Request, Scheme,
 };
 use serde_json::{Value, json};
 
@@ -172,6 +172,68 @@ async fn the_real_report_shows_the_setup_and_never_a_secret() {
     assert_eq!(route["host"], "registry.corp.test");
     assert_eq!(route["source"], "pac");
     assert_eq!(route["hops"][1], "DIRECT");
+}
+
+#[tokio::test]
+async fn a_setup_that_does_not_work_as_set_is_listed_in_the_report_without_a_secret() {
+    let os = FakeOs::failing_watch(
+        ProxyConfig {
+            problems: vec![ProxyProblem::unusable(
+                "the HTTPS_PROXY variable (\"socks5://p:1080\"): unsupported proxy scheme \"socks5\"",
+            )],
+            read_error: Some(
+                "the machine-wide WinHTTP proxy could not be read: access denied".into(),
+            ),
+            ..ProxyConfig::default()
+        },
+        "the registry watch stopped (error 6), Basic dXNlcjpwYXNzd29yZA==",
+    );
+    let discovery = Discovery::new(os, Config::default());
+    assert!(discovery.watch().is_none());
+    let clock = Arc::new(ManualClock::new(START_MS));
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+    let api = start_with_network(health).await;
+
+    let reply = api.get("/api/network-health").await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(
+        !reply.body.contains("dXNlcjpwYXNzd29yZA"),
+        "token leaked: {}",
+        reply.body
+    );
+    let proxy = &reply.json()["proxy"];
+    assert_eq!(proxy["problems"][0]["kind"], "unusable_setting");
+    assert!(
+        proxy["problems"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("HTTPS_PROXY")
+    );
+    assert_eq!(proxy["problems"][1]["kind"], "changes_not_noticed");
+    assert!(
+        proxy["problems"][1]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("registry watch stopped")
+    );
+    assert!(
+        proxy["settings_error"]
+            .as_str()
+            .unwrap()
+            .contains("machine-wide")
+    );
+    // A healthy setup lists nothing.
+    let quiet = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
+    let clock = Arc::new(ManualClock::new(START_MS));
+    let api = start_with_network(Arc::new(HostNetworkHealth::new(
+        quiet,
+        clock as Arc<dyn Clock>,
+    )))
+    .await;
+    assert_eq!(
+        api.get("/api/network-health").await.json()["proxy"]["problems"],
+        json!([])
+    );
 }
 
 #[tokio::test]

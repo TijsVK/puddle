@@ -39,6 +39,48 @@ pub enum Detected {
     Direct,
 }
 
+/// What kind of trouble a [`ProxyProblem`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ProxyProblemKind {
+    /// A proxy setting puddle cannot use (a SOCKS proxy, a malformed entry, a list with nothing
+    /// usable in it). What the setting covers goes direct, or through the entries that are fine.
+    UnusableSetting,
+    /// puddle cannot, or can no longer, see changes of the proxy settings or the network, so its
+    /// routes stay as they are until it restarts.
+    ChangesNotNoticed,
+}
+
+/// One thing in the proxy setup that is not working as the user set it up, in words. The text
+/// carries no credential ([`crate::redact_text`] has cleaned it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProxyProblem {
+    /// What kind of trouble.
+    pub kind: ProxyProblemKind,
+    /// What exactly, as one sentence fragment: which setting and why.
+    pub detail: String,
+}
+
+impl ProxyProblem {
+    /// A setting puddle cannot use, with `detail` naming it and why.
+    #[must_use]
+    pub fn unusable(detail: impl Into<String>) -> Self {
+        Self {
+            kind: ProxyProblemKind::UnusableSetting,
+            detail: detail.into(),
+        }
+    }
+
+    /// Changes that puddle does not see, with `detail` saying why.
+    #[must_use]
+    pub fn changes_not_noticed(detail: impl Into<String>) -> Self {
+        Self {
+            kind: ProxyProblemKind::ChangesNotNoticed,
+            detail: detail.into(),
+        }
+    }
+}
+
 /// A proxy that did not answer and is tried last for a while.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeadProxy {
@@ -78,8 +120,11 @@ pub struct ProxyHealth {
     pub https_proxy: Option<ProxyAddr>,
     /// How many bypass entries the static settings have.
     pub bypass_entries: usize,
-    /// Why the system settings could not be read, cleaned.
+    /// Why the system settings could not be read (all of them or a part), cleaned.
     pub settings_error: Option<String>,
+    /// What in the setup does not work as set: settings puddle cannot use and changes it cannot
+    /// see. Cleaned. Empty when all is as configured.
+    pub problems: Vec<ProxyProblem>,
     /// The network epoch number; it grows whenever the OS reports a change.
     pub epoch: u64,
     /// When the current epoch began, once the network has changed at least once since start.

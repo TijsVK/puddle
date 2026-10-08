@@ -16,7 +16,8 @@ pub(crate) use sspi::SspiSource;
 
 use crate::hop::Hop;
 use crate::os::{
-    ChangeCallback, OsProxy, PacError, PacQuery, ProxyConfig, SettingsError, WatchGuard,
+    ChangeCallback, OsProxy, PacError, PacQuery, ProblemCallback, ProxyConfig, SettingsError,
+    WatchGuard,
 };
 
 /// WinHTTP and registry backed [`OsProxy`].
@@ -40,8 +41,12 @@ impl OsProxy for WinOs {
         pac::resolve(query)
     }
 
-    fn watch(&self, on_change: ChangeCallback) -> Option<Box<dyn WatchGuard>> {
-        watch::start(on_change)
+    fn watch(
+        &self,
+        on_change: ChangeCallback,
+        on_problem: ProblemCallback,
+    ) -> Option<Box<dyn WatchGuard>> {
+        watch::start(on_change, &on_problem)
     }
 }
 

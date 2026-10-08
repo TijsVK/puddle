@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::env::{EnvFallback, EnvOs};
+use crate::health::ProxyProblem;
 use crate::hop::Hop;
 use crate::parse::{BypassList, ProxyRules};
 
@@ -35,6 +36,13 @@ pub struct ProxyConfig {
     pub bypass: BypassList,
     /// Where the rules came from.
     pub origin: Origin,
+    /// Parts of the settings puddle could not use (a SOCKS proxy, a malformed entry). What they
+    /// covered is missing from the fields above, so those destinations go direct.
+    pub problems: Vec<ProxyProblem>,
+    /// Why the settings, or a part of them, could not be read, when the fields above are a
+    /// substitute (the environment instead of the system's settings) or incomplete (no
+    /// machine-wide proxy). Reported as the health report's `settings_error`.
+    pub read_error: Option<String>,
 }
 
 /// One PAC / WPAD evaluation to run.
@@ -74,6 +82,11 @@ pub struct SettingsError(pub String);
 /// Called by the OS layer on any proxy or network change. Cheap and non-blocking.
 pub type ChangeCallback = Arc<dyn Fn() + Send + Sync>;
 
+/// Called by the OS layer with the reason, whenever part of the change notification is not
+/// working: a registration that failed when the watch started, or a watcher that stopped later.
+/// Cheap and non-blocking.
+pub type ProblemCallback = Arc<dyn Fn(String) + Send + Sync>;
+
 /// Keeps a change registration alive; dropping it unregisters.
 pub trait WatchGuard: Send + Sync + std::fmt::Debug {}
 
@@ -94,8 +107,14 @@ pub trait OsProxy: Send + Sync + std::fmt::Debug {
     fn resolve_pac(&self, query: &PacQuery) -> Result<Vec<Hop>, PacError>;
 
     /// Calls `on_change` whenever proxy settings or the network change, until the guard drops.
-    /// `None` when this OS layer cannot watch.
-    fn watch(&self, on_change: ChangeCallback) -> Option<Box<dyn WatchGuard>>;
+    /// Tells `on_problem` why whenever a part of that is not working (changes of that kind are
+    /// then not seen). `None` when this OS layer cannot watch; a layer that cannot by nature
+    /// (the environment) says nothing, one that tried and failed says why.
+    fn watch(
+        &self,
+        on_change: ChangeCallback,
+        on_problem: ProblemCallback,
+    ) -> Option<Box<dyn WatchGuard>>;
 }
 
 /// The OS layer of the current platform: WinHTTP with the environment as a fallback on Windows,

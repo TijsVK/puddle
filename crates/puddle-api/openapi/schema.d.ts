@@ -2218,6 +2218,18 @@ export interface components {
          * @enum {string}
          */
         ProxyMode: "system" | "direct" | "manual";
+        /** @description One thing in the proxy setup that does not work as the user set it up. */
+        ProxyProblem: {
+            /** @description Which setting or part, and why, as a sentence fragment; contains no credential. */
+            detail: string;
+            /** @description What kind of trouble. */
+            kind: components["schemas"]["ProxyProblemKind"];
+        };
+        /**
+         * @description What kind of trouble a [`ProxyProblem`] is.
+         * @enum {string}
+         */
+        ProxyProblemKind: "unusable_setting" | "changes_not_noticed" | "other";
         /** @description The proxy setup puddle sees. */
         ProxyReport: {
             /** @description Automatic detection (WPAD) is on. */
@@ -2251,7 +2263,9 @@ export interface components {
             pac_state: components["schemas"]["PacState"];
             /** @description The PAC script's address, without user info, query or fragment; `null` when none. */
             pac_url: string | null;
-            /** @description Why the system settings could not be read; `null` when they could. */
+            /** @description What in the setup does not work as set, one entry each; empty when all does. */
+            problems: components["schemas"]["ProxyProblem"][];
+            /** @description Why the system settings, or a part of them, could not be read; `null` when they could. */
             settings_error: string | null;
         };
         /** @description Image pulls and the pull proxy. */

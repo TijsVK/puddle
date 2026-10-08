@@ -45,9 +45,9 @@ pub use identities::{
     WorkspaceGitView, WorkspaceIdentitiesRequest,
 };
 pub use network_health::{
-    DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyReport, PullProxyReport,
-    RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt, SignInReport, SignInResult,
-    SkippedRoot, SyncedRoot,
+    DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,
+    ProxyReport, PullProxyReport, RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt,
+    SignInReport, SignInResult, SkippedRoot, SyncedRoot,
 };
 pub use rule_sets::{
     NewRuleSetRequest, RuleSetEntry, RuleSetKind, RuleSetList, RuleSetOverride,

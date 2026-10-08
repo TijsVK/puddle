@@ -29,9 +29,11 @@ use tokio::sync::{Notify, OnceCell, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use crate::health::{DeadProxy, Detected, MAX_ROUTE_SAMPLES, ModeKind, ProxyHealth, RouteSample};
+use crate::health::{
+    DeadProxy, Detected, MAX_ROUTE_SAMPLES, ModeKind, ProxyHealth, ProxyProblem, RouteSample,
+};
 use crate::hop::{Destination, Hop, ProxyAddr, Route, Scheme};
-use crate::os::{Origin, OsProxy, PacError, PacQuery, ProxyConfig, WatchGuard};
+use crate::os::{Origin, OsProxy, PacError, PacQuery, ProblemCallback, ProxyConfig, WatchGuard};
 use crate::parse::{BypassList, ProxyRules};
 
 /// Where the proxy setting comes from.
@@ -207,6 +209,9 @@ pub struct Discovery {
     current: RwLock<Arc<Epoch>>,
     counter: AtomicU64,
     epochs: watch::Sender<u64>,
+    /// Why the OS change notification is not (fully) working, as the OS layer said; it outlives
+    /// epochs, since the watcher does.
+    watch_problems: Arc<Mutex<Vec<String>>>,
 }
 
 impl Discovery {
@@ -214,12 +219,16 @@ impl Discovery {
     #[must_use]
     pub fn new(os: Arc<dyn OsProxy>, config: Config) -> Arc<Self> {
         let (epochs, _) = watch::channel(0);
+        for problem in manual_problems(&config.mode) {
+            tracing::warn!(problem = %problem.detail, "proxy setting puddle cannot use; what it covers goes direct");
+        }
         Arc::new(Self {
             os,
             config,
             current: RwLock::new(Epoch::new(0)),
             counter: AtomicU64::new(0),
             epochs,
+            watch_problems: Arc::default(),
         })
     }
 
@@ -270,11 +279,27 @@ impl Discovery {
     /// Starts listening to the OS for proxy and network changes: after `debounce` of quiet, the
     /// epoch ends. Must run inside a tokio runtime. Returns `None` when the OS layer cannot watch;
     /// call [`Discovery::bump_epoch`] from another signal then. Dropping the handle stops it.
+    /// Whatever part of the notification does not work (now or later) is logged and listed in
+    /// [`ProxyHealth::problems`].
     #[must_use]
     pub fn watch(self: &Arc<Self>) -> Option<Watching> {
         let notify = Arc::new(Notify::new());
         let signal = Arc::clone(&notify);
-        let guard = self.os.watch(Arc::new(move || signal.notify_one()))?;
+        let problems = Arc::clone(&self.watch_problems);
+        problems
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        let on_problem: ProblemCallback = Arc::new(move |why: String| {
+            tracing::warn!(error = %why, "proxy and network changes are not all noticed");
+            problems
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(why);
+        });
+        let guard = self
+            .os
+            .watch(Arc::new(move || signal.notify_one()), on_problem)?;
         let this = Arc::downgrade(self);
         let debounce = self.config.debounce;
         let task = tokio::spawn(async move {
@@ -334,8 +359,8 @@ impl Discovery {
         let epoch = self.epoch_state();
         let now = Instant::now();
         let changed_at = (epoch.number > 0).then_some(epoch.started);
-        let (mode, settings, settings_error) = match &self.config.mode {
-            Mode::Direct => (ModeKind::Direct, ProxyConfig::default(), None),
+        let (mode, settings, settings_error, mut problems) = match &self.config.mode {
+            Mode::Direct => (ModeKind::Direct, ProxyConfig::default(), None, Vec::new()),
             Mode::Manual(manual) => (
                 ModeKind::Manual,
                 ProxyConfig {
@@ -344,6 +369,7 @@ impl Discovery {
                     ..ProxyConfig::default()
                 },
                 None,
+                manual_problems(&self.config.mode),
             ),
             Mode::System => {
                 let settings = self.settings(&epoch).await.clone();
@@ -352,9 +378,20 @@ impl Discovery {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .clone();
-                (ModeKind::System, settings, error)
+                let mut problems = settings.problems.clone();
+                problems.extend(
+                    self.watch_problems
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .iter()
+                        .map(|why| ProxyProblem::changes_not_noticed(why.clone())),
+                );
+                (ModeKind::System, settings, error, problems)
             }
         };
+        for problem in &mut problems {
+            problem.detail = crate::redact::redact_text(&problem.detail);
+        }
         let detected = if settings.pac_url.is_some() {
             Detected::Pac
         } else if settings.auto_detect {
@@ -389,6 +426,7 @@ impl Discovery {
             https_proxy: settings.rules.for_scheme(Scheme::Https).cloned(),
             bypass_entries: settings.bypass.len(),
             settings_error: settings_error.map(|why| crate::redact::redact_text(&why)),
+            problems,
             epoch: epoch.number,
             changed_at,
             dead: epoch.dead_proxies(now),
@@ -429,10 +467,19 @@ impl Discovery {
                         .unwrap_or_else(PoisonError::into_inner) = Some(why);
                 };
                 match tokio::task::spawn_blocking(move || os.config()).await {
-                    Ok(Ok(config)) => config,
+                    Ok(Ok(config)) => {
+                        // A substitute or partial read (the OS layer already logged why).
+                        if let Some(why) = &config.read_error {
+                            note(why.clone());
+                        }
+                        for problem in &config.problems {
+                            tracing::warn!(problem = %problem.detail, "proxy setting puddle cannot use; what it covers goes direct");
+                        }
+                        config
+                    }
                     Ok(Err(err)) => {
                         tracing::warn!(error = %err, "system proxy settings unreadable; going direct");
-                        note(err.to_string());
+                        note(err.0);
                         ProxyConfig::default()
                     }
                     Err(err) => {
@@ -542,6 +589,23 @@ enum PacOutcome {
     Answer(Resolved),
     Failed,
     Unavailable,
+}
+
+/// What in puddle's own proxy setting cannot be used; empty in the other modes.
+fn manual_problems(mode: &Mode) -> Vec<ProxyProblem> {
+    let Mode::Manual(manual) = mode else {
+        return Vec::new();
+    };
+    if manual.proxy_server.trim().is_empty() {
+        return vec![ProxyProblem::unusable(
+            "the proxy fixed in puddle's settings is empty",
+        )];
+    }
+    ProxyRules::parse_with_problems(&manual.proxy_server)
+        .1
+        .into_iter()
+        .map(|why| ProxyProblem::unusable(format!("the proxy fixed in puddle's settings: {why}")))
+        .collect()
 }
 
 fn manual_route(manual: &ManualProxy, dest: &Destination) -> Resolved {

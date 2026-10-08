@@ -55,6 +55,25 @@ pub fn redact_text(text: &str) -> String {
     clip(&out.join(" "))
 }
 
+/// A proxy list, one entry of it or an environment variable's value as the user wrote it, for a
+/// message about it: the user info of every `user:password@host` is dropped (a URL keeps its
+/// scheme, host and path, see [`redact_url`]) and the rest goes through [`redact_text`].
+pub(crate) fn entry_text(text: &str) -> String {
+    let parts: Vec<String> = text
+        .split([';', ' '])
+        .map(|part| {
+            if part.contains("://") {
+                redact_url(part)
+            } else {
+                part.rsplit_once('@')
+                    .map_or(part, |(_, host)| host)
+                    .to_owned()
+            }
+        })
+        .collect();
+    redact_text(&parts.join(" "))
+}
+
 fn looks_like_token(word: &str) -> bool {
     let word = word.trim_end_matches([',', ';', '.']);
     word.len() >= 8
