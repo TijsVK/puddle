@@ -8,12 +8,14 @@
 //! [`RequestView`], and what it returns is a closed set of outcomes.
 
 use std::fmt;
+use std::sync::Arc;
 
 use ::http::{HeaderName, HeaderValue};
 use puddle_types::{Host, WorkspaceName};
 use zeroize::Zeroize as _;
 
 use crate::destination::BoxFuture;
+use crate::proxy::Refusal;
 
 /// A header value that is a secret: never printed, never logged.
 #[derive(Clone, PartialEq, Eq)]
@@ -79,8 +81,17 @@ impl InjectedHeader {
         Ok(Self { name, value })
     }
 
-    pub(crate) fn name(&self) -> &HeaderName {
+    /// The header's name.
+    #[must_use]
+    pub fn name(&self) -> &HeaderName {
         &self.name
+    }
+
+    /// Whether the value is exactly `expected`. For a test or a check that already holds the
+    /// value; the value itself is never handed out.
+    #[must_use]
+    pub fn value_is(&self, expected: &str) -> bool {
+        self.value.expose() == expected
     }
 
     pub(crate) fn header_value(&self) -> Option<HeaderValue> {
@@ -96,6 +107,7 @@ impl InjectedHeader {
 pub struct Injection {
     binding_id: String,
     headers: Vec<InjectedHeader>,
+    unauthorized: Option<Unauthorized>,
 }
 
 impl Injection {
@@ -105,17 +117,66 @@ impl Injection {
         Self {
             binding_id: binding_id.into(),
             headers,
+            unauthorized: None,
         }
     }
 
-    pub(crate) fn binding_id(&self) -> &str {
+    /// If the real server answers this request with `401`, send the guest `unauthorized`'s
+    /// refusal instead: the credential that was added was not accepted, and a `401` would make
+    /// the guest's tool ask for a password the workspace does not have.
+    #[must_use]
+    pub fn on_unauthorized(mut self, unauthorized: Unauthorized) -> Self {
+        self.unauthorized = Some(unauthorized);
+        self
+    }
+
+    /// The binding that supplied the headers, as the audit records it.
+    #[must_use]
+    pub fn binding_id(&self) -> &str {
         &self.binding_id
     }
 
-    pub(crate) fn headers(&self) -> &[InjectedHeader] {
+    /// The headers to add.
+    #[must_use]
+    pub fn headers(&self) -> &[InjectedHeader] {
         &self.headers
     }
 }
+
+/// What to answer the guest when the real server answers a request with `401`, for a request the
+/// injector chose the credential for: it added one ([`Injection::on_unauthorized`]) or had none
+/// to add ([`InjectDecision::PassThroughGuarded`]). The proxy calls it when the `401` arrives and
+/// sends the refusal it returns instead of the server's answer, so the guest's tool never prompts
+/// for a password the workspace does not hold. A request that carried the guest's own
+/// credentials is never given one: the server's `401` is the tool's to handle.
+#[derive(Clone)]
+pub struct Unauthorized(Arc<dyn Fn() -> InjectRefusal + Send + Sync>);
+
+impl Unauthorized {
+    /// `answer` runs each time a `401` is replaced, so it can also forget what it cached.
+    #[must_use]
+    pub fn new(answer: impl Fn() -> InjectRefusal + Send + Sync + 'static) -> Self {
+        Self(Arc::new(answer))
+    }
+
+    pub(crate) fn refusal(&self) -> InjectRefusal {
+        (self.0)()
+    }
+}
+
+impl fmt::Debug for Unauthorized {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Unauthorized")
+    }
+}
+
+impl PartialEq for Unauthorized {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Unauthorized {}
 
 /// An error answer the injector wants sent to the guest instead of forwarding the request: a
 /// push to a repository that is not on the list, a secret that could not be read.
@@ -146,16 +207,34 @@ impl InjectRefusal {
         }
     }
 
-    pub(crate) fn status(&self) -> u16 {
+    /// The HTTP status the guest gets (`4xx`/`5xx`, never `401` or `407`).
+    #[must_use]
+    pub fn status(&self) -> u16 {
         self.status
     }
 
-    pub(crate) fn code(&self) -> &'static str {
+    /// The machine-readable code, sent as `x-puddle-blocked`.
+    #[must_use]
+    pub fn code(&self) -> &'static str {
         self.code
     }
 
-    pub(crate) fn message(&self) -> &str {
+    /// The one-line message for the user.
+    #[must_use]
+    pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// The answer the guest gets: the status line, `x-puddle-blocked: <code>` and the message.
+    pub(crate) fn to_refusal(&self) -> Refusal {
+        let status =
+            ::http::StatusCode::from_u16(self.status).unwrap_or(::http::StatusCode::BAD_GATEWAY);
+        let line = format!(
+            "{} {}",
+            status.as_str(),
+            status.canonical_reason().unwrap_or("")
+        );
+        Refusal::new(line, self.message.clone()).header("x-puddle-blocked", self.code)
     }
 }
 
@@ -163,14 +242,44 @@ impl InjectRefusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum InjectDecision {
-    /// Forward it with these headers added. The guest's own `Authorization` and
-    /// `Proxy-Authorization` are removed first, so nothing the guest sent competes with the
-    /// credential.
+    /// Forward it with these headers added. A header of the same name the guest sent is
+    /// replaced; any other header of the guest's is left alone.
     Inject(Injection),
     /// Forward it as the guest sent it (no credential applies to it).
     PassThrough,
+    /// Forward it as the guest sent it, but if the real server answers `401`, send the guest
+    /// this instead: the injector is responsible for the credentials of this request and has
+    /// none to add.
+    PassThroughGuarded(Unauthorized),
     /// Answer the guest with this error; nothing is sent upstream.
     Refuse(InjectRefusal),
+}
+
+/// What the proxy does with a request after the injector decided.
+pub(crate) struct Forwarding {
+    pub(crate) injection: Option<Injection>,
+    pub(crate) unauthorized: Option<Unauthorized>,
+}
+
+impl InjectDecision {
+    /// What to send upstream, or the refusal for the guest.
+    pub(crate) fn into_forwarding(self) -> Result<Forwarding, InjectRefusal> {
+        match self {
+            Self::Inject(injection) => Ok(Forwarding {
+                unauthorized: injection.unauthorized.clone(),
+                injection: Some(injection),
+            }),
+            Self::PassThrough => Ok(Forwarding {
+                injection: None,
+                unauthorized: None,
+            }),
+            Self::PassThroughGuarded(unauthorized) => Ok(Forwarding {
+                injection: None,
+                unauthorized: Some(unauthorized),
+            }),
+            Self::Refuse(refusal) => Err(refusal),
+        }
+    }
 }
 
 /// The connection a request arrived on.
@@ -193,6 +302,16 @@ pub struct RequestView<'a> {
 }
 
 impl<'a> RequestView<'a> {
+    /// A view of a request: `headers` are `name: value` lines, as an HTTP/1.1 head has them.
+    #[must_use]
+    pub fn new(method: &'a str, target: &'a str, headers: &'a [String]) -> Self {
+        Self {
+            method,
+            target,
+            headers,
+        }
+    }
+
     /// The method as sent (case kept).
     #[must_use]
     pub fn method(&self) -> &'a str {

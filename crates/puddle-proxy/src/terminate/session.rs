@@ -13,7 +13,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 
 use super::body::{Abort, ChannelBody, pump};
 use super::guest::{ALPN_HTTP11, Prefixed, Proto, read_hello, server_config};
-use super::inject::{InjectContext, InjectDecision, Injection, RequestView};
+use super::inject::{Forwarding, InjectContext, Injection, RequestView, Unauthorized};
 use super::leg::{self, BoxError, Connected, H1Conn, UpBody};
 use super::request::{self, Parsed};
 use super::stand_in::Swapped;
@@ -335,24 +335,14 @@ where
             };
             self.cx.termination.injector().decide(&context, &view).await
         };
-        let injection = match decision {
-            InjectDecision::Inject(injection) => Some(injection),
-            InjectDecision::PassThrough => None,
-            InjectDecision::Refuse(refusal) => {
+        let Forwarding {
+            injection,
+            unauthorized,
+        } = match decision.into_forwarding() {
+            Ok(forwarding) => forwarding,
+            Err(refusal) => {
                 tracing::info!(host = %self.cx.target.host, code = refusal.code(), "request refused by the credential rules");
-                let status = ::http::StatusCode::from_u16(refusal.status())
-                    .unwrap_or(::http::StatusCode::BAD_GATEWAY);
-                let line = format!(
-                    "{} {}",
-                    status.as_str(),
-                    status.canonical_reason().unwrap_or("")
-                );
-                return self
-                    .refuse(
-                        &Refusal::new(line, refusal.message().to_owned())
-                            .header("x-puddle-blocked", refusal.code()),
-                    )
-                    .await;
+                return self.refuse(&refusal.to_refusal()).await;
             }
         };
         let headers = match request::upstream_headers(&head, &self.cx.target, injection.as_ref()) {
@@ -360,7 +350,7 @@ where
             Err(refusal) => return self.refuse(&refusal).await,
         };
         let headers = self.add_credentials(headers, injection.as_ref());
-        self.exchange(&parsed, headers).await
+        self.exchange(&parsed, headers, unauthorized.as_ref()).await
     }
 
     /// Notes the injected credential for the audit, then swaps the workspace's stand-ins in
@@ -465,8 +455,14 @@ where
         piped.map_or(Flow::Abort, |()| Flow::Close)
     }
 
-    /// Sends `parsed` with `headers` upstream and its response to the guest.
-    async fn exchange(&mut self, parsed: &Parsed, headers: ::http::HeaderMap) -> Flow {
+    /// Sends `parsed` with `headers` upstream and its response to the guest. A `401` from the
+    /// server is replaced by `unauthorized`'s answer when there is one.
+    async fn exchange(
+        &mut self,
+        parsed: &Parsed,
+        headers: ::http::HeaderMap,
+        unauthorized: Option<&Unauthorized>,
+    ) -> Flow {
         let config = self.cx.proxy.config;
         let Some(upstream) = self.upstream.as_mut() else {
             return Flow::Abort;
@@ -535,6 +531,15 @@ where
                     .await;
             }
         };
+        if response.status() == ::http::StatusCode::UNAUTHORIZED
+            && let Some(unauthorized) = unauthorized
+        {
+            let refusal = unauthorized.refusal();
+            tracing::info!(host = %self.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was puddle's to choose");
+            // The server's answer is left unread, so this connection is not used again.
+            self.upstream = None;
+            return self.refuse(&refusal.to_refusal()).await;
+        }
         let mut response = response;
         if parsed.upgrade && response.status() == ::http::StatusCode::SWITCHING_PROTOCOLS {
             return self.splice_websocket(&mut response).await;

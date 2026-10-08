@@ -191,9 +191,9 @@ fn connection_tokens(head: &Head) -> Vec<String> {
 }
 
 /// The headers to send upstream: `Host` first, then the guest's end-to-end headers, then the
-/// injected ones. Hop-by-hop headers and the headers the proxy owns are dropped, and so are the
-/// guest's `Authorization` and `Proxy-Authorization` when a credential is injected, so the
-/// credential never has a competitor.
+/// injected ones. Hop-by-hop headers and the headers the proxy owns are dropped (among them
+/// `Proxy-Authorization`, which is addressed to this proxy). The guest's `Authorization` is kept:
+/// it is the guest's own, and an injected header replaces a guest header of the same name only.
 pub(crate) fn upstream_headers(
     head: &Head,
     target: &Target,
@@ -213,10 +213,7 @@ pub(crate) fn upstream_headers(
     for line in &head.headers {
         let name = HeaderName::from_bytes(http::header_name(line).as_bytes())
             .map_err(|_| bad("malformed header name"))?;
-        if is_proxy_owned(&name)
-            || named_in_connection.iter().any(|t| t == name.as_str())
-            || (injection.is_some() && name.as_str() == "authorization")
-        {
+        if is_proxy_owned(&name) || named_in_connection.iter().any(|t| t == name.as_str()) {
             continue;
         }
         let value = HeaderValue::from_str(http::header_value(line))
@@ -246,8 +243,8 @@ pub(crate) enum UpstreamVersion {
 
 /// The headers to send upstream for a request that came in over HTTP/2: the guest's end-to-end
 /// headers, then the injected ones. The same rules as [`upstream_headers`]: hop-by-hop headers
-/// and the headers the proxy owns are dropped, and so is the guest's `Authorization` when a
-/// credential is injected. `te: trailers` is the one hop-by-hop header kept, and only toward an
+/// and the headers the proxy owns are dropped, the guest's `Authorization` is kept.
+/// `te: trailers` is the one hop-by-hop header kept, and only toward an
 /// HTTP/2 server (gRPC needs it). Toward an HTTP/1.1 server `Host` is added and the cookie
 /// crumbs are joined into one `Cookie` header (RFC 9113 §8.2.3). The `:authority` of an HTTP/2
 /// server comes from the request's URI, so no `Host` is added there.
@@ -278,7 +275,7 @@ pub(crate) fn upstream_headers_h2(
             }
             continue;
         }
-        if is_proxy_owned(name) || (injection.is_some() && name.as_str() == "authorization") {
+        if is_proxy_owned(name) {
             continue;
         }
         if version == UpstreamVersion::H1 && name == ::http::header::COOKIE {
@@ -463,6 +460,20 @@ mod tests {
     }
 
     #[test]
+    fn an_injected_header_of_another_name_leaves_the_guests_authorization_alone() {
+        use super::super::inject::{InjectedHeader, SecretValue};
+        let t = target("github.com", 443);
+        let h = head("GET /a HTTP/1.1\r\nHost: github.com\r\nAuthorization: Bearer guest\r\n\r\n");
+        let injection = Injection::new(
+            "b1",
+            vec![InjectedHeader::new("x-extra", SecretValue::new("injected")).unwrap()],
+        );
+        let map = upstream_headers(&h, &t, Some(&injection)).unwrap();
+        assert_eq!(map["authorization"], "Bearer guest");
+        assert_eq!(map["x-extra"], "injected");
+    }
+
+    #[test]
     fn injectors_cannot_set_proxy_owned_headers() {
         use super::super::inject::{HeaderError, InjectedHeader, SecretValue};
         for name in [
@@ -566,6 +577,20 @@ mod h2_tests {
             assert_eq!(map.get_all("authorization").iter().count(), 1);
             assert_eq!(map["authorization"], "Basic xyz");
             assert!(map["authorization"].is_sensitive());
+        }
+    }
+
+    #[test]
+    fn an_injected_header_of_another_name_leaves_the_guests_authorization_alone() {
+        let other = Injection::new(
+            "binding-1",
+            vec![InjectedHeader::new("x-extra", SecretValue::new("injected")).unwrap()],
+        );
+        for version in [UpstreamVersion::H1, UpstreamVersion::H2] {
+            let map =
+                upstream_headers_h2(&guest_headers(), &target(), Some(&other), version).unwrap();
+            assert_eq!(map["authorization"], "Bearer guest");
+            assert_eq!(map["x-extra"], "injected");
         }
     }
 

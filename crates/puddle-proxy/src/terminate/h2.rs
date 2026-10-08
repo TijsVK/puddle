@@ -32,7 +32,7 @@ use tokio::sync::Notify;
 use tokio::time::Sleep;
 
 use super::guest::{ALPN_H2, ALPN_HTTP11};
-use super::inject::{InjectContext, InjectDecision, Injection, RequestView};
+use super::inject::{Forwarding, InjectContext, Injection, RequestView, Unauthorized};
 use super::leg::{self, BoxError, Connected, H1Pool, H2Conn, Lease, UpBody};
 use super::request::{self, UpstreamVersion, bad, misdirected};
 use super::session::{Context, Outcome};
@@ -437,8 +437,11 @@ async fn exchange(
     }
     let mut route = shared.route().await?;
     let version = route.version();
-    let injection = match decide(shared, &checked, request.headers(), version).await {
-        Ok(injection) => injection,
+    let Forwarding {
+        injection,
+        unauthorized,
+    } = match decide(shared, &checked, request.headers(), version).await {
+        Ok(forwarding) => forwarding,
         Err(refusal) => {
             route.unused();
             return Err(refusal);
@@ -470,6 +473,9 @@ async fn exchange(
     let upstream_request =
         build_request(cx, version, checked.method, &checked.path, headers, body)?;
     let response = send(shared, &mut route, upstream_request, &sent).await?;
+    if let Some(refusal) = unauthorized_answer(shared, &response, unauthorized.as_ref()) {
+        return Err(refusal);
+    }
     let lease = match route {
         Route::H1(lease) => Some(lease),
         Route::H2(_) => None,
@@ -486,7 +492,7 @@ async fn decide(
     checked: &Checked,
     headers: &HeaderMap,
     version: UpstreamVersion,
-) -> Result<Option<Injection>, Refusal> {
+) -> Result<Forwarding, Refusal> {
     let cx = &shared.cx;
     let mut lines = header_lines(headers, &cx.target.host.to_string());
     // A WebSocket over an extended CONNECT reaches an HTTP/1.1 server as a `GET` with `Upgrade`
@@ -508,21 +514,26 @@ async fn decide(
         target: &checked.path,
         headers: &lines,
     };
-    match cx.termination.injector().decide(&context, &view).await {
-        InjectDecision::Inject(injection) => Ok(Some(injection)),
-        InjectDecision::PassThrough => Ok(None),
-        InjectDecision::Refuse(refusal) => {
-            tracing::info!(host = %cx.target.host, code = refusal.code(), "request refused by the credential rules");
-            let status = StatusCode::from_u16(refusal.status()).unwrap_or(StatusCode::BAD_GATEWAY);
-            let line = format!(
-                "{} {}",
-                status.as_str(),
-                status.canonical_reason().unwrap_or("")
-            );
-            Err(Refusal::new(line, refusal.message().to_owned())
-                .header("x-puddle-blocked", refusal.code()))
-        }
+    let decision = cx.termination.injector().decide(&context, &view).await;
+    decision.into_forwarding().map_err(|refusal| {
+        tracing::info!(host = %cx.target.host, code = refusal.code(), "request refused by the credential rules");
+        refusal.to_refusal()
+    })
+}
+
+/// The refusal that replaces the server's answer when it is a `401` for a request whose
+/// credential was puddle's to choose.
+fn unauthorized_answer<B>(
+    shared: &Shared,
+    response: &Response<B>,
+    unauthorized: Option<&Unauthorized>,
+) -> Option<Refusal> {
+    if response.status() != StatusCode::UNAUTHORIZED {
+        return None;
     }
+    let refusal = unauthorized?.refusal();
+    tracing::info!(host = %shared.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was puddle's to choose");
+    Some(refusal.to_refusal())
 }
 
 /// The request for the real server: `:authority` and `:scheme` from the URI on HTTP/2, the

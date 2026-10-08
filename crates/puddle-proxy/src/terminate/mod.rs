@@ -44,7 +44,9 @@
 //!   their real values in the header values of the request, toward the hosts each is for, on both
 //!   HTTP versions.
 //! - **Responses**: framed by an HTTP client library, then rebuilt for the guest, trailers
-//!   included. Redirects are passed through, never followed.
+//!   included. Redirects are passed through, never followed. A `401` is replaced by the
+//!   injector's own refusal when the injector chose the request's credential ([`Unauthorized`]);
+//!   otherwise it is the server's answer like any other.
 //! - **WebSocket**: HTTP/1.1 `Upgrade` and HTTP/2 extended `CONNECT` (RFC 8441) are checked and
 //!   injected like any request; once the server agrees, the two connections are a byte pipe.
 
@@ -70,7 +72,7 @@ use puddle_types::WorkspaceName;
 
 pub use inject::{
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
-    NoInjection, RequestView, SecretValue,
+    NoInjection, RequestView, SecretValue, Unauthorized,
 };
 pub(crate) use session::{Context, run};
 pub use set::{PatternError, TerminationSet};
