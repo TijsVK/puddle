@@ -1228,6 +1228,45 @@ async fn a_damaged_workspace_list_stops_the_start_instead_of_looking_empty() {
     assert!(rig.runtime.calls().is_empty());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn an_open_data_folder_is_made_owner_only_at_start_and_one_that_cannot_be_refuses() {
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("puddle.db"), b"").unwrap();
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let host = Host::start(
+        prepared,
+        &FakeFactory::new(&rig.runtime, &rig.log),
+        HostOptions::default(),
+    )
+    .await
+    .unwrap();
+    let db = std::fs::File::open(data.join("puddle.db")).unwrap();
+    puddle_fs::private::check(&db).unwrap();
+    host.shutdown().await;
+
+    // A folder in the database's place can't be made owner-only: the start is refused before
+    // anything is reconciled.
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(data.join("puddle.db")).unwrap();
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let err = Host::start(
+        prepared,
+        &FakeFactory::new(&rig.runtime, &rig.log),
+        HostOptions::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("will not run with wider permissions"),
+        "{err}"
+    );
+    assert!(rig.runtime.calls().is_empty());
+}
+
 // ---- the workspace list never costs a workspace its volume ------------------------------
 
 async fn volume_names(rig: &Rig) -> Vec<String> {

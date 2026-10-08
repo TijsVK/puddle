@@ -21,12 +21,13 @@ use std::ptr;
 use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, LocalFree};
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
-    SDDL_REVISION_1, SE_FILE_OBJECT,
+    SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
-    EqualSid, GetAce, GetAclInformation, GetTokenInformation, PSECURITY_DESCRIPTOR, PSID,
-    SECURITY_ATTRIBUTES, TOKEN_ACCESS_MASK, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    EqualSid, GetAce, GetAclInformation, GetSecurityDescriptorDacl, GetTokenInformation,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+    TOKEN_ACCESS_MASK, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE,
@@ -98,6 +99,55 @@ pub fn create_owner_only_dir(dir: &Path) -> io::Result<()> {
     // SAFETY: as for `create_owner_only_file`.
     if unsafe { CreateDirectoryW(wide.as_ptr(), &raw const attrs) } == 0 {
         return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Replaces the access list of the existing file or folder `path` with the owner-only protected
+/// one (see [`create_owner_only_file`]). For a folder (`inherit`), entries that inherit from it
+/// are rewritten too, so its existing children lose the inherited entries for administrators and
+/// `SYSTEM`; children with their own protected list keep it.
+///
+/// # Errors
+///
+/// The OS error, for example when the current user may not change the list.
+pub fn set_owner_only_acl(path: &Path, inherit: bool) -> io::Result<()> {
+    let descriptor = owner_only_descriptor("FA", inherit)?;
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut dacl: *mut ACL = ptr::null_mut();
+    // SAFETY: `descriptor` is a valid descriptor that it keeps alive; the out-pointers are valid
+    // and `dacl` points into the descriptor.
+    let ok = unsafe {
+        GetSecurityDescriptorDacl(
+            descriptor.as_ptr(),
+            &raw mut present,
+            &raw mut dacl,
+            &raw mut defaulted,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if present == 0 || dacl.is_null() {
+        return Err(io::Error::other("the owner-only descriptor has no DACL"));
+    }
+    let wide = wide_nul(path.as_os_str());
+    // SAFETY: `wide` is NUL-terminated and outlives the call; `dacl` stays valid while
+    // `descriptor` lives; null owner, group and SACL are allowed with only the DACL bits set.
+    let rc = unsafe {
+        SetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            dacl,
+            ptr::null(),
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::from_raw_os_error(rc.cast_signed()));
     }
     Ok(())
 }

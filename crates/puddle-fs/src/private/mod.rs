@@ -85,6 +85,36 @@ pub fn check(file: &File) -> Result<(), CheckError> {
     platform::check(file)
 }
 
+/// Makes the existing folder `dir` owner-only, creating it (owner-only) if it is missing.
+///
+/// Returns what was wrong before the fix, or `None` if the folder was already owner-only or has
+/// just been created. On Unix it clears the group and other bits; on Windows it replaces the
+/// folder's access list with the one-entry protected list, which the folder's existing children
+/// inherit. It checks the result and fails if the folder is still exposed, so a caller can
+/// refuse to run rather than run with wider permissions.
+///
+/// # Errors
+///
+/// Any file-system error (including not owning the folder), or `InvalidInput` if `dir` is not a
+/// folder.
+pub fn tighten_dir(dir: &Path) -> io::Result<Option<Exposed>> {
+    if !dir.exists() {
+        create_dir(dir)?;
+        return Ok(None);
+    }
+    platform::tighten_dir(dir)
+}
+
+/// Makes the existing file `path` owner-only, like [`tighten_dir`]. A missing file is not an
+/// error and returns `None`; a file that isn't a regular file (a symlink, a folder) is refused.
+///
+/// # Errors
+///
+/// Any file-system error, or `InvalidInput` if `path` is not a regular file.
+pub fn tighten_file(path: &Path) -> io::Result<Option<Exposed>> {
+    platform::tighten_file(path)
+}
+
 /// Writes `body` to `path` owner-only and atomically: a temporary owner-only file in the same
 /// folder, synced, then renamed over `path`, so a reader never sees half of it. Creates the
 /// folder if needed. The temporary file is removed on failure.
@@ -177,6 +207,41 @@ mod tests {
         create_dir(dir.path()).unwrap();
         create_dir(&dir.path().join("a").join("b")).unwrap();
         assert!(dir.path().join("a").join("b").is_dir());
+    }
+
+    #[test]
+    fn tighten_creates_a_missing_folder_and_skips_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("new");
+        assert_eq!(tighten_dir(&sub).unwrap(), None);
+        assert!(sub.is_dir());
+        assert_eq!(tighten_file(&sub.join("absent")).unwrap(), None);
+    }
+
+    #[test]
+    fn tighten_leaves_an_owner_only_folder_and_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("own");
+        create_dir(&sub).unwrap();
+        let file = sub.join("f");
+        drop(create_file(&file).unwrap());
+        assert_eq!(tighten_dir(&sub).unwrap(), None);
+        assert_eq!(tighten_file(&file).unwrap(), None);
+    }
+
+    #[test]
+    fn tighten_refuses_a_file_where_a_folder_is_expected_and_the_reverse() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f");
+        fs::write(&file, b"x").unwrap();
+        assert_eq!(
+            tighten_dir(&file).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            tighten_file(dir.path()).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
     }
 
     #[test]

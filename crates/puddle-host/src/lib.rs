@@ -25,6 +25,7 @@
 
 mod boot;
 mod config;
+mod data_folder;
 mod error;
 mod files;
 mod host;

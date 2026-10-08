@@ -593,12 +593,7 @@ fn open_state(
     events: &Arc<EventHub>,
     clock: &Arc<SystemClock>,
 ) -> Result<State, HostError> {
-    if let Some(dir) = paths.store().parent() {
-        std::fs::create_dir_all(dir).map_err(|e| HostError::State {
-            what: "the data folder",
-            reason: format!("cannot create {}: {e}", dir.display()),
-        })?;
-    }
+    crate::data_folder::make_owner_only(paths)?;
     let store = Arc::new(
         Store::open(&paths.store(), clock.clone(), Limits::default())?
             .with_events(events.clone() as Arc<dyn EventSink>),

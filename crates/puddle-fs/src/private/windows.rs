@@ -5,9 +5,12 @@
 //! the inherited ACL. Folders carry inheritable entries, so files created inside by other means
 //! are owner-only too.
 
-use std::fs::File;
+use std::fs::{self, File, OpenOptions};
 use std::io;
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
+
+use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
 
 use super::{CheckError, Exposed};
 use crate::win;
@@ -38,17 +41,54 @@ pub(super) fn check(file: &File) -> Result<(), CheckError> {
     win::dacl_is_owner_only(file)?.map_err(|why| CheckError::Exposed(Exposed::Acl(why)))
 }
 
+pub(super) fn tighten_dir(dir: &Path) -> io::Result<Option<Exposed>> {
+    if !fs::metadata(dir)?.is_dir() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a folder"));
+    }
+    let open = || {
+        // Backup semantics is what lets a folder be opened as a handle.
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(dir)
+    };
+    let Err(was) = win::dacl_is_owner_only(&open()?)? else {
+        return Ok(None);
+    };
+    win::set_owner_only_acl(dir, true)?;
+    win::dacl_is_owner_only(&open()?)?.map_err(io::Error::other)?;
+    Ok(Some(Exposed::Acl(was)))
+}
+
+pub(super) fn tighten_file(path: &Path) -> io::Result<Option<Exposed>> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "not a regular file",
+            ));
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    }
+    let Err(was) = win::dacl_is_owner_only(&File::open(path)?)? else {
+        return Ok(None);
+    };
+    win::set_owner_only_acl(path, false)?;
+    win::dacl_is_owner_only(&File::open(path)?)?.map_err(io::Error::other)?;
+    Ok(Some(Exposed::Acl(was)))
+}
+
 #[cfg(test)]
 mod tests {
     //! The ACL as the OS reports it, and other principals trying to open the file.
 
     use std::fmt::Write as _;
-    use std::fs::{self, OpenOptions};
-    use std::os::windows::fs::OpenOptionsExt;
     use std::process::Command;
 
     use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
-    use windows_sys::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, FILE_FLAG_BACKUP_SEMANTICS};
+    use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
 
     use super::*;
     use crate::win::testing::{
@@ -113,6 +153,49 @@ mod tests {
         let path = dir.path().join("f");
         drop(create_file(&path).unwrap());
         open_restricted(&path, GENERIC_READ | GENERIC_WRITE, true).unwrap();
+    }
+
+    #[test]
+    fn a_folder_with_an_inherited_acl_is_tightened_and_its_children_follow() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("data");
+        fs::create_dir(&folder).unwrap();
+        let child = folder.join("puddle.db");
+        fs::write(&child, b"x").unwrap();
+        // The temporary folder inherits from the profile, so both are open to more than us.
+        assert!(check(&File::open(&child).unwrap()).is_err());
+        let was = tighten_dir(&folder).unwrap();
+        assert!(matches!(was, Some(Exposed::Acl(_))), "{was:?}");
+        let handle = OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&folder)
+            .unwrap();
+        assert_owner_only_dacl(&handle, FILE_ALL_ACCESS);
+        // The existing child picked up the folder's one entry.
+        check(&File::open(&child).unwrap()).unwrap();
+        assert_eq!(tighten_dir(&folder).unwrap(), None);
+        assert_eq!(fs::read(&child).unwrap(), b"x");
+    }
+
+    #[test]
+    fn a_file_with_an_inherited_acl_is_tightened_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("puddle.db");
+        fs::write(&path, b"x").unwrap();
+        let was = tighten_file(&path).unwrap();
+        assert!(matches!(was, Some(Exposed::Acl(_))), "{was:?}");
+        assert_owner_only_dacl(&File::open(&path).unwrap(), FILE_ALL_ACCESS);
+        assert_eq!(tighten_file(&path).unwrap(), None);
+    }
+
+    #[test]
+    fn a_tightened_file_refuses_a_restricted_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("puddle.db");
+        fs::write(&path, b"x").unwrap();
+        tighten_file(&path).unwrap();
+        assert_access_denied(open_restricted(&path, GENERIC_READ, false));
     }
 
     /// A throwaway local account, deleted on drop.

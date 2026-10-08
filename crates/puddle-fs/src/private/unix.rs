@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Unix: modes `0700` for folders puddle creates, `0600` for files.
 
-use std::fs::{DirBuilder, File, OpenOptions};
+use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
@@ -30,6 +30,48 @@ pub(super) fn check(file: &File) -> Result<(), CheckError> {
         Ok(())
     } else {
         Err(CheckError::Exposed(Exposed::Mode(mode)))
+    }
+}
+
+pub(super) fn tighten_dir(dir: &Path) -> io::Result<Option<Exposed>> {
+    let meta = fs::metadata(dir)?;
+    if !meta.is_dir() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a folder"));
+    }
+    let mode = meta.permissions().mode() & 0o777;
+    if mode & 0o077 == 0 {
+        return Ok(None);
+    }
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    let now = fs::metadata(dir)?.permissions().mode() & 0o777;
+    if now & 0o077 != 0 {
+        return Err(io::Error::other(format!("the mode is still {now:o}")));
+    }
+    Ok(Some(Exposed::Mode(mode)))
+}
+
+pub(super) fn tighten_file(path: &Path) -> io::Result<Option<Exposed>> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "not a regular file",
+            ));
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    }
+    let file = File::open(path)?;
+    match check(&file) {
+        Ok(()) => Ok(None),
+        Err(CheckError::Io(err)) => Err(err),
+        Err(CheckError::Exposed(was)) => {
+            // Through the open handle, so a swap of the path after the check changes nothing.
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            check(&file).map_err(io::Error::other)?;
+            Ok(Some(was))
+        }
     }
 }
 
@@ -78,5 +120,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_too_open_folder_is_tightened_and_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(tighten_dir(dir.path()).unwrap(), Some(Exposed::Mode(0o755)));
+        assert_eq!(mode(dir.path()), 0o700);
+        assert_eq!(tighten_dir(dir.path()).unwrap(), None);
+    }
+
+    #[test]
+    fn a_too_open_file_is_tightened_and_a_symlink_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("puddle.db");
+        fs::write(&file, b"x").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o664)).unwrap();
+        assert_eq!(tighten_file(&file).unwrap(), Some(Exposed::Mode(0o664)));
+        assert_eq!(mode(&file), 0o600);
+        assert_eq!(fs::read(&file).unwrap(), b"x");
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert_eq!(
+            tighten_file(&link).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_read_is_an_error_not_a_silent_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            tighten_dir(&dir.path().join("gone")).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
     }
 }
