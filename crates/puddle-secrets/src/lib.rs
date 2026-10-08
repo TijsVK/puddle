@@ -17,7 +17,8 @@
 //!
 //! A [`Credential`] is a value an identity owns: a source says nothing about how many credentials a
 //! workspace has. The same [`Fetch`] call serves the proxy's injection and host-side API calls.
-//! Another source (the Azure CLI) is one more [`SourceSpec`] variant and one more arm in
+//! Signing in is the user's click and nothing else ([`SignIns`]): `gh auth login --web`, or Git Credential
+//! Manager allowed to open its own window. Another source (the Azure CLI) is one more [`SourceSpec`] variant and one more arm in
 //! [`Sources`].
 
 #![forbid(unsafe_code)]
