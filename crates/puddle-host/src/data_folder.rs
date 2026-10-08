@@ -113,9 +113,8 @@ mod tests {
             let mut name = paths.store().into_os_string();
             name.push(suffix);
             let name = PathBuf::from(name);
-            if name.exists() {
-                assert!(is_owner_only(&name), "{}", name.display());
-            }
+            // SQLite in WAL mode keeps both side files while a connection is open.
+            assert!(is_owner_only(&name), "{}", name.display());
         }
         drop(store);
         // A second start on the now-populated folder changes nothing.
@@ -177,5 +176,11 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("not-a-folder"), "{err}");
+    }
+
+    #[test]
+    fn the_log_line_describes_both_kinds_of_exposure() {
+        assert!(describe(&Exposed::Mode(0o755)).contains("mode 755"));
+        assert!(describe(&Exposed::Acl("entry 1".into())).contains("entry 1"));
     }
 }
