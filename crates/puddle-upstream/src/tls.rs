@@ -24,7 +24,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
-/// The only protocol offered to servers: terminated connections speak HTTP/1.1 end to end.
+/// The protocol offered when the caller does not choose: HTTP/1.1.
 const ALPN_HTTP11: &[u8] = b"http/1.1";
 
 /// Why the verifier could not be built.
@@ -162,7 +162,8 @@ impl TlsClient {
     }
 
     /// Runs the handshake with `server_name` over `stream` (any connection already made: direct,
-    /// or a tunnel through the company proxy) and returns the encrypted stream.
+    /// or a tunnel through the company proxy) and returns the encrypted stream. Offers
+    /// `http/1.1` only.
     ///
     /// # Errors
     /// [`TlsConnectError`]; the stream is dropped.
@@ -174,10 +175,34 @@ impl TlsClient {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
+        self.connect_alpn(server_name, stream, &[ALPN_HTTP11]).await
+    }
+
+    /// As [`Self::connect`], offering `alpn` (in order of preference) instead of `http/1.1`. What
+    /// the server chose is `stream.get_ref().1.alpn_protocol()` on the result.
+    ///
+    /// # Errors
+    /// [`TlsConnectError`]; the stream is dropped.
+    pub async fn connect_alpn<S>(
+        &self,
+        server_name: &str,
+        stream: S,
+        alpn: &[&[u8]],
+    ) -> Result<TlsStream<S>, TlsConnectError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         let Ok(name @ ServerName::DnsName(_)) = ServerName::try_from(server_name.to_owned()) else {
             return Err(TlsConnectError::InvalidName(server_name.to_owned()));
         };
-        TlsConnector::from(Arc::clone(&self.config))
+        let config = if alpn == [ALPN_HTTP11] {
+            Arc::clone(&self.config)
+        } else {
+            let mut config = ClientConfig::clone(&self.config);
+            config.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
+            Arc::new(config)
+        };
+        TlsConnector::from(config)
             .connect(name, stream)
             .await
             .map_err(|err| TlsConnectError::from_io(&err))
@@ -253,7 +278,7 @@ mod tests {
         .with_no_client_auth()
         .with_single_cert(vec![cert.der().clone()], PrivateKeyDer::from(key))
         .unwrap();
-        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         let acceptor = TlsAcceptor::from(Arc::new(config));
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -295,6 +320,30 @@ mod tests {
         let mut out = String::new();
         let _ = tls.read_to_string(&mut out).await;
         Ok(out)
+    }
+
+    #[tokio::test]
+    async fn the_offered_protocols_decide_what_the_server_picks() {
+        let server = server("host.test", (-1, 1)).await;
+        let client = TlsClient::new([server.root.clone()]).unwrap();
+        for (offer, picked) in [
+            (vec![&b"h2"[..], b"http/1.1"], Some(&b"h2"[..])),
+            (vec![b"http/1.1"], Some(b"http/1.1")),
+            (vec![b"h2"], Some(b"h2")),
+            (vec![b"spdy/3"], None),
+        ] {
+            let tcp = tokio::net::TcpStream::connect(("127.0.0.1", server.port))
+                .await
+                .unwrap();
+            let tls = client.connect_alpn("host.test", tcp, &offer).await;
+            // A server with no protocol in common ends the handshake, as real servers do.
+            match picked {
+                Some(picked) => {
+                    assert_eq!(tls.unwrap().get_ref().1.alpn_protocol(), Some(picked));
+                }
+                None => assert!(tls.is_err()),
+            }
+        }
     }
 
     #[tokio::test]

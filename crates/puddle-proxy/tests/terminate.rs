@@ -128,7 +128,7 @@ async fn a_bound_name_on_another_port_or_plain_is_spliced() {
 }
 
 #[tokio::test]
-async fn only_http11_is_offered_to_the_guest() {
+async fn an_http11_server_gets_an_http11_guest_unless_the_guest_speaks_only_h2() {
     let pki = Pki::new();
     let server = upstream(&pki, ok_handler()).await;
     let rig = RigBuilder::new(&pki)
@@ -146,14 +146,13 @@ async fn only_http11_is_offered_to_the_guest() {
         .await
         .unwrap();
     assert_eq!(none.alpn, None);
+    // A guest that speaks only h2 is served h2 and the proxy translates to the server.
     let mut guest = rig.guest().await;
-    assert!(
-        guest
-            .tls_with("bound.test:443", None, &[b"h2"], true)
-            .await
-            .is_err(),
-        "a client that speaks only h2 is turned away, not served h2"
-    );
+    let h2_only = guest
+        .tls_with("bound.test:443", None, &[b"h2"], true)
+        .await
+        .unwrap();
+    assert_eq!(h2_only.alpn.as_deref(), Some(&b"h2"[..]));
 }
 
 #[tokio::test]

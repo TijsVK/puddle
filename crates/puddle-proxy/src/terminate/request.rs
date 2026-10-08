@@ -39,6 +39,10 @@ pub(crate) fn is_proxy_owned(name: &HeaderName) -> bool {
 
 /// A request that passed the checks.
 #[derive(Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about one request head; an enum would only rename them"
+)]
 pub(crate) struct Parsed {
     pub(crate) method: String,
     /// Origin form: path and query, starting with `/`.
@@ -49,9 +53,11 @@ pub(crate) struct Parsed {
     pub(crate) expect_continue: bool,
     /// The guest asked to close after this request.
     pub(crate) close: bool,
+    /// A WebSocket handshake (`Connection: upgrade`, `Upgrade: websocket`).
+    pub(crate) upgrade: bool,
 }
 
-fn bad(why: impl Into<String>) -> Refusal {
+pub(crate) fn bad(why: impl Into<String>) -> Refusal {
     Refusal::new("400 Bad Request", why)
 }
 
@@ -96,7 +102,18 @@ pub(crate) fn parse(head: &Head, target: &Target) -> Result<Parsed, Refusal> {
         }
         expect_continue = http11 && body != Body::None;
     }
-    let close = !http11 || connection_tokens(head).iter().any(|t| t == "close");
+    let tokens = connection_tokens(head);
+    let close = !http11 || tokens.iter().any(|t| t == "close");
+    let upgrade_values: Vec<&str> = head
+        .headers
+        .iter()
+        .filter(|h| http::header_name(h) == "upgrade")
+        .map(|h| http::header_value(h))
+        .collect();
+    let upgrade = http11
+        && head.method == "GET"
+        && body == Body::None
+        && super::ws::is_upgrade_request(&tokens, &upgrade_values);
     Ok(Parsed {
         method: head.method.clone(),
         target: path,
@@ -104,10 +121,11 @@ pub(crate) fn parse(head: &Head, target: &Target) -> Result<Parsed, Refusal> {
         body,
         expect_continue,
         close,
+        upgrade,
     })
 }
 
-fn misdirected(target: &Target) -> Refusal {
+pub(crate) fn misdirected(target: &Target) -> Refusal {
     Refusal::new(
         "421 Misdirected Request",
         format!(
@@ -118,7 +136,7 @@ fn misdirected(target: &Target) -> Refusal {
 }
 
 /// Whether an authority (`host` or `host:port`) names `target`.
-fn authority_is(authority: &str, target: &Target) -> bool {
+pub(crate) fn authority_is(authority: &str, target: &Target) -> bool {
     let Ok((host, port)) = http::split_host_port(authority) else {
         return false;
     };
@@ -204,6 +222,77 @@ pub(crate) fn upstream_headers(
         let value = HeaderValue::from_str(http::header_value(line))
             .map_err(|_| bad("malformed header value"))?;
         map.append(name, value);
+    }
+    if let Some(injection) = injection {
+        for header in injection.headers() {
+            let Some(value) = header.header_value() else {
+                return Err(Refusal::new(
+                    "502 Bad Gateway",
+                    "an injected header could not be built",
+                ));
+            };
+            map.insert(header.name().clone(), value);
+        }
+    }
+    Ok(map)
+}
+
+/// Which HTTP version the real server is spoken to in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UpstreamVersion {
+    H1,
+    H2,
+}
+
+/// The headers to send upstream for a request that came in over HTTP/2: the guest's end-to-end
+/// headers, then the injected ones. The same rules as [`upstream_headers`]: hop-by-hop headers
+/// and the headers the proxy owns are dropped, and so is the guest's `Authorization` when a
+/// credential is injected. `te: trailers` is the one hop-by-hop header kept, and only toward an
+/// HTTP/2 server (gRPC needs it). Toward an HTTP/1.1 server `Host` is added and the cookie
+/// crumbs are joined into one `Cookie` header (RFC 9113 §8.2.3). The `:authority` of an HTTP/2
+/// server comes from the request's URI, so no `Host` is added there.
+pub(crate) fn upstream_headers_h2(
+    headers: &HeaderMap,
+    target: &Target,
+    injection: Option<&Injection>,
+    version: UpstreamVersion,
+) -> Result<HeaderMap, Refusal> {
+    let mut map = HeaderMap::new();
+    if version == UpstreamVersion::H1 {
+        let host = if target.port == HTTPS_PORT {
+            target.host.to_string()
+        } else {
+            format!("{}:{}", target.host, target.port)
+        };
+        map.insert(
+            HeaderName::from_static("host"),
+            HeaderValue::from_str(&host).map_err(|_| bad("host"))?,
+        );
+    }
+    let mut cookies: Vec<&[u8]> = Vec::new();
+    for (name, value) in headers {
+        if name == ::http::header::TE {
+            if version == UpstreamVersion::H2 && value.as_bytes().eq_ignore_ascii_case(b"trailers")
+            {
+                map.insert(name.clone(), value.clone());
+            }
+            continue;
+        }
+        if is_proxy_owned(name) || (injection.is_some() && name.as_str() == "authorization") {
+            continue;
+        }
+        if version == UpstreamVersion::H1 && name == ::http::header::COOKIE {
+            cookies.push(value.as_bytes());
+            continue;
+        }
+        map.append(name.clone(), value.clone());
+    }
+    if !cookies.is_empty() {
+        let joined = cookies.join(&b"; "[..]);
+        map.insert(
+            ::http::header::COOKIE,
+            HeaderValue::from_bytes(&joined).map_err(|_| bad("malformed cookie"))?,
+        );
     }
     if let Some(injection) = injection {
         for header in injection.headers() {
@@ -397,5 +486,91 @@ mod tests {
             InjectedHeader::new("bad name", SecretValue::new("x")).unwrap_err(),
             HeaderError::Name
         );
+    }
+}
+
+#[cfg(test)]
+mod h2_tests {
+    use puddle_types::Host;
+
+    use super::*;
+    use crate::terminate::inject::{InjectedHeader, SecretValue};
+
+    fn target() -> Target {
+        Target {
+            host: Host::parse_normalised("bound.test").unwrap(),
+            port: 443,
+        }
+    }
+
+    fn guest_headers() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("host", HeaderValue::from_static("bound.test"));
+        headers.insert("authorization", HeaderValue::from_static("Bearer guest"));
+        headers.insert("te", HeaderValue::from_static("trailers"));
+        headers.insert("content-length", HeaderValue::from_static("3"));
+        headers.insert("expect", HeaderValue::from_static("100-continue"));
+        headers.insert("user-agent", HeaderValue::from_static("tool"));
+        headers.append("cookie", HeaderValue::from_static("a=1"));
+        headers.append("cookie", HeaderValue::from_static("b=2"));
+        headers
+    }
+
+    fn injection() -> Injection {
+        Injection::new(
+            "binding-1",
+            vec![InjectedHeader::new("authorization", SecretValue::new("Basic xyz")).unwrap()],
+        )
+    }
+
+    #[test]
+    fn toward_an_http2_server_te_trailers_stays_and_crumbs_are_not_joined() {
+        let map =
+            upstream_headers_h2(&guest_headers(), &target(), None, UpstreamVersion::H2).unwrap();
+        assert_eq!(map["te"], "trailers");
+        assert!(map.get("host").is_none());
+        assert!(map.get("content-length").is_none() && map.get("expect").is_none());
+        assert_eq!(map.get_all("cookie").iter().count(), 2);
+        assert_eq!(map["authorization"], "Bearer guest");
+    }
+
+    #[test]
+    fn toward_an_http11_server_te_goes_host_is_set_and_cookies_are_joined() {
+        let map =
+            upstream_headers_h2(&guest_headers(), &target(), None, UpstreamVersion::H1).unwrap();
+        assert!(map.get("te").is_none());
+        assert_eq!(map["host"], "bound.test");
+        assert_eq!(map["cookie"], "a=1; b=2");
+        assert_eq!(map["user-agent"], "tool");
+    }
+
+    #[test]
+    fn a_te_that_is_not_trailers_never_goes_on() {
+        let mut headers = guest_headers();
+        headers.insert("te", HeaderValue::from_static("gzip"));
+        let map = upstream_headers_h2(&headers, &target(), None, UpstreamVersion::H2).unwrap();
+        assert!(map.get("te").is_none());
+    }
+
+    #[test]
+    fn an_injected_credential_replaces_the_guests_and_is_sensitive() {
+        for version in [UpstreamVersion::H1, UpstreamVersion::H2] {
+            let map = upstream_headers_h2(&guest_headers(), &target(), Some(&injection()), version)
+                .unwrap();
+            assert_eq!(map.get_all("authorization").iter().count(), 1);
+            assert_eq!(map["authorization"], "Basic xyz");
+            assert!(map["authorization"].is_sensitive());
+        }
+    }
+
+    #[test]
+    fn a_port_other_than_443_is_part_of_the_host_header() {
+        let other = Target {
+            host: Host::parse_normalised("bound.test").unwrap(),
+            port: 8443,
+        };
+        let map =
+            upstream_headers_h2(&HeaderMap::new(), &other, None, UpstreamVersion::H1).unwrap();
+        assert_eq!(map["host"], "bound.test:8443");
     }
 }

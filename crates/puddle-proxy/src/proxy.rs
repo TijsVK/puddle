@@ -61,8 +61,8 @@ pub struct ProxyConfig {
     pub keepalive_timeout: Duration,
     /// How long a bound host may take to answer once the whole request is sent. Over it: `504`.
     pub upstream_head_timeout: Duration,
-    /// How long either side of a terminated request may stall in the middle of a body before
-    /// the connection is dropped.
+    /// How long either side of a terminated HTTP/1.1 request may stall in the middle of a body
+    /// before the connection is dropped. HTTP/2 streams are kept alive by pings instead.
     pub body_idle_timeout: Duration,
     /// How long one name lookup for the guest's stub DNS may take. Over it, the stub gets
     /// `SERVFAIL` (or, with a company proxy in the route, a stand-in address).
@@ -522,7 +522,7 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
 /// Decides, connects and relays one request whose destination is known; returns what the audit
 /// records about it (bytes are filled in by the caller once the stream is gone).
 async fn relay(
-    proxy: &Proxy,
+    proxy: &Arc<Proxy>,
     mut reader: GuestReader,
     request: &EgressRequest,
     head: &Head,
@@ -546,15 +546,15 @@ async fn relay(
     if path.is_none()
         && let Some((termination, tls)) = proxy.terminating(request)
     {
-        let cx = terminate::Context {
-            proxy,
-            termination: &termination,
-            tls,
-            workspace: &request.workspace,
-            target,
-            admitted: &admitted,
-        };
-        let done = terminate::run(&cx, reader).await;
+        let cx = Arc::new(terminate::Context {
+            proxy: Arc::clone(proxy),
+            termination,
+            tls: tls.clone(),
+            workspace: request.workspace.clone(),
+            target: target.clone(),
+            admitted,
+        });
+        let done = terminate::run(cx, reader).await;
         event.http = done.http;
         event.resolved_ip = done.resolved_ip;
         event.upstream = done.hop;

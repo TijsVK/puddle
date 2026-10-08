@@ -177,3 +177,94 @@ async fn a_terminated_connection_signs_in_to_an_ntlm_company_proxy_on_one_connec
     assert_eq!(response.text(), "via ntlm");
     assert_eq!(proxy.connections(), 1, "three legs, one connection");
 }
+
+#[tokio::test]
+async fn http2_runs_end_to_end_inside_the_company_proxy_tunnel() {
+    use terminate_support::h2_rig::{H2Server, Script, full, reply};
+    let pki = Pki::new();
+    let script: Script = Arc::new(|_| reply(200, "h2 via the company proxy"));
+    let server = H2Server::recording(&pki, "bound.test", script).await;
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "corp".into(),
+        password: "proxy-pw".into(),
+    })
+    .await;
+    proxy.resolve_name("bound.test", server.addr);
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .via(through(&proxy, "corp", "proxy-pw"))
+        .build();
+    let mut guest = rig.guest().await;
+    let mut client = guest.h2("bound.test:443", &[b"h2", b"http/1.1"]).await;
+    let mut tasks = Vec::new();
+    for i in 0..20 {
+        let mut sender = client.sender.clone();
+        tasks.push(tokio::spawn(async move {
+            let request = http::Request::builder()
+                .uri(format!("https://bound.test/n/{i}"))
+                .body(full(bytes::Bytes::new()))
+                .unwrap();
+            terminate_support::h2_rig::collect(sender.send_request(request).await.unwrap()).await
+        }));
+    }
+    for task in tasks {
+        let got = task.await.unwrap();
+        assert_eq!(got.status, 200);
+        assert_eq!(got.text(), "h2 via the company proxy");
+    }
+    let _ = &mut client;
+    assert_eq!(proxy.connections(), 1, "twenty streams, one tunnel");
+    let seen = proxy.seen();
+    assert!(
+        seen.iter()
+            .any(|s| s.method == "CONNECT" && s.target == "bound.test:443"),
+        "{seen:?}"
+    );
+    assert!(
+        seen.iter()
+            .all(|s| s.headers.iter().all(|(_, v)| !v.contains(CANARY))),
+        "the credential travels inside the tunnel only"
+    );
+    assert_eq!(
+        server.recorded()[0].headers_named("authorization"),
+        [format!("Basic {CANARY}")]
+    );
+}
+
+#[tokio::test]
+async fn an_h2_guest_over_an_http11_server_behind_a_company_proxy_uses_a_few_tunnels() {
+    use terminate_support::h2_rig::{collect, full};
+    let pki = Pki::new();
+    let server = FakeServer::tls(
+        pki.server_config("bound.test", Flaw::None),
+        Arc::new(|r| Reply::ok(&format!("h1 {}", r.target)).after(Duration::from_millis(50))),
+    )
+    .await;
+    let proxy = FakeProxy::start(Behaviour::Open).await;
+    proxy.resolve_name("bound.test", server.addr);
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .via(through(&proxy, "u", "p"))
+        .build();
+    let mut guest = rig.guest().await;
+    let client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let mut tasks = Vec::new();
+    for i in 0..40 {
+        let mut sender = client.sender.clone();
+        tasks.push(tokio::spawn(async move {
+            let request = http::Request::builder()
+                .uri(format!("https://bound.test/n/{i}"))
+                .body(full(bytes::Bytes::new()))
+                .unwrap();
+            collect(sender.send_request(request).await.unwrap()).await
+        }));
+    }
+    for (i, task) in tasks.into_iter().enumerate() {
+        assert_eq!(task.await.unwrap().text(), format!("h1 /n/{i}"));
+    }
+    let tunnels = proxy.connections();
+    assert!(
+        (2..=8).contains(&tunnels),
+        "{tunnels} tunnels for 40 streams"
+    );
+}

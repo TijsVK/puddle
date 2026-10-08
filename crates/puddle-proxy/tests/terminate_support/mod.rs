@@ -1005,3 +1005,5 @@ pub(crate) async fn read_response<R: AsyncBufReadExt + Unpin>(
         body,
     })
 }
+
+pub(crate) mod h2_rig;

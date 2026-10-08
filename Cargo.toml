@@ -101,7 +101,7 @@ utoipa = { version = "6.0.0", default-features = false, features = ["macros"] }
 # Local HTTP API: axum on loopback; utoipa-axum registers routes and spec together.
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "macros", "query", "tokio", "tracing"] }
 # Served through hyper directly (not `axum::serve`) for a header-read timeout and owned connection tasks.
-hyper = { version = "1.11", default-features = false, features = ["http1", "server", "client"] }
+hyper = { version = "1.11", default-features = false, features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.21", default-features = false, features = ["http1", "server", "server-graceful", "service", "tokio"] }
 utoipa-axum = "0.3.0"
 tower-http = { version = "0.7.1", default-features = false, features = ["timeout"] }
@@ -126,7 +126,18 @@ tauri-plugin-single-instance = "2.5.2"
 tauri-plugin-window-state = "2.5.0"
 tauri-plugin-opener = { version = "2.7.0", default-features = false }
 url = "2"
-# Terminated TLS connections: the upstream leg is a hyper HTTP/1 client connection.
+# WebSocket handshake of a terminated connection (RFC 6455 §4.2.2: SHA-1 of the key). Already in
+# the tree through rustls and rcgen.
+ring = { version = "0.17", default-features = false }
+# Test client for the HTTP/2 of terminated connections (hostile-guest tests); already in the tree
+# through hyper.
+h2 = { version = "0.4", default-features = false }
+# gRPC test server and client for the trailers and streaming of terminated HTTP/2 connections.
+# Dev-dependencies only; no protoc: the messages are written by hand with prost's derive.
+tonic = { version = "0.14", default-features = false, features = ["codegen"] }
+tonic-prost = { version = "0.14", default-features = false }
+prost = { version = "0.14", default-features = false, features = ["derive"] }
+# Terminated TLS connections: hyper HTTP/1 and HTTP/2 on both legs.
 http = "1"
 http-body = "1"
 http-body-util = "0.1"

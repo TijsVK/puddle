@@ -16,10 +16,109 @@ use rustls::crypto::CryptoProvider;
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio_rustls::TlsAcceptor;
 
-/// The only protocol offered to the guest: terminated connections are HTTP/1.1.
-const ALPN_HTTP11: &[u8] = b"http/1.1";
+/// The protocol names of ALPN (RFC 7301) puddle speaks on a terminated connection.
+pub(crate) const ALPN_HTTP11: &[u8] = b"http/1.1";
+pub(crate) const ALPN_H2: &[u8] = b"h2";
+
+/// What the guest's `ClientHello` says, which decides what the upstream is offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Hello {
+    /// The name asked for is the `CONNECT` host.
+    pub(crate) name_matches: bool,
+    /// ALPN lists `h2`.
+    pub(crate) offers_h2: bool,
+    /// ALPN lists `http/1.1`, or there is no ALPN at all (such a client speaks HTTP/1.1).
+    pub(crate) offers_h1: bool,
+}
+
+/// Which protocol a leg of a terminated connection speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Proto {
+    H1,
+    H2,
+}
+
+impl Proto {
+    pub(crate) fn alpn(self) -> &'static [u8] {
+        match self {
+            Self::H1 => ALPN_HTTP11,
+            Self::H2 => ALPN_H2,
+        }
+    }
+
+    pub(crate) fn from_alpn(chosen: Option<&[u8]>) -> Self {
+        if chosen == Some(ALPN_H2) {
+            Self::H2
+        } else {
+            Self::H1
+        }
+    }
+}
+
+impl Hello {
+    /// The protocols to offer the real server, best first: `h2` whenever the guest can speak it
+    /// (a server that only speaks HTTP/1.1 then answers `http/1.1`, and the proxy translates),
+    /// else `http/1.1`.
+    pub(crate) fn upstream_offer(self) -> Vec<&'static [u8]> {
+        if self.offers_h2 {
+            vec![ALPN_H2, ALPN_HTTP11]
+        } else {
+            vec![ALPN_HTTP11]
+        }
+    }
+
+    /// The protocol the guest is served, given what the real server chose: the same one, except
+    /// that a guest that offered only `h2` gets `h2` over an HTTP/1.1 server (translated), and a
+    /// guest that offered both gets the server's own choice.
+    pub(crate) fn guest_proto(self, upstream: Proto) -> Proto {
+        match upstream {
+            Proto::H2 => Proto::H2,
+            Proto::H1 if self.offers_h2 && !self.offers_h1 => Proto::H2,
+            Proto::H1 => Proto::H1,
+        }
+    }
+}
+
+/// Reads the guest's `ClientHello` without answering it, so that the proxy can look at the
+/// name and the protocols before it decides anything.
+///
+/// # Errors
+/// The stream failed, or what arrived is not a `ClientHello`.
+pub(crate) async fn read_hello<S>(
+    stream: S,
+    host: &Host,
+) -> io::Result<(tokio_rustls::StartHandshake<S>, Hello)>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let start =
+        tokio_rustls::LazyConfigAcceptor::new(rustls::server::Acceptor::default(), stream).await?;
+    let hello = start.client_hello();
+    let name_matches = name_is(hello.server_name(), &host.to_string());
+    let (mut offers_h2, mut offers_h1, mut any) = (false, false, false);
+    for proto in hello.alpn().into_iter().flatten() {
+        any = true;
+        offers_h2 |= proto == ALPN_H2;
+        offers_h1 |= proto == ALPN_HTTP11;
+    }
+    Ok((
+        start,
+        Hello {
+            name_matches,
+            offers_h2,
+            offers_h1: offers_h1 || !any,
+        },
+    ))
+}
+
+/// Whether a `ClientHello`'s name is `host`.
+fn name_is(sni: Option<&str>, host: &str) -> bool {
+    let wanted = sni
+        .and_then(|name| normalise_host(name).ok())
+        .map(puddle_netpolicy::Target::into_host);
+    matches!(&wanted, Some(Host::Name(name)) if name.to_string() == host)
+}
 
 fn provider() -> Arc<CryptoProvider> {
     static PROVIDER: OnceLock<Arc<CryptoProvider>> = OnceLock::new();
@@ -40,12 +139,7 @@ struct SniGate {
 
 impl ResolvesServerCert for SniGate {
     fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        let wanted = hello
-            .server_name()
-            .and_then(|name| normalise_host(name).ok())
-            .map(puddle_netpolicy::Target::into_host);
-        let matches = matches!(&wanted, Some(Host::Name(name)) if name.to_string() == self.host);
-        if !matches {
+        if !name_is(hello.server_name(), &self.host) {
             self.mismatch.store(true, Ordering::Relaxed);
             return None;
         }
@@ -59,12 +153,13 @@ impl ResolvesServerCert for SniGate {
     }
 }
 
-/// An acceptor for one connection to `host`, and the flag that says the client asked for another
-/// name.
-pub(crate) fn acceptor(
+/// The server configuration for one connection to `host`, offering `alpn`, and the flag that
+/// says the client asked for another name.
+pub(crate) fn server_config(
     ca: &Arc<WorkspaceCa>,
     host: &Host,
-) -> Result<(TlsAcceptor, Arc<AtomicBool>), rustls::Error> {
+    alpn: &[&[u8]],
+) -> Result<(Arc<ServerConfig>, Arc<AtomicBool>), rustls::Error> {
     let mismatch = Arc::new(AtomicBool::new(false));
     let gate = SniGate {
         ca: Arc::clone(ca),
@@ -75,11 +170,11 @@ pub(crate) fn acceptor(
         .with_safe_default_protocol_versions()?
         .with_no_client_auth()
         .with_cert_resolver(Arc::new(gate));
-    config.alpn_protocols = vec![ALPN_HTTP11.to_vec()];
+    config.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
     // One connection per config: nothing to resume, and no tickets that outlive it.
     config.send_tls13_tickets = 0;
     config.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
-    Ok((TlsAcceptor::from(Arc::new(config)), mismatch))
+    Ok((Arc::new(config), mismatch))
 }
 
 /// A stream that first yields bytes already read from it, then reads on.

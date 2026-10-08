@@ -19,29 +19,44 @@
 //!
 //! On a terminated connection:
 //!
-//! - **Guest leg**: a rustls server offering only `http/1.1`, whose one certificate is the leaf
-//!   for the `CONNECT` host. A client that sends another name, an IP address or none gets a TLS
-//!   alert and the connection ends with the audit reason `sni_mismatch`; nothing is sent upstream.
+//! - **Order**: the guest's `ClientHello` is read first and its name checked; a client that sends
+//!   another name, an IP address or none gets a TLS alert and the connection ends with the audit
+//!   reason `sni_mismatch`, and nothing is sent upstream. Then the real server is connected to,
+//!   offering the protocols the guest offered (`h2`, `http/1.1`), and the guest is offered what the
+//!   server chose. A server that cannot be used (a certificate that is not accepted) does not stop
+//!   the guest's handshake: the first request is answered with the reason.
+//! - **Guest leg**: a rustls server whose one certificate is the leaf for the `CONNECT` host.
+//!   HTTP/1.1 is read with the strict parser the plain-HTTP path uses, one request at a time (a
+//!   pipelined request is decided on its own) and rebuilt before it is sent. HTTP/2 is served by
+//!   hyper, one request per stream, with the same checks (`Host`/`:authority`, target, framing)
+//!   and limits of its own (streams, header list, resets, header-read time).
 //!   A client that refuses the certificate (it does not trust the workspace's CA) is recorded with
 //!   the audit reason `guest_tls_rejected`; the rule's decision stands, since puddle blocked nothing.
-//! - **Requests**: read with the strict parser the plain-HTTP path uses, one at a time (a
-//!   pipelined request is decided on its own), and rebuilt before they are sent. A request for
-//!   another host (`Host`, or an absolute target) is `421`; an ambiguous one is `400`.
+//! - **Requests**: a request for another host (`Host`, `:authority` or an absolute target) is
+//!   `421`; an ambiguous one is `400`. The [`Injector`] is asked the same way on both versions.
 //! - **Upstream leg**: one connection per guest connection, never shared, verified against the
 //!   platform's roots plus the corporate roots with the host's clock. A certificate that is not
 //!   accepted is a `502` that names the reason, and no request byte, and no credential, is sent.
-//!   The [`Injector`] is asked only after the connection is verified.
-//! - **Responses**: framed by an HTTP client library, then rebuilt for the guest. Redirects are
-//!   passed through, never followed.
+//!   The [`Injector`] is asked only after the connection is verified. HTTP/2 to the server carries
+//!   every stream of an HTTP/2 guest; an HTTP/2 guest talking to an HTTP/1.1 server uses a small
+//!   pool of HTTP/1.1 connections owned by that guest connection.
+//! - **Responses**: framed by an HTTP client library, then rebuilt for the guest, trailers
+//!   included. Redirects are passed through, never followed.
+//! - **WebSocket**: HTTP/1.1 `Upgrade` and HTTP/2 extended `CONNECT` (RFC 8441) are checked and
+//!   injected like any request; once the server agrees, the two connections are a byte pipe.
 
 mod body;
 mod guest;
+mod h2;
 mod handshake;
 mod inject;
+mod leg;
 pub(crate) mod request;
 mod response;
 mod session;
 mod set;
+mod watch;
+mod ws;
 
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};

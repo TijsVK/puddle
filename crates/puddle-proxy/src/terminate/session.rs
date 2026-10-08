@@ -3,24 +3,24 @@
 
 use std::io;
 use std::pin::pin;
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
-use hyper::client::conn::http1::{self, SendRequest};
-use hyper_util::rt::TokioIo;
+use http_body_util::BodyExt as _;
+use hyper::client::conn::http1::SendRequest;
 use puddle_types::{HttpRequestLine, WorkspaceName};
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::task::JoinHandle;
 
 use super::body::{Abort, ChannelBody, pump};
-use super::guest::{Prefixed, acceptor};
+use super::guest::{ALPN_HTTP11, Prefixed, Proto, read_hello, server_config};
 use super::inject::{InjectContext, InjectDecision, RequestView};
+use super::leg::{self, BoxError, Connected, H1Conn, UpBody};
 use super::request::{self, Parsed};
-use super::{Termination, response};
+use super::{Termination, h2, response, ws};
 use crate::http::{self, HeadError};
-use crate::proxy::{ClientReader, ProxyConfig, Refusal, refuse};
+use crate::proxy::{ClientReader, Proxy, ProxyConfig, Refusal, refuse};
 use crate::target::Target;
-use crate::upstream::{Admitted, connect_out};
+use crate::upstream::Admitted;
 
 /// The upstream client's read buffer cap, which bounds a response head: heads up to this size are
 /// always accepted and heads over twice this size never are (the client library may read a
@@ -29,7 +29,25 @@ use crate::upstream::{Admitted, connect_out};
 pub(crate) const MAX_RESPONSE_HEAD: usize = 32 * 1024;
 
 /// Most response header lines accepted from the upstream.
-const MAX_RESPONSE_HEADERS: usize = 200;
+pub(crate) const MAX_RESPONSE_HEADERS: usize = 200;
+
+/// Ends the guest's handshake with the alert for a name that is not the `CONNECT` host. Nothing
+/// goes to the real server.
+async fn refuse_name<S>(cx: &Context, start: tokio_rustls::StartHandshake<S>)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    tracing::info!(host = %cx.target.host, "TLS handshake refused: the client asked for another name");
+    if let Ok((refuse_config, _)) =
+        server_config(cx.termination.ca(), &cx.target.host, &[ALPN_HTTP11])
+    {
+        let _ = tokio::time::timeout(
+            cx.proxy.config.tls_handshake_timeout,
+            start.into_stream(refuse_config),
+        )
+        .await;
+    }
+}
 
 /// What a connection did, for the audit record.
 #[derive(Debug, Default)]
@@ -51,20 +69,21 @@ pub(crate) struct Outcome {
 }
 
 /// What a terminated connection runs on.
-pub(crate) struct Context<'a> {
-    pub(crate) proxy: &'a crate::proxy::Proxy,
-    pub(crate) termination: &'a Termination,
-    pub(crate) tls: &'a TlsClient,
-    pub(crate) workspace: &'a WorkspaceName,
-    pub(crate) target: &'a Target,
-    pub(crate) admitted: &'a Admitted,
+pub(crate) struct Context {
+    pub(crate) proxy: Arc<Proxy>,
+    pub(crate) termination: Arc<Termination>,
+    pub(crate) tls: TlsClient,
+    pub(crate) workspace: WorkspaceName,
+    pub(crate) target: Target,
+    pub(crate) admitted: Admitted,
 }
 
-/// Terminates `reader`'s connection (a `CONNECT` whose head was just read). The real server is
-/// connected to when the first request arrives.
-pub(crate) async fn run<S>(cx: &Context<'_>, reader: ClientReader<S>) -> Outcome
+/// Terminates `reader`'s connection (a `CONNECT` whose head was just read). The guest's
+/// `ClientHello` is read first and its name checked; then the real server is connected to, offering
+/// the protocols the guest offered, and the guest is offered what the server chose.
+pub(crate) async fn run<S>(cx: Arc<Context>, reader: ClientReader<S>) -> Outcome
 where
-    S: AsyncRead + AsyncWrite + Unpin + Send,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let mut outcome = Outcome::default();
     let early = reader.buffer().to_vec();
@@ -76,26 +95,61 @@ where
         tracing::debug!(error = %err, "guest went away before the TLS handshake");
         return outcome;
     }
-    let (acceptor, mismatch) = match acceptor(cx.termination.ca(), &cx.target.host) {
-        Ok(pair) => pair,
-        Err(err) => {
-            tracing::error!(error = %err, "could not build the guest TLS configuration");
+    let config = cx.proxy.config;
+    let hello = tokio::time::timeout(
+        config.tls_handshake_timeout,
+        read_hello(Prefixed::new(stream, early), &cx.target.host),
+    )
+    .await;
+    let (start, hello) = match hello {
+        Ok(Ok(read)) => read,
+        Ok(Err(err)) => {
+            tracing::debug!(host = %cx.target.host, error = %err, "guest TLS hello not read");
+            return outcome;
+        }
+        Err(_) => {
+            tracing::debug!(host = %cx.target.host, "guest TLS handshake timed out");
             return outcome;
         }
     };
-    let config = cx.proxy.config;
-    let accepted = tokio::time::timeout(
+    if !hello.name_matches {
+        refuse_name(&cx, start).await;
+        outcome.sni_mismatch = true;
+        return outcome;
+    }
+    // Upstream first: what the real server speaks decides what the guest is offered.
+    let (first, deferred) = match leg::connect(&cx, &hello.upstream_offer()).await {
+        Ok(made) => {
+            outcome.hop = made.hop;
+            outcome.resolved_ip = made.ip;
+            (Some(made.conn), None)
+        }
+        Err(refusal) => (None, Some(refusal)),
+    };
+    let guest_proto = match &first {
+        Some(conn) => hello.guest_proto(conn.proto()),
+        // The real server could not be used: the guest still gets the handshake, and the first
+        // request is answered with the reason.
+        None if hello.offers_h1 => Proto::H1,
+        None => Proto::H2,
+    };
+    let (server_config, _) =
+        match server_config(cx.termination.ca(), &cx.target.host, &[guest_proto.alpn()]) {
+            Ok(pair) => pair,
+            Err(err) => {
+                tracing::error!(error = %err, "could not build the guest TLS configuration");
+                return outcome;
+            }
+        };
+    let tls = match tokio::time::timeout(
         config.tls_handshake_timeout,
-        acceptor.accept(Prefixed::new(stream, early)),
+        start.into_stream(server_config),
     )
-    .await;
-    let tls = match accepted {
+    .await
+    {
         Ok(Ok(tls)) => tls,
         Ok(Err(err)) => {
-            outcome.sni_mismatch = mismatch.load(Ordering::Relaxed);
-            if outcome.sni_mismatch {
-                tracing::info!(host = %cx.target.host, "TLS handshake refused: the client asked for another name");
-            } else if let Some(alert) = super::handshake::rejected_certificate(&err) {
+            if let Some(alert) = super::handshake::rejected_certificate(&err) {
                 outcome.certificate_refused = true;
                 tracing::info!(workspace = %cx.workspace, host = %cx.target.host, alert, "the client in the workspace did not accept puddle's certificate for this host");
             } else {
@@ -108,28 +162,26 @@ where
             return outcome;
         }
     };
-    let (read, write) = tokio::io::split(tls);
-    let mut conn = Conn {
-        cx,
-        reader: BufReader::new(read),
-        writer: write,
-        upstream: None,
-        outcome,
-        first: true,
-    };
-    conn.serve().await;
-    conn.outcome
-}
-
-/// The HTTP client connection to the real server, and its driver task.
-struct Upstream {
-    sender: SendRequest<ChannelBody>,
-    driver: JoinHandle<()>,
-}
-
-impl Drop for Upstream {
-    fn drop(&mut self) {
-        self.driver.abort();
+    match guest_proto {
+        Proto::H2 => h2::serve(cx, tls, first, deferred, outcome).await,
+        Proto::H1 => {
+            let upstream = match first {
+                Some(Connected::H1(conn)) => Some(conn),
+                _ => None,
+            };
+            let (read, write) = tokio::io::split(tls);
+            let mut conn = Conn {
+                cx: &cx,
+                reader: BufReader::new(read),
+                writer: write,
+                upstream,
+                deferred,
+                outcome,
+                first: true,
+            };
+            conn.serve().await;
+            conn.outcome
+        }
     }
 }
 
@@ -144,10 +196,12 @@ enum Flow {
 }
 
 struct Conn<'a, R, W> {
-    cx: &'a Context<'a>,
+    cx: &'a Context,
     reader: BufReader<R>,
     writer: W,
-    upstream: Option<Upstream>,
+    upstream: Option<H1Conn>,
+    /// Why the real server could not be used at the handshake; answered by the first request.
+    deferred: Option<Refusal>,
     outcome: Outcome,
     first: bool,
 }
@@ -231,7 +285,7 @@ where
             Ok(Ok(Ok(head))) => head,
         };
         self.first = false;
-        let parsed = match request::parse(&head, self.cx.target) {
+        let parsed = match request::parse(&head, &self.cx.target) {
             Ok(parsed) => parsed,
             Err(refusal) => {
                 tracing::info!(host = %self.cx.target.host, status = %refusal.status, "terminated request refused: {}", refusal.message);
@@ -247,7 +301,7 @@ where
         }
         let decision = {
             let context = InjectContext {
-                workspace: self.cx.workspace,
+                workspace: &self.cx.workspace,
                 host: &self.cx.target.host,
             };
             let view = RequestView {
@@ -277,7 +331,7 @@ where
                     .await;
             }
         };
-        let headers = match request::upstream_headers(&head, self.cx.target, injection.as_ref()) {
+        let headers = match request::upstream_headers(&head, &self.cx.target, injection.as_ref()) {
             Ok(headers) => headers,
             Err(refusal) => return self.refuse(&refusal).await,
         };
@@ -292,6 +346,9 @@ where
 
     /// Makes sure a verified upstream connection exists.
     async fn ensure_upstream(&mut self) -> Result<(), Refusal> {
+        if let Some(refusal) = self.deferred.take() {
+            return Err(refusal);
+        }
         if let Some(up) = self.upstream.as_mut() {
             // `ready` waits until the connection has settled after the last response, so a
             // connection the server closed (or fed stray bytes) is seen as closed here.
@@ -300,53 +357,21 @@ where
             }
         }
         self.upstream = None;
-        let cx = self.cx;
-        let config = cx.proxy.config;
-        let out = connect_out(
-            cx.proxy.upstream(),
-            cx.target,
-            true,
-            cx.admitted,
-            config.connect_timeout,
-        )
-        .await?;
+        let made = leg::connect(self.cx, &[ALPN_HTTP11]).await?;
         if self.outcome.hop.is_none() && self.outcome.resolved_ip.is_none() {
-            self.outcome.hop.clone_from(&out.hop);
-            self.outcome.resolved_ip = out.addr.map(|addr| addr.ip());
+            self.outcome.hop = made.hop;
+            self.outcome.resolved_ip = made.ip;
         }
-        let name = cx.target.host.to_string();
-        let tls = match tokio::time::timeout(
-            config.tls_handshake_timeout,
-            cx.tls.connect(&name, out.stream),
-        )
-        .await
-        {
-            Ok(Ok(tls)) => tls,
-            Ok(Err(err)) => return Err(upstream_tls_refusal(&name, &err)),
-            Err(_) => {
-                return Err(Refusal::new(
-                    "504 Gateway Timeout",
-                    format!("the TLS handshake with {name} timed out"),
-                )
-                .header("x-puddle-blocked-by", "upstream-tls"));
+        match made.conn {
+            Connected::H1(conn) => {
+                self.upstream = Some(conn);
+                Ok(())
             }
-        };
-        let (sender, connection) = http1::Builder::new()
-            .max_buf_size(MAX_RESPONSE_HEAD)
-            .max_headers(MAX_RESPONSE_HEADERS)
-            .handshake::<_, ChannelBody>(TokioIo::new(tls))
-            .await
-            .map_err(|err| {
-                tracing::info!(host = %name, error = %err, "HTTP client setup failed");
-                Refusal::new("502 Bad Gateway", format!("could not talk HTTP to {name}"))
-            })?;
-        let driver = tokio::spawn(async move {
-            if let Err(err) = connection.await {
-                tracing::debug!(error = %err, "upstream connection ended");
-            }
-        });
-        self.upstream = Some(Upstream { sender, driver });
-        Ok(())
+            Connected::H2(_) => Err(Refusal::new(
+                "502 Bad Gateway",
+                "the server chose a protocol that was not offered",
+            )),
+        }
     }
 
     /// Writes `response` to the guest while the guest's read side is polled (see [`keep_reading`]).
@@ -369,22 +394,46 @@ where
         }
     }
 
+    /// The server agreed to the WebSocket upgrade: tells the guest, then pipes the two connections
+    /// until either ends. Nothing else is sent on this connection afterwards.
+    async fn splice_websocket(
+        &mut self,
+        response: &mut ::http::Response<hyper::body::Incoming>,
+    ) -> Flow {
+        let upgraded = hyper::upgrade::on(&mut *response);
+        let mut head =
+            b"HTTP/1.1 101 Switching Protocols\r\nconnection: upgrade\r\nupgrade: websocket\r\n"
+                .to_vec();
+        for (name, value) in ws::answer_headers(response.headers(), true) {
+            head.extend_from_slice(name.as_str().as_bytes());
+            head.extend_from_slice(b": ");
+            head.extend_from_slice(value.as_bytes());
+            head.extend_from_slice(b"\r\n");
+        }
+        head.extend_from_slice(b"\r\n");
+        if let Err(err) = self.writer.write_all(&head).await {
+            tracing::debug!(error = %err, "guest went away before the WebSocket answer");
+            return Flow::Abort;
+        }
+        let Ok(upgraded) = upgraded.await else {
+            tracing::info!(host = %self.cx.target.host, "the WebSocket upgrade did not complete");
+            return Flow::Abort;
+        };
+        // Bytes the guest sent right behind its handshake are still in the reader's buffer.
+        let mut guest = tokio::io::join(&mut self.reader, &mut self.writer);
+        ws::splice(&mut guest, upgraded).await;
+        Flow::Close
+    }
+
     /// Sends `parsed` with `headers` upstream and its response to the guest.
     async fn exchange(&mut self, parsed: &Parsed, headers: ::http::HeaderMap) -> Flow {
         let config = self.cx.proxy.config;
         let Some(upstream) = self.upstream.as_mut() else {
             return Flow::Abort;
         };
-        let (body, tx, abort) = ChannelBody::new(parsed.body);
+        let (channel, tx, abort) = ChannelBody::new(parsed.body);
         let has_body = !matches!(parsed.body, http::Body::None | http::Body::Length(0));
-        let mut builder = ::http::Request::builder()
-            .method(parsed.method.as_str())
-            .uri(parsed.target.as_str())
-            .version(::http::Version::HTTP_11);
-        if let Some(map) = builder.headers_mut() {
-            *map = headers;
-        }
-        let Ok(request) = builder.body(body) else {
+        let Some(request) = upstream_request(parsed, headers, channel) else {
             return self
                 .refuse(&Refusal::new("400 Bad Request", "malformed request"))
                 .await;
@@ -446,6 +495,10 @@ where
                     .await;
             }
         };
+        let mut response = response;
+        if parsed.upgrade && response.status() == ::http::StatusCode::SWITCHING_PROTOCOLS {
+            return self.splice_websocket(&mut response).await;
+        }
         let written = self.write_response(response, parsed, config).await;
         match written {
             Ok(response::Written::KeepOpen) if body_complete || !has_body => Flow::Continue,
@@ -464,6 +517,34 @@ where
     }
 }
 
+/// The request to send to an HTTP/1.1 server: the checked `parsed` pieces, the rebuilt `headers`
+/// and the guest's body as it is decoded. A WebSocket handshake keeps its `Upgrade` headers.
+fn upstream_request(
+    parsed: &Parsed,
+    mut headers: ::http::HeaderMap,
+    body: ChannelBody,
+) -> Option<::http::Request<UpBody>> {
+    if parsed.upgrade {
+        headers.insert(
+            ::http::header::CONNECTION,
+            ::http::HeaderValue::from_static("upgrade"),
+        );
+        headers.insert(
+            ::http::header::UPGRADE,
+            ::http::HeaderValue::from_static("websocket"),
+        );
+    }
+    let body: UpBody = body.map_err(|err| Box::new(err) as BoxError).boxed_unsync();
+    let mut builder = ::http::Request::builder()
+        .method(parsed.method.as_str())
+        .uri(parsed.target.as_str())
+        .version(::http::Version::HTTP_11);
+    if let Some(map) = builder.headers_mut() {
+        *map = headers;
+    }
+    builder.body(body).ok()
+}
+
 /// Polls the guest's read side for as long as it is dropped. A yamux stream only learns that
 /// the peer opened its window again by being read, so a writer that is stuck on a full window
 /// while nobody reads (the guest is waiting for the response) never wakes: a download of more
@@ -479,9 +560,9 @@ async fn keep_reading<R: tokio::io::AsyncBufRead + Unpin>(
 /// Sends `request` while pumping the guest's body into it. `None` as the first answer: the
 /// upstream did not answer in time. The second is the pump's result, if it finished.
 async fn send_and_pump<R>(
-    sender: &mut SendRequest<ChannelBody>,
+    sender: &mut SendRequest<UpBody>,
     reader: &mut R,
-    request: ::http::Request<ChannelBody>,
+    request: ::http::Request<UpBody>,
     (body, tx, abort): (http::Body, tokio::sync::mpsc::Sender<bytes::Bytes>, Abort),
     config: ProxyConfig,
 ) -> (
@@ -541,7 +622,7 @@ fn short(err: &hyper::Error) -> String {
         .map_or_else(|| err.to_string(), ToString::to_string)
 }
 
-fn upstream_tls_refusal(name: &str, err: &TlsConnectError) -> Refusal {
+pub(crate) fn upstream_tls_refusal(name: &str, err: &TlsConnectError) -> Refusal {
     tracing::info!(host = name, error = %err, "upstream TLS refused");
     let message = match err {
         TlsConnectError::Certificate(reason) => {
