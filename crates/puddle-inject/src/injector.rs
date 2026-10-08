@@ -133,7 +133,14 @@ impl GitInjector {
             // No identity covers it: it goes out as the workspace sent it, so a token the workspace
             // supplies after the server's `401` (a credential helper, `.netrc`, the address's user
             // name and password) is used as it would be without puddle.
-            CredentialChoice::Uncovered => InjectDecision::PassThrough,
+            CredentialChoice::Uncovered => {
+                tracing::info!(
+                    workspace = %self.workspace,
+                    owner = %format!("{}/{}", path.host, path.owner),
+                    "no identity covers this owner; the request goes out without a credential"
+                );
+                InjectDecision::PassThrough
+            }
             CredentialChoice::Ambiguous(ids) => {
                 let labels = git
                     .identities

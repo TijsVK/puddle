@@ -14,7 +14,9 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 
 use super::body::{Abort, BodyReader, ChannelBody, pump};
 use super::guest::{ALPN_HTTP11, Prefixed, Proto, read_hello, server_config};
-use super::inject::{Forwarding, InjectContext, Injection, RequestView, Unauthorized};
+use super::inject::{
+    Forwarding, InjectContext, Injection, RequestView, Unauthorized, body_too_large,
+};
 use super::leg::{self, BoxError, Connected, H1Conn, UpBody};
 use super::request::{self, Parsed};
 use super::stand_in::Swapped;
@@ -408,21 +410,20 @@ where
         Ok(())
     }
 
+    /// Answers a body over `limit` with `413` and records it.
+    async fn refuse_too_large(&mut self, limit: usize) -> Flow {
+        self.outcome.refused.get_or_insert("body_too_large");
+        self.refuse(&body_too_large(limit)).await
+    }
+
     /// Reads the guest's whole request body (at most `limit` bytes) for an injector that decides
     /// on it. `Err` is how the connection goes on: the refusal has been sent.
     async fn read_whole_body(&mut self, parsed: &Parsed, limit: usize) -> Result<Bytes, Flow> {
-        let too_large = || {
-            Refusal::new(
-                "413 Content Too Large",
-                format!("this request's body is over {limit} bytes, more than puddle reads to decide on it"),
-            )
-            .header("x-puddle-blocked", "body_too_large")
-        };
         if matches!(parsed.body, http::Body::None | http::Body::Length(0)) {
             return Ok(Bytes::new());
         }
         if matches!(parsed.body, http::Body::Length(n) if n > limit as u64) {
-            return Err(self.refuse(&too_large()).await);
+            return Err(self.refuse_too_large(limit).await);
         }
         if parsed.expect_continue
             && let Err(err) = self
@@ -441,7 +442,7 @@ where
                 Ok(Ok(Some(piece))) => {
                     whole.extend_from_slice(&piece);
                     if whole.len() > limit {
-                        return Err(self.refuse(&too_large()).await);
+                        return Err(self.refuse_too_large(limit).await);
                     }
                 }
                 Ok(Ok(None)) => return Ok(Bytes::from(whole)),

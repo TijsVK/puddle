@@ -32,7 +32,9 @@ use tokio::sync::Notify;
 use tokio::time::Sleep;
 
 use super::guest::{ALPN_H2, ALPN_HTTP11};
-use super::inject::{Forwarding, InjectContext, Injection, RequestView, Unauthorized};
+use super::inject::{
+    Forwarding, InjectContext, Injection, RequestView, Unauthorized, body_too_large,
+};
 use super::leg::{self, BoxError, Connected, H1Pool, H2Conn, Lease, UpBody};
 use super::request::{self, UpstreamVersion, bad, misdirected};
 use super::session::{Context, Outcome};
@@ -593,13 +595,13 @@ async fn read_whole_body(
     limit: usize,
 ) -> Result<Bytes, Refusal> {
     let too_large = || {
-        Refusal::new(
-            "413 Content Too Large",
-            format!(
-                "this request's body is over {limit} bytes, more than puddle reads to decide on it"
-            ),
-        )
-        .header("x-puddle-blocked", "body_too_large")
+        shared
+            .outcome
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .refused
+            .get_or_insert("body_too_large");
+        body_too_large(limit)
     };
     let declared = body.size_hint().exact();
     if declared.is_some_and(|n| n > limit as u64) {

@@ -184,6 +184,13 @@ async fn a_body_over_the_limit_is_413_whether_declared_or_chunked_and_nothing_go
         "the injector never saw an oversized body"
     );
     assert!(server.recorded().is_empty());
+    // Both are recorded as refused, with the refusal's code.
+    let events = rig.events(2).await;
+    assert!(
+        events
+            .iter()
+            .all(|e| e.reason == ConnectionReason::Refused("body_too_large"))
+    );
 }
 
 #[tokio::test]

@@ -254,6 +254,17 @@ pub enum InjectDecision {
     Refuse(InjectRefusal),
 }
 
+/// The answer to a request whose body is over what the injector asked to read.
+pub(crate) fn body_too_large(limit: usize) -> Refusal {
+    Refusal::new(
+        "413 Content Too Large",
+        format!(
+            "this request's body is over {limit} bytes, more than puddle reads before it decides; send smaller requests"
+        ),
+    )
+    .header("x-puddle-blocked", "body_too_large")
+}
+
 /// What the proxy does with a request after the injector decided.
 pub(crate) struct Forwarding {
     pub(crate) injection: Option<Injection>,
