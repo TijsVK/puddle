@@ -12,7 +12,12 @@ export type DeleteCheck = components["schemas"]["DeleteCheck"];
 
 /** States with no VM: the workspace can be started or deleted. */
 export function isDown(status: Status): boolean {
-  return status === "created" || status === "stopped" || status === "crashed";
+  return (
+    status === "created" ||
+    status === "stopped" ||
+    status === "crashed" ||
+    status === "volume_missing"
+  );
 }
 
 /** Nothing is changing the workspace right now. */
@@ -36,6 +41,7 @@ const STATUS_WORDS: Record<Status, string> = {
   paused: "Paused",
   stopped: "Stopped",
   crashed: "Crashed",
+  volume_missing: "Volume missing",
 };
 
 export const statusLabel = (status: Status): string => STATUS_WORDS[status];
@@ -51,6 +57,7 @@ const STATUS_TONES: Record<Status, Tone> = {
   paused: "warn",
   stopped: "idle",
   crashed: "bad",
+  volume_missing: "bad",
 };
 
 export const statusTone = (status: Status): Tone => STATUS_TONES[status];

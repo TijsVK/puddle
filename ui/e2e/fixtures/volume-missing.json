@@ -1,0 +1,11 @@
+{
+  "name": "volume-missing",
+  "workspaces": [
+    {
+      "name": "lost-disk",
+      "repo_url": "https://github.com/acme/lost-disk.git",
+      "status": "volume_missing",
+      "ago_ms": 604800000
+    }
+  ]
+}

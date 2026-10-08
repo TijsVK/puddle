@@ -84,6 +84,9 @@ struct Slot {
     /// Being deleted: left out of the saved list, so a delete that went through can't come
     /// back as a workspace without a volume.
     deleting: bool,
+    /// The start that is running was refused because the volume is gone; `conclude` turns it
+    /// into the `volume_missing` state instead of `crashed`.
+    volume_missing: bool,
 }
 
 struct State {
@@ -169,7 +172,7 @@ fn delete_check(report: &puddle_workspace::DeleteReport) -> DeleteCheck {
         other,
         errors,
     } = &report.findings;
-    DeleteCheck::new(
+    let check = DeleteCheck::new(
         report.workspace.clone(),
         repos
             .iter()
@@ -185,7 +188,12 @@ fn delete_check(report: &puddle_workspace::DeleteReport) -> DeleteCheck {
         listing(other),
         errors.clone(),
         report.removes_sandbox.clone(),
-    )
+    );
+    if report.volume_missing {
+        check.with_volume_missing()
+    } else {
+        check
+    }
 }
 
 /// Holds the count of running operations up for as long as it lives.
@@ -243,6 +251,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     record,
                     creating: false,
                     deleting: false,
+                    volume_missing: false,
                 },
             );
         }
@@ -441,7 +450,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 state.slots.remove(id);
             }
             (Err(_), Operation::Starting) => {
-                slot.record.status = WorkspaceStatus::Crashed;
+                slot.record.status = if std::mem::take(&mut slot.volume_missing) {
+                    WorkspaceStatus::VolumeMissing
+                } else {
+                    WorkspaceStatus::Crashed
+                };
                 status_changed = true;
             }
             (Err(_), Operation::Stopping) => {
@@ -509,6 +522,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// Creates a sandbox on workspace `record`'s volume and boots it through the hook.
+    fn mark_volume_missing(&self, id: &WorkspaceId) {
+        if let Some(slot) = self.state().slots.get_mut(id) {
+            slot.volume_missing = true;
+        }
+    }
+
     async fn boot_new(
         &self,
         record: &WorkspaceRecord,
@@ -534,7 +553,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .prepare_existing(&inner.runtime, id, &name.sandbox_name())
                 .await
         }
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            if matches!(e, puddle_workspace::WorkspaceError::VolumeMissing { .. }) {
+                self.mark_volume_missing(id);
+            }
+            e.to_string()
+        })?;
         *created_volume = attachment.created_volume();
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string());
         let config = match &image {
@@ -943,6 +967,20 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .delete(&inner.runtime, &record.id, &report.confirm())
             .await
             .map_err(|e| e.to_string())?;
+        if report.volume_missing {
+            // The registry forgets its sandbox on a restart, so a record the runtime still has
+            // for this workspace is found by name.
+            let sandbox = record.name.sandbox_name();
+            let listed = inner.runtime.list().await.map_err(|e| e.to_string())?;
+            if listed.iter().any(|s| s.name == sandbox.as_str()) {
+                inner
+                    .runtime
+                    .remove(&sandbox)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                inner.workspaces.sandbox_removed(&sandbox);
+            }
+        }
         self.quiesce(&record.name, true).await;
         Ok(())
     }
@@ -1034,6 +1072,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         record: record.clone(),
                         creating: true,
                         deleting: false,
+                        volume_missing: false,
                     },
                 );
                 if let Err(e) = self.persist(&state) {

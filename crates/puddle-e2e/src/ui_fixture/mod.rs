@@ -45,7 +45,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 5] = [
+const BUILT_IN: [(&str, &str); 6] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -65,6 +65,10 @@ const BUILT_IN: [(&str, &str); 5] = [
     (
         "network-trouble",
         include_str!("../../../../ui/e2e/fixtures/network-trouble.json"),
+    ),
+    (
+        "volume-missing",
+        include_str!("../../../../ui/e2e/fixtures/volume-missing.json"),
     ),
 ];
 
@@ -574,6 +578,7 @@ impl State {
             StatusSeed::Running => WorkspaceStatus::Running,
             StatusSeed::Stopped => WorkspaceStatus::Stopped,
             StatusSeed::Crashed => WorkspaceStatus::Crashed,
+            StatusSeed::VolumeMissing => WorkspaceStatus::VolumeMissing,
         };
         record.created_at = now.saturating_sub(seed.ago_ms);
         record.disk_used_mib = seed.disk_used_mib;

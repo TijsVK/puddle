@@ -38,6 +38,7 @@ export function cleanCheck(
     other: { items: [], more: 0 },
     errors: [],
     removes_sandbox: null,
+    volume_missing: false,
     fingerprint: "fp-clean",
     ...over,
   };

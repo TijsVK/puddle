@@ -213,6 +213,9 @@ pub struct DeleteCheck {
     /// The stopped workspace that is removed together with the workspace.
     #[schema(required = true)]
     pub removes_sandbox: Option<SandboxName>,
+    /// The workspace's volume is already gone: nothing was inspected and deleting loses
+    /// nothing. `clean` is `true` then.
+    pub volume_missing: bool,
     /// Identifies exactly this report: send it back in the delete request, which is refused if
     /// the workspace has changed since.
     pub fingerprint: String,
@@ -238,6 +241,7 @@ impl From<domain::DeleteCheck> for DeleteCheck {
             other: check.other.into(),
             errors: check.errors,
             removes_sandbox: check.removes_sandbox,
+            volume_missing: check.volume_missing,
             fingerprint: check.fingerprint,
         }
     }

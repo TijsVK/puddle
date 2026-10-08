@@ -142,6 +142,8 @@ pub enum StatusSeed {
     Stopped,
     /// Ended without a stop.
     Crashed,
+    /// Its volume is gone.
+    VolumeMissing,
 }
 
 /// What the delete check finds in a workspace.

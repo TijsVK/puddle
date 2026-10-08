@@ -356,6 +356,28 @@ async fn unknown_workspaces_are_404_on_every_route() {
 }
 
 #[tokio::test]
+async fn a_workspace_with_no_volume_has_its_own_state_and_can_be_deleted() {
+    let api = start().await;
+    // Unsaved work the fake would list is ignored: with no volume there is nothing to look at.
+    seed(&api, "web", WorkspaceStatus::VolumeMissing, dirty());
+    assert_eq!(
+        api.get("/api/workspaces/web").await.json()["status"],
+        "volume_missing"
+    );
+    let check = api.get("/api/workspaces/web/delete-check").await.json();
+    assert_eq!(check["volume_missing"], true);
+    assert_eq!(check["clean"], true);
+    assert_eq!(check["repos"], json!([]));
+
+    let seen = json!({"confirm": true, "fingerprint": check["fingerprint"]});
+    let accepted = api.send("DELETE", "/api/workspaces/web", Some(&seen)).await;
+    assert_eq!(accepted.status, 202, "{}", accepted.body);
+    api.workspaces.idle().await;
+    assert_eq!(api.get("/api/workspaces/web").await.status, 404);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_delete_check_lists_what_would_be_lost() {
     let api = start().await;
     seed(&api, "web", WorkspaceStatus::Stopped, dirty());
@@ -367,6 +389,7 @@ async fn the_delete_check_lists_what_would_be_lost() {
     assert_eq!(c["clean"], false);
     assert_eq!(c["removes_sandbox"], "web");
     assert_eq!(c["errors"], json!([]));
+    assert_eq!(c["volume_missing"], false);
     assert_eq!(c["other"], json!({"items": ["scratch"], "more": 0}));
     let repo = &c["repos"][0];
     assert_eq!(repo["dir"], "api");

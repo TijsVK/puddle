@@ -1653,6 +1653,72 @@ async fn starting_a_workspace_whose_volume_is_gone_refuses_and_makes_no_empty_vo
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_refused_start_for_a_missing_volume_shows_the_volume_missing_state() {
+    let (_rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(
+        api.get("/api/workspaces/acme").await.json()["status"],
+        "volume_missing"
+    );
+    // The state is a way to delete, and a start that finds the volume again leaves it.
+    let check = api.get("/api/workspaces/acme/delete-check").await.json();
+    assert_eq!(check["volume_missing"], true);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_whose_volume_is_gone_can_be_deleted_without_a_check_in_a_sandbox() {
+    let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let check = api.get("/api/workspaces/acme/delete-check").await.json();
+    assert_eq!(check["volume_missing"], true, "{check}");
+    assert_eq!(check["clean"], true, "{check}");
+    let seen =
+        json!({"confirm": true, "fingerprint": check["fingerprint"].as_str().unwrap()}).to_string();
+    let accepted = api.delete("/api/workspaces/acme", Some(&seen)).await;
+    assert_eq!(accepted.status, 202, "{}", accepted.body);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(
+        api.get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(rig.runtime.list().await.unwrap().is_empty());
+    assert!(volume_names(&rig).await.is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restored_volume_lets_a_volume_missing_workspace_start() {
+    let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("acme").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(
+        api.get("/api/workspaces/acme").await.json()["status"],
+        "running"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn creating_a_workspace_named_like_a_kept_volume_is_refused_and_leaves_it_alone() {
     let rig = Rig::new();
     rig.runtime

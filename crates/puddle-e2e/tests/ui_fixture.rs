@@ -157,6 +157,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("lived-in", 8, 6),
         ("corporate-network", 0, 0),
         ("network-trouble", 0, 0),
+        ("volume-missing", 0, 0),
     ];
     for (name, pending, rules_min) in counts {
         let run = start(name).await;
@@ -179,7 +180,8 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "empty",
             "lived-in",
             "corporate-network",
-            "network-trouble"
+            "network-trouble",
+            "volume-missing"
         ]
     );
 }

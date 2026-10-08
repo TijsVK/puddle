@@ -165,6 +165,17 @@ describe("NoticeWatcher", () => {
     expect(center.items).toHaveLength(1);
   });
 
+  it("reports a workspace that cannot start for lack of a volume", () => {
+    const w = make();
+    w.handle(status("docs", "volume_missing"));
+    expect(center.items[0]).toMatchObject({
+      key: "stop:docs",
+      title: "docs can't start: its disk is missing.",
+    });
+    w.handle(status("docs", "running"));
+    expect(center.items).toHaveLength(0);
+  });
+
   it("keeps a newer event over the list it reads later, and survives a failing list", async () => {
     const w = make();
     w.handle(status("web", "stopped"));

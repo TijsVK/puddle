@@ -27,6 +27,9 @@ pub enum WorkspaceStatus {
     Stopped,
     /// Ended without an explicit stop: the VM died, or its owning handle was dropped.
     Crashed,
+    /// The workspace is listed but its volume is gone, so it cannot start: restore the volume
+    /// and start it again, or delete the workspace.
+    VolumeMissing,
 }
 
 impl WorkspaceStatus {
@@ -41,13 +44,17 @@ impl WorkspaceStatus {
             Self::Paused => "paused",
             Self::Stopped => "stopped",
             Self::Crashed => "crashed",
+            Self::VolumeMissing => "volume_missing",
         }
     }
 
     /// Whether the workspace has no VM (it can be started or removed).
     #[must_use]
     pub fn is_down(self) -> bool {
-        matches!(self, Self::Created | Self::Stopped | Self::Crashed)
+        matches!(
+            self,
+            Self::Created | Self::Stopped | Self::Crashed | Self::VolumeMissing
+        )
     }
 }
 
@@ -352,6 +359,7 @@ mod tests {
             (WorkspaceStatus::Paused, "paused", false),
             (WorkspaceStatus::Stopped, "stopped", true),
             (WorkspaceStatus::Crashed, "crashed", true),
+            (WorkspaceStatus::VolumeMissing, "volume_missing", true),
         ];
         for (status, text, down) in all {
             assert_eq!(status.to_string(), text);

@@ -239,6 +239,9 @@ pub struct DeleteCheck {
     pub errors: Vec<String>,
     /// The stopped workspace that is removed together with the workspace.
     pub removes_sandbox: Option<SandboxName>,
+    /// The workspace's volume is already gone: there was nothing to inspect, and deleting loses
+    /// nothing; it only drops the workspace.
+    pub volume_missing: bool,
     /// A digest of exactly this report. A delete that passes it is refused when the workspace
     /// has changed since.
     pub fingerprint: String,
@@ -261,10 +264,20 @@ impl DeleteCheck {
             other,
             errors,
             removes_sandbox,
+            volume_missing: false,
             fingerprint: String::new(),
         };
         check.fingerprint = fingerprint(&check);
         check
+    }
+
+    /// Marks the report as one for a workspace whose volume is gone (recomputes the fingerprint,
+    /// so a delete confirmed for this report is refused if the volume comes back).
+    #[must_use]
+    pub fn with_volume_missing(mut self) -> Self {
+        self.volume_missing = true;
+        self.fingerprint = fingerprint(&self);
+        self
     }
 
     /// Whether deleting loses nothing the check can see.
@@ -547,6 +560,9 @@ fn fingerprint(check: &DeleteCheck) -> String {
     let mut errors = Listing::default();
     errors.items.clone_from(&check.errors);
     list("errors", &errors);
+    if check.volume_missing {
+        put("volume_missing");
+    }
     hash.finalize()
         .iter()
         .fold(String::with_capacity(64), |mut out, byte| {
@@ -630,6 +646,7 @@ mod tests {
             other: Listing::default(),
             errors: vec![],
             removes_sandbox: None,
+            volume_missing: false,
             fingerprint: String::new(),
         };
         assert!(check.is_clean());
@@ -641,6 +658,15 @@ mod tests {
         check.other = Listing::default();
         check.errors.push("repo: unreadable".into());
         assert!(!check.is_clean());
+    }
+
+    #[test]
+    fn a_missing_volume_changes_the_fingerprint() {
+        let id = WorkspaceId::new("w").unwrap();
+        let plain = DeleteCheck::new(id, vec![], Listing::default(), vec![], None);
+        let gone = plain.clone().with_volume_missing();
+        assert!(gone.volume_missing && gone.is_clean());
+        assert_ne!(plain.fingerprint, gone.fingerprint);
     }
 
     #[tokio::test]

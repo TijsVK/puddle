@@ -773,17 +773,74 @@ async fn unknown_workspaces_are_not_found() {
     let rt = FakeRuntime::new();
     let w = Workspaces::default();
     let id = ws("nope");
-    for err in [
-        w.check_delete(&rt, &id).await.unwrap_err(),
-        w.reclaim_space(&rt, &id).await.unwrap_err(),
-    ] {
-        assert_eq!(
-            err,
-            WorkspaceError::NotFound {
-                workspace: "nope".into()
-            }
-        );
-    }
+    let err = w.reclaim_space(&rt, &id).await.unwrap_err();
+    assert_eq!(
+        err,
+        WorkspaceError::NotFound {
+            workspace: "nope".into()
+        }
+    );
+}
+
+#[tokio::test]
+async fn a_workspace_whose_volume_is_gone_can_be_deleted_with_nothing_to_check() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    sb.stop().await.unwrap();
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+
+    let report = w.check_delete(&rt, &id).await.unwrap();
+    assert!(report.volume_missing && report.is_clean());
+    assert_eq!(report.removes_sandbox, Some(name("box")));
+    assert!(report.to_string().contains("already gone"), "{report}");
+
+    let deleted = w.delete(&rt, &id, &report.confirm()).await.unwrap();
+    assert_eq!(deleted.removed_sandbox, Some(name("box")));
+    let left = rt.list().await.unwrap();
+    assert_eq!(left, []);
+}
+
+#[tokio::test]
+async fn a_volume_that_comes_back_after_the_check_stops_the_delete() {
+    let rt = FakeRuntime::new();
+    let _stub = CheckStub::install(&rt, CLEAN);
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    sb.stop().await.unwrap();
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+    let report = w.check_delete(&rt, &id).await.unwrap();
+
+    // Restored between the check and the confirm: it may hold work the user never saw.
+    rt.create_volume(VolumeSpec {
+        name: id.volume_name(),
+        size: DiskSize::mib(1024),
+    })
+    .await
+    .unwrap();
+    let err = w.delete(&rt, &id, &report.confirm()).await.unwrap_err();
+    assert!(matches!(err, WorkspaceError::Changed { .. }), "{err}");
+    assert!(rt.volume(&id.volume_name()).await.unwrap().is_some());
+    assert_eq!(rt.list().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_volume_that_vanishes_after_the_check_stops_the_delete() {
+    let rt = FakeRuntime::new();
+    let _stub = CheckStub::install(&rt, CLEAN);
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    sb.stop().await.unwrap();
+    let report = w.check_delete(&rt, &id).await.unwrap();
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+    let err = w.delete(&rt, &id, &report.confirm()).await.unwrap_err();
+    assert!(
+        matches!(err, WorkspaceError::Changed { ref report, .. } if report.volume_missing),
+        "{err}"
+    );
 }
 
 #[tokio::test]

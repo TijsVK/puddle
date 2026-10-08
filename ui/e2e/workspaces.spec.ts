@@ -1140,3 +1140,31 @@ test.describe("accessibility", () => {
     }
   });
 });
+
+test.describe("a workspace whose volume is gone", () => {
+  test("says so on the card and the page, and deleting it is allowed and loses nothing", async ({
+    page,
+    backend,
+  }) => {
+    await backend.control.reset("volume-missing");
+    await openList(page, backend);
+    const lost = card(page, "lost-disk");
+    await expect(lost).toContainText("Volume missing");
+    await expect(lost).toContainText("Restore the volume ws-lost-disk");
+    await expect(
+      lost.getByRole("button", { name: "Start lost-disk" }),
+    ).toBeEnabled();
+    expect(await axeViolations(page), "list").toEqual([]);
+
+    await lost.getByRole("link", { name: /^Details/ }).click();
+    await expect(page.getByText("Its disk is gone")).toBeVisible();
+    await page.getByRole("button", { name: "Delete workspace…" }).click();
+    const confirm = page.getByRole("alertdialog");
+    await expect(confirm).toContainText("nothing is lost");
+    expect(await axeViolations(page), "delete dialog").toEqual([]);
+    await confirm.getByRole("checkbox", { name: "Delete lost-disk" }).check();
+    await confirm.getByRole("button", { name: "Delete workspace" }).click();
+    await expect(page).toHaveURL(/\/workspaces$/);
+    await expect(card(page, "lost-disk")).toHaveCount(0);
+  });
+});

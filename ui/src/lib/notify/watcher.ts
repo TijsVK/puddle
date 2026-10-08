@@ -114,6 +114,18 @@ export class NoticeWatcher {
           label: "Open workspace",
         },
       });
+    } else if (status === "volume_missing") {
+      this.#notifier.notify({
+        key: stopKey(name),
+        tone: "warning",
+        title: `${name} can't start: its disk is missing.`,
+        detail:
+          "Restore the volume and start it again, or delete the workspace.",
+        link: {
+          href: `/workspaces/${encodeURIComponent(name)}`,
+          label: "Open workspace",
+        },
+      });
     } else if (status === "stopped" && wasUp && !this.#expected.has(name)) {
       this.#notifier.notify({
         key: stopKey(name),

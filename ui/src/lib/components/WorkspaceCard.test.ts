@@ -54,6 +54,16 @@ describe("WorkspaceCard", () => {
     expect(card).toHaveTextContent("3 hours ago");
   });
 
+  it("tells a workspace with no volume how to get out, and keeps Start", () => {
+    const calls = mount({}, workspace("demo", { status: "volume_missing" }));
+    const card = screen.getByRole("article");
+    expect(card).toHaveTextContent("Volume missing");
+    expect(card).toHaveTextContent("Restore the volume ws-demo");
+    expect(card).toHaveTextContent("open Details to delete it");
+    expect(screen.getByRole("button", { name: /Start/ })).toBeEnabled();
+    expect(calls.start).not.toHaveBeenCalled();
+  });
+
   it("marks a workspace with direct SSH on as trusted, and no other", () => {
     mount({}, workspace("demo", { direct_ssh: true }));
     expect(screen.getByText("Trusted")).toBeInTheDocument();

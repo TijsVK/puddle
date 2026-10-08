@@ -541,11 +541,13 @@ impl Workspaces {
     /// Step one of a delete: lists what deleting workspace `id` would lose (uncommitted changes,
     /// unpushed commits, stashes, data outside any checkout), checked in its running holder or
     /// in a short-lived maintenance sandbox. Show it, and pass [`DeleteReport::confirm`] to
-    /// [`Workspaces::delete`] if the user agrees.
+    /// [`Workspaces::delete`] if the user agrees. A workspace whose volume is gone has nothing
+    /// to inspect: the report says so ([`DeleteReport::volume_missing`]) and a delete drops
+    /// only its sandbox record, so the caller should ask only about workspaces it lists.
     ///
     /// # Errors
     ///
-    /// [`WorkspaceError::NotFound`]; [`WorkspaceError::Check`] when the check can't run or its
+    /// [`WorkspaceError::Check`] when the check can't run or its
     /// output can't be read (fail closed); [`WorkspaceError::InUse`] while a create or another
     /// maintenance run has it; [`WorkspaceError::Runtime`].
     pub async fn check_delete<R: Runtime>(
@@ -553,7 +555,17 @@ impl Workspaces {
         rt: &R,
         id: &WorkspaceId,
     ) -> Result<DeleteReport, WorkspaceError> {
-        let info = self.volume(rt, id).await?;
+        let Some(info) = self.volume_if_any(rt, id).await? else {
+            // The volume is gone (lost or removed outside puddle): nothing to inspect, nothing
+            // to lose. The caller only asks about workspaces it lists.
+            return Ok(DeleteReport {
+                workspace: id.clone(),
+                findings: Findings::default(),
+                checked_in: maintenance_name(id)?,
+                removes_sandbox: self.existing_owner(rt, id).await?,
+                volume_missing: true,
+            });
+        };
         let removes_sandbox = self.existing_owner(rt, id).await?;
         if let Some(holder) = self.running_holder(id, &info)? {
             let sandbox = rt
@@ -566,6 +578,7 @@ impl Workspaces {
                 findings,
                 checked_in: holder,
                 removes_sandbox,
+                volume_missing: false,
             });
         }
         let checked_in = maintenance_name(id)?;
@@ -575,6 +588,7 @@ impl Workspaces {
                 findings,
                 checked_in,
                 removes_sandbox,
+                volume_missing: false,
             }),
             JobOutput::Trim(_) => unreachable_job(id),
         }
@@ -602,7 +616,13 @@ impl Workspaces {
                 confirmed: confirmed.workspace.to_string(),
             });
         }
-        let info = self.volume(rt, id).await?;
+        let Some(info) = self.volume_if_any(rt, id).await? else {
+            return self.delete_without_volume(rt, id, confirmed).await;
+        };
+        if confirmed.volume_missing {
+            // It was gone when the user looked and is back now: it may hold work.
+            return Err(self.changed(rt, id).await);
+        }
         if let Some(holder) = self.running_holder(id, &info)? {
             return Err(WorkspaceError::InUse {
                 workspace: id.to_string(),
@@ -643,6 +663,7 @@ impl Workspaces {
                     findings,
                     checked_in,
                     removes_sandbox: owner,
+                    volume_missing: false,
                 }),
             });
         }
@@ -661,6 +682,53 @@ impl Workspaces {
             workspace: id.clone(),
             removed_sandbox: owner,
         })
+    }
+
+    /// A delete of a workspace whose volume is gone: only the owning sandbox is left to remove.
+    async fn delete_without_volume<R: Runtime>(
+        &self,
+        rt: &R,
+        id: &WorkspaceId,
+        confirmed: &DeleteConfirmation,
+    ) -> Result<Deleted, WorkspaceError> {
+        let owner = self.existing_owner(rt, id).await?;
+        if !confirmed.volume_missing || owner != confirmed.removes_sandbox {
+            return Err(self.changed(rt, id).await);
+        }
+        if let Some(sandbox) = &owner {
+            rt.remove(sandbox)
+                .await
+                .map_err(|e| WorkspaceError::runtime("remove the owning sandbox", id, e))?;
+            self.sandbox_removed(sandbox);
+        }
+        self.registry.forget(id);
+        info!(workspace = %id, volume_missing = true, removed_sandbox = ?owner.as_ref().map(SandboxName::as_str), "workspace deleted; its volume was already gone");
+        Ok(Deleted {
+            workspace: id.clone(),
+            removed_sandbox: owner,
+        })
+    }
+
+    /// [`WorkspaceError::Changed`] with a fresh report (or the error that stopped the check).
+    async fn changed<R: Runtime>(&self, rt: &R, id: &WorkspaceId) -> WorkspaceError {
+        match self.check_delete(rt, id).await {
+            Ok(report) => WorkspaceError::Changed {
+                workspace: id.to_string(),
+                report: Box::new(report),
+            },
+            Err(e) => e,
+        }
+    }
+
+    /// The volume of `id`, or `None` when the runtime has none.
+    async fn volume_if_any<R: Runtime>(
+        &self,
+        rt: &R,
+        id: &WorkspaceId,
+    ) -> Result<Option<VolumeInfo>, WorkspaceError> {
+        rt.volume(&id.volume_name())
+            .await
+            .map_err(|e| WorkspaceError::runtime("look up the volume", id, e))
     }
 
     /// The volume of `id`, or [`WorkspaceError::NotFound`].

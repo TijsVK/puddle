@@ -116,6 +116,9 @@ pub struct DeleteReport {
     pub checked_in: SandboxName,
     /// The stopped sandbox that owns the workspace: the delete removes it too.
     pub removes_sandbox: Option<SandboxName>,
+    /// The workspace's volume is gone: there is nothing to inspect and nothing to lose, and the
+    /// delete only drops the workspace (and the sandbox that owned it).
+    pub volume_missing: bool,
 }
 
 impl DeleteReport {
@@ -134,6 +137,7 @@ impl DeleteReport {
             workspace: self.workspace.clone(),
             findings: self.findings.clone(),
             removes_sandbox: self.removes_sandbox.clone(),
+            volume_missing: self.volume_missing,
         }
     }
 }
@@ -155,7 +159,13 @@ fn write_listing(f: &mut fmt::Formatter<'_>, what: &str, l: &Listing) -> fmt::Re
 impl fmt::Display for DeleteReport {
     /// A plain-text summary for the CLI and logs.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_clean() {
+        if self.volume_missing {
+            writeln!(
+                f,
+                "workspace {}: its volume is already gone; nothing is lost by deleting it",
+                self.workspace
+            )?;
+        } else if self.is_clean() {
             writeln!(f, "workspace {}: nothing unsaved", self.workspace)?;
         } else {
             writeln!(f, "workspace {}: deleting loses", self.workspace)?;
@@ -190,6 +200,7 @@ pub struct DeleteConfirmation {
     pub(crate) workspace: WorkspaceId,
     pub(crate) findings: Findings,
     pub(crate) removes_sandbox: Option<SandboxName>,
+    pub(crate) volume_missing: bool,
 }
 
 impl DeleteConfirmation {
@@ -438,6 +449,7 @@ mod tests {
 
     fn report(findings: Findings) -> DeleteReport {
         DeleteReport {
+            volume_missing: false,
             workspace: WorkspaceId::new("acme").unwrap(),
             findings,
             checked_in: SandboxName::new("acme").unwrap(),

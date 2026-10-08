@@ -4,6 +4,7 @@
   import ProgressLine from "./ProgressLine.svelte";
   import StatusChip from "./StatusChip.svelte";
   import TrustedBadge from "./TrustedBadge.svelte";
+  import VolumeMissingNotice from "./VolumeMissingNotice.svelte";
   import { relativeTime } from "#lib/format/relative-time.ts";
   import type { OomEvent, Progress } from "#lib/stores/workspaces.svelte.ts";
   import {
@@ -72,6 +73,9 @@
       <span class="flag warn">Out of memory {relativeTime(oom.at, now)}</span>
     {/if}
   </p>
+  {#if workspace.status === "volume_missing" && workspace.busy === null}
+    <VolumeMissingNotice name={workspace.name} />
+  {/if}
   <ProgressLine
     busy={workspace.busy}
     {progress}

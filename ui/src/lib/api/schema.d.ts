@@ -1110,6 +1110,11 @@ export interface components {
             removes_sandbox: components["schemas"]["SandboxName"] | null;
             /** @description Every checkout, clean or not. */
             repos: components["schemas"]["RepoFindings"][];
+            /**
+             * @description The workspace's volume is already gone: nothing was inspected and deleting loses
+             *     nothing. `clean` is `true` then.
+             */
+            volume_missing: boolean;
             /** @description The workspace's id. */
             workspace: string;
         };
@@ -2098,7 +2103,7 @@ export interface components {
          * @description A workspace's state: its sandbox's state as the runtime reports it (msb's states, one for one).
          * @enum {string}
          */
-        WorkspaceStatus: "created" | "starting" | "running" | "draining" | "paused" | "stopped" | "crashed";
+        WorkspaceStatus: "created" | "starting" | "running" | "draining" | "paused" | "stopped" | "crashed" | "volume_missing";
         /**
          * @description Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
          * @enum {string}

@@ -78,6 +78,17 @@ describe("DeleteWorkspaceDialog", () => {
     ).not.toBeChecked();
   });
 
+  it("says a missing volume loses nothing, and still asks", async () => {
+    mount({ check: cleanCheck("demo", { volume_missing: true }) });
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("volume is already gone");
+    expect(dialog).not.toHaveTextContent("everything on its disk");
+    expect(remove()).toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", { name: "Delete demo" }),
+    ).not.toBeChecked();
+  });
+
   it("says what could not be checked, and counts that as a risk", async () => {
     mount({
       check: cleanCheck("demo", {

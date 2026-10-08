@@ -352,6 +352,16 @@ fn delete_check(entry: &Entry) -> DeleteCheck {
         .status
         .is_down()
         .then(|| entry.record.name.sandbox_name());
+    if entry.record.status == WorkspaceStatus::VolumeMissing {
+        return DeleteCheck::new(
+            entry.record.id.clone(),
+            Vec::new(),
+            Listing::default(),
+            Vec::new(),
+            removes_sandbox,
+        )
+        .with_volume_missing();
+    }
     DeleteCheck::new(
         entry.record.id.clone(),
         entry.unsaved.repos.clone(),

@@ -5,6 +5,7 @@
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import { page } from "$app/state";
   import StatusChip from "#lib/components/StatusChip.svelte";
+  import VolumeMissingNotice from "#lib/components/VolumeMissingNotice.svelte";
   import { api } from "#lib/api/client.ts";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
   import { isExpired, workspaceOf } from "#lib/rules/model.ts";
@@ -124,6 +125,9 @@
         <dt>Repository</dt>
         <dd class="mono">{workspace.repo_url}</dd>
       </dl>
+      {#if workspace.status === "volume_missing" && workspace.busy === null}
+        <VolumeMissingNotice name={workspace.name} detail />
+      {/if}
     </section>
 
     <section class="card" aria-labelledby="resources-h">
@@ -169,10 +173,17 @@
 
     <section class="card danger" aria-labelledby="danger-h">
       <h2 id="danger-h">Delete workspace</h2>
-      <p class="hint">
-        Deleting removes the workspace and its disk. puddle first lists
-        uncommitted changes, unpushed commits and stashes.
-      </p>
+      {#if workspace.status === "volume_missing"}
+        <p class="hint">
+          The disk is already gone, so deleting only removes the workspace from
+          puddle.
+        </p>
+      {:else}
+        <p class="hint">
+          Deleting removes the workspace and its disk. puddle first lists
+          uncommitted changes, unpushed commits and stashes.
+        </p>
+      {/if}
       {#if !canDelete(workspace) && workspace.busy === null}
         <p class="hint">Stop the workspace before deleting it.</p>
       {/if}

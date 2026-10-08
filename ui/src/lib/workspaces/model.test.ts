@@ -39,6 +39,7 @@ const STATUSES: Status[] = [
   "paused",
   "stopped",
   "crashed",
+  "volume_missing",
 ];
 
 describe("what can be done in each state", () => {
@@ -62,8 +63,14 @@ describe("what can be done in each state", () => {
       ["paused", false, false, false, false, false],
       ["stopped", true, false, false, true, true],
       ["crashed", true, false, false, true, false],
+      ["volume_missing", true, false, false, true, false],
     ]);
-    expect(STATUSES.filter(isDown)).toEqual(["created", "stopped", "crashed"]);
+    expect(STATUSES.filter(isDown)).toEqual([
+      "created",
+      "stopped",
+      "crashed",
+      "volume_missing",
+    ]);
   });
 
   it("nothing is allowed while an operation runs", () => {

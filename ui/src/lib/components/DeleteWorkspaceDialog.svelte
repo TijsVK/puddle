@@ -52,15 +52,25 @@
       <AlertDialog.Title class="confirm-title">Delete {name}?</AlertDialog.Title
       >
       <AlertDialog.Description class="confirm-detail">
-        This removes the workspace and everything on its disk. It can't be
-        undone.
+        {#if check.volume_missing}
+          This removes the workspace from puddle. Its disk is already gone, so
+          there is nothing left to lose.
+        {:else}
+          This removes the workspace and everything on its disk. It can't be
+          undone.
+        {/if}
       </AlertDialog.Description>
 
       {#if error}
         <p class="notice" role="alert">{error}</p>
       {/if}
 
-      {#if check.clean && check.errors.length === 0}
+      {#if check.volume_missing}
+        <p class="clean">
+          The volume is already gone, so there was nothing to check and nothing
+          is lost.
+        </p>
+      {:else if check.clean && check.errors.length === 0}
         <p class="clean">
           puddle found nothing unsaved: no uncommitted changes, unpushed commits
           or stashes.
@@ -106,7 +116,9 @@
         <input type="checkbox" bind:checked={understood} />
         <span>
           {check.clean && check.errors.length === 0
-            ? `Delete ${name} and its disk`
+            ? check.volume_missing
+              ? `Delete ${name}`
+              : `Delete ${name} and its disk`
             : `I understand this work will be lost: delete ${name}`}
         </span>
       </label>

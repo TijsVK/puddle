@@ -11,6 +11,7 @@ describe("StatusChip", () => {
     ["running", "Running"],
     ["draining", "Stopping"],
     ["crashed", "Crashed"],
+    ["volume_missing", "Volume missing"],
   ] as const)("says %s in words", (status, label) => {
     render(StatusChip, { props: { status } });
     expect(screen.getByText(label)).toBeInTheDocument();

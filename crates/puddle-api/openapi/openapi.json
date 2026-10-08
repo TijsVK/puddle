@@ -4399,6 +4399,7 @@
           "other",
           "errors",
           "removes_sandbox",
+          "volume_missing",
           "fingerprint"
         ],
         "properties": {
@@ -4438,6 +4439,10 @@
               "$ref": "#/components/schemas/RepoFindings"
             },
             "description": "Every checkout, clean or not."
+          },
+          "volume_missing": {
+            "type": "boolean",
+            "description": "The workspace's volume is already gone: nothing was inspected and deleting loses\nnothing. `clean` is `true` then."
           },
           "workspace": {
             "type": "string",
@@ -6768,7 +6773,8 @@
           "draining",
           "paused",
           "stopped",
-          "crashed"
+          "crashed",
+          "volume_missing"
         ]
       },
       "WorkspaceStep": {
