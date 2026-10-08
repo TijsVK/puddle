@@ -2125,6 +2125,20 @@ mod tests {
     }
 
     #[test]
+    fn density_choices_convert_both_ways() {
+        for (wire, stored) in [
+            (
+                DensityChoice::Comfortable,
+                settings::DensityChoice::Comfortable,
+            ),
+            (DensityChoice::Compact, settings::DensityChoice::Compact),
+        ] {
+            assert_eq!(settings::DensityChoice::from(wire), stored);
+            assert_eq!(DensityChoice::from(stored), wire);
+        }
+    }
+
+    #[test]
     fn global_request_sets_vscode_options() {
         let mut g = settings::GlobalSettings::default();
         GlobalSettingsRequest {
