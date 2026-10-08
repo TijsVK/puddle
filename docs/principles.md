@@ -147,9 +147,9 @@ work; it may not change how those tools behave, and it must be easy to remove.
   comes from Puddle's settings. The one edit it makes to a file of yours is a single `Include` line
   at the top of `~/.ssh/config`, which points at Puddle's own SSH config file; the rest of the file
   is untouched. It installs no editor extensions on your machine.
-- **This rules out:** rewriting another tool's settings or global configuration; sharing a folder
-  with a separately installed copy of the same runtime; copying host settings, credentials or
-  dotfiles into a workspace; installing software into your tools without being asked.
+- **This rules out:** rewriting another tool's settings; keeping Puddle's runtime in, or mixing it
+  with, a separately installed copy of the same runtime; copying your `.gitconfig` or other host
+  settings into a workspace; installing editor extensions on your machine.
 
 ## Leanings
 
