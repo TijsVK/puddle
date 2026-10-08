@@ -97,7 +97,8 @@ pub(crate) fn classify(host: &str, method: &str, path: &str, query: Option<&str>
     let reading = method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD");
     let posting = method.eq_ignore_ascii_case("POST");
     let mut access = endpoint.access(reading, posting, service);
-    if service == Some(Service::Receive) {
+    // The words of a push anywhere after the repository, or in the query, make it one.
+    if service == Some(Service::Receive) || found.rest.iter().any(|s| s == "git-receive-pack") {
         access = Access::Push;
     }
     Classified::Git(GitPath {
@@ -518,7 +519,7 @@ mod tests {
     #[test]
     fn what_each_endpoint_asks_for() {
         use Access::{Batch, Pull, Push};
-        let cases: [(&str, &str, &str, Option<&str>, Access); 22] = [
+        let cases: [(&str, &str, &str, Option<&str>, Access); 24] = [
             (
                 "GET",
                 "info/refs",
@@ -572,6 +573,9 @@ mod tests {
             ("POST", "info/lfs/locks/verify", "", None, Pull),
             ("POST", "info/lfs/locks/42/unlock", "", None, Push),
             ("DELETE", "info/lfs", "", None, Push),
+            // The word of a push in any later segment makes it a push.
+            ("GET", "info/lfs/git-receive-pack", "", None, Push),
+            ("GET", "info/lfs/objects/git-receive-pack", "", None, Push),
         ];
         for (method, endpoint, _, query, want) in cases {
             let path = format!("/acme/web.git/{endpoint}");
