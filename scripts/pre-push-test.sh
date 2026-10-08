@@ -5,6 +5,10 @@
 # pushed commit skips them; a marker for only one of two commits, a marker for another commit and a
 # deletion-only push all run them. Not seen: the real gates, and git's own stdin format.
 set -eu
+# Run from a git hook (pre-commit, pre-push), git exports GIT_DIR, GIT_INDEX_FILE and friends; with
+# them set, the `git init` below would re-initialise the calling repository, not the scratch one.
+# shellcheck disable=SC2046 # the list is words by design
+unset $(git rev-parse --local-env-vars)
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
@@ -38,4 +42,19 @@ expect "marker for one of two commits" ran "$tmp/pass" "$two"
 expect "marker for another commit" ran "$tmp/pass" "refs/heads/z ccc refs/heads/z $zero"
 expect "deletion only" ran "$tmp/pass" "(delete) $zero refs/heads/x aaa"
 expect "empty pass dir name" ran "$tmp/missing" "$one"
+# Regression: a hook in a linked worktree exports that worktree's GIT_DIR and GIT_INDEX_FILE; with
+# them set, the repository behind the worktree must come out of this script unchanged (git init
+# there flips its core.bare to true).
+if [ -z "${PRE_PUSH_TEST_NESTED:-}" ]; then
+    git init -q "$tmp/main"
+    git -C "$tmp/main" -c user.email=t@example.org -c user.name=t commit -q --allow-empty -m init
+    git -C "$tmp/main" worktree add -q "$tmp/linked"
+    gitdir=$(git -C "$tmp/linked" rev-parse --absolute-git-dir)
+    before=$(git -C "$tmp/main" config core.bare)
+    GIT_DIR=$gitdir GIT_INDEX_FILE=$gitdir/index PRE_PUSH_TEST_NESTED=1 sh "$0" >/dev/null
+    [ "$before" = "$(git -C "$tmp/main" config core.bare)" ] || {
+        echo "pre-push-test: hook variables reached the scratch repository setup" >&2
+        exit 1
+    }
+fi
 echo "pre-push-test: ok"
