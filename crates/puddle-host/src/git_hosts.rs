@@ -38,7 +38,11 @@ pub(crate) fn decrypt_set(git: &WorkspaceGit) -> TerminationSet {
     let mut set = TerminationSet::new();
     for identity in &git.identities {
         for credential in &identity.credentials {
-            for pattern in decrypt_patterns(credential.host.as_str()) {
+            let patterns = decrypt_patterns(credential.host.as_str());
+            if patterns.is_empty() {
+                tracing::warn!(host = %credential.host, "not decrypted: only port 443 is");
+            }
+            for pattern in patterns {
                 if let Err(err) = set.insert(&pattern) {
                     tracing::warn!(host = %credential.host, %err, "this credential's host is never decrypted");
                 }
