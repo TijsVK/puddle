@@ -444,9 +444,10 @@ async fn exchange(
             return Err(refusal);
         }
     };
-    let headers =
+    let mut headers =
         request::upstream_headers_h2(request.headers(), &cx.target, injection.as_ref(), version)?;
     record_injection(shared, injection.as_ref());
+    swap_stand_ins(shared, &mut headers, injection.as_ref());
     if checked.protocol.is_some() {
         let guest_upgrade = hyper::upgrade::on(&mut request);
         return websocket(shared, guest_upgrade, &checked, route, headers, guard).await;
@@ -699,6 +700,22 @@ async fn websocket(
 /// The system had no random bytes for a WebSocket key.
 fn no_random_bytes() -> Refusal {
     Refusal::new("502 Bad Gateway", "no random bytes for the WebSocket key")
+}
+
+/// Swaps the workspace's stand-ins in `headers` for their real values, as the HTTP/1.1 path does
+/// (the injected headers are left alone), and notes it for the audit.
+fn swap_stand_ins(shared: &Shared, headers: &mut HeaderMap, injection: Option<&Injection>) {
+    let host = &shared.cx.target.host;
+    let swapped = shared
+        .cx
+        .termination
+        .stand_ins()
+        .swap(headers, host, injection);
+    shared
+        .outcome
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .record_stand_ins(host, &swapped);
 }
 
 fn record_injection(shared: &Shared, injection: Option<&Injection>) {
