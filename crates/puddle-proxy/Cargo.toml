@@ -50,11 +50,14 @@ prost = { workspace = true }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 proptest = { workspace = true }
+puddle-inject = { workspace = true, features = ["testing"] }
 puddle-proxy = { path = ".", features = ["testing"] }
+puddle-secrets = { workspace = true }
+puddle-store = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }
 rcgen = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
