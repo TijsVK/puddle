@@ -29,7 +29,7 @@ pub enum WorkspaceError {
     /// A workspace that should have data has no volume, and puddle did not make an empty one
     /// in its place.
     #[error(
-        "workspace {workspace:?} has no volume ({volume}); it was not started, and no new empty volume was made in its place"
+        "workspace {workspace:?} has no volume ({volume}); it was not started, and no new empty volume was made in its place; restore the volume, then start it again"
     )]
     VolumeMissing {
         /// The workspace.
