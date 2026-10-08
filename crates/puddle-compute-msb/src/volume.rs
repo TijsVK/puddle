@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn an_unreadable_config_of_a_stopped_sandbox_holds_nothing() {
         let m = mounter("ws-a", WorkspaceStatus::Stopped, bad_config()).unwrap();
-        assert!(m.volumes.is_empty());
+        assert_eq!(m.volumes, Vec::<String>::new());
     }
 
     #[test]
@@ -191,10 +191,9 @@ mod tests {
             err.contains("`ws-a`") && err.contains("single-writer"),
             "{err}"
         );
-        assert!(
-            mounted_volumes("ws-a", Ok::<_, String>(SandboxConfig::default()))
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            mounted_volumes("ws-a", Ok::<_, String>(SandboxConfig::default())).unwrap(),
+            Vec::<String>::new()
         );
     }
 

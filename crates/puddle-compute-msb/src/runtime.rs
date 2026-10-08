@@ -509,9 +509,9 @@ impl Runtime for MsbRuntime {
     fn stale_dirs(&self) -> impl Future<Output = Result<Vec<String>, ComputeError>> + Send {
         Box::pin(async move {
             let dirs = match std::fs::read_dir(&self.inner.sandboxes_dir) {
-                Ok(entries) => dir_names(entries.map(|e| {
-                    e.and_then(|e| Ok((e.file_name(), e.file_type().map(|t| t.is_dir()))))
-                }))?,
+                Ok(entries) => dir_names(
+                    entries.map(|e| e.map(|e| (e.file_name(), e.file_type().map(|t| t.is_dir())))),
+                )?,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeSet::new(),
                 Err(e) => return Err(runtime("list stale dirs", &e)),
             };
