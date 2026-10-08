@@ -39,7 +39,7 @@ pub(super) fn tighten_dir(dir: &Path) -> io::Result<Option<Exposed>> {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a folder"));
     }
     let mode = meta.permissions().mode() & 0o777;
-    if mode & 0o077 == 0 {
+    if mode.trailing_zeros() >= 6 {
         return Ok(None);
     }
     fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
