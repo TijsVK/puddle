@@ -28,4 +28,10 @@ describe("nav", () => {
     expect(documentTitle("/rules", 3)).toBe("Rules - puddle");
     expect(documentTitle("/nope", 3)).toBe("Not found - puddle");
   });
+
+  it("titles the first-run steps by their name, with no pending count", () => {
+    expect(documentTitle("/welcome", 3)).toBe("Welcome - puddle");
+    expect(documentTitle("/welcome/connect", 3)).toBe("Connect - puddle");
+    expect(documentTitle("/welcome/unknown", 0)).toBe("Welcome - puddle");
+  });
 });

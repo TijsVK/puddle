@@ -8,6 +8,7 @@ import ScrollText from "@lucide/svelte/icons/scroll-text";
 import KeyRound from "@lucide/svelte/icons/key-round";
 import Settings from "@lucide/svelte/icons/settings";
 import type { Component } from "svelte";
+import { isWelcome, stepFor } from "./welcome/steps.ts";
 
 export interface NavItem {
   /** Route path, also the key. */
@@ -44,6 +45,9 @@ export function sectionFor(pathname: string): NavItem | undefined {
 
 /** `Inbox (3) - puddle`: the document title, with the pending count when there is one. */
 export function documentTitle(pathname: string, pending: number): string {
+  if (isWelcome(pathname)) {
+    return `${stepFor(pathname)?.label ?? "Welcome"} - ${APP_NAME}`;
+  }
   const section = sectionFor(pathname);
   const label = section?.label ?? "Not found";
   const count =

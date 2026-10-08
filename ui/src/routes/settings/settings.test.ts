@@ -53,6 +53,13 @@ const putBodies = () =>
     .filter(([c]) => c === "PUT /api/settings");
 
 describe("the screen", () => {
+  it("offers to run the system check again, on its own page with a way back here", async () => {
+    await open();
+    expect(
+      screen.getByRole("link", { name: "Run the system check again" }),
+    ).toHaveAttribute("href", "/welcome/check?from=settings");
+  });
+
   it("has one h1, every section and the stored values", async () => {
     api.layer.memory = 4096;
     await open();

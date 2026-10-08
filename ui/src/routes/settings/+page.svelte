@@ -377,6 +377,18 @@
             ></a
           >
         </div>
+        <h3>System check</h3>
+        <div class="setting">
+          <div class="grow">
+            <p class="desc">
+              Checks this computer again: virtualization, the hypervisor, the
+              bundled runtime and a test start of a tiny workspace.
+            </p>
+          </div>
+          <a class="btn" href="/welcome/check?from=settings"
+            >Run the system check again</a
+          >
+        </div>
         <h3>Local destinations</h3>
         <p class="desc">
           Off by default. Turning one on makes those destinations

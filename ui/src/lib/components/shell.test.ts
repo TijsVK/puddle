@@ -31,7 +31,6 @@ vi.mock("#lib/stores/network-health.svelte.ts", () => ({
 
 import Layout from "../../routes/+layout.svelte";
 import ErrorPage from "../../routes/+error.svelte";
-import { load as rootLoad } from "../../routes/+page.ts";
 import { ssr, prerender } from "../../routes/+layout.ts";
 import Sidebar from "./Sidebar.svelte";
 import { theme } from "../theme/theme.svelte.ts";
@@ -128,6 +127,16 @@ describe("root layout", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/isn't answering/);
   });
 
+  it("leaves the sidebar out of the first-run flow and names its step in the title", () => {
+    url.pathname = "/welcome/check";
+    render(Layout, { children: (() => {}) as never });
+    expect(
+      screen.queryByRole("navigation", { name: "Main" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("main")).toBeInTheDocument();
+    expect(document.title).toBe("System check - puddle");
+  });
+
   it("puts the pending count in the document title", () => {
     live.pending = 2;
     render(Layout, { children: (() => {}) as never });
@@ -136,10 +145,7 @@ describe("root layout", () => {
 });
 
 describe("pages", () => {
-  it("the start page redirects to the workspaces, and the app renders in the browser only", () => {
-    expect(() => rootLoad()).toThrowError(
-      expect.objectContaining({ status: 307, location: "/workspaces" }),
-    );
+  it("the app renders in the browser only", () => {
     expect({ ssr, prerender }).toEqual({ ssr: false, prerender: false });
   });
 

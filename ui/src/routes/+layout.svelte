@@ -12,10 +12,13 @@
   import { networkHealth } from "#lib/stores/network-health.svelte.ts";
   import { density } from "#lib/theme/density.svelte.ts";
   import { theme } from "#lib/theme/theme.svelte.ts";
+  import { isWelcome } from "#lib/welcome/steps.ts";
 
   let { children } = $props();
 
   const watcher = new NoticeWatcher({ source: live });
+  // The first-run flow has the whole window: the app's sidebar would invite leaving it half done.
+  const welcome = $derived(isWelcome(page.url.pathname));
 
   onMount(() => {
     theme.init();
@@ -38,7 +41,7 @@
 
 <a class="skip-link" href="#main">Skip to content</a>
 <div class="shell">
-  <Sidebar />
+  {#if !welcome}<Sidebar />{/if}
   <div class="content">
     {#if live.problem === "unauthorized"}
       <p class="banner" role="status">
