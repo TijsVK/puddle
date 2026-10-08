@@ -612,7 +612,7 @@ mod tests {
             "#/components/schemas/WorkspaceName"
         );
         let status = serde_json::to_value(WorkspaceStatus::schema()).unwrap();
-        assert_eq!(status["enum"].as_array().unwrap().len(), 7);
+        assert_eq!(status["enum"].as_array().unwrap().len(), 8);
     }
 
     #[test]
