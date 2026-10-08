@@ -49,7 +49,12 @@ async fn a_client_that_does_not_trust_the_workspace_ca_is_recorded_as_having_ref
     // Puddle blocked nothing: the rule that allowed the host still stands.
     assert_eq!(events[0].decision, ConnectionDecision::Allow);
     assert!(!events[0].injected);
-    assert_eq!(server.accepted(), 0, "nothing reached the real server");
+    // The real server is connected to before the guest's handshake ends (its protocol decides
+    // what the guest is offered), but no request, and no credential, reaches it.
+    assert!(
+        server.recorded().is_empty(),
+        "no request reached the real server"
+    );
 }
 
 #[tokio::test]
