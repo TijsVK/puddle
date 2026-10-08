@@ -658,6 +658,11 @@ fn open_state(
     })
 }
 
+/// A company root as the TLS client takes it.
+fn der_of(root: &puddle_certs::SyncedCert) -> rustls::pki_types::CertificateDer<'static> {
+    rustls::pki_types::CertificateDer::from(root.der().to_vec())
+}
+
 /// The company roots as PEM, for the runtime's registry client.
 fn pem_of(roots: &CorporateRoots) -> Vec<String> {
     roots
@@ -739,12 +744,7 @@ impl Injecting {
             store.clone(),
         ));
         // The platform's roots plus the company's, as the guest is given.
-        let tls = TlsClient::new(
-            roots
-                .certificates()
-                .iter()
-                .map(|root| rustls::pki_types::CertificateDer::from(root.der().to_vec())),
-        )?;
+        let tls = TlsClient::new(roots.certificates().iter().map(der_of))?;
         Ok(Self {
             injection,
             secrets,

@@ -146,12 +146,16 @@ pub(crate) fn authors(git: &WorkspaceGit) -> Authors {
             }
         }
     }
-    if rules.len() > MAX_GIT_AUTHOR_RULES {
+    if let Some(extra) = rules
+        .len()
+        .checked_sub(MAX_GIT_AUTHOR_RULES)
+        .filter(|n| *n > 0)
+    {
         tracing::warn!(
-            rules = rules.len(),
-            "more author rules than a workspace holds: the lowest priority ones are left out"
+            extra,
+            "more author rules than a plan holds: the lowest priority go"
         );
-        rules.drain(..rules.len() - MAX_GIT_AUTHOR_RULES);
+        rules.drain(..extra);
     }
     Authors { fallback, rules }
 }

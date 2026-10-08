@@ -1154,8 +1154,8 @@ impl Runtime for SlowPull {
 
     async fn pull_image(
         &self,
-        image: &puddle_types::ImageRef,
-    ) -> Result<puddle_compute::ImageConfig, puddle_compute::ComputeError> {
+        image: &ImageRef,
+    ) -> Result<ImageConfig, puddle_compute::ComputeError> {
         tokio::time::sleep(self.1).await;
         self.0.pull_image(image).await
     }
@@ -2039,7 +2039,7 @@ async fn a_sandbox_record_the_list_does_not_name_is_removed_and_reported_but_its
     rig.runtime
         .create(puddle_compute::SandboxSpec::new(
             ghost.clone(),
-            puddle_types::ImageRef::new(FakeRuntime::DEBIAN).unwrap(),
+            ImageRef::new(FakeRuntime::DEBIAN).unwrap(),
         ))
         .await
         .unwrap();
@@ -2664,6 +2664,62 @@ async fn a_change_made_while_the_guest_boots_reaches_it_once_it_is_up() {
     rig.guest.boots_reach(2).await;
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     assert!(pem_of(&files, "/etc/puddle/gitconfig").contains("name = \"Ada\""));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_made_while_a_stopped_workspace_starts_again_reaches_it_once_it_is_up() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let booted = rig.guest.boots();
+
+    rig.guest.hold_boot.store(true, Ordering::SeqCst);
+    let _release = Release(&rig.guest.hold_boot);
+    api.post("/api/workspaces/acme/start", "").await;
+    // The sandbox exists but its guest is not up: the set follows, the guest has to wait.
+    eventually("the CA", || {
+        host.workspaces().termination(&name("acme")).is_some()
+    })
+    .await;
+    let identity = make_identity(&api, "Ada", "github.com", &[]).await;
+    attach(&api, "acme", identity).await;
+    eventually("the set follows", || decrypts(&host, "acme", "github.com")).await;
+    assert_eq!(rig.guest.boots(), booted + 1);
+    rig.guest.hold_boot.store(false, Ordering::SeqCst);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    rig.guest.boots_reach(booted + 2).await;
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(pem_of(&files, "/etc/puddle/gitconfig").contains("name = \"Ada\""));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn settings_that_turn_unreadable_during_a_boot_do_not_fail_the_boot() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+
+    rig.guest.hold_boot.store(true, Ordering::SeqCst);
+    let _release = Release(&rig.guest.hold_boot);
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    eventually("the CA", || {
+        host.workspaces().termination(&name("acme")).is_some()
+    })
+    .await;
+    damage_database(&rig, &UNREADABLE_GIT_ROW.replace("{}", "acme"));
+    rig.guest.hold_boot.store(false, Ordering::SeqCst);
+    // The boot had what it needed; the workspace comes up with the settings it started with.
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(host.workspaces().termination(&name("acme")).is_some());
+    assert_eq!(rig.guest.boots(), 1);
     host.shutdown().await;
 }
 

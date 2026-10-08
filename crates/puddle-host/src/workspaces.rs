@@ -763,32 +763,38 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if guest.authors == wanted {
             return;
         }
-        let planned = inner.kit.plan(
-            &guest.image,
-            &GuestInputs {
-                ca: &guest.ca,
-                authors: &wanted,
-            },
-        );
-        let plan = match planned {
-            Ok((plan, _)) => plan,
-            Err(reason) => {
-                tracing::warn!(workspace = %name, %reason, "the commit authors in the workspace are not updated");
-                return;
-            }
-        };
-        match inner.kit.hook().run(gated.ungated(), &plan).await {
-            Ok(_) => {
+        match self.run_plan_with(&gated, &guest, &wanted).await {
+            Ok(()) => {
                 if let Some(entry) = inner.live.lock().await.get_mut(name)
                     && let Some(state) = entry.guest.as_mut()
                 {
                     state.authors = wanted;
                 }
             }
-            Err(failure) => {
-                tracing::warn!(workspace = %name, %failure, "the commit authors in the workspace are not updated");
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the authors in the workspace are not updated");
             }
         }
+    }
+
+    /// Plans the guest again with `authors` in place of what it holds and runs the plan in it.
+    async fn run_plan_with(
+        &self,
+        gated: &GatedSandbox<R::Sandbox>,
+        guest: &GuestState,
+        authors: &Authors,
+    ) -> Result<(), String> {
+        let kit = &self.inner.kit;
+        let inputs = GuestInputs {
+            ca: &guest.ca,
+            authors,
+        };
+        let (plan, _) = kit.plan(&guest.image, &inputs)?;
+        kit.hook()
+            .run(gated.ungated(), &plan)
+            .await
+            .map(|_| ())
+            .map_err(|failure| failure.to_string())
     }
 
     /// Looks at every running workspace again (after events were missed).
