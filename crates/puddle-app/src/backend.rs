@@ -168,6 +168,17 @@ pub(crate) mod tests {
         backend.shutdown().await;
     }
 
+    /// The Windows smoke test goes through the first-run flow in the window, so the stand-in
+    /// backend has to start as a fresh install; seeding it as set up would hide the flow.
+    #[tokio::test]
+    async fn the_fixture_is_a_fresh_install_whose_first_run_flow_is_open() {
+        let backend = Backend::start(0).await.unwrap();
+        let reply = get(&backend, "/api/first-run", Some(backend.token())).await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains("\"completed\":false"), "{reply}");
+        backend.shutdown().await;
+    }
+
     #[tokio::test]
     async fn shutdown_stops_listening_and_can_be_called_twice() {
         let backend = Backend::start(0).await.unwrap();

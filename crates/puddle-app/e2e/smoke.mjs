@@ -96,16 +96,39 @@ try {
   page = await connect(target.webSocketDebuggerUrl);
   const run = (body) => page.evaluate(`(async () => { ${body} })()`);
 
-  // The sidebar's sections (ui/src/lib/nav.ts): Workspaces, Inbox, Rules, Activity, Identities, Settings.
-  const SECTIONS = 6;
+  // A fresh install opens the first-run flow, which has the whole window (no sidebar). Go through it
+  // the way a user does: press "Skip setup".
+  let welcome;
+  for (let i = 0; i < 100; i++) {
+    welcome = await run(`return { origin: location.origin, path: location.pathname, title: document.title,
+      heading: document.querySelector('h1')?.textContent ?? "",
+      skip: [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === "Skip setup"),
+      links: document.querySelectorAll('nav[aria-label="Main"] a').length };`).catch(() => undefined);
+    if (welcome?.skip) break;
+    await sleep(400);
+  }
+  check(
+    "a fresh install opens the first-run welcome screen, without the sidebar",
+    welcome?.path === "/welcome" && welcome.title === "Welcome - puddle" && welcome.heading === "Welcome to puddle" && welcome.skip && welcome.links === 0,
+    JSON.stringify(welcome),
+  );
+  await run(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === "Skip setup")?.click(); return true;`);
+
+  // The sections the sidebar has today (ui/src/lib/nav.ts). A new section must not turn this test
+  // red; losing one must. The Playwright shell tests count the sections, on the same engine.
+  const KNOWN_SECTIONS = ["/workspaces", "/inbox", "/rules", "/activity", "/identities", "/settings"];
+  const hasKnownSections = (hrefs) => KNOWN_SECTIONS.every((href) => hrefs?.includes(href));
   let shell;
   for (let i = 0; i < 100; i++) {
     shell = await run(`return { origin: location.origin, title: document.title,
-      links: document.querySelectorAll('nav[aria-label="Main"] a').length };`).catch(() => undefined);
-    if (shell && shell.links === SECTIONS) break;
+      hrefs: [...document.querySelectorAll('nav[aria-label="Main"] a')].map((a) => a.getAttribute("href")) };`).catch(() => undefined);
+    if (hasKnownSections(shell?.hrefs)) break;
     await sleep(400);
   }
-  check("the window shows the SPA from the in-process API", shell?.links === SECTIONS, JSON.stringify(shell));
+  check("skipping the setup shows the app from the in-process API, with its sections", hasKnownSections(shell?.hrefs), JSON.stringify(shell));
+  const recorded = await run(`const r = await fetch("/api/first-run", { headers: { Authorization: "Bearer " + window.__PUDDLE__.token } });
+    return { status: r.status, body: await r.json() };`).catch((err) => ({ error: String(err) }));
+  check("the API records that the setup is done", recorded?.status === 200 && recorded.body?.completed === true, JSON.stringify(recorded));
   check("served from 127.0.0.1", /^http:\/\/127\.0\.0\.1:\d+$/.test(shell?.origin ?? ""), shell?.origin);
   check("title carries the app name", /puddle/.test(shell?.title ?? ""), shell?.title);
 
