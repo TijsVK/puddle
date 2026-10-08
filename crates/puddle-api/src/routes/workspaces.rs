@@ -27,31 +27,79 @@ fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
 
 /// Whether direct SSH is on for each workspace, in order. A settings document that cannot be
 /// read counts as off: the answer fails closed, as the host's own check does.
-async fn direct_ssh_of(state: &AppState, records: &[WorkspaceRecord]) -> Vec<bool> {
+/// Whether direct SSH is on for a workspace, and why that is only a guess when the settings
+/// cannot be read.
+struct DirectSsh {
+    on: bool,
+    /// Set when the settings could not be read: direct SSH then counts as off (the safe side).
+    unreadable: Option<String>,
+}
+
+impl DirectSsh {
+    fn unreadable(reason: &str) -> Self {
+        Self {
+            on: false,
+            unreadable: Some(format!(
+                "the settings cannot be read ({reason}); direct SSH counts as off until they can"
+            )),
+        }
+    }
+}
+
+/// `direct_ssh` of each of `records`, in order. Settings that cannot be read count as off and say
+/// why, so a damaged document is not shown as "off" by the user's choice.
+async fn direct_ssh_of(state: &AppState, records: &[WorkspaceRecord]) -> Vec<DirectSsh> {
     let names: Vec<_> = records.iter().map(|r| r.name.clone()).collect();
     let settings = state.settings.clone();
     let _lock = state.settings_lock.lock().await;
-    blocking(move || {
+    let loaded = blocking(move || {
         let repo = settings.as_ref();
-        let global = crate::routes::settings::load_global(repo)?;
+        let global = match crate::routes::settings::load_global(repo) {
+            Ok(global) => global,
+            Err(e) => {
+                let reason = e.reason().to_owned();
+                return Ok(names
+                    .iter()
+                    .map(|_| DirectSsh::unreadable(&reason))
+                    .collect());
+            }
+        };
         Ok(names
             .iter()
-            .map(|name| {
-                crate::routes::settings::load_workspace(repo, name).is_ok_and(|own| {
-                    resolve(&global.settings, Some(&own.settings))
-                        .direct_ssh
-                        .value
-                })
-            })
+            .map(
+                |name| match crate::routes::settings::load_workspace(repo, name) {
+                    Ok(own) => DirectSsh {
+                        on: resolve(&global.settings, Some(&own.settings))
+                            .direct_ssh
+                            .value,
+                        unreadable: None,
+                    },
+                    Err(e) => DirectSsh::unreadable(e.reason()),
+                },
+            )
             .collect())
     })
-    .await
-    .unwrap_or_else(|_| vec![false; records.len()])
+    .await;
+    match loaded {
+        Ok(all) => all,
+        Err(e) => records
+            .iter()
+            .map(|_| DirectSsh::unreadable(e.reason()))
+            .collect(),
+    }
 }
 
-/// Whether direct SSH is on for one workspace.
-async fn direct_ssh_on(state: &AppState, record: WorkspaceRecord) -> bool {
-    direct_ssh_of(state, &[record]).await.first() == Some(&true)
+/// Whether direct SSH is on for one workspace; the error says why it cannot be known.
+async fn direct_ssh_on(state: &AppState, record: WorkspaceRecord) -> Result<bool, String> {
+    let one = direct_ssh_of(state, &[record]).await.pop();
+    match one {
+        Some(DirectSsh {
+            unreadable: Some(reason),
+            ..
+        }) => Err(reason),
+        Some(DirectSsh { on, .. }) => Ok(on),
+        None => Ok(false),
+    }
 }
 
 /// The workspaces as the API shows them.
@@ -60,14 +108,20 @@ async fn views(state: &AppState, records: Vec<WorkspaceRecord>) -> Vec<Workspace
     records
         .into_iter()
         .zip(direct)
-        .map(|(record, on)| Workspace::new(record, on))
+        .map(|(record, d)| Workspace::new(record, d.on).with_settings_error(d.unreadable))
         .collect()
 }
 
 /// One workspace as the API shows it.
 async fn view(state: &AppState, record: WorkspaceRecord) -> Workspace {
-    let on = direct_ssh_on(state, record.clone()).await;
-    Workspace::new(record, on)
+    let d = direct_ssh_of(state, std::slice::from_ref(&record))
+        .await
+        .pop()
+        .unwrap_or(DirectSsh {
+            on: false,
+            unreadable: None,
+        });
+    Workspace::new(record, d.on).with_settings_error(d.unreadable)
 }
 
 /// Every workspace.
@@ -274,11 +328,17 @@ pub(crate) async fn attach_workspace(
         // A workspace that is not up gets the service's own "start it first" answer.
         let record = state.workspaces.get(&id).await?;
         let up = record.busy.is_none() && record.status == puddle_types::WorkspaceStatus::Running;
-        if up && !direct_ssh_on(&state, record).await {
-            return Err(crate::WorkspaceError::Conflict(
-                "direct SSH is off for this workspace; allow it first".to_owned(),
-            )
-            .into());
+        if up {
+            match direct_ssh_on(&state, record).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(crate::WorkspaceError::Conflict(
+                        "direct SSH is off for this workspace; allow it first".to_owned(),
+                    )
+                    .into());
+                }
+                Err(reason) => return Err(crate::WorkspaceError::Conflict(reason).into()),
+            }
         }
     }
     let attached = state.workspaces.attach(&id, mode).await?;

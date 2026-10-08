@@ -61,6 +61,9 @@ pub struct ApiErrorBody {
 pub(crate) struct ApiError {
     status: StatusCode,
     body: ApiErrorBody,
+    /// What went wrong, for the host's own use; never serialized (the client of an internal
+    /// error learns only that it failed).
+    detail: Option<String>,
 }
 
 impl ApiError {
@@ -71,6 +74,7 @@ impl ApiError {
                 error,
                 message: message.into(),
             },
+            detail: None,
         }
     }
 
@@ -94,11 +98,18 @@ impl ApiError {
     /// the client only learns that something failed.
     pub(crate) fn internal(detail: &dyn std::fmt::Display) -> Self {
         tracing::error!(error = %detail, "api request failed");
-        Self::new(
+        let mut err = Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Internal,
             "internal error; see puddle's log",
-        )
+        );
+        err.detail = Some(detail.to_string());
+        err
+    }
+
+    /// The cause as the host sees it: the detail of an internal error, else the message.
+    pub(crate) fn reason(&self) -> &str {
+        self.detail.as_deref().unwrap_or(&self.body.message)
     }
 
     #[cfg(test)]

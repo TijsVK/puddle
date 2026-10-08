@@ -25,6 +25,8 @@ const noLayer = (): S["SettingsLayer"] => ({
 
 export class FakeSettings {
   layer = noLayer();
+  /** Fields the stored document has that puddle doesn't know. */
+  unknown: string[] = [];
   vscode: S["VsCodeServer"] = {
     server: null,
     telemetry: null,
@@ -94,7 +96,7 @@ export class FakeSettings {
       workspace_defaults: l,
       vscode_server: this.vscode,
       ui: this.ui,
-      unknown_fields: [],
+      unknown_fields: this.unknown,
       effective: {
         memory: {
           value: l.memory ?? 8192,

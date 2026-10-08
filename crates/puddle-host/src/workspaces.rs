@@ -33,7 +33,7 @@ use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_compute::{ComputeError, DiskSize, Runtime};
 use puddle_lifecycle::Lifecycle;
 use puddle_proxy::Route;
-use puddle_settings::{GlobalSettings, WorkspaceSettings, resolve};
+use puddle_settings::{WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
@@ -238,7 +238,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             let name = WorkspaceName::new(&stored.name).map_err(|e| state(&e))?;
             let mut record = WorkspaceRecord::new(id.clone(), name.clone(), stored.repo_url);
             record.image = stored.image;
-            record.memory = MemoryMib::new(stored.memory_mib).unwrap_or(MemoryMib::DEFAULT);
+            record.memory = MemoryMib::new(stored.memory_mib).map_err(|e| HostError::State {
+                what: "the workspace list",
+                reason: format!("workspace {name} has an invalid memory size: {e}"),
+            })?;
             record.created_at = stored.created_at;
             record.disk_size_mib = stored.disk_size_mib;
             record.status = match status.get(&name) {
@@ -498,18 +501,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// The default memory for a workspace made without one: the settings' value.
-    fn default_memory(&self) -> MemoryMib {
-        let global = self
-            .inner
-            .settings
-            .load_global()
-            .ok()
-            .flatten()
-            .and_then(|doc| GlobalSettings::from_document(doc).ok())
-            .map(|loaded| loaded.settings)
-            .unwrap_or_default();
-        resolve(&global, None::<&WorkspaceSettings>).memory.value
+    /// The default memory for a workspace made without one: the settings' value. An unreadable
+    /// settings document is an error, so the workspace is not made with a size the user never
+    /// chose.
+    fn default_memory(&self) -> Result<MemoryMib, String> {
+        let global = crate::settings_read::global(self.inner.settings.as_ref())?;
+        Ok(resolve(&global, None::<&WorkspaceSettings>).memory.value)
     }
 
     /// The image config of `image`, pulling it if needed.
@@ -665,32 +662,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// The single gate for direct SSH: whether the user allowed it for `name`. Whatever opens an
     /// SSH way into a workspace (the endpoint, and any ssh config entry) must check this first.
-    /// It is its override over the global default over
-    /// off. A settings document that cannot be read counts as off.
+    /// It is its override over the global default over off. Settings that cannot be read count as
+    /// off, with the reason logged (and shown on the workspace by the API).
     #[must_use]
     pub fn direct_ssh_allowed(&self, name: &WorkspaceName) -> bool {
-        let settings = self.inner.settings.as_ref();
-        let Some(global) = settings
-            .load_global()
-            .ok()
-            .map(|doc| doc.unwrap_or_else(|| serde_json::json!({})))
-            .and_then(|doc| GlobalSettings::from_document(doc).ok())
-        else {
-            return false;
-        };
-        let own = settings
-            .load_workspace(name)
-            .ok()
-            .map(|doc| doc.unwrap_or_else(|| serde_json::json!({})))
-            .and_then(|doc| WorkspaceSettings::from_document(doc).ok());
-        match own {
-            Some(own) => {
-                resolve(&global.settings, Some(&own.settings))
-                    .direct_ssh
-                    .value
+        match self.direct_ssh_setting(name) {
+            Ok(on) => on,
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "direct SSH stays off: the settings cannot be read");
+                false
             }
-            None => false,
         }
+    }
+
+    fn direct_ssh_setting(&self, name: &WorkspaceName) -> Result<bool, String> {
+        let settings = self.inner.settings.as_ref();
+        let global = crate::settings_read::global(settings)?;
+        let own = crate::settings_read::workspace(settings, name)?;
+        Ok(resolve(&global, Some(&own)).direct_ssh.value)
     }
 
     /// Opens the SSH endpoint of a running sandbox Failures are logged: the workspace
@@ -1013,7 +1002,15 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 .image
                 .as_ref()
                 .map_or_else(|| DEFAULT_IMAGE.to_owned(), |i| i.as_str().to_owned());
-            record.memory = new.memory.unwrap_or_else(|| self.default_memory());
+            record.memory = match new.memory {
+                Some(memory) => memory,
+                None => self.default_memory().map_err(|reason| {
+                    WorkspaceError::Conflict(format!(
+                        "{reason}, so puddle can't tell how much memory the new workspace gets; \
+                         fix or reset the settings, or choose a memory size for it"
+                    ))
+                })?,
+            };
             record.created_at = self.inner.clock.now_ms();
             record.disk_size_mib = u64::from(self.inner.workspaces.config().default_size.as_mib());
             record.disk_used_mib = None;

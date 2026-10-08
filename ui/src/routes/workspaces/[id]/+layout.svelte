@@ -45,6 +45,12 @@
       />
     </div>
   </div>
+  {#if workspace.settings_error}
+    <p class="problem" role="alert">
+      Puddle can't read this workspace's settings: {workspace.settings_error}
+      Check them on the <a href="/settings">Settings</a> page.
+    </p>
+  {/if}
   <ProgressLine
     busy={workspace.busy}
     progress={workspaces.progress[workspace.name]}
@@ -98,6 +104,13 @@
   h1 {
     font-size: var(--text-xl);
     overflow-wrap: anywhere;
+  }
+  .problem {
+    margin: 0 0 var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border-subtle);
+    border-inline-start: 3px solid var(--color-accent);
+    background: var(--color-surface-raised);
   }
   .acts {
     display: flex;

@@ -838,6 +838,55 @@ async fn a_new_workspace_gets_the_memory_the_settings_name() {
     again.shutdown().await;
 }
 
+/// Puts a damaged global settings file where the host reads it, before the host starts.
+fn damage_global_settings(rig: &Rig) -> PathBuf {
+    let dir = rig.dir.path().join("data").join("settings");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("global.json");
+    std::fs::write(&file, b"{ not json").unwrap();
+    file
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_that_needs_the_default_memory_is_refused_while_the_settings_are_unreadable() {
+    let rig = Rig::new();
+    let file = damage_global_settings(&rig);
+    let host = rig.start().await;
+    let api = api(&host);
+    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    let message = reply.json()["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("global.json"), "{message}");
+    assert!(message.contains("choose a memory size"), "{message}");
+    assert_eq!(
+        api.get("/api/workspaces").await.json()["workspaces"],
+        json!([])
+    );
+
+    // Naming the memory needs no settings, so that way out works.
+    let mut events = api.events().await;
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": "acme", "repo_url": REPO, "memory_mib": 4096}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let view = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(view["memory_mib"], 4096);
+    // The same damage is on the workspace, and direct SSH stays off.
+    assert_eq!(view["direct_ssh"], false);
+    assert!(view["settings_error"].as_str().is_some(), "{view}");
+    assert!(
+        !host
+            .workspaces()
+            .direct_ssh_allowed(&WorkspaceName::new("acme").unwrap())
+    );
+    assert!(file.is_file(), "the damaged file is left for the user");
+    host.shutdown().await;
+}
+
 fn api_for(host: &Host<FakeRuntime>) -> Api {
     api(host)
 }

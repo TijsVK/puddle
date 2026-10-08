@@ -22,6 +22,7 @@ export function workspace(
     disk_size_mib: 32_768,
     disk_used_mib: 2048,
     direct_ssh: false,
+    settings_error: null,
     first_connect_notice_due: false,
     ...over,
   };
@@ -85,6 +86,8 @@ const resolved = <T>(value: T, source: "workspace" | "global" | "default") => ({
 export class FakeWorkspaces {
   list: Workspace[] = [];
   overrides: Record<string, Layer> = {};
+  /** Unknown fields per workspace document. */
+  unknown: Record<string, string[]> = {};
   globalMemory = 8192;
   check: DeleteCheck | null = null;
   calls: string[] = [];
@@ -183,7 +186,7 @@ export class FakeWorkspaces {
           workspace: name,
           overrides: this.overrides[name] ?? noLayer(),
           effective: this.effective(name),
-          unknown_fields: [],
+          unknown_fields: this.unknown[name] ?? [],
         });
       }
     }

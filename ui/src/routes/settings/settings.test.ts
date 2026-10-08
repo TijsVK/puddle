@@ -116,6 +116,19 @@ describe("the screen", () => {
     );
   });
 
+  it("lists the stored fields it doesn't know, and nothing when there are none", async () => {
+    await open();
+    expect(screen.queryByText(/fields this puddle doesn't know/)).toBeNull();
+    cleanup();
+    globalSettings.view = null;
+    globalSettings.status = "loading";
+    api.unknown = ["workspace_defaults.memry", "color"];
+    await open();
+    const note = screen.getByText(/fields this puddle doesn't know/);
+    expect(note).toHaveTextContent("workspace_defaults.memry, color");
+    expect(note).toHaveTextContent("kept but have no effect");
+  });
+
   it("shows puddle's version and loads the licences when asked", async () => {
     api.version = "9.8.7";
     await open();

@@ -8478,6 +8478,7 @@
           "disk_size_mib",
           "disk_used_mib",
           "direct_ssh",
+          "settings_error",
           "first_connect_notice_due"
         ],
         "properties": {
@@ -8543,6 +8544,13 @@
           "repo_url": {
             "type": "string",
             "description": "The HTTPS URL it was cloned from."
+          },
+          "settings_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why `direct_ssh` is only a guess: the settings could not be read, so it counts as off.\n`null` when the settings were read."
           },
           "status": {
             "$ref": "#/components/schemas/WorkspaceStatus",

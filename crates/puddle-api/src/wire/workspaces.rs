@@ -66,6 +66,10 @@ pub struct Workspace {
     /// settings). The workspace is then "trusted": desktop VS Code and other SSH tools can
     /// connect, and what runs in the workspace can reach this computer through them.
     pub direct_ssh: bool,
+    /// Why `direct_ssh` is only a guess: the settings could not be read, so it counts as off.
+    /// `null` when the settings were read.
+    #[schema(required = true)]
+    pub settings_error: Option<String>,
     /// Deprecated and always `false`: the first-connect notice is the "Allow direct SSH"
     /// confirmation now. Read `direct_ssh` instead.
     #[deprecated(note = "always false; read `direct_ssh`")]
@@ -102,8 +106,16 @@ impl Workspace {
             disk_size_mib,
             disk_used_mib,
             direct_ssh,
+            settings_error: None,
             first_connect_notice_due: false,
         }
+    }
+
+    /// The same workspace, with the reason its settings could not be read (if they could not).
+    #[must_use]
+    pub fn with_settings_error(mut self, error: Option<String>) -> Self {
+        self.settings_error = error;
+        self
     }
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The workspaces resource over real HTTP, against `FakeWorkspaces`.
 
-use puddle_api::{Listing, Operation, RepoFindings, Unsaved, WorkspaceRecord};
+use puddle_api::{Listing, Operation, RepoFindings, SettingsRepo, Unsaved, WorkspaceRecord};
 use puddle_types::{WorkspaceId, WorkspaceName, WorkspaceStatus};
 use serde_json::{Value, json};
 
@@ -104,6 +104,7 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
             "disk_size_mib": puddle_api::DEFAULT_DISK_MIB,
             "disk_used_mib": 0,
             "direct_ssh": false,
+            "settings_error": null,
             "first_connect_notice_due": false
         })
     );
@@ -792,5 +793,58 @@ async fn without_a_workspaces_service_every_route_says_unavailable() {
         assert_eq!(reply.status, 503, "{method} {path}: {}", reply.body);
         assert_eq!(reply.error(), "unavailable");
     }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn unreadable_global_settings_are_reported_on_every_workspace_not_shown_as_off() {
+    let api = start().await;
+    running(&api, "web").await;
+    api.settings.save_global(json!("not an object")).unwrap();
+    for body in [
+        api.get("/api/workspaces/web").await.json(),
+        api.get("/api/workspaces").await.json()["workspaces"][0].clone(),
+    ] {
+        assert_eq!(body["direct_ssh"], false);
+        let reason = body["settings_error"].as_str().unwrap();
+        assert!(reason.contains("must be an object"), "{reason}");
+        assert!(reason.contains("direct SSH counts as off"), "{reason}");
+    }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn unreadable_workspace_settings_are_reported_on_that_workspace_only() {
+    let api = start().await;
+    running(&api, "web").await;
+    running(&api, "db").await;
+    api.settings
+        .save_workspace(&WorkspaceName::new("web").unwrap(), json!([1]))
+        .unwrap();
+    assert!(api.get("/api/workspaces/web").await.json()["settings_error"].is_string());
+    assert_eq!(
+        api.get("/api/workspaces/db").await.json()["settings_error"],
+        Value::Null
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn desktop_attach_names_the_unreadable_settings_instead_of_saying_direct_ssh_is_off() {
+    let api = start().await;
+    running(&api, "web").await;
+    api.settings.save_global(json!(7)).unwrap();
+    let reply = api
+        .send(
+            "POST",
+            "/api/workspaces/web/attach",
+            Some(&json!({"mode": "desktop"})),
+        )
+        .await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    let message = reply.json()["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("settings cannot be read"), "{message}");
+    assert!(!message.contains("direct SSH is off for this workspace"));
+    assert_eq!(api.launcher.opened().len(), 0);
     api.running.shutdown().await;
 }

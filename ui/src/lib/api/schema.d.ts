@@ -2434,6 +2434,11 @@ export interface components {
             name: components["schemas"]["WorkspaceName"];
             /** @description The HTTPS URL it was cloned from. */
             repo_url: string;
+            /**
+             * @description Why `direct_ssh` is only a guess: the settings could not be read, so it counts as off.
+             *     `null` when the settings were read.
+             */
+            settings_error: string | null;
             /** @description The workspace's state. */
             status: components["schemas"]["WorkspaceStatus"];
         };

@@ -26,7 +26,7 @@ use puddle_compute::{Runtime, SandboxInfo};
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Upstream};
-use puddle_settings::{GlobalSettings, WorkspaceSettings, resolve};
+use puddle_settings::resolve;
 use puddle_store::{DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
 use puddle_types::{EventSink, WorkspaceName, WorkspaceStatus};
 use puddle_upstream::{AuthList, BasicAuth, Chain, Discovery, Watching, system_auth};
@@ -324,24 +324,27 @@ impl<R: Runtime + Clone> std::fmt::Debug for Host<R> {
     }
 }
 
-/// The local-destination settings of `sandbox`, read from the settings at each connection so a
-/// change applies to the next one. A document that cannot be read leaves the defaults (all
-/// local destinations blocked): the guard fails closed.
+/// The local-destination settings of `workspace`, read from the settings at each connection so a
+/// change applies to the next one. Settings that cannot be read leave every local destination
+/// blocked (the guard fails closed) and are logged with the reason; the API shows the same damage
+/// on the workspace.
 fn local_access(settings: &dyn SettingsRepo, workspace: &WorkspaceName) -> LocalAccess {
-    let global = settings
-        .load_global()
-        .ok()
-        .flatten()
-        .and_then(|doc| GlobalSettings::from_document(doc).ok())
-        .map(|loaded| loaded.settings)
-        .unwrap_or_default();
-    let own = settings
-        .load_workspace(workspace)
-        .ok()
-        .flatten()
-        .and_then(|doc| WorkspaceSettings::from_document(doc).ok())
-        .map(|loaded| loaded.settings);
-    LocalAccess::from_effective(&resolve(&global, own.as_ref()))
+    match local_access_checked(settings, workspace) {
+        Ok(access) => access,
+        Err(reason) => {
+            tracing::warn!(%workspace, %reason, "local destinations stay blocked: the settings cannot be read");
+            LocalAccess::NONE
+        }
+    }
+}
+
+fn local_access_checked(
+    settings: &dyn SettingsRepo,
+    workspace: &WorkspaceName,
+) -> Result<LocalAccess, String> {
+    let global = crate::settings_read::global(settings)?;
+    let own = crate::settings_read::workspace(settings, workspace)?;
+    Ok(LocalAccess::from_effective(&resolve(&global, Some(&own))))
 }
 
 impl<R: Runtime + Clone> Host<R> {

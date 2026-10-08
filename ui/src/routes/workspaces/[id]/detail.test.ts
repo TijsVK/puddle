@@ -111,6 +111,7 @@ function reset() {
   api.down = false;
   api.check = null;
   api.overrides = {};
+  api.unknown = {};
   api.refuse.clear();
   rules.rules = [];
   rules.calls = [];
@@ -166,6 +167,30 @@ describe("the detail layout", () => {
       "href",
       "/workspaces/demo/settings",
     );
+  });
+
+  it("says when the workspace's settings cannot be read, and says nothing otherwise", async () => {
+    await load();
+    const view = render(DetailLayout, { children: (() => {}) as never });
+    await screen.findByRole("heading", { level: 1, name: "demo" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    view.unmount();
+
+    api.list = [
+      workspace("demo", {
+        status: "running",
+        settings_error:
+          "the settings cannot be read (global settings must be an object); direct SSH counts as off until they can",
+      }),
+    ];
+    await load();
+    render(DetailLayout, { children: (() => {}) as never });
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("can't read this workspace's settings");
+    expect(alert).toHaveTextContent("must be an object");
+    expect(
+      within(alert).getByRole("link", { name: "Settings" }),
+    ).toHaveAttribute("href", "/settings");
   });
 
   it("marks another tab, and counts what waits on the network tab", async () => {
@@ -523,6 +548,17 @@ describe("the settings tab", () => {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
     expect(document.getElementById("local-destinations")).not.toBeNull();
+  });
+
+  it("lists stored fields it doesn't know, only when there are some", async () => {
+    await open();
+    expect(screen.queryByText(/fields this puddle doesn't know/)).toBeNull();
+    cleanup();
+    api.unknown = { demo: ["clipboard_reed"] };
+    await open();
+    expect(
+      screen.getByText(/fields this puddle doesn't know/),
+    ).toHaveTextContent("clipboard_reed");
   });
 
   it("saves a memory choice at once and says the next start applies it", async () => {

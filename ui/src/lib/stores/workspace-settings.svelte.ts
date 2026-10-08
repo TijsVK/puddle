@@ -16,6 +16,8 @@ export class WorkspaceSettings {
   status = $state<Status>("loading");
   overrides = $state.raw<Layer | null>(null);
   effective = $state.raw<Effective | null>(null);
+  /** Fields in the stored document that this puddle doesn't know. */
+  unknownFields = $state.raw<string[]>([]);
   /** What a workspace with no overrides gets: the global values. */
   global = $state.raw<Effective | null>(null);
   #name = "";
@@ -43,6 +45,7 @@ export class WorkspaceSettings {
       if (mine.data && global.data) {
         this.overrides = mine.data.overrides;
         this.effective = mine.data.effective;
+        this.unknownFields = mine.data.unknown_fields;
         this.global = global.data.effective;
         this.status = "ready";
       } else if (!quiet) {

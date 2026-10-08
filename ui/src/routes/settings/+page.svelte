@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { onMount } from "svelte";
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
@@ -185,6 +186,7 @@
   {@const eff = view.effective}
   {@const server = serverOf(view)}
   {@const consent = store.consents.vscode_server}
+  <UnknownFields fields={view.unknown_fields} />
   <div class="layout">
     <nav aria-label="Settings sections">
       {#each SECTIONS as [id, name] (id)}

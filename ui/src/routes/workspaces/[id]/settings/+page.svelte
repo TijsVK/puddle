@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { page } from "$app/state";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
   import { WorkspaceSettings } from "#lib/stores/workspace-settings.svelte.ts";
@@ -142,6 +143,8 @@
       These settings belong to <b>{workspace.name}</b>. Each one can follow the
       global setting or be set here.
     </p>
+
+    <UnknownFields fields={settings.unknownFields} />
 
     <div class="status" aria-live="polite">
       {#if saved}<p class="saved">{saved}</p>{/if}
