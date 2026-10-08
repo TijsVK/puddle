@@ -18,8 +18,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, HostNetworkHealth, Launcher, RunningApi, Services,
-    SettingsRepo, forward_network_changes,
+    ApiConfig, ApiServer, ApiToken, EventHub, HostCredentials, HostNetworkHealth, Launcher,
+    RunningApi, Services, SettingsRepo, forward_network_changes,
 };
 use puddle_certs::CorporateRoots;
 use puddle_compute::{Runtime, SandboxInfo};
@@ -450,6 +450,7 @@ impl<R: Runtime + Clone> Host<R> {
         let services = Services::new(store.clone(), settings, events.clone(), clock)
             .with_workspaces(Arc::new(service.clone()))
             .with_network_health(network_health)
+            .with_credentials(Arc::new(HostCredentials::on_this_computer()))
             .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
         let (info, url, api) = (served.info, served.url, served.api);

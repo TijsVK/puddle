@@ -64,6 +64,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/credentials/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reads a credential once and says whether that worked, never the value. Never opens a sign-in. */
+        post: operations["check_credential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/credentials/found": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The accounts already signed in on this computer (names only), from a fixed list of listing
+         *     commands. A listing that could not run is named in `problems`.
+         */
+        get: operations["found_accounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/credentials/sign-in": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Starts a sign-in the user finishes outside puddle: `gh` shows a one-time code and an address,
+         *     Git Credential Manager opens its own window. Only from a click; a request from a workspace
+         *     never does this. Check the credential until it reads; puddle ends an unfinished sign-in after
+         *     five minutes.
+         */
+        post: operations["sign_in"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/credentials/stored": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Keeps a pasted token in the operating system's credential store and answers with the source
+         *     that names it. The token is never read back.
+         */
+        post: operations["store_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/credentials/stored/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Removes a pasted token from the credential store; one that is already gone counts as removed. */
+        delete: operations["forget_token"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events": {
         parameters: {
             query?: never;
@@ -1170,6 +1266,20 @@ export interface components {
          * @enum {string}
          */
         AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "audit_trimmed";
+        /** @description A credential to try. */
+        CheckRequest: {
+            /** @description Where its value comes from. */
+            source: components["schemas"]["CredentialSource"];
+        };
+        /** @description Whether puddle can read a credential's value now. Never the value. */
+        CheckResult: {
+            /** @description True when the way out is for the user to sign in. */
+            needs_sign_in: boolean;
+            /** @description Why not, in words; `null` when it is readable. */
+            problem: string | null;
+            /** @description True when the source gave a value. */
+            readable: boolean;
+        };
         /**
          * @description What a programmatic clipboard read in the browser window does.
          * @enum {string}
@@ -1509,6 +1619,26 @@ export interface components {
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
+            /** @description The Git host the workspace was talking to. */
+            host: string;
+            /** @description The source, as one line of names (`gh account me on github.com`). */
+            source: string;
+            /** @enum {string} */
+            type: "credential_sign_in_needed";
+        } | {
+            /** @description What was refused. */
+            access: components["schemas"]["GitAccess"];
+            /** @description The Git host. */
+            host: string;
+            /** @description The user or organisation. */
+            owner: string;
+            /** @description `repo`, or `project/repo` on Azure DevOps. */
+            repo: string;
+            /** @enum {string} */
+            type: "git_access_denied";
+            /** @description The workspace that tried. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
             /**
              * Format: int64
              * @description The newest audit record's id.
@@ -1535,6 +1665,43 @@ export interface components {
              */
             more: number;
         };
+        /** @description An account that is already signed in on this computer. Names only. */
+        FoundAccount: {
+            /** @description The account. */
+            account: string;
+            /** @description The Git host. */
+            host: string;
+            /** @description The Azure DevOps organisation the account is bound to, when the listing says. */
+            org: string | null;
+            /** @description False when the tool lists the account but its token no longer works. */
+            signed_in: boolean;
+            /** @description Which tool knows it. */
+            via: components["schemas"]["FoundVia"];
+        };
+        /** @description What puddle found signed in on this computer. */
+        FoundAccounts: {
+            /** @description The accounts, without duplicates. */
+            accounts: components["schemas"]["FoundAccount"][];
+            /** @description The listings that could not run. */
+            problems: components["schemas"]["FoundProblem"][];
+        };
+        /** @description A listing that could not run, so its accounts are missing from the list. */
+        FoundProblem: {
+            /** @description Why, in words ("gh is not installed or not on PATH"). */
+            message: string;
+            /** @description Which tool. */
+            via: components["schemas"]["FoundVia"];
+        };
+        /**
+         * @description Which listing found an account.
+         * @enum {string}
+         */
+        FoundVia: "gh" | "gcm_github" | "gcm_azure_repos";
+        /**
+         * @description What a workspace's repository table refused, as [`Event::GitAccessDenied`] reports it.
+         * @enum {string}
+         */
+        GitAccess: "push" | "pull";
         /** @description Adds a repository to the table. */
         GitRepoRequest: {
             /** @description The host (`github.com`). */
@@ -2309,11 +2476,26 @@ export interface components {
              */
             methods: string[];
         };
+        /** @description A sign-in to start. */
+        SignInRequest: {
+            /** @description The credential to sign in to. */
+            source: components["schemas"]["CredentialSource"];
+        };
         /**
          * @description How a sign-in to a proxy ended.
          * @enum {string}
          */
         SignInResult: "signed_in" | "not_required" | "failed" | "unsupported";
+        /**
+         * @description What the user does to finish a sign-in puddle started. Poll the credential's check to learn
+         *     when it worked; puddle ends a sign-in nobody finished after five minutes.
+         */
+        SignInStarted: {
+            /** @description The one-time code to type at `url`; `null` when the tool opens its own window. */
+            code: string | null;
+            /** @description Where to type it; `null` when the tool opens its own window. */
+            url: string | null;
+        };
         /** @description A certificate in the host's stores that workspaces do not get. */
         SkippedRoot: {
             /** @description SHA-256 of the certificate, lower-case hex. */
@@ -2322,6 +2504,26 @@ export interface components {
             reason: string;
             /** @description The subject's common name, when readable. */
             subject: string | null;
+        };
+        /**
+         * @description A token the user pasted. It is kept in the operating system's credential store under puddle's
+         *     own name and never read back through the API.
+         */
+        StoreTokenRequest: {
+            /** @description The Git host the token is for. */
+            host: string;
+            /** @description The organisation, for tokens that belong to one (Azure DevOps). */
+            org?: string | null;
+            /**
+             * Format: password
+             * @description The token. Write-only.
+             */
+            token: string;
+        };
+        /** @description Where a stored token went: the source to put in a credential. */
+        StoredToken: {
+            /** @description A `stored` source naming the new entry. */
+            source: components["schemas"]["CredentialSource"];
         };
         /** @description Whether a workspace's new pending requests are being suppressed (R-13). */
         Suppression: {
@@ -2752,6 +2954,380 @@ export interface operations {
             };
             /** @description puddle failed; see its log */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    check_credential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckRequest"];
+            };
+        };
+        responses: {
+            /** @description whether it can be read */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckResult"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a value refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not available in this build */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    found_accounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the accounts found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FoundAccounts"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not available in this build */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    sign_in: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignInRequest"];
+            };
+        };
+        responses: {
+            /** @description the sign-in is open */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInStarted"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a pasted token has nothing to sign in to */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the tool is missing or showed no code */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    store_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StoreTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description the token is kept */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoredToken"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the host, organisation or token is refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the credential store is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    forget_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the stored entry's id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not a stored entry's id */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the credential store is not available */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

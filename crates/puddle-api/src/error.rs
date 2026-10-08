@@ -9,6 +9,7 @@ use puddle_store::StoreError;
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::credentials::CredentialsError;
 use crate::network_health::NetworkHealthError;
 use crate::settings::SettingsRepoError;
 use crate::workspaces::WorkspaceError;
@@ -112,6 +113,11 @@ impl ApiError {
         self.detail.as_deref().unwrap_or(&self.body.message)
     }
 
+    /// What the refusal says.
+    pub(crate) fn message(&self) -> &str {
+        &self.body.message
+    }
+
     #[cfg(test)]
     pub(crate) fn status(&self) -> StatusCode {
         self.status
@@ -200,6 +206,18 @@ impl From<NetworkHealthError> for ApiError {
             NetworkHealthError::Unavailable(m) => {
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
             }
+        }
+    }
+}
+
+impl From<CredentialsError> for ApiError {
+    fn from(err: CredentialsError) -> Self {
+        match err {
+            CredentialsError::Unavailable(m) => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
+            }
+            CredentialsError::Invalid(m) => Self::invalid(m),
+            CredentialsError::Internal(m) => Self::internal(&m),
         }
     }
 }

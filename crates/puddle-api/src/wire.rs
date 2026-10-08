@@ -23,11 +23,17 @@ use utoipa::ToSchema;
 
 use crate::error::ApiError;
 
+mod credentials;
 mod identities;
 mod network_health;
 mod rule_sets;
 mod workspaces;
 
+pub(crate) use credentials::source_problem;
+pub use credentials::{
+    CheckRequest, CheckResult, FoundAccount, FoundAccounts, FoundProblem, FoundVia, SignInRequest,
+    SignInStarted, StoreTokenRequest, StoredToken,
+};
 pub use identities::{
     AttachIdentityRequest, CredentialCoverage, CredentialSource, GitRepoRequest, GitRepoToggles,
     GitRepoView, GitSwitchesRequest, IdentityAuthor, IdentityCredential, IdentityDeleted,

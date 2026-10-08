@@ -301,3 +301,75 @@ fn the_database_holds_references_never_a_value() {
         "{json}"
     );
 }
+
+fn repo(host: &str, owner: &str, name: &str) -> RepoRef {
+    RepoRef::new(host, owner, name).unwrap()
+}
+
+#[test]
+fn a_new_workspace_gets_the_identity_that_covers_its_repository_and_the_repository_itself() {
+    let (_sink, store) = fixture();
+    let _personal = make(&store, "Personal", &[], true);
+    let work = make(&store, "Work", &["acme"], false);
+
+    store
+        .start_workspace_git(&ws("shop"), &repo("github.com", "acme", "shop"))
+        .unwrap();
+    let git = store.workspace_git(&ws("shop")).unwrap();
+    // The exact owner beats "the rest of github.com", which is the default.
+    assert_eq!(
+        git.identities.iter().map(|i| i.id).collect::<Vec<_>>(),
+        [work]
+    );
+    assert_eq!(git.repos.len(), 1);
+    assert_eq!((git.repos[0].pull, git.repos[0].push), (true, true));
+    assert_eq!(git.repos[0].repo, repo("github.com", "acme", "shop"));
+    assert!(git.only_push_listed && !git.only_pull_listed);
+}
+
+#[test]
+fn a_repository_nobody_covers_gets_the_default_and_none_when_there_is_none() {
+    let (_sink, store) = fixture();
+    store
+        .start_workspace_git(&ws("lonely"), &repo("github.com", "me", "x"))
+        .unwrap();
+    let none = store.workspace_git(&ws("lonely")).unwrap();
+    assert_eq!(none.identities.len(), 0);
+    assert_eq!(none.repos.len(), 1);
+
+    // Work covers only acme on github.com; the default (first made) covers another host.
+    let default = store
+        .create_identity(draft("Default", "dev.azure.com", &["contoso"], false))
+        .unwrap()
+        .id;
+    let _work = make(&store, "Work", &["acme"], false);
+    store
+        .start_workspace_git(&ws("elsewhere"), &repo("github.com", "me", "x"))
+        .unwrap();
+    let git = store.workspace_git(&ws("elsewhere")).unwrap();
+    assert_eq!(
+        git.identities.iter().map(|i| i.id).collect::<Vec<_>>(),
+        [default]
+    );
+}
+
+#[test]
+fn two_identities_that_cover_a_repository_equally_give_the_first_in_your_order() {
+    let (_sink, store) = fixture();
+    // Collisions are refused per workspace, not globally, so two identities may both cover the
+    // rest of github.com; a new workspace gets the first of them in your order.
+    let a = make(&store, "A", &[], true);
+    let b = make(&store, "B", &[], true);
+    store
+        .start_workspace_git(&ws("both"), &repo("github.com", "x", "y"))
+        .unwrap();
+    let ids: Vec<_> = store
+        .workspace_git(&ws("both"))
+        .unwrap()
+        .identities
+        .iter()
+        .map(|i| i.id)
+        .collect();
+    assert_eq!(ids, [a]);
+    assert_ne!(a, b);
+}

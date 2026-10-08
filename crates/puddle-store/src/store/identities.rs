@@ -8,8 +8,8 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use super::{Store, lock, sql_ts};
 use crate::error::StoreError;
 use crate::identity::{
-    Author, CredentialBinding, Identity, IdentityDraft, IdentityId, Signing, check_attachable,
-    collision,
+    Author, CredentialBinding, CredentialChoice, Identity, IdentityDraft, IdentityId, Signing,
+    check_attachable, collision, resolve,
 };
 use crate::workspace_git::{RepoEntry, RepoRef, WorkspaceGit};
 
@@ -416,6 +416,32 @@ impl Store {
             only_push_listed,
             only_pull_listed,
         })
+    }
+
+    /// What a new workspace starts with: the identity that covers its repository (the first in
+    /// your order when several cover it equally), else the default identity, and the repository
+    /// itself in the table with Pull and Push on.
+    ///
+    /// # Errors
+    /// A database error, or [`StoreError::RepoListed`] when the table already has the repository.
+    pub fn start_workspace_git(
+        &self,
+        ws: &WorkspaceName,
+        repo: &RepoRef,
+    ) -> Result<(), StoreError> {
+        let all = self.identities()?;
+        let chosen = match resolve(&all, repo.host.as_str(), repo.owner.as_str()) {
+            CredentialChoice::Covered { identity, .. } => Some(identity.id),
+            CredentialChoice::Ambiguous(ids) => {
+                all.iter().map(|i| i.id).find(|id| ids.contains(id))
+            }
+            CredentialChoice::Uncovered => all.iter().find(|i| i.is_default).map(|i| i.id),
+        };
+        if let Some(id) = chosen {
+            self.attach_identity(ws, id, None)?;
+        }
+        self.add_repo(ws, repo, true, true)?;
+        Ok(())
     }
 
     /// Replaces the workspace's ordered identity list.

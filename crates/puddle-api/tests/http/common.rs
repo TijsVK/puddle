@@ -8,8 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, FakeLauncher, FakeWorkspaces, Launcher,
-    MemorySettings, NetworkHealthService, RunningApi, Services, SettingsRepo,
+    ApiConfig, ApiServer, ApiToken, CredentialService, EventHub, FakeCredentials, FakeLauncher,
+    FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, RunningApi, Services,
+    SettingsRepo,
 };
 use puddle_store::{Limits, ManualClock, Store};
 use puddle_types::{EgressRequest, Host, PendingId, SuffixAllows, WorkspaceName};
@@ -33,6 +34,8 @@ pub(crate) struct Api {
     pub(crate) clock: Arc<ManualClock>,
     pub(crate) workspaces: FakeWorkspaces,
     pub(crate) launcher: Arc<FakeLauncher>,
+    /// The credentials service the API runs on, unless the test brought its own.
+    pub(crate) credentials: Arc<FakeCredentials>,
 }
 
 pub(crate) async fn start() -> Api {
@@ -40,23 +43,29 @@ pub(crate) async fn start() -> Api {
 }
 
 pub(crate) async fn start_with(config: ApiConfig) -> Api {
-    start_inner(config, true, None).await
+    start_inner(config, true, None, None).await
 }
 
 /// An API serving this network-health report.
 pub(crate) async fn start_with_network(network: Arc<dyn NetworkHealthService>) -> Api {
-    start_inner(ApiConfig::default(), true, Some(network)).await
+    start_inner(ApiConfig::default(), true, Some(network), None).await
 }
 
 /// An API whose services have no workspaces implementation (what `Services::new` gives).
 pub(crate) async fn start_without_workspaces() -> Api {
-    start_inner(ApiConfig::default(), false, None).await
+    start_inner(ApiConfig::default(), false, None, None).await
+}
+
+/// An API whose credentials service is `credentials` (`Api::credentials` is then an unused fake).
+pub(crate) async fn start_with_credentials(credentials: Arc<dyn CredentialService>) -> Api {
+    start_inner(ApiConfig::default(), true, None, Some(credentials)).await
 }
 
 async fn start_inner(
     config: ApiConfig,
     with_workspaces: bool,
     network: Option<Arc<dyn NetworkHealthService>>,
+    own_credentials: Option<Arc<dyn CredentialService>>,
 ) -> Api {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
@@ -89,6 +98,10 @@ async fn start_inner(
         Some(network) => services.with_network_health(network),
         None => services,
     };
+    let credentials = Arc::new(FakeCredentials::new());
+    let services = services.with_credentials(
+        own_credentials.unwrap_or_else(|| credentials.clone() as Arc<dyn CredentialService>),
+    );
     let server = ApiServer::bind(config, token.clone(), services)
         .await
         .unwrap();
@@ -104,6 +117,7 @@ async fn start_inner(
         clock,
         workspaces,
         launcher,
+        credentials,
     }
 }
 

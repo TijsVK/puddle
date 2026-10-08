@@ -45,6 +45,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod credentials;
 mod error;
 mod events;
 mod extract;
@@ -60,6 +61,9 @@ mod ui;
 pub mod wire;
 mod workspaces;
 
+pub use credentials::{
+    Check, CredentialService, CredentialsError, FakeCredentials, HostCredentials, NoCredentials,
+};
 pub use error::{ApiErrorBody, ErrorCode};
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};

@@ -22,12 +22,20 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
+use puddle_api::wire::{FoundAccount, FoundVia};
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, ConnectionInfo, EventHub, FakeLauncher, FakeNetworkHealth,
-    FakeWorkspaces, Launcher, Listing, MemorySettings, NetworkHealthService, Operation,
-    RepoFindings, RepoUrl, RunningApi, Services, SettingsRepo, Unsaved, WorkspaceRecord,
+    ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, EventHub, FakeCredentials,
+    FakeLauncher, FakeNetworkHealth, FakeWorkspaces, Launcher, Listing, MemorySettings,
+    NetworkHealthService, Operation, RepoFindings, RepoUrl, RunningApi, Services, SettingsRepo,
+    Unsaved, WorkspaceRecord,
 };
-use puddle_store::{Actor, Clock, Limits, ManualClock, NewRule, Pattern, Scope, Store};
+use puddle_secrets::{
+    AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
+    SignInStart, SourceError, Tool,
+};
+use puddle_store::{
+    Actor, Clock, IdentityId, Limits, ManualClock, NewRule, Pattern, RepoRef, Scope, Store,
+};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, Event,
     EventSink, Host, ImageRef, MemoryMib, SuffixAllows, WorkspaceId, WorkspaceName,
@@ -40,12 +48,13 @@ pub mod control;
 pub mod scenario;
 
 pub use scenario::{
-    ConnectionSeed, DecisionSeed, EffectSeed, RepoSeed, RequestSeed, RuleSeed, Scenario,
-    SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
+    ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, GitRepoSeed, GitSeed, RepoSeed,
+    RequestSeed, RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnsavedSeed,
+    WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 6] = [
+const BUILT_IN: [(&str, &str); 7] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -69,6 +78,10 @@ const BUILT_IN: [(&str, &str); 6] = [
     (
         "volume-missing",
         include_str!("../../../../ui/e2e/fixtures/volume-missing.json"),
+    ),
+    (
+        "git-identities",
+        include_str!("../../../../ui/e2e/fixtures/git-identities.json"),
     ),
 ];
 
@@ -124,6 +137,7 @@ struct State {
     settings: Arc<MemorySettings>,
     workspaces: FakeWorkspaces,
     network: Arc<FakeNetworkHealth>,
+    credentials: Arc<FakeCredentials>,
     api: Option<RunningApi>,
 }
 
@@ -177,6 +191,7 @@ impl Fixture {
             Duration::from_millis(scenario.workspace_step_delay_ms),
         );
         let network = Arc::new(FakeNetworkHealth::new(clock.clone() as Arc<dyn Clock>));
+        let credentials = Arc::new(FakeCredentials::new());
         let state = State {
             store,
             clock,
@@ -184,6 +199,7 @@ impl Fixture {
             settings,
             workspaces,
             network,
+            credentials,
             api: None,
         };
         state.seed(scenario)?;
@@ -203,7 +219,8 @@ impl Fixture {
                 state.clock.clone() as Arc<dyn Clock>,
             )
             .with_workspaces(Arc::new(state.workspaces.clone()))
-            .with_network_health(state.network.clone() as Arc<dyn NetworkHealthService>);
+            .with_network_health(state.network.clone() as Arc<dyn NetworkHealthService>)
+            .with_credentials(state.credentials.clone() as Arc<dyn CredentialService>);
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
                 self.token.clone(),
@@ -444,9 +461,12 @@ impl State {
         for connection in &scenario.connections {
             self.connection(connection, start)?;
         }
+        let identities = self.identities(scenario)?;
         for workspace in &scenario.workspaces {
             self.workspace(workspace, start)?;
+            self.workspace_git(workspace, &identities)?;
         }
+        self.credentials_seed(&scenario.credentials)?;
         if let Some(global) = &scenario.settings.global {
             self.settings
                 .save_global(global.clone())
@@ -538,6 +558,14 @@ impl State {
                 self.network.set((**report).clone());
                 self.events.emit(Event::NetworkChanged { epoch });
             }
+            Step::CredentialReadable { source, readable } => {
+                let spec = source.clone().into_spec()?;
+                self.credentials
+                    .set_unreadable(spec, (!readable).then_some(SourceError::NotSignedIn));
+            }
+            Step::CredentialsFound { accounts } => {
+                self.credentials.set_found(found(accounts, &[])?);
+            }
             Step::Rule(rule) => self.add_rule(rule, now)?,
             Step::Connection(connection) => self.connection(connection, now)?,
             Step::HoldWorkspaces => self.workspaces.hold(),
@@ -607,6 +635,82 @@ impl State {
         Ok(())
     }
 
+    /// Makes the scenario's identities, in order; the labels with their ids.
+    fn identities(&self, scenario: &Scenario) -> Result<Vec<(String, IdentityId)>, String> {
+        scenario
+            .identities
+            .iter()
+            .map(|request| {
+                let label = request.label.clone();
+                let draft = request.clone().into_store_draft()?;
+                let made = self
+                    .store
+                    .create_identity(draft)
+                    .map_err(|err| format!("identity {label:?}: {err}"))?;
+                Ok((label, made.id))
+            })
+            .collect()
+    }
+
+    /// A seeded workspace's identities, table and switches.
+    fn workspace_git(
+        &self,
+        seed: &WorkspaceSeed,
+        identities: &[(String, IdentityId)],
+    ) -> Result<(), String> {
+        let name = workspace(&seed.name)?;
+        let git = &seed.git;
+        let ids = git
+            .identities
+            .iter()
+            .map(|label| {
+                identities
+                    .iter()
+                    .find(|(l, _)| l == label)
+                    .map(|(_, id)| *id)
+                    .ok_or_else(|| format!("workspace {:?}: no identity {label:?}", seed.name))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if !ids.is_empty() {
+            self.store
+                .set_workspace_identities(&name, &ids)
+                .map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
+        }
+        for row in &git.repos {
+            let repo = RepoRef::new(&row.host, &row.owner, &row.repo)
+                .map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
+            self.store
+                .add_repo(&name, &repo, row.pull, row.push)
+                .map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
+        }
+        if git.only_push_listed.is_some() || git.only_pull_listed.is_some() {
+            self.store
+                .set_git_switches(&name, git.only_push_listed, git.only_pull_listed)
+                .map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
+        }
+        Ok(())
+    }
+
+    fn credentials_seed(&self, seed: &CredentialsSeed) -> Result<(), String> {
+        self.credentials
+            .set_found(found(&seed.found, &seed.missing)?);
+        for source in &seed.signed_out {
+            self.credentials
+                .set_unreadable(source.clone().into_spec()?, Some(SourceError::NotSignedIn));
+        }
+        self.credentials.set_sign_in(match &seed.sign_in {
+            Some(start) => SignInStart {
+                code: start.code.clone(),
+                url: start.url.clone(),
+            },
+            None => SignInStart {
+                code: Some("ABCD-1234".into()),
+                url: Some("https://github.com/login/device".into()),
+            },
+        });
+        Ok(())
+    }
+
     /// Runs `work` with the clock `ago_ms` before `now`, then puts the clock back.
     fn at<T>(&self, now: u64, ago_ms: u64, work: impl FnOnce() -> T) -> T {
         self.clock.set(now.saturating_sub(ago_ms));
@@ -673,6 +777,46 @@ impl State {
         self.at(now, seed.ago_ms, || self.store.record_connection(&event))
             .map_err(|err| err.to_string())
     }
+}
+
+/// The accounts the fake "finds", and the listings whose tool is missing.
+fn found(accounts: &[FoundAccount], missing: &[FoundVia]) -> Result<Discovery, String> {
+    let listing = |via: FoundVia| match via {
+        FoundVia::Gh => FoundListing::GhAuthStatus,
+        FoundVia::GcmGithub => FoundListing::GcmGithub,
+        FoundVia::GcmAzureRepos => FoundListing::GcmAzureRepos,
+    };
+    let name = |what: &str, err: &dyn std::fmt::Display| format!("found account {what}: {err}");
+    Ok(Discovery {
+        accounts: accounts
+            .iter()
+            .map(|a| {
+                Ok(DiscoveredAccount {
+                    via: listing(a.via),
+                    host: HostName::new(&a.host).map_err(|e| name(&a.host, &e))?,
+                    account: AccountName::new(&a.account).map_err(|e| name(&a.account, &e))?,
+                    org: a
+                        .org
+                        .as_deref()
+                        .map(OrgName::new)
+                        .transpose()
+                        .map_err(|e| name("org", &e))?,
+                    signed_in: a.signed_in,
+                })
+            })
+            .collect::<Result<_, String>>()?,
+        problems: missing
+            .iter()
+            .map(|via| {
+                let tool = if *via == FoundVia::Gh {
+                    Tool::Gh
+                } else {
+                    Tool::Git
+                };
+                (listing(*via), SourceError::ToolMissing(tool))
+            })
+            .collect(),
+    })
 }
 
 fn workspace(name: &str) -> Result<WorkspaceName, String> {

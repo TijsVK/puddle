@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.5.1"
+    "version": "0.6.0"
   },
   "paths": {
     "/api/audit": {
@@ -368,6 +368,435 @@
           },
           "500": {
             "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/credentials/check": {
+      "post": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Reads a credential once and says whether that worked, never the value. Never opens a sign-in.",
+        "operationId": "check_credential",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "whether it can be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a value refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/credentials/found": {
+      "get": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "The accounts already signed in on this computer (names only), from a fixed list of listing\ncommands. A listing that could not run is named in `problems`.",
+        "operationId": "found_accounts",
+        "responses": {
+          "200": {
+            "description": "the accounts found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FoundAccounts"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/credentials/sign-in": {
+      "post": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Starts a sign-in the user finishes outside puddle: `gh` shows a one-time code and an address,\nGit Credential Manager opens its own window. Only from a click; a request from a workspace\nnever does this. Check the credential until it reads; puddle ends an unfinished sign-in after\nfive minutes.",
+        "operationId": "sign_in",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignInRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the sign-in is open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignInStarted"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a pasted token has nothing to sign in to",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the tool is missing or showed no code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/credentials/stored": {
+      "post": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Keeps a pasted token in the operating system's credential store and answers with the source\nthat names it. The token is never read back.",
+        "operationId": "store_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "the token is kept",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoredToken"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the host, organisation or token is refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the credential store is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/credentials/stored/{id}": {
+      "delete": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Removes a pasted token from the credential store; one that is already gone counts as removed.",
+        "operationId": "forget_token",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "the stored entry's id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "removed"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not a stored entry's id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the credential store is not available",
             "content": {
               "application/json": {
                 "schema": {
@@ -5523,6 +5952,46 @@
           "audit_trimmed"
         ]
       },
+      "CheckRequest": {
+        "type": "object",
+        "description": "A credential to try.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/CredentialSource",
+            "description": "Where its value comes from."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CheckResult": {
+        "type": "object",
+        "description": "Whether puddle can read a credential's value now. Never the value.",
+        "required": [
+          "readable",
+          "problem",
+          "needs_sign_in"
+        ],
+        "properties": {
+          "needs_sign_in": {
+            "type": "boolean",
+            "description": "True when the way out is for the user to sign in."
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, in words; `null` when it is readable."
+          },
+          "readable": {
+            "type": "boolean",
+            "description": "True when the source gave a value."
+          }
+        }
+      },
       "ClipboardRead": {
         "type": "string",
         "description": "What a programmatic clipboard read in the browser window does.",
@@ -6362,6 +6831,71 @@
           },
           {
             "type": "object",
+            "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from puddle; a request never opens a sign-in\nwindow. Global: every subscriber gets it. Names only, never a value.",
+            "required": [
+              "host",
+              "source",
+              "type"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "The Git host the workspace was talking to."
+              },
+              "source": {
+                "type": "string",
+                "description": "The source, as one line of names (`gh account me on github.com`)."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "credential_sign_in_needed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A push or a fetch was refused because the workspace's repository table does not allow it.\n`host`, `owner` and `repo` are the table's spelling of the repository (lower-case, no\n`.git`), so the notice can add the row as it is.",
+            "required": [
+              "workspace",
+              "host",
+              "owner",
+              "repo",
+              "access",
+              "type"
+            ],
+            "properties": {
+              "access": {
+                "$ref": "#/components/schemas/GitAccess",
+                "description": "What was refused."
+              },
+              "host": {
+                "type": "string",
+                "description": "The Git host."
+              },
+              "owner": {
+                "type": "string",
+                "description": "The user or organisation."
+              },
+              "repo": {
+                "type": "string",
+                "description": "`repo`, or `project/repo` on Azure DevOps."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "git_access_denied"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace that tried."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "New audit records were committed. `id` is the newest record's id, so a client that holds\neverything up to `after` reads on with `GET /api/audit?after=`. One event per commit,\nnot per record. Global: every subscriber gets it.",
             "required": [
               "id",
@@ -6428,6 +6962,101 @@
             "minimum": 0
           }
         }
+      },
+      "FoundAccount": {
+        "type": "object",
+        "description": "An account that is already signed in on this computer. Names only.",
+        "required": [
+          "via",
+          "host",
+          "account",
+          "org",
+          "signed_in"
+        ],
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "The account."
+          },
+          "host": {
+            "type": "string",
+            "description": "The Git host."
+          },
+          "org": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Azure DevOps organisation the account is bound to, when the listing says."
+          },
+          "signed_in": {
+            "type": "boolean",
+            "description": "False when the tool lists the account but its token no longer works."
+          },
+          "via": {
+            "$ref": "#/components/schemas/FoundVia",
+            "description": "Which tool knows it."
+          }
+        }
+      },
+      "FoundAccounts": {
+        "type": "object",
+        "description": "What puddle found signed in on this computer.",
+        "required": [
+          "accounts",
+          "problems"
+        ],
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FoundAccount"
+            },
+            "description": "The accounts, without duplicates."
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FoundProblem"
+            },
+            "description": "The listings that could not run."
+          }
+        }
+      },
+      "FoundProblem": {
+        "type": "object",
+        "description": "A listing that could not run, so its accounts are missing from the list.",
+        "required": [
+          "via",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Why, in words (\"gh is not installed or not on PATH\")."
+          },
+          "via": {
+            "$ref": "#/components/schemas/FoundVia",
+            "description": "Which tool."
+          }
+        }
+      },
+      "FoundVia": {
+        "type": "string",
+        "description": "Which listing found an account.",
+        "enum": [
+          "gh",
+          "gcm_github",
+          "gcm_azure_repos"
+        ]
+      },
+      "GitAccess": {
+        "type": "string",
+        "description": "What a workspace's repository table refused, as [`Event::GitAccessDenied`] reports it.",
+        "enum": [
+          "push",
+          "pull"
+        ]
       },
       "GitRepoRequest": {
         "type": "object",
@@ -8204,6 +8833,20 @@
         },
         "additionalProperties": false
       },
+      "SignInRequest": {
+        "type": "object",
+        "description": "A sign-in to start.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/CredentialSource",
+            "description": "The credential to sign in to."
+          }
+        },
+        "additionalProperties": false
+      },
       "SignInResult": {
         "type": "string",
         "description": "How a sign-in to a proxy ended.",
@@ -8213,6 +8856,30 @@
           "failed",
           "unsupported"
         ]
+      },
+      "SignInStarted": {
+        "type": "object",
+        "description": "What the user does to finish a sign-in puddle started. Poll the credential's check to learn\nwhen it worked; puddle ends a sign-in nobody finished after five minutes.",
+        "required": [
+          "code",
+          "url"
+        ],
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The one-time code to type at `url`; `null` when the tool opens its own window."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where to type it; `null` when the tool opens its own window."
+          }
+        }
       },
       "SkippedRoot": {
         "type": "object",
@@ -8240,6 +8907,47 @@
           }
         },
         "additionalProperties": false
+      },
+      "StoreTokenRequest": {
+        "type": "object",
+        "description": "A token the user pasted. It is kept in the operating system's credential store under puddle's\nown name and never read back through the API.",
+        "required": [
+          "host",
+          "token"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The Git host the token is for."
+          },
+          "org": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The organisation, for tokens that belong to one (Azure DevOps)."
+          },
+          "token": {
+            "type": "string",
+            "format": "password",
+            "description": "The token. Write-only.",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "StoredToken": {
+        "type": "object",
+        "description": "Where a stored token went: the source to put in a credential.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/CredentialSource",
+            "description": "A `stored` source naming the new entry."
+          }
+        }
       },
       "Suppression": {
         "type": "object",

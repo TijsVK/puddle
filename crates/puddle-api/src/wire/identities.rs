@@ -52,7 +52,7 @@ pub enum CredentialSource {
 }
 
 impl CredentialSource {
-    fn from_store(spec: &SourceSpec) -> Option<Self> {
+    pub(crate) fn from_store(spec: &SourceSpec) -> Option<Self> {
         Some(match spec {
             SourceSpec::Gh { host, account } => Self::Gh {
                 host: host.to_string(),
@@ -76,7 +76,16 @@ impl CredentialSource {
         })
     }
 
-    fn into_store(self) -> Result<SourceSpec, ApiError> {
+    /// The source as `puddle-secrets` has it, or why it is refused. For tools that seed a store
+    /// from a description (the UI fixture).
+    ///
+    /// # Errors
+    /// The refusal in words: a host, account, path, id or organisation that is not valid.
+    pub fn into_spec(self) -> Result<SourceSpec, String> {
+        self.into_store().map_err(|err| err.message().to_owned())
+    }
+
+    pub(crate) fn into_store(self) -> Result<SourceSpec, ApiError> {
         let host = |h: &str| HostName::new(h).map_err(|_| bad("host"));
         let account = |a: &str| AccountName::new(a).map_err(|_| bad("account name"));
         Ok(match self {
@@ -246,6 +255,15 @@ pub struct IdentityRequest {
 }
 
 impl IdentityRequest {
+    /// The store's draft of this request, or why it is refused. For tools that seed a store from
+    /// a description (the UI fixture).
+    ///
+    /// # Errors
+    /// The refusal in words.
+    pub fn into_store_draft(self) -> Result<store::IdentityDraft, String> {
+        self.into_draft().map_err(|err| err.message().to_owned())
+    }
+
     pub(crate) fn into_draft(self) -> Result<store::IdentityDraft, ApiError> {
         Ok(store::IdentityDraft {
             label: self.label,

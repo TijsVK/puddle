@@ -131,6 +131,22 @@ pub(crate) async fn list_workspaces(
     }))
 }
 
+/// A new workspace's Git settings: the identity that covers its repository (else the default) and
+/// the repository in the table. A failure here does not undo the workspace: its Git tab then
+/// shows no identity, which says what is missing.
+async fn start_git(state: &AppState, record: &WorkspaceRecord) {
+    let store = state.store.clone();
+    let (name, url) = (record.name.clone(), record.repo_url.clone());
+    let started = blocking(move || {
+        let repo = puddle_store::RepoRef::from_https_url(&url)?;
+        Ok(store.start_workspace_git(&name, &repo)?)
+    })
+    .await;
+    if let Err(err) = started {
+        tracing::warn!(workspace = %record.name, error = ?err, "could not set up the new workspace's Git settings");
+    }
+}
+
 /// Creates a workspace: its disk, then a clone of the repository. Answers 202; follow it with
 /// `workspace_progress` events.
 #[utoipa::path(
@@ -150,6 +166,7 @@ pub(crate) async fn create_workspace(
     crate::extract::Json(body): crate::extract::Json<NewWorkspaceRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
     let record = state.workspaces.create(body.into_new()?).await?;
+    start_git(&state, &record).await;
     // A new workspace may start with direct SSH on (the global default).
     crate::system_managed::refresh(&state).await;
     Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))

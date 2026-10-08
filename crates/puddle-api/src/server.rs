@@ -23,6 +23,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use tower_http::timeout::TimeoutLayer;
 
 use crate::auth::{Guard, guard};
+use crate::credentials::{CredentialService, NoCredentials};
 use crate::error::ApiError;
 use crate::events::EventHub;
 use crate::network_health::{NetworkHealthService, NoNetworkHealth};
@@ -110,6 +111,10 @@ pub struct Services {
     /// The network-health report. [`Services::new`] starts with [`NoNetworkHealth`], which
     /// answers 503; set the real one with [`Services::with_network_health`].
     pub network_health: Arc<dyn NetworkHealthService>,
+    /// What the identities screens ask the host: accounts found, credential checks, pasted
+    /// tokens, sign-ins. [`Services::new`] starts with [`NoCredentials`], which answers 503; set
+    /// the real one with [`Services::with_credentials`].
+    pub credentials: Arc<dyn CredentialService>,
     /// The registry of puddle's own listeners that the workspace proxy's guard consults. The API
     /// registers its address here when it binds, so a workspace can't reach it even with the
     /// loopback toggle on. [`Services::new`] starts with an empty registry of its own; give the
@@ -133,6 +138,7 @@ impl Services {
             clock,
             workspaces: Arc::new(NoWorkspaces),
             network_health: Arc::new(NoNetworkHealth),
+            credentials: Arc::new(NoCredentials),
             endpoints: PuddleEndpoints::new(),
         }
     }
@@ -141,6 +147,13 @@ impl Services {
     #[must_use]
     pub fn with_network_health(mut self, network_health: Arc<dyn NetworkHealthService>) -> Self {
         self.network_health = network_health;
+        self
+    }
+
+    /// These services with this credentials implementation.
+    #[must_use]
+    pub fn with_credentials(mut self, credentials: Arc<dyn CredentialService>) -> Self {
+        self.credentials = credentials;
         self
     }
 
@@ -215,6 +228,7 @@ impl ApiServer {
             clock: services.clock,
             workspaces: services.workspaces,
             network_health: services.network_health,
+            credentials: services.credentials,
             shutdown,
         };
         // System managed follows the stored setup from the first request on (rules spec R-41).

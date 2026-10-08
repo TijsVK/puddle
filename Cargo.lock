@@ -5972,6 +5972,7 @@ dependencies = [
  "puddle-ipc",
  "puddle-netpolicy",
  "puddle-proxy",
+ "puddle-secrets",
  "puddle-store",
  "puddle-types",
  "puddle-upstream",

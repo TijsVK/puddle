@@ -1,0 +1,118 @@
+{
+  "name": "git-identities",
+  "workspaces": [
+    {
+      "name": "web-shop",
+      "repo_url": "https://github.com/acme/web-shop.git",
+      "status": "running",
+      "ago_ms": 1209600000,
+      "disk_used_mib": 6144,
+      "git": {
+        "identities": ["Work"],
+        "repos": [
+          { "host": "github.com", "owner": "acme", "repo": "web-shop" },
+          { "host": "github.com", "owner": "acme", "repo": "design-tokens", "push": false }
+        ]
+      }
+    },
+    {
+      "name": "docs-site",
+      "repo_url": "https://github.com/tijs-demo/docs-site.git",
+      "status": "stopped",
+      "ago_ms": 604800000,
+      "disk_used_mib": 1536,
+      "git": {
+        "identities": ["Personal", "Work"],
+        "repos": [{ "host": "github.com", "owner": "tijs-demo", "repo": "docs-site" }],
+        "only_push_listed": false
+      }
+    },
+    {
+      "name": "data-tools",
+      "repo_url": "https://github.com/acme/data-tools.git",
+      "status": "created",
+      "ago_ms": 3600000,
+      "disk_used_mib": 128
+    }
+  ],
+  "identities": [
+    {
+      "label": "Work",
+      "author": { "name": "Tijs Work", "email": "tijs@acme.example" },
+      "credentials": [
+        {
+          "host": "github.com",
+          "source": { "kind": "gh", "host": "github.com", "account": "tijs-work" },
+          "covers": { "owners": ["acme", "acme-labs"], "rest_of_host": false }
+        },
+        {
+          "host": "dev.azure.com",
+          "source": { "kind": "git_credential", "host": "dev.azure.com", "path": "contoso", "username": null },
+          "covers": { "owners": ["contoso"], "rest_of_host": false }
+        }
+      ]
+    },
+    {
+      "label": "Personal",
+      "author": { "name": "Tijs", "email": "tijs@users.noreply.github.example" },
+      "credentials": [
+        {
+          "host": "github.com",
+          "source": { "kind": "gh", "host": "github.com", "account": "tijs-demo" },
+          "covers": { "owners": [], "rest_of_host": true }
+        }
+      ]
+    }
+  ],
+  "credentials": {
+    "found": [
+      { "via": "gh", "host": "github.com", "account": "tijs-demo", "org": null, "signed_in": true },
+      { "via": "gh", "host": "github.com", "account": "tijs-work", "org": null, "signed_in": true },
+      { "via": "gh", "host": "github.com", "account": "tijs-old", "org": null, "signed_in": false },
+      { "via": "gcm_azure_repos", "host": "dev.azure.com", "account": "tijs@contoso.example", "org": "contoso", "signed_in": true }
+    ],
+    "missing": [],
+    "signed_out": [
+      { "kind": "git_credential", "host": "dev.azure.com", "path": "contoso", "username": null }
+    ],
+    "sign_in": { "code": "ABCD-1234", "url": "https://github.com/login/device" }
+  },
+  "scripts": {
+    "sign_in_needed": [
+      {
+        "do": "emit",
+        "event": {
+          "type": "credential_sign_in_needed",
+          "host": "dev.azure.com",
+          "source": "Git credential for https://dev.azure.com/contoso"
+        }
+      }
+    ],
+    "pull_denied": [
+      {
+        "do": "emit",
+        "event": {
+          "type": "git_access_denied",
+          "workspace": "web-shop",
+          "host": "github.com",
+          "owner": "acme",
+          "repo": "billing",
+          "access": "pull"
+        }
+      }
+    ],
+    "push_denied": [
+      {
+        "do": "emit",
+        "event": {
+          "type": "git_access_denied",
+          "workspace": "web-shop",
+          "host": "github.com",
+          "owner": "acme",
+          "repo": "billing",
+          "access": "push"
+        }
+      }
+    ]
+  }
+}

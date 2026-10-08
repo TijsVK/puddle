@@ -158,6 +158,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("corporate-network", 0, 0),
         ("network-trouble", 0, 0),
         ("volume-missing", 0, 0),
+        ("git-identities", 0, 0),
     ];
     for (name, pending, rules_min) in counts {
         let run = start(name).await;
@@ -181,7 +182,8 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "lived-in",
             "corporate-network",
             "network-trouble",
-            "volume-missing"
+            "volume-missing",
+            "git-identities"
         ]
     );
 }
@@ -739,4 +741,115 @@ async fn a_network_health_report_with_a_typo_fails_to_start() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("pac_ur"), "{err}");
+}
+
+#[tokio::test]
+async fn the_git_identities_scenario_seeds_identities_tables_and_what_the_credentials_service_answers()
+ {
+    let run = start("git-identities").await;
+    let identities = run.get("/api/identities").await.json();
+    let labels: Vec<_> = identities["identities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| {
+            (
+                i["label"].as_str().unwrap(),
+                i["is_default"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(labels, [("Work", true), ("Personal", false)]);
+
+    let shop = run.get("/api/workspaces/web-shop/git").await.json();
+    assert_eq!(shop["identities"][0]["label"], "Work");
+    let rows: Vec<_> = shop["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["repo"].as_str().unwrap(),
+                r["pull"].as_bool().unwrap(),
+                r["push"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [("web-shop", true, true), ("design-tokens", true, false)]
+    );
+    let docs = run.get("/api/workspaces/docs-site/git").await.json();
+    assert_eq!(docs["identities"].as_array().unwrap().len(), 2);
+    assert_eq!(docs["only_push_listed"], false);
+    let tools = run.get("/api/workspaces/data-tools/git").await.json();
+    assert_eq!(tools["identities"], json!([]));
+    assert_eq!(tools["repos"], json!([]));
+
+    let found = run.get("/api/credentials/found").await.json();
+    assert_eq!(found["accounts"].as_array().unwrap().len(), 4);
+    let signed_out = json!({"source": {"kind": "git_credential", "host": "dev.azure.com", "path": "contoso", "username": null}});
+    let check = async |body: &Value| {
+        run.api("POST", "/api/credentials/check", Some(body))
+            .await
+            .json()
+    };
+    assert_eq!(check(&signed_out).await["readable"], false);
+
+    // A step makes it readable, as a finished sign-in would; another replaces what is found.
+    let step = run
+        .control(
+            "POST",
+            "/control/step",
+            Some(&json!({"do": "credential_readable", "readable": true, "source": signed_out["source"]})),
+        )
+        .await;
+    assert_eq!(step.status, 204, "{}", step.body);
+    assert_eq!(check(&signed_out).await["readable"], true);
+    let step = run
+        .control(
+            "POST",
+            "/control/step",
+            Some(&json!({"do": "credentials_found", "accounts": []})),
+        )
+        .await;
+    assert_eq!(step.status, 204, "{}", step.body);
+    assert_eq!(
+        run.get("/api/credentials/found").await.json()["accounts"],
+        json!([])
+    );
+
+    // Sign-in needed and refused Git access arrive as events (the scripts emit them).
+    let mut stream = run.events().await;
+    for script in ["sign_in_needed", "push_denied", "pull_denied"] {
+        let ran = run
+            .control("POST", &format!("/control/script/{script}"), None)
+            .await;
+        assert_eq!(ran.status, 204, "{script}");
+    }
+    let seen = read_until(&mut stream, |s| {
+        s.contains("credential_sign_in_needed") && s.matches("git_access_denied").count() >= 2
+    })
+    .await;
+    assert!(
+        seen.contains(r#""access":"push""#) && seen.contains(r#""access":"pull""#),
+        "{seen}"
+    );
+}
+
+#[tokio::test]
+async fn a_scenario_whose_workspace_names_an_identity_that_is_not_there_fails_to_start() {
+    let bad: Scenario = serde_json::from_value(json!({
+        "workspaces": [{"name": "a", "repo_url": "https://github.com/x/y.git", "git": {"identities": ["Ghost"]}}]
+    }))
+    .unwrap();
+    let err = Fixture::start(FixtureOptions {
+        port: 0,
+        connection_file: None,
+        scenario: bad,
+    })
+    .await
+    .err()
+    .unwrap();
+    assert!(err.contains("Ghost"), "{err}");
 }

@@ -1,0 +1,26 @@
+{
+  "comment": "Clone addresses and the repository each names, shared by the Rust parser (RepoRef::from_https_url) and the UI's (ui/src/lib/identities/repo.ts). `null` is refused.",
+  "cases": [
+    { "url": "https://github.com/acme/web-shop.git", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "https://github.com/Acme/Web-Shop", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "  https://GitHub.com/acme/web-shop/  ", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "https://github.com/acme/web-shop.git?ref=1#top", "repo": ["github.com", "acme", "web-shop"] },
+    { "url": "https://dev.azure.com/contoso/Platform/_git/Api", "repo": ["dev.azure.com", "contoso", "platform/api"] },
+    { "url": "https://dev.azure.com/contoso/_git/Api", "repo": ["dev.azure.com", "contoso", "api/api"] },
+    { "url": "https://contoso.visualstudio.com/Platform/_git/Api", "repo": ["contoso.visualstudio.com", "contoso", "platform/api"] },
+    { "url": "https://contoso.visualstudio.com/DefaultCollection/Platform/_git/Api", "repo": ["contoso.visualstudio.com", "contoso", "platform/api"] },
+    { "url": "http://github.com/acme/web-shop", "repo": null },
+    { "url": "git@github.com:acme/web-shop.git", "repo": null },
+    { "url": "https://me@github.com/acme/web-shop", "repo": null },
+    { "url": "https://me:secret@github.com/acme/web-shop", "repo": null },
+    { "url": "https://github.com:8443/acme/web-shop", "repo": null },
+    { "url": "https://github.com/acme", "repo": null },
+    { "url": "https://github.com/acme/web/shop", "repo": null },
+    { "url": "https://github.com/acme/..", "repo": null },
+    { "url": "https://github.com/acme/web shop", "repo": null },
+    { "url": "https://github.com", "repo": null },
+    { "url": "https://dev.azure.com/contoso/Platform/Api", "repo": null },
+    { "url": "https://dev.azure.com/contoso/My%20Project/_git/Api", "repo": null },
+    { "url": "", "repo": null }
+  ]
+}

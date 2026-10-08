@@ -11,6 +11,7 @@
 
 mod common;
 
+mod credentials;
 mod endpoints;
 pub(crate) mod events;
 mod guard;

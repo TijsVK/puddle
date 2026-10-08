@@ -53,6 +53,56 @@ impl RepoRef {
     }
 }
 
+impl RepoRef {
+    /// The repository an HTTPS clone address names: `https://github.com/acme/web.git`,
+    /// `https://dev.azure.com/org/project/_git/repo` (or `org/_git/repo`, whose project has the
+    /// repository's name) and `https://org.visualstudio.com/project/_git/repo` (optionally with a
+    /// `DefaultCollection` segment first). A query or fragment is ignored.
+    ///
+    /// # Errors
+    /// [`StoreError::IdentityInvalid`] for another scheme, a user name or port in the address, or
+    /// a path that is not one of those shapes.
+    pub fn from_https_url(url: &str) -> Result<Self, StoreError> {
+        let bad = || StoreError::IdentityInvalid("not an HTTPS repository address".into());
+        let url = url.trim();
+        let rest = url
+            .get(..8)
+            .filter(|scheme| scheme.eq_ignore_ascii_case("https://"))
+            .and_then(|_| url.get(8..))
+            .ok_or_else(bad)?;
+        let rest = rest.split(['?', '#']).next().unwrap_or_default();
+        let (host, path) = rest.split_once('/').ok_or_else(bad)?;
+        if host.contains(['@', ':']) {
+            return Err(bad());
+        }
+        let host = host.to_ascii_lowercase();
+        let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let git = |s: &&str| s.eq_ignore_ascii_case("_git");
+        let (owner, repo) = if host == "dev.azure.com" {
+            match segments.as_slice() {
+                [org, mid, repo] if git(mid) => ((*org).to_owned(), format!("{repo}/{repo}")),
+                [org, project, mid, repo] if git(mid) => {
+                    ((*org).to_owned(), format!("{project}/{repo}"))
+                }
+                _ => return Err(bad()),
+            }
+        } else if let Some(org) = host.strip_suffix(".visualstudio.com") {
+            match segments.as_slice() {
+                [project, mid, repo] | [_, project, mid, repo] if git(mid) => {
+                    (org.to_owned(), format!("{project}/{repo}"))
+                }
+                _ => return Err(bad()),
+            }
+        } else {
+            match segments.as_slice() {
+                [owner, repo] => ((*owner).to_owned(), (*repo).to_owned()),
+                _ => return Err(bad()),
+            }
+        };
+        Self::new(&host, &owner, &repo)
+    }
+}
+
 impl std::fmt::Display for RepoRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}/{}", self.host, self.owner, self.repo)
@@ -143,6 +193,29 @@ mod tests {
             pull,
             push,
             created_at: 0,
+        }
+    }
+
+    #[test]
+    fn clone_addresses_name_the_repository_the_ui_also_reads() {
+        // The same file drives the UI's parser (`ui/src/lib/identities/repo.ts`).
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/data/repo-urls.json")).unwrap();
+        for case in vectors["cases"].as_array().unwrap() {
+            let url = case["url"].as_str().unwrap();
+            let got = RepoRef::from_https_url(url);
+            match case["repo"].as_array() {
+                Some(want) => {
+                    let want: Vec<&str> = want.iter().map(|v| v.as_str().unwrap()).collect();
+                    let got = got.unwrap_or_else(|e| panic!("{url:?}: {e}"));
+                    assert_eq!(
+                        [got.host.as_str(), got.owner.as_str(), got.repo.as_str()],
+                        [want[0], want[1], want[2]],
+                        "{url:?}"
+                    );
+                }
+                None => assert!(got.is_err(), "{url:?} must be refused, got {got:?}"),
+            }
         }
     }
 

@@ -8,7 +8,9 @@
 
 use std::collections::BTreeMap;
 
-use puddle_api::wire::NetworkHealth;
+use puddle_api::wire::{
+    CredentialSource, FoundAccount, FoundVia, IdentityRequest, NetworkHealth, SignInStarted,
+};
 use puddle_types::Event;
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +49,13 @@ pub struct Scenario {
     /// Workspaces that exist at start, with the state they are in.
     #[serde(default)]
     pub workspaces: Vec<WorkspaceSeed>,
+    /// Identities that exist at start, in your order (the first one made is the default).
+    #[serde(default)]
+    pub identities: Vec<IdentityRequest>,
+    /// What the credentials service answers: the accounts found, what is not signed in, the code
+    /// a sign-in shows.
+    #[serde(default)]
+    pub credentials: CredentialsSeed,
     /// How long the fake workspace service pauses between the steps of an operation (create,
     /// start, ...), in ms. Zero (the default) runs them back to back; tests that need to look
     /// at the busy state use the `hold_workspaces` step instead.
@@ -127,6 +136,67 @@ pub struct WorkspaceSeed {
     /// What deleting it would lose; nothing when left out.
     #[serde(default)]
     pub unsaved: UnsavedSeed,
+    /// Its identities and repository table; the defaults when left out.
+    #[serde(default)]
+    pub git: GitSeed,
+}
+
+const fn yes() -> bool {
+    true
+}
+
+/// A workspace's Git settings at start.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitSeed {
+    /// The labels of its identities, in order.
+    #[serde(default)]
+    pub identities: Vec<String>,
+    /// Its repository table.
+    #[serde(default)]
+    pub repos: Vec<GitRepoSeed>,
+    /// "Only push to listed repos"; on when left out.
+    #[serde(default)]
+    pub only_push_listed: Option<bool>,
+    /// "Only pull from listed repos"; off when left out.
+    #[serde(default)]
+    pub only_pull_listed: Option<bool>,
+}
+
+/// One row of a workspace's repository table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitRepoSeed {
+    /// The host.
+    pub host: String,
+    /// The user or organisation.
+    pub owner: String,
+    /// The repository.
+    pub repo: String,
+    /// Pull on; on when left out.
+    #[serde(default = "yes")]
+    pub pull: bool,
+    /// Push on; on when left out.
+    #[serde(default = "yes")]
+    pub push: bool,
+}
+
+/// What the credentials service answers at start.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialsSeed {
+    /// The accounts "found on this computer".
+    #[serde(default)]
+    pub found: Vec<FoundAccount>,
+    /// Listings whose tool is not installed.
+    #[serde(default)]
+    pub missing: Vec<FoundVia>,
+    /// Credentials that cannot be read: not signed in.
+    #[serde(default)]
+    pub signed_out: Vec<CredentialSource>,
+    /// What a sign-in shows; a code and address when left out.
+    #[serde(default)]
+    pub sign_in: Option<SignInStarted>,
 }
 
 /// A workspace's state at start.
@@ -327,6 +397,19 @@ pub enum Step {
     /// Replaces the network-health report and sends `network_changed` with its epoch, as a
     /// network or proxy change would.
     NetworkHealth(Box<NetworkHealth>),
+    /// Makes a credential unreadable (not signed in) or readable again, as a sign-in or an
+    /// expiry would.
+    CredentialReadable {
+        /// The credential's source.
+        source: CredentialSource,
+        /// Whether it reads now.
+        readable: bool,
+    },
+    /// Replaces the accounts "found on this computer".
+    CredentialsFound {
+        /// The accounts.
+        accounts: Vec<FoundAccount>,
+    },
     /// Creates a rule.
     Rule(RuleSeed),
     /// Writes a connection audit record.

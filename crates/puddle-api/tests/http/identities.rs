@@ -370,9 +370,11 @@ async fn a_workspaces_repository_table_and_switches() {
     let fresh = api.get("/api/workspaces/shop/git").await.json();
     assert_eq!(fresh["only_push_listed"], true);
     assert_eq!(fresh["only_pull_listed"], false);
-    assert_eq!(fresh["repos"], json!([]));
+    // A new workspace starts with its own repository, Pull and Push on.
+    assert_eq!(fresh["repos"].as_array().unwrap().len(), 1);
+    assert_eq!(fresh["repos"][0]["repo"], "api");
 
-    let add = json!({"host": "GitHub.com", "owner": "Acme", "repo": "API.git", "pull": true, "push": true});
+    let add = json!({"host": "GitHub.com", "owner": "Acme", "repo": "Docs.git", "pull": true, "push": true});
     let row = api
         .send("POST", "/api/workspaces/shop/git/repos", Some(&add))
         .await;
@@ -384,7 +386,7 @@ async fn a_workspaces_repository_table_and_switches() {
             row["owner"].as_str(),
             row["repo"].as_str()
         ),
-        (Some("github.com"), Some("acme"), Some("api"))
+        (Some("github.com"), Some("acme"), Some("docs"))
     );
     assert_eq!(
         api.send("POST", "/api/workspaces/shop/git/repos", Some(&add))
@@ -508,4 +510,49 @@ async fn changes_reach_the_event_stream_and_no_secret_is_on_the_wire() {
         }
     }
     api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_new_workspace_gets_the_identity_that_covers_its_repository_and_lists_it() {
+    let api = start().await;
+    let _personal = make(&api, "Personal", &[], true).await;
+    let work = make(&api, "Work", &["acme"], false).await;
+    workspace(&api, "shop").await;
+
+    let git = api.get("/api/workspaces/shop/git").await.json();
+    let attached: Vec<_> = git["identities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(attached, [work]);
+    assert_eq!(git["repos"].as_array().unwrap().len(), 1);
+    let row = &git["repos"][0];
+    assert_eq!(
+        (&row["host"], &row["owner"], &row["repo"]),
+        (&json!("github.com"), &json!("acme"), &json!("api"))
+    );
+    assert_eq!((&row["pull"], &row["push"]), (&json!(true), &json!(true)));
+    assert_eq!(git["only_push_listed"], true);
+    assert_eq!(git["only_pull_listed"], false);
+}
+
+#[tokio::test]
+async fn a_repository_address_puddle_cannot_read_still_makes_the_workspace_with_empty_git_settings()
+{
+    let api = start().await;
+    let _work = make(&api, "Work", &["acme"], false).await;
+    let reply = api
+        .send(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({"name": "odd", "repo_url": "https://example.com/a/b/c"})),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    api.workspaces.idle().await;
+    let git = api.get("/api/workspaces/odd/git").await.json();
+    assert_eq!(git["identities"], json!([]));
+    assert_eq!(git["repos"], json!([]));
 }

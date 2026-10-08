@@ -9,12 +9,14 @@ use tokio::sync::{Mutex, watch};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::credentials::CredentialService;
 use crate::events::EventHub;
 use crate::network_health::NetworkHealthService;
 use crate::settings::SettingsRepo;
 use crate::workspaces::WorkspaceService;
 
 mod audit;
+mod credentials;
 mod events;
 mod identities;
 mod meta;
@@ -36,6 +38,7 @@ pub(crate) struct AppState {
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) workspaces: Arc<dyn WorkspaceService>,
     pub(crate) network_health: Arc<dyn NetworkHealthService>,
+    pub(crate) credentials: Arc<dyn CredentialService>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }
@@ -96,6 +99,11 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             identities::delete_identity
         ))
         .routes(routes!(identities::set_default_identity))
+        .routes(routes!(credentials::found_accounts))
+        .routes(routes!(credentials::check_credential))
+        .routes(routes!(credentials::store_token))
+        .routes(routes!(credentials::forget_token))
+        .routes(routes!(credentials::sign_in))
         .routes(routes!(identities::get_workspace_git))
         .routes(routes!(
             identities::set_workspace_identities,

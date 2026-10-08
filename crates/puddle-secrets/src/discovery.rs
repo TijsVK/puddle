@@ -61,7 +61,7 @@ pub struct DiscoveredAccount {
 }
 
 /// What the listings found, and which of them could not run.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Discovery {
     /// Accounts, de-duplicated and sorted.
     pub accounts: Vec<DiscoveredAccount>,
