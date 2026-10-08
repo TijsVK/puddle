@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 
 use puddle_types::{Decision, EgressRequest, Host, SandboxName, SuffixAllows};
 
+use puddle_api::SettingsRepo as _;
+
 use crate::common::{Api, start};
 
 fn decide(api: &Api, sandbox: &str, host: &str) -> Decision {
@@ -325,5 +327,25 @@ async fn direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
     )
     .await;
     assert!(!decide(&api, "ssh", "marketplace.visualstudio.com").is_allow());
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn unreadable_settings_leave_system_managed_as_it_was() {
+    let api = start().await;
+    assert!(decide(&api, "box", "open-vsx.org").is_allow());
+    // A document from a newer puddle can't be read: the derivation stops, nothing is dropped.
+    api.settings
+        .save_global(json!({"schema_version": 99}))
+        .unwrap();
+    let reply = api
+        .send(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({"name": "late", "repo_url": "https://github.com/acme/api.git"})),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    assert!(decide(&api, "box", "open-vsx.org").is_allow());
     api.running.shutdown().await;
 }

@@ -80,10 +80,8 @@ pub(crate) async fn refresh(state: &AppState) {
     .await;
     match result {
         Ok(closed) if !closed.is_empty() => {
-            tracing::info!(
-                closed = closed.len(),
-                "System managed hosts decided waiting requests"
-            );
+            let count = closed.len();
+            tracing::info!(count, "System managed hosts decided waiting requests");
         }
         Ok(_) => {}
         Err(err) => {
