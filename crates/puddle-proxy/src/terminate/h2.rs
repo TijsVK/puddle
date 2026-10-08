@@ -437,10 +437,28 @@ async fn exchange(
     }
     let mut route = shared.route().await?;
     let version = route.version();
+    let prefetched = match body_wanted(shared, &checked, request.headers(), version) {
+        Some(limit) => match read_whole_body(shared, request.body_mut(), limit).await {
+            Ok(body) => Some(body),
+            Err(refusal) => {
+                route.unused();
+                return Err(refusal);
+            }
+        },
+        None => None,
+    };
     let Forwarding {
         injection,
         unauthorized,
-    } = match decide(shared, &checked, request.headers(), version).await {
+    } = match decide(
+        shared,
+        &checked,
+        request.headers(),
+        version,
+        prefetched.as_deref(),
+    )
+    .await
+    {
         Ok(forwarding) => forwarding,
         Err(refusal) => {
             route.unused();
@@ -469,7 +487,15 @@ async fn exchange(
                 .collect()
         })
         .unwrap_or_default();
-    let body: UpBody = GuestBody::new(body, &activity, &sent, injected).boxed_unsync();
+    let body: UpBody = match prefetched {
+        Some(whole) => {
+            sent.finish();
+            Full::new(whole)
+                .map_err(|never| match never {})
+                .boxed_unsync()
+        }
+        None => GuestBody::new(body, &activity, &sent, injected).boxed_unsync(),
+    };
     let upstream_request =
         build_request(cx, version, checked.method, &checked.path, headers, body)?;
     let response = send(shared, &mut route, upstream_request, &sent).await?;
@@ -492,33 +518,123 @@ async fn decide(
     checked: &Checked,
     headers: &HeaderMap,
     version: UpstreamVersion,
+    body: Option<&[u8]>,
 ) -> Result<Forwarding, Refusal> {
     let cx = &shared.cx;
-    let mut lines = header_lines(headers, &cx.target.host.to_string());
-    // A WebSocket over an extended CONNECT reaches an HTTP/1.1 server as a `GET` with `Upgrade`
-    // headers; the rules judge what the server will be sent.
-    let websocket_over_h1 = checked.protocol.is_some() && version == UpstreamVersion::H1;
-    let method = if websocket_over_h1 {
-        lines.push("connection: upgrade".to_owned());
-        lines.push("upgrade: websocket".to_owned());
-        Method::GET.as_str()
-    } else {
-        checked.method.as_str()
-    };
+    let (method, lines) = injector_lines(checked, headers, version, &cx.target.host.to_string());
     let context = InjectContext {
         workspace: &cx.workspace,
         host: &cx.target.host,
     };
-    let view = RequestView {
-        method,
-        target: &checked.path,
-        headers: &lines,
+    let view = RequestView::new(method, &checked.path, &lines);
+    let decision = match body {
+        Some(body) => {
+            cx.termination
+                .injector()
+                .decide(&context, &view.with_body(body))
+                .await
+        }
+        None => cx.termination.injector().decide(&context, &view).await,
     };
-    let decision = cx.termination.injector().decide(&context, &view).await;
     decision.into_forwarding().map_err(|refusal| {
         tracing::info!(host = %cx.target.host, code = refusal.code(), "request refused by the credential rules");
+        shared
+            .outcome
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .refused
+            .get_or_insert(refusal.code());
         refusal.to_refusal()
     })
+}
+
+/// The method and header lines the injector sees. A WebSocket over an extended CONNECT reaches an
+/// HTTP/1.1 server as a `GET` with `Upgrade` headers; the rules judge what the server will be sent.
+fn injector_lines<'a>(
+    checked: &'a Checked,
+    headers: &HeaderMap,
+    version: UpstreamVersion,
+    host: &str,
+) -> (&'a str, Vec<String>) {
+    let mut lines = header_lines(headers, host);
+    if checked.protocol.is_some() && version == UpstreamVersion::H1 {
+        lines.push("connection: upgrade".to_owned());
+        lines.push("upgrade: websocket".to_owned());
+        return (Method::GET.as_str(), lines);
+    }
+    (checked.method.as_str(), lines)
+}
+
+/// How much of the request body the injector wants to see before it decides, if any.
+fn body_wanted(
+    shared: &Shared,
+    checked: &Checked,
+    headers: &HeaderMap,
+    version: UpstreamVersion,
+) -> Option<usize> {
+    let cx = &shared.cx;
+    if checked.protocol.is_some() {
+        return None;
+    }
+    let (method, lines) = injector_lines(checked, headers, version, &cx.target.host.to_string());
+    let context = InjectContext {
+        workspace: &cx.workspace,
+        host: &cx.target.host,
+    };
+    let view = RequestView::new(method, &checked.path, &lines);
+    cx.termination.injector().body_wanted(&context, &view)
+}
+
+/// Reads the guest's whole request body (at most `limit` bytes) for an injector that decides on
+/// it. Trailers are not read into it, and the request goes on without them.
+async fn read_whole_body(
+    shared: &Shared,
+    body: &mut Incoming,
+    limit: usize,
+) -> Result<Bytes, Refusal> {
+    let too_large = || {
+        Refusal::new(
+            "413 Content Too Large",
+            format!(
+                "this request's body is over {limit} bytes, more than puddle reads to decide on it"
+            ),
+        )
+        .header("x-puddle-blocked", "body_too_large")
+    };
+    let declared = body.size_hint().exact();
+    if declared.is_some_and(|n| n > limit as u64) {
+        return Err(too_large());
+    }
+    let idle = shared.cx.proxy.config.body_idle_timeout;
+    let mut whole = Vec::new();
+    loop {
+        match tokio::time::timeout(idle, body.frame()).await {
+            Err(_) => {
+                return Err(Refusal::new(
+                    "408 Request Timeout",
+                    "the request body did not arrive",
+                ));
+            }
+            Ok(None) => break,
+            Ok(Some(Err(err))) => {
+                tracing::info!(host = %shared.cx.target.host, error = %err, "request body failed");
+                return Err(bad("the request body could not be read"));
+            }
+            Ok(Some(Ok(frame))) => {
+                if let Some(data) = frame.data_ref() {
+                    whole.extend_from_slice(data);
+                    if whole.len() > limit {
+                        return Err(too_large());
+                    }
+                }
+            }
+        }
+    }
+    // A guest may end a stream cleanly short of its `Content-Length` (as `GuestBody` guards).
+    if declared.is_some_and(|n| n != whole.len() as u64) {
+        return Err(bad("the request body ended before its Content-Length"));
+    }
+    Ok(Bytes::from(whole))
 }
 
 /// The refusal that replaces the server's answer when it is a `401` for a request whose
@@ -533,6 +649,12 @@ fn unauthorized_answer<B>(
     }
     let refusal = unauthorized?.refusal();
     tracing::info!(host = %shared.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was puddle's to choose");
+    shared
+        .outcome
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .refused
+        .get_or_insert(refusal.code());
     Some(refusal.to_refusal())
 }
 

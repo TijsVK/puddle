@@ -5,13 +5,14 @@ use std::io;
 use std::pin::pin;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use hyper::client::conn::http1::SendRequest;
 use puddle_types::{Host, HttpRequestLine, WorkspaceName};
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
-use super::body::{Abort, ChannelBody, pump};
+use super::body::{Abort, BodyReader, ChannelBody, pump};
 use super::guest::{ALPN_HTTP11, Prefixed, Proto, read_hello, server_config};
 use super::inject::{Forwarding, InjectContext, Injection, RequestView, Unauthorized};
 use super::leg::{self, BoxError, Connected, H1Conn, UpBody};
@@ -75,6 +76,8 @@ pub(crate) struct Outcome {
     pub(crate) sni_mismatch: bool,
     /// The guest's client refused the certificate (it does not trust the workspace's CA).
     pub(crate) certificate_refused: bool,
+    /// The code of the first refusal the credential rules gave a request (`x-puddle-blocked`).
+    pub(crate) refused: Option<&'static str>,
 }
 
 impl Outcome {
@@ -323,17 +326,22 @@ where
         if let Err(refusal) = self.ensure_upstream().await {
             return self.refuse(&refusal).await;
         }
-        let decision = {
-            let context = InjectContext {
-                workspace: &self.cx.workspace,
-                host: &self.cx.target.host,
-            };
-            let view = RequestView {
-                method: &parsed.method,
-                target: &parsed.target,
-                headers: &head.headers,
-            };
-            self.cx.termination.injector().decide(&context, &view).await
+        let context = InjectContext {
+            workspace: &self.cx.workspace,
+            host: &self.cx.target.host,
+        };
+        let injector = self.cx.termination.injector();
+        let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
+        let prefetched = match injector.body_wanted(&context, &view) {
+            Some(limit) => match self.read_whole_body(&parsed, limit).await {
+                Ok(body) => Some(body),
+                Err(flow) => return flow,
+            },
+            None => None,
+        };
+        let decision = match &prefetched {
+            Some(body) => injector.decide(&context, &view.with_body(body)).await,
+            None => injector.decide(&context, &view).await,
         };
         let Forwarding {
             injection,
@@ -342,6 +350,7 @@ where
             Ok(forwarding) => forwarding,
             Err(refusal) => {
                 tracing::info!(host = %self.cx.target.host, code = refusal.code(), "request refused by the credential rules");
+                self.outcome.refused.get_or_insert(refusal.code());
                 return self.refuse(&refusal.to_refusal()).await;
             }
         };
@@ -350,7 +359,8 @@ where
             Err(refusal) => return self.refuse(&refusal).await,
         };
         let headers = self.add_credentials(headers, injection.as_ref());
-        self.exchange(&parsed, headers, unauthorized.as_ref()).await
+        self.exchange(&parsed, headers, unauthorized.as_ref(), prefetched)
+            .await
     }
 
     /// Notes the injected credential for the audit, then swaps the workspace's stand-ins in
@@ -396,6 +406,64 @@ where
                 .into_h1()?,
         );
         Ok(())
+    }
+
+    /// Reads the guest's whole request body (at most `limit` bytes) for an injector that decides
+    /// on it. `Err` is how the connection goes on: the refusal has been sent.
+    async fn read_whole_body(&mut self, parsed: &Parsed, limit: usize) -> Result<Bytes, Flow> {
+        let too_large = || {
+            Refusal::new(
+                "413 Content Too Large",
+                format!("this request's body is over {limit} bytes, more than puddle reads to decide on it"),
+            )
+            .header("x-puddle-blocked", "body_too_large")
+        };
+        if matches!(parsed.body, http::Body::None | http::Body::Length(0)) {
+            return Ok(Bytes::new());
+        }
+        if matches!(parsed.body, http::Body::Length(n) if n > limit as u64) {
+            return Err(self.refuse(&too_large()).await);
+        }
+        if parsed.expect_continue
+            && let Err(err) = self
+                .writer
+                .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
+                .await
+        {
+            tracing::debug!(error = %err, "guest went away before its body");
+            return Err(Flow::Abort);
+        }
+        let idle = self.cx.proxy.config.body_idle_timeout;
+        let mut decoder = BodyReader::new(parsed.body);
+        let mut whole = Vec::new();
+        loop {
+            match tokio::time::timeout(idle, decoder.next(&mut self.reader)).await {
+                Ok(Ok(Some(piece))) => {
+                    whole.extend_from_slice(&piece);
+                    if whole.len() > limit {
+                        return Err(self.refuse(&too_large()).await);
+                    }
+                }
+                Ok(Ok(None)) => return Ok(Bytes::from(whole)),
+                Ok(Err(err)) => {
+                    tracing::info!(host = %self.cx.target.host, error = %err, "request body failed");
+                    return Err(self
+                        .refuse(&Refusal::new(
+                            "400 Bad Request",
+                            "the request body could not be read",
+                        ))
+                        .await);
+                }
+                Err(_) => {
+                    return Err(self
+                        .refuse(&Refusal::new(
+                            "408 Request Timeout",
+                            "the request body did not arrive",
+                        ))
+                        .await);
+                }
+            }
+        }
     }
 
     /// Writes `response` to the guest while the guest's read side is polled (see [`keep_reading`]).
@@ -455,6 +523,16 @@ where
         piped.map_or(Flow::Abort, |()| Flow::Close)
     }
 
+    /// Answers the guest with `unauthorized`'s refusal in place of the server's `401`. The server's
+    /// answer is left unread, so the upstream connection is not used again.
+    async fn replace_unauthorized(&mut self, unauthorized: &Unauthorized) -> Flow {
+        let refusal = unauthorized.refusal();
+        tracing::info!(host = %self.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was puddle's to choose");
+        self.upstream = None;
+        self.outcome.refused.get_or_insert(refusal.code());
+        self.refuse(&refusal.to_refusal()).await
+    }
+
     /// Sends `parsed` with `headers` upstream and its response to the guest. A `401` from the
     /// server is replaced by `unauthorized`'s answer when there is one.
     async fn exchange(
@@ -462,19 +540,25 @@ where
         parsed: &Parsed,
         headers: ::http::HeaderMap,
         unauthorized: Option<&Unauthorized>,
+        prefetched: Option<Bytes>,
     ) -> Flow {
         let config = self.cx.proxy.config;
         let Some(upstream) = self.upstream.as_mut() else {
             return Flow::Abort;
         };
-        let (channel, tx, abort) = ChannelBody::new(parsed.body);
-        let has_body = !matches!(parsed.body, http::Body::None | http::Body::Length(0));
+        // A body the injector asked for is already read, framing and `Expect` included.
+        let (framing, (channel, tx, abort)) = match prefetched {
+            Some(body) => (http::Body::None, ChannelBody::prefetched(body)),
+            None => (parsed.body, ChannelBody::new(parsed.body)),
+        };
+        let has_body = !matches!(framing, http::Body::None | http::Body::Length(0));
         let Some(request) = upstream_request(parsed, headers, channel) else {
             return self
                 .refuse(&Refusal::new("400 Bad Request", "malformed request"))
                 .await;
         };
         if parsed.expect_continue
+            && has_body
             && let Err(err) = self
                 .writer
                 .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
@@ -487,7 +571,7 @@ where
             &mut upstream.sender,
             &mut self.reader,
             request,
-            (parsed.body, tx, abort),
+            (framing, tx, abort),
             config,
         )
         .await;
@@ -534,11 +618,7 @@ where
         if response.status() == ::http::StatusCode::UNAUTHORIZED
             && let Some(unauthorized) = unauthorized
         {
-            let refusal = unauthorized.refusal();
-            tracing::info!(host = %self.cx.target.host, code = refusal.code(), "401 replaced: the credential for this request was puddle's to choose");
-            // The server's answer is left unread, so this connection is not used again.
-            self.upstream = None;
-            return self.refuse(&refusal.to_refusal()).await;
+            return self.replace_unauthorized(unauthorized).await;
         }
         let mut response = response;
         if parsed.upgrade && response.status() == ::http::StatusCode::SWITCHING_PROTOCOLS {
@@ -608,7 +688,7 @@ async fn send_and_pump<R>(
     sender: &mut SendRequest<UpBody>,
     reader: &mut R,
     request: ::http::Request<UpBody>,
-    (body, tx, abort): (http::Body, tokio::sync::mpsc::Sender<bytes::Bytes>, Abort),
+    (body, tx, abort): (http::Body, tokio::sync::mpsc::Sender<Bytes>, Abort),
     config: ProxyConfig,
 ) -> (
     Option<Result<::http::Response<hyper::body::Incoming>, hyper::Error>>,

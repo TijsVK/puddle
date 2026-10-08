@@ -191,6 +191,24 @@ impl ChannelBody {
     }
 }
 
+impl ChannelBody {
+    /// A body that is already complete in `bytes` (read for an injector that decides on it): the
+    /// sender is the one [`ChannelBody::new`] would give, and dropping it ends the body.
+    pub(crate) fn prefetched(bytes: Bytes) -> (Self, mpsc::Sender<Bytes>, Abort) {
+        let len = bytes.len() as u64;
+        let (body, tx, abort) = Self::new(if len == 0 {
+            Body::None
+        } else {
+            Body::Length(len)
+        });
+        if len > 0 {
+            // The channel holds four pieces and this is the first.
+            let _ = tx.try_send(bytes);
+        }
+        (body, tx, abort)
+    }
+}
+
 impl HttpBody for ChannelBody {
     type Data = Bytes;
     type Error = io::Error;

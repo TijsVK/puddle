@@ -65,8 +65,9 @@ impl fmt::Display for ConnectionOrigin {
 
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`,
-/// `local_address`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`
-/// or `suppressed`.
+/// `local_address`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`,
+/// `suppressed` or, for a request the credential rules refused on a decrypted connection, the
+/// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectionReason {
@@ -88,6 +89,10 @@ pub enum ConnectionReason {
     GuestTlsRejected,
     /// Summary of connection records over the per-workspace limit (R-26).
     Suppressed,
+    /// On a decrypted connection the credential rules refused a request, or the server's `401`
+    /// to a request whose credential puddle chose was answered with puddle's own refusal. The
+    /// text is the refusal's machine-readable code.
+    Refused(&'static str),
 }
 
 impl fmt::Display for ConnectionReason {
@@ -101,6 +106,7 @@ impl fmt::Display for ConnectionReason {
             Self::SniMismatch => f.write_str("sni_mismatch"),
             Self::GuestTlsRejected => f.write_str("guest_tls_rejected"),
             Self::Suppressed => f.write_str("suppressed"),
+            Self::Refused(code) => f.write_str(code),
         }
     }
 }
@@ -391,6 +397,7 @@ mod tests {
             (ConnectionReason::SniMismatch, "sni_mismatch"),
             (ConnectionReason::GuestTlsRejected, "guest_tls_rejected"),
             (ConnectionReason::Suppressed, "suppressed"),
+            (ConnectionReason::Refused("push_denied"), "push_denied"),
         ];
         for (reason, text) in reasons {
             assert_eq!(reason.to_string(), text);

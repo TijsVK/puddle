@@ -570,6 +570,9 @@ async fn relay(
         } else if done.certificate_refused {
             // Puddle blocked nothing: the rule's decision stands and the tool refused.
             event.reason = ConnectionReason::GuestTlsRejected;
+        } else if let Some(code) = done.refused {
+            event.decision = ConnectionDecision::Blocked;
+            event.reason = ConnectionReason::Refused(code);
         }
         return event;
     }

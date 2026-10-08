@@ -2,6 +2,10 @@
 //! A `401` from the real server is replaced by the injector's own answer when the injector chose
 //! the request's credential (it added one, or had none to add), and only then: any other `401`
 //! is the server's answer like every other. Both HTTP versions.
+#![expect(
+    clippy::unwrap_used,
+    reason = "helpers outside #[test] functions fail the test by panicking"
+)]
 mod terminate_support;
 
 use std::sync::Arc;

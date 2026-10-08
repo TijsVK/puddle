@@ -299,6 +299,7 @@ pub struct RequestView<'a> {
     pub(crate) method: &'a str,
     pub(crate) target: &'a str,
     pub(crate) headers: &'a [String],
+    pub(crate) body: Option<&'a [u8]>,
 }
 
 impl<'a> RequestView<'a> {
@@ -309,7 +310,24 @@ impl<'a> RequestView<'a> {
             method,
             target,
             headers,
+            body: None,
         }
+    }
+
+    /// The same view with the request body the injector asked for ([`Injector::body_wanted`]).
+    #[must_use]
+    pub fn with_body(self, body: &'a [u8]) -> Self {
+        Self {
+            body: Some(body),
+            ..self
+        }
+    }
+
+    /// The whole request body, decoded, when the injector asked to see it and the request
+    /// carried it within the limit it named; `None` otherwise.
+    #[must_use]
+    pub fn body(&self) -> Option<&'a [u8]> {
+        self.body
     }
 
     /// The method as sent (case kept).
@@ -367,6 +385,19 @@ pub trait Injector: Send + Sync + fmt::Debug {
         context: &'a InjectContext<'a>,
         request: &'a RequestView<'a>,
     ) -> BoxFuture<'a, InjectDecision>;
+
+    /// How many bytes of this request's body the injector needs to see before it can decide, if
+    /// any. The proxy then reads the whole body (a request with a larger one is refused with
+    /// `413` and `x-puddle-blocked: body_too_large`; nothing is sent upstream), hands it to
+    /// [`Injector::decide`] through [`RequestView::body`] and forwards it unchanged. It is asked
+    /// before `decide`, with a view that has no body, and must be cheap.
+    fn body_wanted(
+        &self,
+        _context: &InjectContext<'_>,
+        _request: &RequestView<'_>,
+    ) -> Option<usize> {
+        None
+    }
 }
 
 /// An injector that never injects: every request passes through untouched. Terminating with it
