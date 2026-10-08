@@ -992,8 +992,8 @@ async fn preparing_an_existing_workspace_never_makes_a_missing_volume() {
         text.contains("ws-acme") && text.contains("no new empty volume"),
         "{text}"
     );
-    assert!(names(&rt).await.is_empty());
-    assert!(rt.list_volumes().await.unwrap().is_empty());
+    assert_eq!(names(&rt).await.len(), 0);
+    assert_eq!(rt.list_volumes().await.unwrap().len(), 0);
     // The failed prepare released its reservation.
     assert!(w.holder(&id).is_none());
 }
