@@ -10,12 +10,15 @@ title = "puddle"
 [extend]
 useDefault = true
 
+# The gate's own self-test (scripts/check-secrets.sh) writes these same values into throwaway
+# repositories, so the script lists them too.
+#
 # Canary strings: test values that are recognisable on purpose, so a test can assert they never
 # reach a log, a response or the guest (CANARY-<word>, in integration tests only).
 [[allowlists]]
 description = "CANARY-* test values in crate integration tests"
 condition = "AND"
-paths = ['''^crates/[^/]+/tests/[^/]+\.rs$''']
+paths = ['''^crates/[^/]+/tests/[^/]+\.rs$''', '''^scripts/check-secrets\.sh$''']
 regexTarget = "match"
 regexes = ['''(?i)(password|token|secret)\W{0,4}CANARY-[A-Za-z0-9-]+''']
 
@@ -24,6 +27,6 @@ regexes = ['''(?i)(password|token|secret)\W{0,4}CANARY-[A-Za-z0-9-]+''']
 [[allowlists]]
 description = "base64 of the fake login user:puddle in the Docker config fixture"
 condition = "AND"
-paths = ['''^crates/puddle-boot/tests/vm_boot\.rs$''']
+paths = ['''^crates/puddle-boot/tests/vm_boot\.rs$''', '''^scripts/check-secrets\.sh$''']
 regexTarget = "match"
 regexes = ['''auth\W{1,4}dXNlcjpwdWRkbGU=''']
