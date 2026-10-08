@@ -386,7 +386,12 @@ mod tests {
                 source: "gh account me on github.com".into(),
             }]
         );
-        task.abort();
+        // The forwarder ends with the cache it listens to.
+        drop(secrets);
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -421,19 +426,6 @@ mod tests {
         assert_eq!(text, "InjectorInputs { .. }");
     }
 
-    #[derive(Debug)]
-    struct Marked;
-
-    impl Injector for Marked {
-        fn decide<'a>(
-            &'a self,
-            _: &'a puddle_proxy::InjectContext<'a>,
-            _: &'a puddle_proxy::RequestView<'a>,
-        ) -> puddle_proxy::BoxFuture<'a, puddle_proxy::InjectDecision> {
-            Box::pin(async { puddle_proxy::InjectDecision::PassThrough })
-        }
-    }
-
     #[test]
     fn each_start_gets_an_injector_made_for_its_workspace_and_it_stays_across_changes() {
         let store = store();
@@ -441,7 +433,7 @@ mod tests {
         let record = Arc::clone(&made);
         let factory: InjectorFactory = Arc::new(move |_, workspace| {
             record.lock().unwrap().push(workspace.clone());
-            Arc::new(Marked)
+            Arc::new(NoInjection)
         });
         let terminations = Arc::new(Terminations::new());
         let injection = Injection::new(Arc::clone(&terminations), inputs(&store), Some(factory));
@@ -454,8 +446,8 @@ mod tests {
         attach(&store, &a, "ada", "github.com");
         assert!(injection.resync(&a).unwrap().is_some());
         assert_eq!(made.lock().unwrap().len(), 2);
-        assert!(format!("{:?}", terminations.termination(&a).unwrap()).contains("Marked"));
-        assert!(before.contains("Marked"));
+        assert!(format!("{:?}", terminations.termination(&a).unwrap()).contains("NoInjection"));
+        assert!(before.contains("NoInjection"));
         // A restart makes a new one.
         injection.begin(&a).unwrap();
         assert_eq!(made.lock().unwrap().len(), 3);
