@@ -371,4 +371,25 @@ mod tests {
             "one empty data frame is fine"
         );
     }
+
+    /// A connection whose reads fail.
+    struct Broken;
+
+    impl AsyncRead for Broken {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Err(io::Error::from(io::ErrorKind::ConnectionReset)))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_read_error_of_the_connection_is_passed_on_as_it_is() {
+        use tokio::io::AsyncReadExt as _;
+        let mut watched = Watch::new(Broken, Duration::from_secs(1));
+        let err = watched.read(&mut [0_u8; 16]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::ConnectionReset);
+    }
 }

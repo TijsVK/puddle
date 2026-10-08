@@ -38,15 +38,17 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     tracing::info!(host = %cx.target.host, "TLS handshake refused: the client asked for another name");
-    if let Ok((refuse_config, _)) =
-        server_config(cx.termination.ca(), &cx.target.host, &[ALPN_HTTP11])
-    {
-        let _ = tokio::time::timeout(
+    let _ = async {
+        let (refuse_config, _) =
+            server_config(cx.termination.ca(), &cx.target.host, &[ALPN_HTTP11]).ok()?;
+        tokio::time::timeout(
             cx.proxy.config.tls_handshake_timeout,
             start.into_stream(refuse_config),
         )
-        .await;
+        .await
+        .ok()
     }
+    .await;
 }
 
 /// What a connection did, for the audit record.
@@ -357,11 +359,8 @@ where
             }
         }
         self.upstream = None;
+        // The first connection of the guest connection is the one the audit record names.
         let made = leg::connect(self.cx, &[ALPN_HTTP11]).await?;
-        if self.outcome.hop.is_none() && self.outcome.resolved_ip.is_none() {
-            self.outcome.hop = made.hop;
-            self.outcome.resolved_ip = made.ip;
-        }
         match made.conn {
             Connected::H1(conn) => {
                 self.upstream = Some(conn);

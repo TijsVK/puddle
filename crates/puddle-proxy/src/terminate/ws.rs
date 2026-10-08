@@ -152,4 +152,15 @@ mod tests {
         assert_eq!(kept, ["sec-websocket-protocol"]);
         assert_eq!(answer_headers(&headers, true).len(), 2);
     }
+
+    #[test]
+    fn a_header_is_single_only_when_it_has_exactly_one_text_value() {
+        let mut headers = HeaderMap::new();
+        let name = HeaderName::from_static("sec-websocket-protocol");
+        assert_eq!(single(&headers, &name), None);
+        headers.append(name.clone(), "chat".parse().unwrap());
+        assert_eq!(single(&headers, &name), Some("chat"));
+        headers.append(name.clone(), "superchat".parse().unwrap());
+        assert_eq!(single(&headers, &name), None);
+    }
 }

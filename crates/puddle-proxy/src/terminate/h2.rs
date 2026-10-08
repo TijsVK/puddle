@@ -104,7 +104,7 @@ struct Shared {
     /// Why the real server could not be used at the handshake; the first stream gets it.
     deferred: Mutex<Option<Refusal>>,
     outcome: Mutex<Outcome>,
-    open_streams: AtomicUsize,
+    open_streams: Arc<AtomicUsize>,
 }
 
 impl Shared {
@@ -124,7 +124,7 @@ impl Shared {
                 LegState::H2(conn) if !conn.sender.is_closed() => {
                     return Ok(Route::H2(conn.sender.clone()));
                 }
-                LegState::H1(pool) => Some(pool.clone()),
+                LegState::H1(pool) => pool.clone(),
                 _ => {
                     let made = leg::connect(&self.cx, &[ALPN_H2, ALPN_HTTP11]).await?;
                     {
@@ -144,33 +144,30 @@ impl Shared {
                         Connected::H1(conn) => {
                             let pool = H1Pool::new(conn);
                             *leg = LegState::H1(pool.clone());
-                            Some(pool)
+                            pool
                         }
                     }
                 }
             }
         };
-        match pool {
-            Some(pool) => pool.checkout(&self.cx, POOL_WAIT).await.map(Route::H1),
-            None => Err(bad("no upstream")),
-        }
+        pool.checkout(&self.cx, POOL_WAIT).await.map(Route::H1)
     }
 }
 
 /// Counts a stream as open until the guard goes away (with the response body, so a stream that
 /// is still sending is not mistaken for an idle connection).
-struct StreamGuard(Arc<Shared>);
+struct StreamGuard(Arc<AtomicUsize>);
 
 impl StreamGuard {
-    fn new(shared: &Arc<Shared>) -> Self {
-        shared.open_streams.fetch_add(1, Ordering::SeqCst);
-        Self(Arc::clone(shared))
+    fn new(open_streams: &Arc<AtomicUsize>) -> Self {
+        open_streams.fetch_add(1, Ordering::SeqCst);
+        Self(Arc::clone(open_streams))
     }
 }
 
 impl Drop for StreamGuard {
     fn drop(&mut self) {
-        self.0.open_streams.fetch_sub(1, Ordering::SeqCst);
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -197,7 +194,7 @@ where
         leg: tokio::sync::Mutex::new(leg),
         deferred: Mutex::new(deferred),
         outcome: Mutex::new(outcome),
-        open_streams: AtomicUsize::new(0),
+        open_streams: Arc::new(AtomicUsize::new(0)),
     });
     let service = {
         let shared = Arc::clone(&shared);
@@ -249,7 +246,7 @@ async fn handle(
     shared: Arc<Shared>,
     request: Request<Incoming>,
 ) -> Result<Response<RespBody>, Infallible> {
-    let guard = StreamGuard::new(&shared);
+    let guard = StreamGuard::new(&shared.open_streams);
     Ok(match exchange(&shared, request, guard).await {
         Ok(response) => response,
         Err(refusal) => refusal_response(&refusal),
@@ -752,25 +749,25 @@ fn guest_response(
         .map(|token| token.trim().to_ascii_lowercase())
         .collect();
     let mut headers = HeaderMap::with_capacity(parts.headers.len());
-    let mut last: Option<HeaderName> = None;
-    for (name, value) in std::mem::take(&mut parts.headers) {
-        let name = name.or_else(|| last.clone());
-        let Some(name) = name else { continue };
-        last = Some(name.clone());
-        if is_connection_specific(&name) || named_in_connection.iter().any(|t| t == name.as_str()) {
+    for (name, value) in &parts.headers {
+        if is_connection_specific(name) || named_in_connection.iter().any(|t| t == name.as_str()) {
             continue;
         }
-        headers.append(name, value);
+        headers.append(name.clone(), value.clone());
     }
     parts.headers = headers;
     parts.version = ::http::Version::HTTP_2;
-    let body = if head_only {
+    let body: RespBody = if head_only {
         // `HEAD` and `304` describe a body they do not carry; an HTTP/2 stream just ends.
-        UpstreamBody::empty(lease, sent, guard)
+        release(lease, sent);
+        drop(guard);
+        http_body_util::Empty::<Bytes>::new()
+            .map_err(|never| match never {})
+            .boxed_unsync()
     } else {
-        UpstreamBody::new(body, activity, sent, lease, guard)
+        UpstreamBody::new(body, activity, sent, lease, guard).boxed_unsync()
     };
-    Response::from_parts(parts, body.boxed_unsync())
+    Response::from_parts(parts, body)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -873,8 +870,8 @@ fn timed_out() -> BoxError {
 /// upstream request would be framed as complete with a body shorter than it declared, which is how
 /// a server that translates HTTP/2 to HTTP/1.1 behind us gets desynchronised. So the bytes are
 /// counted and a body that ends short is an error, which resets the upstream stream.
-struct GuestBody {
-    inner: Incoming,
+struct GuestBody<B> {
+    inner: B,
     activity: Arc<Activity>,
     sent: Arc<Sent>,
     timer: IdleTimer,
@@ -885,9 +882,9 @@ struct GuestBody {
     injected: Vec<HeaderName>,
 }
 
-impl GuestBody {
+impl<B: Body<Data = Bytes>> GuestBody<B> {
     fn new(
-        inner: Incoming,
+        inner: B,
         activity: &Arc<Activity>,
         sent: &Arc<Sent>,
         injected: Vec<HeaderName>,
@@ -905,6 +902,12 @@ impl GuestBody {
             sent: Arc::clone(sent),
             timer: IdleTimer::new(activity),
         }
+    }
+
+    /// Whether the bytes seen are the `Content-Length` the guest declared (or none was declared).
+    fn complete(&self) -> bool {
+        self.expected
+            .is_none_or(|expected| expected == self.received)
     }
 }
 
@@ -939,7 +942,11 @@ fn body_ended_short() -> BoxError {
     ))
 }
 
-impl Body for GuestBody {
+impl<B> Body for GuestBody<B>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     type Data = Bytes;
     type Error = BoxError;
 
@@ -949,32 +956,24 @@ impl Body for GuestBody {
     ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = &mut *self;
         match Pin::new(&mut this.inner).poll_frame(cx) {
-            Poll::Ready(Some(Ok(frame))) => {
+            Poll::Ready(Some(Ok(mut frame))) => {
                 this.activity.touch();
-                let frame = match frame.into_data() {
-                    Ok(data) => {
-                        this.received = this.received.saturating_add(data.len() as u64);
-                        Frame::data(data)
-                    }
-                    Err(frame) => match frame.into_trailers() {
-                        Ok(mut trailers) => {
-                            scrub_trailers(&mut trailers, &this.injected);
-                            Frame::trailers(trailers)
-                        }
-                        Err(frame) => frame,
-                    },
-                };
-                if this.inner.is_end_stream() {
+                if let Some(data) = frame.data_ref() {
+                    this.received = this
+                        .received
+                        .saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
+                }
+                if let Some(trailers) = frame.trailers_mut() {
+                    scrub_trailers(trailers, &this.injected);
+                }
+                if this.inner.is_end_stream() && this.complete() {
                     this.sent.finish();
                 }
                 Poll::Ready(Some(Ok(frame)))
             }
             Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(Box::new(err)))),
             Poll::Ready(None) => {
-                if this
-                    .expected
-                    .is_some_and(|expected| expected != this.received)
-                {
+                if !this.complete() {
                     return Poll::Ready(Some(Err(body_ended_short())));
                 }
                 this.sent.finish();
@@ -1002,8 +1001,8 @@ impl Body for GuestBody {
 /// The upstream's response body on its way to the guest. It holds the HTTP/1.1 connection it
 /// came over, which goes back to the pool once the body ended cleanly and the request was fully
 /// sent.
-struct UpstreamBody {
-    inner: Option<Incoming>,
+struct UpstreamBody<B> {
+    inner: B,
     activity: Arc<Activity>,
     sent: Arc<Sent>,
     lease: Option<Lease>,
@@ -1011,53 +1010,48 @@ struct UpstreamBody {
     _guard: StreamGuard,
 }
 
-impl UpstreamBody {
+impl<B: Body<Data = Bytes>> UpstreamBody<B> {
     fn new(
-        inner: Incoming,
+        inner: B,
         activity: &Arc<Activity>,
         sent: &Arc<Sent>,
         lease: Option<Lease>,
         guard: StreamGuard,
     ) -> Self {
         let mut body = Self {
-            inner: Some(inner),
+            inner,
             activity: Arc::clone(activity),
             sent: Arc::clone(sent),
             lease,
             timer: IdleTimer::new(activity),
             _guard: guard,
         };
-        if body.inner.as_ref().is_some_and(Incoming::is_end_stream) {
+        if body.inner.is_end_stream() {
             body.finished();
         }
         body
     }
 
-    fn empty(lease: Option<Lease>, sent: &Arc<Sent>, guard: StreamGuard) -> Self {
-        let activity = Arc::new(Activity::new());
-        let mut body = Self {
-            inner: None,
-            activity: Arc::clone(&activity),
-            sent: Arc::clone(sent),
-            lease,
-            timer: IdleTimer::new(&activity),
-            _guard: guard,
-        };
-        body.finished();
-        body
-    }
-
     /// The response ended: the connection is reusable only if the request ended too.
     fn finished(&mut self) {
-        if let Some(mut lease) = self.lease.take()
-            && self.sent.is_done()
-        {
-            lease.mark_reusable();
-        }
+        release(self.lease.take(), &self.sent);
     }
 }
 
-impl Body for UpstreamBody {
+/// Gives an HTTP/1.1 connection back to its pool when the request it carried was sent in full.
+fn release(lease: Option<Lease>, sent: &Sent) {
+    if let Some(mut lease) = lease
+        && sent.is_done()
+    {
+        lease.mark_reusable();
+    }
+}
+
+impl<B> Body for UpstreamBody<B>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     type Data = Bytes;
     type Error = BoxError;
 
@@ -1066,13 +1060,10 @@ impl Body for UpstreamBody {
         cx: &mut TaskContext<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = &mut *self;
-        let Some(inner) = this.inner.as_mut() else {
-            return Poll::Ready(None);
-        };
-        match Pin::new(inner).poll_frame(cx) {
+        match Pin::new(&mut this.inner).poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {
                 this.activity.touch();
-                if this.inner.as_ref().is_some_and(Incoming::is_end_stream) {
+                if this.inner.is_end_stream() {
                     this.finished();
                 }
                 Poll::Ready(Some(Ok(frame)))
@@ -1097,14 +1088,11 @@ impl Body for UpstreamBody {
     }
 
     fn is_end_stream(&self) -> bool {
-        self.inner.as_ref().is_none_or(Incoming::is_end_stream)
+        self.inner.is_end_stream()
     }
 
     fn size_hint(&self) -> SizeHint {
-        match &self.inner {
-            Some(inner) => inner.size_hint(),
-            None => SizeHint::with_exact(0),
-        }
+        self.inner.size_hint()
     }
 }
 
@@ -1377,5 +1365,189 @@ mod tests {
         sent.finish();
         waiter.await.unwrap();
         sent.wait().await;
+    }
+
+    /// A body that yields the frames it is given, then ends or never answers.
+    struct Scripted {
+        frames: std::collections::VecDeque<Result<Frame<Bytes>, io::Error>>,
+        exact: Option<u64>,
+        then_pending: bool,
+    }
+
+    impl Scripted {
+        fn new(frames: Vec<Result<Frame<Bytes>, io::Error>>, exact: Option<u64>) -> Self {
+            Self {
+                frames: frames.into(),
+                exact,
+                then_pending: false,
+            }
+        }
+
+        fn then_pending(mut self) -> Self {
+            self.then_pending = true;
+            self
+        }
+    }
+
+    impl Body for Scripted {
+        type Data = Bytes;
+        type Error = io::Error;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            _cx: &mut TaskContext<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
+            match self.frames.pop_front() {
+                Some(frame) => Poll::Ready(Some(frame)),
+                None if self.then_pending => Poll::Pending,
+                None => Poll::Ready(None),
+            }
+        }
+
+        fn is_end_stream(&self) -> bool {
+            self.frames.is_empty() && !self.then_pending
+        }
+
+        fn size_hint(&self) -> SizeHint {
+            self.exact
+                .map_or_else(SizeHint::default, SizeHint::with_exact)
+        }
+    }
+
+    fn data(text: &'static str) -> Frame<Bytes> {
+        Frame::data(Bytes::from_static(text.as_bytes()))
+    }
+
+    fn guest_body(inner: Scripted) -> (GuestBody<Scripted>, Arc<Sent>) {
+        let sent = Arc::new(Sent::default());
+        let body = GuestBody::new(
+            inner,
+            &Arc::new(Activity::new()),
+            &sent,
+            vec![HeaderName::from_static("x-api-key")],
+        );
+        (body, sent)
+    }
+
+    fn upstream_body(
+        inner: Scripted,
+        sent: &Arc<Sent>,
+    ) -> (UpstreamBody<Scripted>, Arc<AtomicUsize>) {
+        let open = Arc::new(AtomicUsize::new(0));
+        let body = UpstreamBody::new(
+            inner,
+            &Arc::new(Activity::new()),
+            sent,
+            None,
+            StreamGuard::new(&open),
+        );
+        (body, open)
+    }
+
+    #[tokio::test]
+    async fn a_request_body_that_ends_short_of_its_content_length_is_an_error() {
+        let (mut body, sent) = guest_body(Scripted::new(vec![Ok(data("12345"))], Some(10)));
+        assert!(body.frame().await.unwrap().unwrap().is_data());
+        let err = body.frame().await.unwrap().unwrap_err();
+        assert!(
+            err.to_string().contains("before its Content-Length"),
+            "{err}"
+        );
+        assert!(
+            !sent.is_done(),
+            "a truncated request is never marked as sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_body_with_its_whole_length_ends_and_is_marked_sent() {
+        let (mut body, sent) = guest_body(Scripted::new(
+            vec![Ok(data("12")), Ok(data("345"))],
+            Some(5),
+        ));
+        assert!(body.frame().await.unwrap().unwrap().is_data());
+        assert!(body.frame().await.unwrap().unwrap().is_data());
+        assert!(body.frame().await.is_none());
+        assert!(sent.is_done());
+        assert_eq!(body.size_hint().exact(), Some(5));
+    }
+
+    #[tokio::test]
+    async fn a_request_body_without_a_declared_length_ends_at_its_end() {
+        let (mut body, sent) = guest_body(Scripted::new(vec![Ok(data("12"))], None));
+        assert!(body.frame().await.unwrap().unwrap().is_data());
+        assert!(body.frame().await.is_none());
+        assert!(sent.is_done());
+    }
+
+    #[tokio::test]
+    async fn an_error_in_the_request_body_is_passed_on() {
+        let (mut body, _) = guest_body(Scripted::new(
+            vec![Err(io::Error::other("the guest's stream broke"))],
+            None,
+        ));
+        let err = body.frame().await.unwrap().unwrap_err();
+        assert!(err.to_string().contains("stream broke"), "{err}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_request_body_that_moves_nothing_for_an_hour_is_reset() {
+        let (mut body, _) = guest_body(Scripted::new(vec![], None).then_pending());
+        let err = body.frame().await.unwrap().unwrap_err();
+        let err = err.downcast_ref::<io::Error>().unwrap();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn an_empty_request_body_is_sent_at_once() {
+        let (body, sent) = guest_body(Scripted::new(vec![], Some(0)));
+        assert!(body.is_end_stream());
+        assert!(sent.is_done());
+    }
+
+    #[tokio::test]
+    async fn a_response_body_passes_its_frames_and_counts_the_stream_until_it_is_dropped() {
+        let sent = Arc::new(Sent::default());
+        sent.finish();
+        let (mut body, open) = upstream_body(Scripted::new(vec![Ok(data("ab"))], Some(2)), &sent);
+        assert_eq!(open.load(Ordering::SeqCst), 1);
+        assert_eq!(body.size_hint().exact(), Some(2));
+        assert!(body.frame().await.unwrap().unwrap().is_data());
+        assert!(body.frame().await.is_none());
+        assert!(body.is_end_stream());
+        drop(body);
+        assert_eq!(open.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn an_error_in_the_response_body_is_passed_on() {
+        let sent = Arc::new(Sent::default());
+        let (mut body, _) = upstream_body(
+            Scripted::new(vec![Err(io::Error::other("the server broke"))], None),
+            &sent,
+        );
+        let err = body.frame().await.unwrap().unwrap_err();
+        assert!(err.to_string().contains("server broke"), "{err}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_response_body_that_moves_nothing_for_an_hour_is_reset() {
+        let sent = Arc::new(Sent::default());
+        let (mut body, _) = upstream_body(Scripted::new(vec![], None).then_pending(), &sent);
+        let err = body.frame().await.unwrap().unwrap_err();
+        let err = err.downcast_ref::<io::Error>().unwrap();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn a_target_that_is_not_a_path_is_refused() {
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("*")
+            .header("host", "bound.test")
+            .body(())
+            .unwrap();
+        let refusal = check(&request, &target()).unwrap_err();
+        assert_eq!(status(&refusal), "400");
     }
 }

@@ -457,6 +457,16 @@ impl Drop for WsServer {
 
 impl WsServer {
     pub(crate) async fn start(pki: &Pki, name: &str) -> Self {
+        Self::start_with(pki, name, false).await
+    }
+
+    /// A server that accepts the handshake but answers with an accept key that is not the one
+    /// for the key it was sent.
+    pub(crate) async fn lying(pki: &Pki, name: &str) -> Self {
+        Self::start_with(pki, name, true).await
+    }
+
+    async fn start_with(pki: &Pki, name: &str, bad_accept: bool) -> Self {
         let mut config = Arc::into_inner(pki.server_config(name, super::Flaw::None)).unwrap();
         config.alpn_protocols = vec![b"http/1.1".to_vec()];
         let acceptor = TlsAcceptor::from(Arc::new(config));
@@ -511,7 +521,7 @@ impl WsServer {
                                 .await;
                             return;
                         };
-                        let accept = accept_for(&key);
+                        let accept = accept_for(if bad_accept { "not the key sent" } else { &key });
                         let mut answer = format!(
                             "HTTP/1.1 101 Switching Protocols\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-accept: {accept}\r\n"
                         );

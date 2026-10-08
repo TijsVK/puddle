@@ -89,6 +89,21 @@ async fn frames_until_end(tls: &mut TlsStream, limit: Duration) -> (Vec<(u8, u32
     }
 }
 
+/// Reads the server's own `SETTINGS` and acknowledges them, before anything else is sent.
+async fn ack_server_settings(tls: &mut TlsStream) {
+    loop {
+        let mut head = [0_u8; 9];
+        tls.read_exact(&mut head).await.unwrap();
+        let len = (usize::from(head[0]) << 16) | (usize::from(head[1]) << 8) | usize::from(head[2]);
+        let mut payload = vec![0_u8; len];
+        tls.read_exact(&mut payload).await.unwrap();
+        if head[3] == 4 && head[4] & 1 == 0 {
+            tls.write_all(&frame(4, 1, 0, &[])).await.unwrap();
+            return;
+        }
+    }
+}
+
 fn rig_with(
     pki: &Pki,
     server: std::net::SocketAddr,
@@ -171,16 +186,24 @@ async fn a_header_block_left_open_is_cut_off_after_the_head_timeout() {
     let rig = rig_with(&pki, server.addr, config, TestInjector::always());
     let mut guest = rig.guest().await;
     let mut tls = raw(&mut guest).await;
-    // HEADERS without END_HEADERS, then silence.
-    tls.write_all(&frame(1, 0x1, 1, &get_block(b"/")[..4]))
+    // The server's SETTINGS are acknowledged first: any frame between a HEADERS without
+    // END_HEADERS and its CONTINUATION would end the connection as a protocol error at once, and
+    // the test would not be about the deadline.
+    ack_server_settings(&mut tls).await;
+    // A whole, valid header block in a HEADERS frame without END_HEADERS, then silence: the
+    // CONTINUATION it waits for never comes.
+    tls.write_all(&frame(1, 0x1, 1, &get_block(b"/")))
         .await
         .unwrap();
     let started = std::time::Instant::now();
-    let (_, closed) = frames_until_end(&mut tls, Duration::from_secs(10)).await;
+    let (seen, closed) = frames_until_end(&mut tls, Duration::from_secs(10)).await;
     assert!(closed);
+    // The cut-off is the proxy's own deadline (the head timeout of one second), not a protocol
+    // error the HTTP/2 library raises at once.
     assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "{:?}",
+        started.elapsed() >= Duration::from_millis(900)
+            && started.elapsed() < Duration::from_secs(5),
+        "{:?} {seen:?}",
         started.elapsed()
     );
     assert!(server.recorded().is_empty());

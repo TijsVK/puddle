@@ -420,6 +420,9 @@ async fn a_websocket_upgrade_over_http11_is_injected_and_piped() {
     assert_eq!(find("sec-websocket-key"), Some(KEY));
     assert_eq!(find("host"), Some("bound.test"));
     assert_eq!(find("upgrade"), Some("websocket"));
+    // The guest hangs up: the pipe ends and the connection is recorded.
+    client.close().await;
+    assert_eq!(rig.events(1).await.len(), 1);
 }
 
 #[tokio::test]
