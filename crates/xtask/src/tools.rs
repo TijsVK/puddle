@@ -30,7 +30,7 @@ const GIT_LOCAL_ENV: [&str; 15] = [
     "GIT_COMMON_DIR",
 ];
 
-/// `git` without the repository variables of the caller's environment (see [`GIT_LOCAL_ENV`]), so
+/// `git` without the repository variables of the caller's environment (the `GIT_LOCAL_ENV` list), so
 /// it acts on the repository its working directory or `-C` names, also when xtask runs from a hook.
 #[must_use]
 pub fn git_command() -> Command {
