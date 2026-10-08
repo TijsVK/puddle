@@ -157,7 +157,15 @@ describe("the detail layout", () => {
       screen.getByRole("navigation", { name: "Workspace sections" }),
     );
     expect(tabs.getAllByRole("link").map((l) => l.textContent?.trim())).toEqual(
-      ["Overview", "Network", "Environment", "Shell init", "Ports", "Settings"],
+      [
+        "Overview",
+        "Network",
+        "Git",
+        "Environment",
+        "Shell init",
+        "Ports",
+        "Settings",
+      ],
     );
     expect(tabs.getByRole("link", { name: "Overview" })).toHaveAttribute(
       "aria-current",

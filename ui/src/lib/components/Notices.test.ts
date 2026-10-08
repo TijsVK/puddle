@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { NoticeCenter } from "#lib/notify/notices.svelte.ts";
 import Notices from "./Notices.svelte";
 
@@ -83,5 +83,23 @@ describe("Notices", () => {
     expect(screen.getAllByText(/^Title/)).toHaveLength(3);
     await fireEvent.click(screen.getByRole("button", { name: "Dismiss all" }));
     expect(center.items).toEqual([]);
+  });
+
+  it("runs a notice's action on a click, and only then", async () => {
+    const center = setup();
+    const run = vi.fn();
+    center.add({
+      key: "a",
+      tone: "warning",
+      title: "A push was refused",
+      action: { label: "Allow push", run },
+      link: { href: "/git", label: "Git tab" },
+    });
+    expect(run).not.toHaveBeenCalled();
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Allow push" }),
+    );
+    expect(run).toHaveBeenCalledOnce();
+    expect(screen.getByRole("link", { name: "Git tab" })).toBeInTheDocument();
   });
 });

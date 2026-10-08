@@ -10,6 +10,7 @@ export interface Tab {
 export const TABS: readonly Tab[] = [
   { slug: "", label: "Overview" },
   { slug: "network", label: "Network" },
+  { slug: "git", label: "Git" },
   { slug: "environment", label: "Environment" },
   { slug: "shell-init", label: "Shell init" },
   { slug: "ports", label: "Ports" },

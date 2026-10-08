@@ -14,7 +14,9 @@ import {
   type NetworkHealth,
 } from "#lib/network/model.ts";
 import { asWorkspaceEvent } from "#lib/workspaces/events.ts";
+import { identities } from "#lib/stores/identities.svelte.ts";
 import type { LiveSource } from "#lib/stores/live.svelte.ts";
+import { CredentialNotices, type IdentityLookup } from "./credentials.ts";
 import { InAppNotifier, type Notifier } from "./notifier.ts";
 
 type Status = components["schemas"]["WorkspaceStatus"];
@@ -27,13 +29,16 @@ const oomKey = (name: string) => `oom:${name}`;
 export interface WatcherDeps {
   source?: LiveSource;
   notifier?: Notifier;
-  api?: Pick<ApiClient, "GET">;
+  api?: Pick<ApiClient, "GET" | "POST" | "PUT">;
+  /** What the sign-in notice asks of the identities; the app's own by default. */
+  identities?: IdentityLookup;
 }
 
 export class NoticeWatcher {
   readonly #source: LiveSource | undefined;
   readonly #notifier: Notifier;
-  readonly #api: Pick<ApiClient, "GET">;
+  readonly #api: Pick<ApiClient, "GET" | "POST" | "PUT">;
+  readonly #credentials: CredentialNotices;
   readonly #status = new Map<string, Status>();
   readonly #expected = new Set<string>();
   /** The summary the network notice last said, so an unchanged problem is not announced again. */
@@ -43,6 +48,11 @@ export class NoticeWatcher {
     this.#source = deps.source;
     this.#notifier = deps.notifier ?? new InAppNotifier();
     this.#api = deps.api ?? defaultApi;
+    this.#credentials = new CredentialNotices({
+      notifier: this.#notifier,
+      identities: deps.identities ?? identities,
+      api: this.#api,
+    });
   }
 
   /** Reads the statuses the events will be compared with; never throws. */
@@ -61,6 +71,7 @@ export class NoticeWatcher {
 
   /** Applies one stream event. */
   handle(raw: unknown): void {
+    if (this.#credentials.handle(raw)) return;
     const event = asWorkspaceEvent(raw);
     if (!event) return;
     const name = event.workspace;
@@ -168,6 +179,10 @@ export class NoticeWatcher {
       event: (e) => this.handle(e),
       resync: () => void this.seed(),
     });
-    return () => unsubscribe?.();
+    const stopCredentials = this.#credentials.start();
+    return () => {
+      unsubscribe?.();
+      stopCredentials();
+    };
   }
 }

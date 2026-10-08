@@ -44,6 +44,7 @@ export default defineConfig({
         "src/lib/settings/**": { lines: 95, branches: 90 },
         "src/lib/network/**": { lines: 95, branches: 90 },
         "src/lib/notify/**": { lines: 95, branches: 90 },
+        "src/lib/identities/**": { lines: 95, branches: 90 },
       },
     },
   },

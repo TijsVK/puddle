@@ -5,6 +5,7 @@ import Inbox from "@lucide/svelte/icons/inbox";
 import Boxes from "@lucide/svelte/icons/boxes";
 import ShieldCheck from "@lucide/svelte/icons/shield-check";
 import ScrollText from "@lucide/svelte/icons/scroll-text";
+import KeyRound from "@lucide/svelte/icons/key-round";
 import Settings from "@lucide/svelte/icons/settings";
 import type { Component } from "svelte";
 
@@ -28,6 +29,7 @@ export const NAV: readonly NavItem[] = [
   },
   { href: "/rules", label: "Rules", icon: ShieldCheck as Component },
   { href: "/activity", label: "Activity", icon: ScrollText as Component },
+  { href: "/identities", label: "Identities", icon: KeyRound as Component },
   { href: "/settings", label: "Settings", icon: Settings as Component },
 ];
 

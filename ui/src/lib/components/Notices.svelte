@@ -44,8 +44,20 @@
         <div class="text">
           <p class="title">{notice.title}</p>
           {#if notice.detail}<p class="detail">{notice.detail}</p>{/if}
-          {#if notice.link}
-            <a href={notice.link.href}>{notice.link.label}</a>
+          {#if notice.link || notice.action}
+            <div class="ways">
+              {#if notice.action}
+                {@const action = notice.action}
+                <button
+                  type="button"
+                  class="btn"
+                  onclick={() => void action.run()}>{action.label}</button
+                >
+              {/if}
+              {#if notice.link}
+                <a href={notice.link.href}>{notice.link.label}</a>
+              {/if}
+            </div>
           {/if}
         </div>
         <button
@@ -113,6 +125,12 @@
   }
   .detail {
     color: var(--color-text-muted);
+  }
+  .ways {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
   }
   .more {
     display: flex;

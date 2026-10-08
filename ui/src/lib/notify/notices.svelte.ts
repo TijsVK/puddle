@@ -13,6 +13,12 @@ export interface NoticeLink {
   label: string;
 }
 
+/** A button on a notice: one deliberate click does the thing the notice says is missing. */
+export interface NoticeAction {
+  label: string;
+  run: () => void | Promise<void>;
+}
+
 export interface NoticeInput {
   /** What the notice is about; a second notice with this key replaces the first. */
   key: string;
@@ -22,6 +28,7 @@ export interface NoticeInput {
   /** More, shown under the title. */
   detail?: string;
   link?: NoticeLink;
+  action?: NoticeAction;
 }
 
 export interface Notice extends NoticeInput {

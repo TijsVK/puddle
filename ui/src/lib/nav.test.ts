@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 import { documentTitle, NAV, sectionFor } from "./nav.ts";
 
 describe("nav", () => {
-  it("has the five top-level sections, in order", () => {
+  it("has the six top-level sections, in order", () => {
     expect(NAV.map((n) => n.label)).toEqual([
       "Workspaces",
       "Inbox",
       "Rules",
       "Activity",
+      "Identities",
       "Settings",
     ]);
     expect(new Set(NAV.map((n) => n.href)).size).toBe(NAV.length);

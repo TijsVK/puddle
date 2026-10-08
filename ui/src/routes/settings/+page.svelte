@@ -577,10 +577,11 @@
       <section class="card" id="s-git" aria-labelledby="h-git">
         <h2 id="h-git">Git and credentials</h2>
         <p>
-          Git name and email, and the credentials puddle adds to outgoing
-          requests, can't be changed here yet. The secret of a credential never
+          The Git name and email, and the credentials puddle adds to outgoing
+          requests, are kept as identities. The secret of a credential never
           enters a workspace.
         </p>
+        <p><a href="/identities">Manage identities</a></p>
       </section>
 
       <section class="card" id="s-priv" aria-labelledby="h-priv">

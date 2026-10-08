@@ -49,7 +49,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Sidebar", () => {
-  it("lists the five sections and marks the current one", () => {
+  it("lists the six sections and marks the current one", () => {
     url.pathname = "/rules/abc";
     render(Sidebar);
     const links = screen.getAllByRole("link");
@@ -58,6 +58,7 @@ describe("Sidebar", () => {
       "Inbox",
       "Rules",
       "Activity",
+      "Identities",
       "Settings",
     ]);
     expect(screen.getByRole("link", { name: "Rules" })).toHaveAttribute(
