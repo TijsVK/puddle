@@ -119,6 +119,16 @@ async fn an_allowed_name_the_host_cannot_resolve_is_nxdomain_on_a_direct_route()
 }
 
 #[tokio::test]
+async fn an_allowed_name_with_no_addresses_is_nxdomain_on_a_direct_route() {
+    let r = rig(StaticResolver::new().with("empty.example", &[]));
+    r.policy.allow(&host("empty.example"));
+    assert_eq!(
+        r.handler.resolve_name(a("empty.example")).await,
+        ResolveAnswer::NoSuchName { ttl: 20 }
+    );
+}
+
+#[tokio::test]
 async fn an_allowed_name_the_host_cannot_resolve_goes_to_the_company_proxy_when_one_is_in_the_route()
  {
     let r = rig_with(StaticResolver::new(), StaticRecords::new(), |p| {

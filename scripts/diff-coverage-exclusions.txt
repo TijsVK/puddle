@@ -76,3 +76,5 @@ crates/puddle-api/src/routes/workspaces.rs | Err(e) => all_unreadable(records.le
 crates/puddle-api/src/credentials.rs | _ => CredentialsError::Unavailable(said), | the arm for a sign-in refusal a newer puddle-secrets adds to the non-exhaustive enum; no such variant exists yet
 crates/puddle-secrets/src/signin.rs | return Err(SignInError::NoPrompt(Tool::Gh, String::new())); | the child's standard error was requested as a pipe a line earlier, so it is always there; the guard exists only to avoid an unwrap
 crates/puddle-api/src/network_health.rs | _ => ProxyProblemKind::Other, | `ProxyProblemKind` is non-exhaustive in puddle-upstream; both kinds this version has are handled above, so no test can build another
+crates/puddle-upstream/src/tls.rs | rejected = rejected.len(), | a field of the one warning about roots the verifier cannot use; the line is only evaluated with a tracing subscriber installed, and the test for the roots (`roots_that_do_not_parse_are_skipped_and_listed_with_the_reason`) installs none
+crates/puddle-upstream/src/tls.rs | reasons = %reasons.join("; "), | same warning, same reason
