@@ -183,7 +183,7 @@ const REASONS: Record<string, string> = {
 /** Reasons that say something happened to an allowed connection, shown beside the rule. */
 const NOTES: Record<string, string> = {
   guest_tls_rejected:
-    "the tool in the workspace didn't accept puddle's certificate",
+    "the tool in the workspace didn't accept puddle's certificate (it may keep its own list of trusted roots)",
 };
 
 const DECISIONS: Record<string, { label: string; tone: Tone }> = {

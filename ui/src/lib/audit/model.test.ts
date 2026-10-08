@@ -204,13 +204,13 @@ describe("a record as a row", () => {
     );
     expect(refused.outcome).toEqual({ label: "Allowed", tone: "allow" });
     expect(refused.detail).toBe(
-      "rule 12 · the tool in the workspace didn't accept puddle's certificate",
+      "rule 12 · the tool in the workspace didn't accept puddle's certificate (it may keep its own list of trusted roots)",
     );
     const withoutRule = row(
       connection(2, { reason: "guest_tls_rejected", rule_id: null }).record,
     );
     expect(withoutRule.detail).toBe(
-      "the tool in the workspace didn't accept puddle's certificate",
+      "the tool in the workspace didn't accept puddle's certificate (it may keep its own list of trusted roots)",
     );
   });
   it("shows puddle's own connections as puddle, with its own reason", () => {

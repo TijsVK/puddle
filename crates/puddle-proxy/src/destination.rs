@@ -103,6 +103,7 @@ fn name_error(err: io::Error) -> io::Error {
     if lookup_failed(&err) {
         err
     } else {
+        tracing::debug!(error = %err, "name lookup error read as no such name");
         io::Error::new(io::ErrorKind::NotFound, err)
     }
 }

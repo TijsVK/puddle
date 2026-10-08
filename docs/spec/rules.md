@@ -233,15 +233,16 @@ store.
   with no data; R-36 adds one request for an `SRV` query of a name no rule matches.
 - **R-32 An allowed name is resolved once, on the host.** If it resolves, the guest gets a
   stand-in. If the host's resolver says there is no such name, the guest gets `NXDOMAIN`, except
-  under R-33. If every address it resolves to is refused by R-14, the guest still gets a stand-in:
+  under R-33; if the lookup itself fails (no resolver answered, the network is down) it gets
+  `SERVFAIL` and the host logs why, never a cached "no such name". If every address it resolves to is refused by R-14, the guest still gets a stand-in:
   the connection says which toggle would allow it. The addresses never reach the guest, and the
   lookup does not constrain the connection, which resolves and checks again (R-14, R-27).
 - **R-33 A name the host can't resolve goes to the company proxy by name, when one is in the
   route.** If an upstream proxy is in the route and sending unresolvable names to it is on (the
-  default), an allowed name the host can't resolve, or whose lookup times out, gets a stand-in
-  too: on some networks only the proxy resolves internet names, and the proxy decides when the
-  connection arrives. With no upstream proxy, or with that setting off, it is `NXDOMAIN`
-  (or `SERVFAIL` for a timeout).
+  default), an allowed name the host can't resolve, or whose lookup fails or times out, gets a
+  stand-in too: on some networks only the proxy resolves internet names, and the proxy decides when
+  the connection arrives. With no upstream proxy, or with that setting off, it is `NXDOMAIN` for a
+  name that does not exist and `SERVFAIL` for a lookup that failed or timed out.
 - **R-34 `SRV`, `TXT` and `MX` are looked up for allowed names only.** The rules decide the name
   without its leading service labels (`_mongodb._tcp.db.example.net` is decided as
   `db.example.net`), since a service label is not part of a host the user approves. The targets of
