@@ -9,10 +9,13 @@
 #     Windows: the release's msb-windows-x86_64.exe and libkrunfw-windows-x86_64.dll, installed as
 #              msb.exe + libkrunfw.dll.
 #     Linux:   the fork releases no Linux msb, so msb is built from the tag's source (commit
-#              pinned) with upstream's agentd embedded; libkrunfw from upstream's release v<release>
-#              (the fork keeps upstream's firmware), installed as libkrunfw.so.5 and as a copy under
-#              the versioned name msb looks for beside itself (libkrunfw.so.<version>, pinned in
-#              ci/msb-runtime.sha256). Needs cargo and libcap-ng-dev; takes ~10 min cold. MSB_BUILD_DIR (default <dest-dir>/../msb-build) holds the checkout,
+#              pinned) with the guest agent embedded: the release's own agentd-x86_64 when the tag has
+#              one pinned (the fork builds it from the same source as msb, and the host and guest
+#              must agree on their limits), else upstream's; libkrunfw from upstream's release
+#              v<release> (the fork keeps upstream's firmware), installed as libkrunfw.so.5 and as
+#              a copy under the versioned name msb looks for beside itself (libkrunfw.so.<version>,
+#              pinned in ci/msb-runtime.sha256). Needs cargo and libcap-ng-dev; takes ~10 min cold.
+#              MSB_BUILD_DIR (default <dest-dir>/../msb-build) holds the checkout,
 #              its target dir and the result msb-<commit>, which is reused when present (a CI
 #              cache keeps only that file).
 #   upstream tag v<release> (superradcompany/microsandbox): the release archive for this host.
@@ -102,7 +105,11 @@ case "$tag/$os" in
             exit 1
         fi
         mkdir -p "$build/embed"
-        fetch "$upstream_repo" "$release" "agentd-$arch" "$build/embed/agentd"
+        if awk -v t="$tag" -v a="agentd-$arch" '$1 == t && $2 == a { found = 1 } END { exit !found }' "$here/msb-runtime.sha256"; then
+            fetch "$fork_repo" "$tag" "agentd-$arch" "$build/embed/agentd"
+        else
+            fetch "$upstream_repo" "$release" "agentd-$arch" "$build/embed/agentd"
+        fi
         toolchain=$(awk -F'"' '/^channel/ { print $2 }' "$here/../rust-toolchain.toml")
         # Upstream's Linux steps (release-linux.yml "Build msb"), with the fork's own lock.
         (

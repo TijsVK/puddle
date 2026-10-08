@@ -52,11 +52,11 @@ puddle-host = { path = "crates/puddle-host" }
 # required even without guest networking: without it the SDK's launch config lacks `sandbox_slot`
 # and a release msb refuses it ("missing field `sandbox_slot`"). `ssh` for the in-process
 # SSH server.
-microsandbox = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.12", default-features = false, features = ["local", "net", "ssh"] }
+microsandbox = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.14", default-features = false, features = ["local", "net", "ssh"] }
 # The SDK's image crate: the SDK has no public "pull without creating" call.
-microsandbox-image = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.12", default-features = false }
+microsandbox-image = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.14", default-features = false }
 # Only for building the SDK's boot error in tests.
-microsandbox-runtime = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.12", default-features = false }
+microsandbox-runtime = { git = "https://github.com/TijsVK/microsandbox", tag = "v0.7.7-puddle.14", default-features = false }
 object = { version = "0.40", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
@@ -155,23 +155,26 @@ unwrap_used = "warn"
 wildcard_dependencies = "warn"
 
 # The msb fork's own `[patch.crates-io]` doesn't reach puddle (patches apply only in the root
-# workspace), so its libkrun and russh forks are repeated here, pinned by `rev` to the commits the
+# workspace), so its libkrun, russh and imago forks are repeated here, pinned by `rev` to the commits the
 # fork tag's Cargo.lock pins (a branch would follow later pushes, which the tag's msb wasn't built
 # with). libkrun: TijsVK/libkrun `puddle` (msb_krun 0.1.41 + fixes); russh: TijsVK/russh
 # `puddle-0.63.3` (peer-close fix).
 [patch.crates-io]
-msb_krun = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
-msb_krun_arch = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
-msb_krun_arch_gen = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
-msb_krun_cpuid = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
-msb_krun_devices = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
-msb_krun_hvf = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
-msb_krun_kernel = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
-msb_krun_polly = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
-msb_krun_smbios = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
-msb_krun_utils = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
-msb_krun_vmm = { git = "https://github.com/TijsVK/libkrun", rev = "bdf711f0c7ec5117b70c697282c61943fca36ee7" }
+msb_krun = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
+msb_krun_arch = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
+msb_krun_arch_gen = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
+msb_krun_cpuid = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
+msb_krun_devices = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
+msb_krun_hvf = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
+msb_krun_kernel = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
+msb_krun_polly = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
+msb_krun_smbios = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
+msb_krun_utils = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
+msb_krun_vmm = { git = "https://github.com/TijsVK/libkrun", rev = "fdff6d00ff0bc13134b780d76359dd609db068ce" }
 russh = { git = "https://github.com/TijsVK/russh", rev = "b7e6012432378bf7662167d17ce00a152ab33d0d" }
+# msb-imago: TijsVK/imago `puddle` (File::sync() calls fdatasync, so a guest flush no longer commits the
+# host journal for the image mtime).
+msb-imago = { git = "https://github.com/TijsVK/imago", rev = "e528d65caf49ed0e117eb29ffae1d9e6efc95d25" }
 
 [profile.release]
 lto = "thin"
