@@ -307,7 +307,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
-    min-height: 2rem;
+    min-height: var(--control-size);
   }
   .filters {
     display: flex;
@@ -326,7 +326,7 @@
   }
   .field input,
   .field select {
-    min-height: 2rem;
+    min-height: var(--control-size);
     padding: var(--space-1) var(--space-2);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
@@ -339,7 +339,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-4);
-    min-height: 2.25rem;
+    min-height: calc(var(--control-size) + 0.25rem);
     margin-bottom: var(--space-2);
   }
   .status p {

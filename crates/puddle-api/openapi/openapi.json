@@ -5975,6 +5975,14 @@
         },
         "additionalProperties": false
       },
+      "DensityChoice": {
+        "type": "string",
+        "description": "How much room the window leaves around its content.",
+        "enum": [
+          "comfortable",
+          "compact"
+        ]
+      },
       "Effect": {
         "type": "string",
         "description": "Allow or deny.",
@@ -8362,6 +8370,7 @@
         "description": "Preferences for puddle's own window. `null` means puddle's default.",
         "required": [
           "theme",
+          "density",
           "notifications",
           "sound",
           "close_behaviour"
@@ -8372,6 +8381,17 @@
               {
                 "$ref": "#/components/schemas/CloseBehaviour",
                 "description": "What closing the window does while a workspace runs (default `tray`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "density": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DensityChoice",
+                "description": "Comfortable or compact spacing for the whole app (default `comfortable`). A request may\nleave it out, like every field here: out or `null` means the default."
               },
               {
                 "type": "null"

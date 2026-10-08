@@ -18,6 +18,7 @@ vi.mock("#lib/api/client.ts", () => ({ api }));
 import { MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
+import { density } from "#lib/theme/density.svelte.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
 import Page from "./+page.svelte";
 
@@ -30,6 +31,8 @@ beforeEach(() => {
   localStorage.clear();
   delete document.documentElement.dataset["theme"];
   theme.choice = "system";
+  delete document.documentElement.dataset["density"];
+  density.choice = "comfortable";
 });
 afterEach(cleanup);
 
@@ -147,6 +150,35 @@ describe("appearance and notifications", () => {
       /couldn't save it/,
     );
     expect(document.documentElement.dataset["theme"]).toBe("light");
+  });
+
+  it("stores the density in the settings and applies it at once", async () => {
+    await open();
+    expect(screen.getByLabelText("Density")).toHaveValue("comfortable");
+    await choose("Density", "compact");
+    await screen.findByText("Density saved.");
+    expect(api.ui.density).toBe("compact");
+    expect(document.documentElement.dataset["density"]).toBe("compact");
+    expect(localStorage.getItem("puddle.density")).toBe("compact");
+    await choose("Density", "comfortable");
+    await waitFor(() =>
+      expect(document.documentElement.dataset["density"]).toBeUndefined(),
+    );
+    expect(api.ui.density).toBe("comfortable");
+  });
+
+  it("says when the density applied but could not be stored", async () => {
+    await open();
+    api.refuse.set("PUT /api/settings", {
+      status: 500,
+      error: "internal",
+      message: "x",
+    });
+    await choose("Density", "compact");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /density changed here but puddle couldn't save it/,
+    );
+    expect(document.documentElement.dataset["density"]).toBe("compact");
   });
 
   it("saves each notification setting", async () => {

@@ -10,6 +10,7 @@
   import { NoticeWatcher } from "#lib/notify/watcher.ts";
   import { live } from "#lib/stores/live.svelte.ts";
   import { networkHealth } from "#lib/stores/network-health.svelte.ts";
+  import { density } from "#lib/theme/density.svelte.ts";
   import { theme } from "#lib/theme/theme.svelte.ts";
 
   let { children } = $props();
@@ -19,6 +20,8 @@
   onMount(() => {
     theme.init();
     void theme.sync();
+    density.init();
+    void density.sync();
     const stops = [live.start(), networkHealth.start(), watcher.start()];
     return () => stops.forEach((stop) => stop());
   });

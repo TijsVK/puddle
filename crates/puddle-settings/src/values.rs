@@ -124,6 +124,17 @@ pub enum ThemeChoice {
     Dark,
 }
 
+/// How much room puddle's window leaves around its content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DensityChoice {
+    /// The roomier layout.
+    #[default]
+    Comfortable,
+    /// Tighter spacing, so more fits on screen.
+    Compact,
+}
+
 /// What closing puddle's window does while a workspace runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -194,6 +205,12 @@ mod tests {
         assert_eq!(ServerChoice::default(), ServerChoice::CodeServer);
         assert_eq!(ThemeChoice::default(), ThemeChoice::System);
         assert_eq!(CloseBehaviour::default(), CloseBehaviour::Tray);
+        assert_eq!(DensityChoice::default(), DensityChoice::Comfortable);
+        assert_eq!(
+            serde_json::from_str::<DensityChoice>(r#""compact""#).unwrap(),
+            DensityChoice::Compact
+        );
+        assert!(serde_json::from_str::<DensityChoice>(r#""tight""#).is_err());
         assert_eq!(
             serde_json::to_string(&ServerChoice::CodeServer).unwrap(),
             r#""code_server""#

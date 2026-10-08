@@ -87,7 +87,7 @@
   }
   :global(.form-dialog input[type="text"]),
   :global(.form-dialog select) {
-    min-height: 2rem;
+    min-height: var(--control-size);
     padding: var(--space-1) var(--space-2);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);

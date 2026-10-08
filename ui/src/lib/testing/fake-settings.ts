@@ -32,6 +32,7 @@ export class FakeSettings {
   };
   ui: S["UiPrefs"] = {
     theme: null,
+    density: null,
     notifications: null,
     sound: null,
     close_behaviour: null,
@@ -191,6 +192,7 @@ export class FakeSettings {
     };
     this.ui = {
       theme: null,
+      density: null,
       notifications: null,
       sound: null,
       close_behaviour: null,

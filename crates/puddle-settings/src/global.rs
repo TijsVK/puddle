@@ -9,7 +9,8 @@ use serde_json::Value;
 use crate::document::{self, Document};
 use crate::migrate::{self, Migration};
 use crate::{
-    CloseBehaviour, Consents, Loaded, ServerChoice, SettingsError, ThemeChoice, WorkspaceLayer,
+    CloseBehaviour, Consents, DensityChoice, Loaded, ServerChoice, SettingsError, ThemeChoice,
+    WorkspaceLayer,
 };
 
 /// The current shape of [`GlobalSettings`] documents.
@@ -142,6 +143,9 @@ pub struct UiPrefs {
     /// Light, dark or follow the system; default follow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<ThemeChoice>,
+    /// Comfortable or compact spacing for the whole app; default comfortable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub density: Option<DensityChoice>,
     /// Show a system notification for a new request; default on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notifications: Option<bool>,
@@ -165,6 +169,12 @@ impl UiPrefs {
     #[must_use]
     pub fn theme(&self) -> ThemeChoice {
         self.theme.unwrap_or_default()
+    }
+
+    /// The density in use.
+    #[must_use]
+    pub fn density(&self) -> DensityChoice {
+        self.density.unwrap_or_default()
     }
 
     /// Whether a new request raises a system notification.
@@ -236,6 +246,7 @@ mod tests {
         );
         let ui = &loaded.settings.ui;
         assert_eq!(ui.theme(), ThemeChoice::System);
+        assert_eq!(ui.density(), DensityChoice::Comfortable);
         assert!(ui.notifications());
         assert!(!ui.sound());
         assert_eq!(ui.close_behaviour(), CloseBehaviour::Tray);
@@ -243,7 +254,7 @@ mod tests {
         let doc = json!({
             "schema_version": 2,
             "vscode_server": { "server": "microsoft" },
-            "ui": { "theme": "dark", "notifications": false, "sound": true, "close_behaviour": "quit" },
+            "ui": { "theme": "dark", "density": "compact", "notifications": false, "sound": true, "close_behaviour": "quit" },
         });
         let loaded = GlobalSettings::from_document(doc.clone()).unwrap();
         assert_eq!(loaded.unknown_fields, Vec::<String>::new());
@@ -252,6 +263,7 @@ mod tests {
             ServerChoice::Microsoft
         );
         assert_eq!(loaded.settings.ui.theme(), ThemeChoice::Dark);
+        assert_eq!(loaded.settings.ui.density(), DensityChoice::Compact);
         assert!(!loaded.settings.ui.notifications());
         assert!(loaded.settings.ui.sound());
         assert_eq!(loaded.settings.ui.close_behaviour(), CloseBehaviour::Quit);
@@ -265,10 +277,9 @@ mod tests {
         assert_eq!(loaded.migrated_from, None);
         assert_eq!(loaded.settings.to_document(), old);
 
-        let newer =
-            json!({ "schema_version": 2, "ui": { "density": "compact", "theme": "light" } });
+        let newer = json!({ "schema_version": 2, "ui": { "font_scale": 2, "theme": "light" } });
         let loaded = GlobalSettings::from_document(newer.clone()).unwrap();
-        assert_eq!(loaded.unknown_fields, ["ui.density"]);
+        assert_eq!(loaded.unknown_fields, ["ui.font_scale"]);
         assert_eq!(loaded.settings.to_document(), newer);
     }
 

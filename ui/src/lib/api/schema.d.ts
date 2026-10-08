@@ -1360,6 +1360,11 @@ export interface components {
             fingerprint?: string | null;
         };
         /**
+         * @description How much room the window leaves around its content.
+         * @enum {string}
+         */
+        DensityChoice: "comfortable" | "compact";
+        /**
          * @description Allow or deny.
          * @enum {string}
          */
@@ -2371,6 +2376,7 @@ export interface components {
         /** @description Preferences for puddle's own window. `null` means puddle's default. */
         UiPrefs: {
             close_behaviour: components["schemas"]["CloseBehaviour"] | null;
+            density: components["schemas"]["DensityChoice"] | null;
             /** @description A system notification for a new request (default on). */
             notifications: boolean | null;
             /** @description The system sound with a notification (default off). */

@@ -1565,6 +1565,34 @@ impl From<ThemeChoice> for settings::ThemeChoice {
     }
 }
 
+/// How much room the window leaves around its content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DensityChoice {
+    /// The roomier layout.
+    Comfortable,
+    /// Tighter spacing, so more fits on screen.
+    Compact,
+}
+
+impl From<settings::DensityChoice> for DensityChoice {
+    fn from(c: settings::DensityChoice) -> Self {
+        match c {
+            settings::DensityChoice::Comfortable => Self::Comfortable,
+            settings::DensityChoice::Compact => Self::Compact,
+        }
+    }
+}
+
+impl From<DensityChoice> for settings::DensityChoice {
+    fn from(c: DensityChoice) -> Self {
+        match c {
+            DensityChoice::Comfortable => Self::Comfortable,
+            DensityChoice::Compact => Self::Compact,
+        }
+    }
+}
+
 /// What closing the window does while a workspace runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1601,6 +1629,11 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub theme: Option<ThemeChoice>,
+    /// Comfortable or compact spacing for the whole app (default `comfortable`). A request may
+    /// leave it out, like every field here: out or `null` means the default.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub density: Option<DensityChoice>,
     /// A system notification for a new request (default on).
     #[serde(default)]
     #[schema(required = true)]
@@ -1619,6 +1652,7 @@ impl From<&settings::UiPrefs> for UiPrefs {
     fn from(u: &settings::UiPrefs) -> Self {
         Self {
             theme: u.theme.map(Into::into),
+            density: u.density.map(Into::into),
             notifications: u.notifications,
             sound: u.sound,
             close_behaviour: u.close_behaviour.map(Into::into),
@@ -1630,11 +1664,13 @@ impl UiPrefs {
     fn apply_to(self, prefs: &mut settings::UiPrefs) {
         let Self {
             theme,
+            density,
             notifications,
             sound,
             close_behaviour,
         } = self;
         prefs.theme = theme.map(Into::into);
+        prefs.density = density.map(Into::into);
         prefs.notifications = notifications;
         prefs.sound = sound;
         prefs.close_behaviour = close_behaviour.map(Into::into);
@@ -2103,6 +2139,7 @@ mod tests {
             },
             ui: UiPrefs {
                 theme: Some(ThemeChoice::Dark),
+                density: Some(DensityChoice::Compact),
                 notifications: Some(false),
                 sound: Some(true),
                 close_behaviour: Some(CloseBehaviour::Quit),
@@ -2112,6 +2149,7 @@ mod tests {
         .unwrap();
         assert_eq!(g.vscode_server.server(), settings::ServerChoice::Microsoft);
         assert_eq!(g.ui.theme(), settings::ThemeChoice::Dark);
+        assert_eq!(g.ui.density(), settings::DensityChoice::Compact);
         assert!(!g.ui.notifications());
         assert!(g.ui.sound());
         assert_eq!(g.ui.close_behaviour(), settings::CloseBehaviour::Quit);

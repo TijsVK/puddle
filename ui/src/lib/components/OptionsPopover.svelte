@@ -215,7 +215,7 @@
     color: var(--color-text-muted);
   }
   :global(.options select) {
-    min-height: 2rem;
+    min-height: var(--control-size);
     padding: var(--space-1) var(--space-2);
     font: inherit;
     color: var(--color-text);

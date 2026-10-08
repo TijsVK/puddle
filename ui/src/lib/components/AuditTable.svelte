@@ -241,7 +241,7 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    height: 2rem;
+    height: var(--control-size);
     padding: 0 var(--space-3);
     text-align: start;
     background: var(--color-surface-raised);

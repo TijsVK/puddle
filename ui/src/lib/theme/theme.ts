@@ -18,7 +18,7 @@ export function isThemeChoice(value: unknown): value is ThemeChoice {
   );
 }
 
-type StorageLike = Pick<Storage, "getItem" | "setItem">;
+export type StorageLike = Pick<Storage, "getItem" | "setItem">;
 
 export function loadTheme(storage: StorageLike | undefined): ThemeChoice {
   try {

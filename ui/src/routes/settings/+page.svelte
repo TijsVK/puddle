@@ -19,6 +19,8 @@
   } from "#lib/settings/model.ts";
   import { globalSettings as store } from "#lib/stores/global-settings.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
+  import { density } from "#lib/theme/density.svelte.ts";
+  import { isDensityChoice } from "#lib/theme/density.ts";
   import { theme } from "#lib/theme/theme.svelte.ts";
   import {
     DIRECT_SSH_HINT,
@@ -92,6 +94,15 @@
     problem = null;
     if (await theme.set(value)) saved = "Theme saved.";
     else problem = "The theme changed here but puddle couldn't save it.";
+  }
+
+  async function chooseDensity(select: HTMLSelectElement) {
+    const value = select.value;
+    if (!isDensityChoice(value)) return;
+    saved = null;
+    problem = null;
+    if (await density.set(value)) saved = "Density saved.";
+    else problem = "The density changed here but puddle couldn't save it.";
   }
 
   async function chooseServer(select: HTMLSelectElement) {
@@ -196,6 +207,23 @@
             <option value="system">System</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
+          </select>
+        </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-density">Density</label>
+            <p class="desc">
+              Compact tightens the spacing so more fits on screen. Buttons and
+              fields stay easy to hit.
+            </p>
+          </div>
+          <select
+            id="set-density"
+            value={density.choice}
+            onchange={(e) => void chooseDensity(e.currentTarget)}
+          >
+            <option value="comfortable">Comfortable</option>
+            <option value="compact">Compact</option>
           </select>
         </div>
       </section>
@@ -699,7 +727,7 @@
   }
   select,
   input[type="text"] {
-    min-height: 2rem;
+    min-height: var(--control-size);
     max-width: 18rem;
     padding: var(--space-1) var(--space-2);
     border: 1px solid var(--color-border);

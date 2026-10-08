@@ -12,7 +12,7 @@
 //! | [`Effective`], [`Resolved`], [`Source`] | the value a workspace gets and which level it came from |
 //! | [`Consent`], [`Consents`], [`ConsentKind`], [`TermsVersion`], [`UnixMillis`] | what the user agreed to or declined, when, and to which version of the terms |
 //! | [`UiPrefs`] | the window's theme, notification and close preferences |
-//! | [`ReconnectionGrace`], [`ClipboardRead`], [`ServerChoice`], [`ThemeChoice`], [`CloseBehaviour`] | value types for single settings |
+//! | [`ReconnectionGrace`], [`ClipboardRead`], [`ServerChoice`], [`ThemeChoice`], [`DensityChoice`], [`CloseBehaviour`] | value types for single settings |
 //! | [`Loaded`], [`SettingsError`] | the result of reading a document |
 //!
 //! # Resolution
@@ -71,5 +71,7 @@ pub use document::{Loaded, SettingsError};
 pub use global::{GLOBAL_SCHEMA_VERSION, GlobalSettings, UiPrefs, VsCodeServer};
 pub use layer::{LocalToggles, WorkspaceLayer};
 pub use resolve::{Effective, EffectiveToggles, Resolved, Source, resolve};
-pub use values::{ClipboardRead, CloseBehaviour, ReconnectionGrace, ServerChoice, ThemeChoice};
+pub use values::{
+    ClipboardRead, CloseBehaviour, DensityChoice, ReconnectionGrace, ServerChoice, ThemeChoice,
+};
 pub use workspace::{WORKSPACE_SCHEMA_VERSION, WorkspaceSettings};

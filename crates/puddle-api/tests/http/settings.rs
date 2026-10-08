@@ -32,7 +32,7 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
     );
     assert_eq!(
         view["ui"],
-        json!({"theme": null, "notifications": null, "sound": null, "close_behaviour": null})
+        json!({"theme": null, "density": null, "notifications": null, "sound": null, "close_behaviour": null})
     );
     assert_eq!(view["unknown_fields"], json!([]));
     let e = &view["effective"];
@@ -302,7 +302,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         .await;
     let body = json!({
         "vscode_server": {"server": "microsoft", "telemetry": false},
-        "ui": {"theme": "dark", "notifications": false, "sound": true, "close_behaviour": "quit"}
+        "ui": {"theme": "dark", "density": "compact", "notifications": false, "sound": true, "close_behaviour": "quit"}
     });
     let reply = api.send("PUT", "/api/settings", Some(&body)).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -310,6 +310,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     assert_eq!(view["vscode_server"]["server"], "microsoft");
     assert_eq!(view["ui"]["theme"], "dark");
     assert_eq!(view["ui"]["close_behaviour"], "quit");
+    assert_eq!(view["ui"]["density"], "compact");
     let stored = api.settings.load_global().unwrap().unwrap();
     assert_eq!(stored["ui"]["theme"], "dark");
     assert_eq!(stored["vscode_server"]["server"], "microsoft");
@@ -329,6 +330,16 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         api.send("PUT", "/api/settings", Some(&bad)).await.status,
         422
     );
+    let bad = json!({"ui": {"density": "tight"}});
+    assert_eq!(
+        api.send("PUT", "/api/settings", Some(&bad)).await.status,
+        422
+    );
+    // A client from before the density field leaves it out: the document stays valid.
+    let old = json!({"ui": {"theme": "light", "notifications": null, "sound": null, "close_behaviour": null}});
+    let reply = api.send("PUT", "/api/settings", Some(&old)).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["ui"]["density"], json!(null));
     api.running.shutdown().await;
 }
 
