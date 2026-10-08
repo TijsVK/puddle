@@ -351,10 +351,8 @@ mod tests {
         assert_eq!(rule_set, None);
     }
 
-    /// A database a puddle from before the rename left behind: rows in every table that names the
-    /// owner, then migrated.
-    #[test]
-    fn v4_renames_the_owner_everywhere_and_keeps_the_rows_and_guards() {
+    /// A version 3 database with a row in every table that names the owner, migrated to the latest.
+    fn migrated_from_the_rename() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
         migrate_up_to(&mut conn, 3).unwrap();
         conn.execute_batch(
@@ -378,7 +376,14 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", true).unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), 3);
         assert_eq!(version(&conn), 4);
+        conn
+    }
 
+    /// A database a puddle from before the rename left behind: rows in every table that names the
+    /// owner, then migrated.
+    #[test]
+    fn v4_renames_the_owner_everywhere_and_keeps_the_rows() {
+        let conn = migrated_from_the_rename();
         let rules: Vec<(i64, String, Option<String>)> = conn
             .prepare("SELECT id, scope, workspace_id FROM rules ORDER BY id")
             .unwrap()
@@ -425,9 +430,13 @@ mod tests {
             count("SELECT count(*) FROM sqlite_schema WHERE sql LIKE '%sandbox%'"),
             0
         );
+    }
 
-        // The guards still hold: a rule's owner and scope agree, a deleted rule's id is not reused,
-        // a pending row's owner never changes, and the one-open-row key still applies.
+    #[test]
+    fn v4_keeps_the_guards_of_the_rules_and_pending_tables() {
+        let conn = migrated_from_the_rename();
+        // A rule's owner and scope agree, a deleted rule's id is not reused, a pending row's
+        // owner never changes, and the one-open-row key still applies.
         assert!(
             conn.execute(
                 "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
