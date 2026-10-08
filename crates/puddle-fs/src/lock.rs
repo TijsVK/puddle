@@ -188,4 +188,13 @@ mod tests {
         assert!(matches!(err, LockError::Io { .. }), "{err}");
         assert!(err.to_string().contains("cannot lock"), "{err}");
     }
+
+    #[test]
+    fn a_lock_path_that_cannot_be_opened_is_an_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        // A folder where the lock file should be: it exists, and opening it for writing fails.
+        std::fs::create_dir(dir.path().join(LOCK_FILE)).unwrap();
+        let err = DataLock::acquire(dir.path()).unwrap_err();
+        assert!(matches!(err, LockError::Io { .. }), "{err}");
+    }
 }

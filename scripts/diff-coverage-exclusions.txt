@@ -83,4 +83,3 @@ crates/puddle-fs/src/lock.rs | return Err(LockError::Io { | as above
 crates/puddle-fs/src/lock.rs | path: lock_path, | as above
 crates/puddle-fs/src/lock.rs | source, | as above
 crates/puddle-fs/src/lock.rs | }); | as above
-crates/puddle-fs/src/lock.rs | Err(e) => Err(e), | creating the lock file failing for a reason other than "exists" (permissions, disk full) cannot be provoked portably
