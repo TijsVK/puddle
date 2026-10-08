@@ -136,3 +136,26 @@ behaviour trustworthy.
   WCAG 2.2 AA.
 - **This rules out:** skipping, ignoring or weakening a failing test or gate to land; bypassing the
   hooks; a decision whose reason exists only outside this repository.
+
+## 11. Puddle keeps to its own lane on your machine
+
+*Why:* Puddle runs next to the tools people already use, often on a machine they share with other
+work; it may not change how those tools behave, and it must be easy to remove.
+
+- **This means:** Puddle leaves your tools' settings alone and keeps its own state in its own
+  runtime and data folders. It doesn't copy your `.gitconfig` into a workspace: the git identity
+  comes from Puddle's settings. The one edit it makes to a file of yours is a single `Include` line
+  at the top of `~/.ssh/config`, which points at Puddle's own SSH config file; the rest of the file
+  is untouched. It installs no editor extensions on your machine.
+- **This rules out:** rewriting another tool's settings or global configuration; sharing a folder
+  with a separately installed copy of the same runtime; copying host settings, credentials or
+  dotfiles into a workspace; installing software into your tools without being asked.
+
+## Leanings
+
+Guidance, not promises. A review may raise one as a `note`, never as a block, and nobody needs an
+ADR to depart from one.
+
+- **Changeable when it has value or is cheap.** A behaviour needn't be customisable. Make it a
+  setting when that has real value to the person using Puddle or costs little to build; a fixed
+  behaviour is fine otherwise.

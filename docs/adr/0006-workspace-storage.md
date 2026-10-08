@@ -1,9 +1,8 @@
 # 0006 — Workspace storage: a named msb disk volume per workspace
 
 Date: 2026-10-04
-Status: **accepted** for the storage method, seeding and lifecycle (decided 2026-10-04).
-**Proposed** for the requirements that came out of the measurement rerun (marked *proposed*
-below) until they are confirmed.
+Status: **accepted**: the storage method, seeding and lifecycle (decided 2026-10-04) and the
+requirements that came out of the measurement rerun (6 to 9), which are built.
 Evidence: workspace storage measurements on msb 0.7.6, rerun 2026-10-04 with a sounder method. The
 measurement record and raw logs predate this repository and are not published; the numbers that
 decide it are below.
@@ -61,11 +60,11 @@ Two findings from the rerun put requirements on puddle rather than on the choice
 5. **Nested Docker's data stays on an owned disk** (`--mount-owned /var/lib/docker:kind=disk`):
    it is per sandbox and disposable, so it should die with the sandbox. Flat root disks are not used.
 
-### Requirements from the rerun (proposed)
+### Requirements from the rerun
 
 6. **Guest git uses `core.fsync=committed`.** There is no image of our own to bake it into
-   (ADR 0005), so puddle's boot-time guest setup writes it into the system gitconfig
-   (`git config --system core.fsync committed`, falling back to `/etc/gitconfig` directly), next to
+   (ADR 0005), so puddle's boot-time guest setup writes it into its own git config file in the guest
+   (`/etc/puddle/gitconfig`), which `/etc/gitconfig` pulls in with one `include` line, next to
    the other boot setup (inotify limits, proxy config, PATH fix, git identity). The write cost is
    not measured yet.
 7. **puddle trims workspace volumes:** `fstrim` on the volume's mount point when a sandbox is
