@@ -1,6 +1,25 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # All gates before each push, so develop stays green. Enable: git config core.hooksPath .githooks
+#
+# Gates that already passed elsewhere: when PUDDLE_GATE_PASS_DIR names a directory holding a file
+# `<commit sha>.pass` for the tip of every ref being pushed, the gates ran on exactly that commit (for
+# example on a build host, with the same `scripts/check.sh all`), so they are not run again here.
+# Anything else, a missing file included, runs the gates as usual. This is not a way around them:
+# whoever writes a .pass file vouches for that commit, the way `git push --no-verify` would.
+zero=0000000000000000000000000000000000000000
+if [ -n "${PUDDLE_GATE_PASS_DIR:-}" ]; then
+    covered=1 pushed=0
+    while read -r _ local_sha _ _; do
+        [ "$local_sha" != "$zero" ] || continue # a deletion pushes no commit
+        pushed=1
+        [ -f "$PUDDLE_GATE_PASS_DIR/$local_sha.pass" ] || covered=0
+    done
+    if [ "$pushed" = 1 ] && [ "$covered" = 1 ]; then
+        echo "pre-push: every pushed ref tip has a pass marker in $PUDDLE_GATE_PASS_DIR; gates not re-run" >&2
+        exit 0
+    fi
+fi
 top=$(git rev-parse --show-toplevel)
 # git exports GIT_DIR and friends to hooks; left set, every git command a gate or a test runs
 # would act on this repository whatever its working directory (`git init --bare` in a temp dir
