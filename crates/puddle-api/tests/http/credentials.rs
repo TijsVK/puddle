@@ -267,6 +267,17 @@ async fn the_real_service_keeps_a_pasted_token_in_its_store_and_reads_it_back_fo
     };
     assert_eq!(check().await["readable"], true);
 
+    // A token with spaces is not one: refused in words, nothing kept.
+    let spaced = api
+        .send(
+            "POST",
+            "/api/credentials/stored",
+            Some(&json!({"host": "github.com", "token": "two words"})),
+        )
+        .await;
+    assert_eq!(spaced.status, 422, "{}", spaced.body);
+    assert!(!spaced.body.contains("two words"));
+
     // Signing in to a pasted token, or with a tool that is not installed, is refused in words.
     let stored_in = api
         .send(

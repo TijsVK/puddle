@@ -838,6 +838,43 @@ async fn the_git_identities_scenario_seeds_identities_tables_and_what_the_creden
 }
 
 #[tokio::test]
+async fn the_credentials_service_can_report_accounts_from_every_listing_and_listings_that_could_not_run()
+ {
+    let scenario: Scenario = serde_json::from_value(json!({
+        "credentials": {
+            "found": [
+                {"via": "gcm_github", "host": "github.com", "account": "me", "org": null, "signed_in": true},
+                {"via": "gcm_azure_repos", "host": "dev.azure.com", "account": "me@example.com", "org": "acme", "signed_in": true}
+            ],
+            "missing": ["gh", "gcm_github"]
+        }
+    }))
+    .unwrap();
+    let run = start_scenario(scenario).await;
+    let found = run.get("/api/credentials/found").await.json();
+    let via: Vec<_> = found["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["via"].as_str().unwrap())
+        .collect();
+    assert_eq!(via, ["gcm_github", "gcm_azure_repos"]);
+    let problems: Vec<_> = found["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| (p["via"].as_str().unwrap(), p["message"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        problems,
+        [
+            ("gh", "gh is not installed or not on PATH"),
+            ("gcm_github", "git is not installed or not on PATH")
+        ]
+    );
+}
+
+#[tokio::test]
 async fn a_scenario_whose_workspace_names_an_identity_that_is_not_there_fails_to_start() {
     let bad: Scenario = serde_json::from_value(json!({
         "workspaces": [{"name": "a", "repo_url": "https://github.com/x/y.git", "git": {"identities": ["Ghost"]}}]

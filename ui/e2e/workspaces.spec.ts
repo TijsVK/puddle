@@ -688,6 +688,7 @@ test.describe("the detail page", () => {
     await expect(tabs.getByRole("link")).toHaveText([
       /Overview/,
       /Network/,
+      /Git/,
       /Environment/,
       /Shell init/,
       /Ports/,

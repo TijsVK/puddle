@@ -7,6 +7,7 @@ const sections = [
   { path: "/inbox", name: "Inbox" },
   { path: "/rules", name: "Rules" },
   { path: "/activity", name: "Activity" },
+  { path: "/identities", name: "Identities" },
   { path: "/settings", name: "Settings" },
 ];
 
@@ -30,12 +31,12 @@ test.describe("the app shell, served by the real API", () => {
     expect(await violations()).toEqual([]);
   });
 
-  test("all five sections are reachable from the sidebar, and the current one is marked", async ({
+  test("all six sections are reachable from the sidebar, and the current one is marked", async ({
     page,
   }) => {
     await page.goto("/inbox");
     const nav = page.getByRole("navigation", { name: "Main" });
-    await expect(nav.getByRole("link")).toHaveCount(5);
+    await expect(nav.getByRole("link")).toHaveCount(6);
     for (const { path, name } of sections) {
       await nav.getByRole("link", { name: new RegExp(`^${name}`) }).click();
       await expect(page).toHaveURL(new RegExp(`${path}$`));
@@ -74,7 +75,7 @@ test.describe("the app shell, served by the real API", () => {
     await expect(page.locator("main")).toBeFocused();
   });
 
-  test("keyboard: Tab visits the five section links, then the theme choices", async ({
+  test("keyboard: Tab visits the six section links, then the theme choices", async ({
     page,
   }) => {
     await page.goto("/rules");
@@ -82,7 +83,7 @@ test.describe("the app shell, served by the real API", () => {
       page.getByRole("heading", { level: 1, name: "Rules" }),
     ).toBeVisible();
     const order: string[] = [];
-    for (let i = 0; i < 7; i += 1) {
+    for (let i = 0; i < 8; i += 1) {
       await page.keyboard.press("Tab");
       order.push(
         await page.evaluate(() =>
@@ -95,8 +96,13 @@ test.describe("the app shell, served by the real API", () => {
     expect(order[0]).toBe("Skip to content");
     expect(order[1]).toBe("Workspaces");
     expect(order[2]).toMatch(/^Inbox/);
-    expect(order.slice(3, 6)).toEqual(["Rules", "Activity", "Settings"]);
-    expect(order[6]).toMatch(/^(System|Light|Dark)$/);
+    expect(order.slice(3, 7)).toEqual([
+      "Rules",
+      "Activity",
+      "Identities",
+      "Settings",
+    ]);
+    expect(order[7]).toMatch(/^(System|Light|Dark)$/);
   });
 
   for (const scheme of ["light", "dark"] as const) {

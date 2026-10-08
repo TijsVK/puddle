@@ -210,6 +210,38 @@ async fn git_sign_in_does_not_keep_an_answer_for_another_target_and_says_so() {
 }
 
 #[tokio::test]
+async fn git_sign_in_asks_for_the_account_when_the_credential_names_one() {
+    let fakes = Fakes::new();
+    let git = fakes.install("git", "[credential fill]\nexit=1\n");
+    let named = SourceSpec::GitCredential {
+        host: HostName::new("github.com").unwrap(),
+        path: UrlPath::new("me").unwrap(),
+        username: Some(AccountName::new("me").unwrap()),
+    };
+    SignIns::new(ToolPaths::new(None, Some(git.clone())))
+        .begin(&named)
+        .await
+        .unwrap_err();
+    let log = Fakes::log(&git);
+    assert!(log.contains("path=me\\nusername=me\\n"), "{log}");
+}
+
+#[tokio::test]
+async fn git_that_cannot_answer_in_time_is_reported_with_the_tools_own_words() {
+    let fakes = Fakes::new();
+    let slow = fakes.install("git", "[credential fill]\nsleep_ms=2000\n");
+    let err = SignIns::new(ToolPaths::new(None, Some(slow)))
+        .with_window(Duration::from_millis(150))
+        .begin(&git_spec())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err,
+        SignInError::Ended(Tool::Git, "git did not answer in time".into())
+    );
+}
+
+#[tokio::test]
 async fn git_that_ends_at_once_without_an_answer_is_reported() {
     let fakes = Fakes::new();
     let git = fakes.install("git", "[credential fill]\nexit=1\n");

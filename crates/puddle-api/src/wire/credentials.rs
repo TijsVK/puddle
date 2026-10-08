@@ -225,6 +225,25 @@ mod tests {
     }
 
     #[test]
+    fn what_cannot_be_used_is_refused_in_words() {
+        use super::super::identities::{IdentityAuthor, IdentityRequest};
+        let bad = CredentialSource::Gh {
+            host: "not a host".into(),
+            account: "me".into(),
+        };
+        assert_eq!(bad.into_spec().unwrap_err(), "not a valid host");
+        let nameless = IdentityRequest {
+            label: "x".into(),
+            author: IdentityAuthor {
+                name: String::new(),
+                email: String::new(),
+            },
+            credentials: Vec::new(),
+        };
+        assert!(nameless.into_store_draft().is_err());
+    }
+
+    #[test]
     fn problems_are_worded_for_the_user() {
         let text = |e: SourceError| CheckResult::from_error(&e);
         let not_signed_in = text(SourceError::NotSignedIn);

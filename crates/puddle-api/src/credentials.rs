@@ -350,13 +350,11 @@ mod tests {
     use puddle_secrets::Tool;
 
     use super::*;
+    use crate::error::ApiError;
 
     #[test]
     fn a_sign_in_that_could_not_start_says_what_happened_and_what_to_try() {
-        let said = |err| match sign_in_error(err) {
-            CredentialsError::Unavailable(m) | CredentialsError::Invalid(m) => m,
-            other => panic!("{other:?}"),
-        };
+        let said = |err| sign_in_error(err).to_string();
         assert_eq!(
             said(SignInError::NoPrompt(
                 Tool::Gh,
@@ -373,5 +371,36 @@ mod tests {
             "gh is not installed or not on PATH"
         );
         assert!(said(SignInError::NothingToSignIn).starts_with("a pasted token has nothing"));
+    }
+
+    #[test]
+    fn every_refusal_has_its_status_and_the_services_describe_themselves_without_a_value() {
+        use axum::http::StatusCode;
+        for (err, status) in [
+            (
+                CredentialsError::Unavailable("x".into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                CredentialsError::Invalid("x".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                CredentialsError::Internal("x".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        ] {
+            assert_eq!(ApiError::from(err).status(), status);
+        }
+        let real = HostCredentials::new(
+            ToolPaths::new(None, None),
+            Arc::new(puddle_secrets::MemoryStore::new()),
+        )
+        .with_sign_ins(SignIns::new(ToolPaths::new(None, None)));
+        assert_eq!(format!("{real:?}"), "HostCredentials { .. }");
+        assert_eq!(
+            format!("{:?}", FakeCredentials::new()),
+            "FakeCredentials { .. }"
+        );
     }
 }
