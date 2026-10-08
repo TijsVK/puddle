@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![cfg_attr(not(windows), forbid(unsafe_code))]
-//! The two file-system seams that differ per OS:
+//! The file-system seams that differ per OS:
 //!
 //! - [`data_dir`]: puddle's per-user data folder, resolved by the `dirs` crate in this one place.
 //! - [`private`]: owner-only files and folders. On Unix the modes `0600` / `0700`; on Windows an
 //!   explicit, protected ACL with one entry, for the current user.
+//! - [`lock`]: one host process per data folder, an OS lock that dies with its holder.
 //!
 //! | OS | `data_dir()` |
 //! |---|---|
@@ -13,6 +14,7 @@
 //! | macOS | `~/Library/Application Support/puddle` |
 
 mod data_dir;
+pub mod lock;
 pub mod private;
 #[cfg(windows)]
 #[expect(
@@ -22,3 +24,4 @@ pub mod private;
 pub mod win;
 
 pub use data_dir::{DataDirError, data_dir, data_dir_in};
+pub use lock::{DataLock, LockError};

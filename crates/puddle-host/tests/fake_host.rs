@@ -380,7 +380,9 @@ async fn a_missing_agent_stops_the_start_before_anything_is_reconciled() {
 async fn a_taken_api_port_is_reported_and_nothing_was_stopped_or_removed() {
     let rig = Rig::new();
     let first = rig.start().await;
+    // Another data folder, so only the port is shared.
     let mut config = rig.config();
+    config.paths = HostPaths::new(rig.dir.path().join("other-data"));
     config.api.port = first.url().port().unwrap();
     let prepared = prepare(config, &FakePlatform::new(&rig.log)).unwrap();
     let err = Host::start(
@@ -392,6 +394,48 @@ async fn a_taken_api_port_is_reported_and_nothing_was_stopped_or_removed() {
     .unwrap_err();
     assert!(matches!(err, HostError::Api(_)), "{err}");
     first.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_host_on_the_same_data_folder_is_refused_and_the_first_is_untouched() {
+    let rig = Rig::new();
+    let first = rig.start().await;
+    let api = api(&first);
+    let mut events = api.events().await;
+    create(&api, &mut events, "keep").await;
+    let running = rig
+        .runtime
+        .list()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|s| !s.status.is_down())
+        .count();
+    assert_eq!(running, 1);
+    let calls_before = rig.runtime.calls();
+    let log_before = rig.calls();
+
+    let err = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap_err();
+    assert!(matches!(err, HostError::DataFolder(_)), "{err}");
+    let message = err.to_string();
+    assert!(
+        message.contains(&format!("process ID {}", std::process::id())),
+        "{message}"
+    );
+    assert!(message.contains("data folder"), "{message}");
+
+    // The refused start asked the machine nothing and the runtime nothing: the first host's
+    // sandbox was neither trimmed nor stopped.
+    assert_eq!(rig.calls(), log_before);
+    assert_eq!(rig.runtime.calls(), calls_before);
+    let still = rig.runtime.list().await.unwrap();
+    assert_eq!(still.iter().filter(|s| !s.status.is_down()).count(), 1);
+    assert_eq!(api.get("/api/health").await.status, 200);
+
+    // Once the first host is gone the folder is free again.
+    first.shutdown().await;
+    drop(first);
+    drop(prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap());
 }
 
 // ---- the daemon end to end ----------------------------------------------------------------
@@ -874,6 +918,8 @@ async fn a_new_workspace_gets_the_memory_the_settings_name() {
     let spec_memory = api.get("/api/workspaces/acme").await.json()["memory_mib"].clone();
     assert_eq!(spec_memory, 2048);
     host.shutdown().await;
+    // The next start is a new process: the first one's hold on the data folder ends.
+    drop(host);
     // The settings are files: a second host over the same folder sees them.
     let again = rig.start().await;
     let reply = api_for(&again).get("/api/settings").await;
@@ -1203,6 +1249,8 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
     create(&api1, &mut events, "acme").await;
     let created_at = api1.get("/api/workspaces/acme").await.json()["created_at"].clone();
     host.shutdown().await;
+    // The next start is a new process: the first one's hold on the data folder ends.
+    drop(host);
     drop(events);
 
     let again = rig.start().await;
@@ -1248,6 +1296,8 @@ async fn a_crashed_sandbox_is_reported_crashed_and_start_recovers_it() {
     create(&api1, &mut events, "acme").await;
     assert!(rig.runtime.crash(&SandboxName::new("acme").unwrap()));
     host.shutdown().await;
+    // The next start is a new process: the first one's hold on the data folder ends.
+    drop(host);
 
     let again = rig.start().await;
     let api2 = api(&again);
@@ -1274,6 +1324,14 @@ async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
     let running = rig.runtime.list().await.unwrap();
     assert!(!running[0].status.is_down());
 
+    // It died: its hold on the data folder ended with it, and the VM kept running.
+    drop(host);
+    // Let whatever the drop ends finish before the VM is made to outlive it.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        rig.runtime
+            .outlive_owner(&SandboxName::new("acme").unwrap())
+    );
     let again = rig.start().await;
     assert_eq!(
         again.reconcile_report().stopped.len(),
@@ -1287,7 +1345,6 @@ async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
         "stopped"
     );
     again.shutdown().await;
-    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1410,6 +1467,8 @@ async fn a_missing_workspace_list_keeps_every_workspace_volume() {
     let mut events = api1.events().await;
     create(&api1, &mut events, "acme").await;
     host.shutdown().await;
+    // The next start is a new process: the first one's hold on the data folder ends.
+    drop(host);
     drop(events);
     // The list is gone (deleted by hand, restored from an old backup, a broken disk).
     std::fs::remove_file(list_path(&rig)).unwrap();
@@ -1437,6 +1496,8 @@ async fn a_volume_no_listed_workspace_claims_is_kept() {
     let mut events = api1.events().await;
     create(&api1, &mut events, "acme").await;
     host.shutdown().await;
+    // The next start is a new process: the first one's hold on the data folder ends.
+    drop(host);
     drop(events);
     // A volume with work on it that the list doesn't name (an older or partial list).
     rig.runtime

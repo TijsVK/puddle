@@ -424,6 +424,21 @@ impl FakeRuntime {
         }
     }
 
+    /// Simulates a VM that outlives its dead owner: the sandbox runs, whatever its handle's
+    /// drop did (dropping a handle stops the fake VM, as in the SDK, but a killed process never
+    /// gets to drop it). Returns whether the sandbox exists.
+    #[must_use = "false means there is no such sandbox"]
+    pub fn outlive_owner(&self, name: &SandboxName) -> bool {
+        let mut state = self.lock();
+        match state.sandboxes.get_mut(name.as_str()) {
+            Some(r) => {
+                r.status = WorkspaceStatus::Running;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Adds a sandbox puddle didn't create (another tool's, or one without puddle's owner label).
     /// [`Runtime::list`] shows it with `puddle_owned: false`; no other operation sees it, so a
     /// test can check through [`FakeRuntime::calls`] that nothing touched it. `name` need not be

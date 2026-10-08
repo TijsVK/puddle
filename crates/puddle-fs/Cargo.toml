@@ -32,5 +32,10 @@ windows-sys = { workspace = true, features = [
 [dev-dependencies]
 tempfile = { workspace = true }
 
+# The lock across real processes: children are copies of the test binary, so it supplies its own `main`.
+[[test]]
+name = "lock_processes"
+harness = false
+
 [lints]
 workspace = true

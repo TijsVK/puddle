@@ -23,6 +23,7 @@ use puddle_api::{
 };
 use puddle_certs::CorporateRoots;
 use puddle_compute::{Runtime, SandboxInfo};
+use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Upstream};
@@ -44,6 +45,8 @@ use crate::{HostConfig, HostError, HostWorkspaces, Platform};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Step {
+    /// This process holds the data folder; no other puddle process can start on it.
+    DataFolderLocked,
     /// The image-pull proxy is bound (not serving yet).
     PullProxyBound,
     /// The process environment is pinned to puddle's runtime.
@@ -87,7 +90,8 @@ pub enum Step {
 }
 
 /// The steps [`prepare`] runs, in order.
-pub const PREPARE_STEPS: [Step; 4] = [
+pub const PREPARE_STEPS: [Step; 5] = [
+    Step::DataFolderLocked,
     Step::PullProxyBound,
     Step::EnvironmentPinned,
     Step::RuntimeChecked,
@@ -95,7 +99,8 @@ pub const PREPARE_STEPS: [Step; 4] = [
 ];
 
 /// The steps of a start with the default options, in order, [`prepare`]'s included.
-pub const START_STEPS: [Step; 14] = [
+pub const START_STEPS: [Step; 15] = [
+    Step::DataFolderLocked,
     Step::PullProxyBound,
     Step::EnvironmentPinned,
     Step::RuntimeChecked,
@@ -124,6 +129,8 @@ pub const SHUTDOWN_STEPS: [Step; 6] = [
 
 /// The result of [`prepare`]: everything the asynchronous start needs from the synchronous phase.
 pub struct Prepared {
+    // First field: dropped last, so a failed start releases the folder after everything else.
+    lock: DataLock,
     config: HostConfig,
     pull: PullProxy,
     endpoints: PuddleEndpoints,
@@ -151,7 +158,8 @@ impl Prepared {
 /// The synchronous phase of starting. Call it from `main` before building the async runtime or
 /// starting any thread (the desktop shell: before the UI toolkit starts its own).
 ///
-/// The order is the dependency order. The pull proxy is bound first because the runtime's image
+/// The order is the dependency order. The data folder is locked first (a second process on it
+/// is refused with [`HostError::DataFolder`] before it touches anything). The pull proxy is bound first because the runtime's image
 /// pulls need its address; the environment is pinned before the runtime is looked at; the
 /// corporate roots are read last and handed to the runtime when it opens, because msb fixes them
 /// then.
@@ -160,7 +168,10 @@ impl Prepared {
 ///
 /// [`HostError`] from the step that failed; nothing is left running.
 pub fn prepare(config: HostConfig, platform: &dyn Platform) -> Result<Prepared, HostError> {
-    let mut steps = Vec::new();
+    // First, before anything is bound or looked at: a second process on this folder would
+    // reconcile away the first one's running sandboxes.
+    let lock = DataLock::acquire(config.paths.data())?;
+    let mut steps = vec![Step::DataFolderLocked];
     let endpoints = PuddleEndpoints::new();
     let pull = PullProxy::bind(&endpoints).map_err(HostError::PullProxy)?;
     steps.push(Step::PullProxyBound);
@@ -175,6 +186,7 @@ pub fn prepare(config: HostConfig, platform: &dyn Platform) -> Result<Prepared, 
         "corporate root certificates read"
     );
     Ok(Prepared {
+        lock,
         config,
         pull,
         endpoints,
@@ -315,6 +327,8 @@ pub struct Host<R: Runtime + Clone> {
     steps: Mutex<Vec<Step>>,
     reconcile: puddle_lifecycle::ReconcileReport,
     stopped: OnceCell<HostShutdown>,
+    // Held until the host is dropped, after shutdown has stopped the sandboxes.
+    _lock: DataLock,
 }
 
 impl<R: Runtime + Clone> std::fmt::Debug for Host<R> {
@@ -365,6 +379,7 @@ impl<R: Runtime + Clone> Host<R> {
         F: RuntimeFactory<Runtime = R>,
     {
         let Prepared {
+            lock,
             config,
             pull,
             endpoints,
@@ -478,6 +493,7 @@ impl<R: Runtime + Clone> Host<R> {
             steps: Mutex::new(steps),
             reconcile: report,
             stopped: OnceCell::new(),
+            _lock: lock,
         })
     }
 

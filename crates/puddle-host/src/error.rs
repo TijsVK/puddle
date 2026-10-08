@@ -11,6 +11,9 @@ pub enum HostError {
     /// The per-user data folder could not be found.
     #[error("cannot find puddle's data folder: {0}")]
     DataDir(String),
+    /// Another puddle process already uses the data folder, or the folder cannot be locked.
+    #[error(transparent)]
+    DataFolder(#[from] puddle_fs::LockError),
     /// The bundled runtime is missing, unreadable or of another version.
     #[error("{0}; `puddle doctor` explains the fix")]
     Runtime(#[from] puddle_runtime::RuntimeError),

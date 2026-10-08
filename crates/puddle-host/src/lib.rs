@@ -8,7 +8,8 @@
 //! # async fn demo(config: puddle_host::HostConfig) -> Result<(), puddle_host::HostError> {
 //! use puddle_host::{Host, HostOptions, MsbFactory, SystemPlatform, prepare};
 //!
-//! // Synchronous, before the process has a second thread: binds the pull proxy, pins the
+//! // Synchronous, before the process has a second thread: locks the data folder (a second
+//! // process on it is refused), binds the pull proxy, pins the
 //! // environment, checks the runtime, reads the corporate roots.
 //! let prepared = prepare(config, &SystemPlatform::new())?;
 //! // Asynchronous: store, upstream chain, runtime, reconcile, proxies, workspaces, API.
