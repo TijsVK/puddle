@@ -294,3 +294,16 @@ fn the_os_store_round_trips_a_test_owned_entry() {
     assert!(store.get(&id).unwrap().is_none());
     store.delete(&id).unwrap();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_tool_that_is_not_allowed_to_run_is_not_reported_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gh");
+    std::fs::write(&path, "not a program").unwrap();
+    let err = sources(Some(path), None)
+        .fetch(&gh_spec())
+        .await
+        .unwrap_err();
+    assert_eq!(err, SourceError::CouldNotRun(Tool::Gh));
+}

@@ -87,7 +87,7 @@ async fn a_missing_tool_or_a_logged_out_cli_is_a_problem_not_a_failure() {
     let fakes = Fakes::new();
     let gh = fakes.install("gh", "[]\nexit=1\n");
     let found = discover(&ToolPaths::new(Some(gh), None)).await;
-    assert!(found.accounts.is_empty());
+    assert_eq!(found.accounts.len(), 0);
     assert!(
         found
             .problems

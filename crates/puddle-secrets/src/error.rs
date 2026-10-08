@@ -33,6 +33,9 @@ pub enum SourceError {
     /// The tool is not installed or not on `PATH`.
     #[error("{} is not installed or not on PATH", .0.name())]
     ToolMissing(Tool),
+    /// The tool exists but could not be run (not permitted, or it died).
+    #[error("{} could not be run", .0.name())]
+    CouldNotRun(Tool),
     /// The tool did not answer in time (it may be waiting for a sign-in window).
     #[error("{} did not answer in time", .0.name())]
     Timeout(Tool),

@@ -122,7 +122,11 @@ pub(crate) async fn run(
     }
     let mut child = cmd.spawn().map_err(|err| {
         tracing::debug!(tool = tool.name(), kind = ?err.kind(), "could not start the tool");
-        SourceError::ToolMissing(tool)
+        if err.kind() == std::io::ErrorKind::NotFound {
+            SourceError::ToolMissing(tool)
+        } else {
+            SourceError::CouldNotRun(tool)
+        }
     })?;
     if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
         // A tool that exits before reading its input is not an error here: its status says so.
@@ -130,7 +134,7 @@ pub(crate) async fn run(
     }
     let out = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(Ok(out)) => out,
-        Ok(Err(_)) => return Err(SourceError::ToolMissing(tool)),
+        Ok(Err(_)) => return Err(SourceError::CouldNotRun(tool)),
         Err(_) => return Err(SourceError::Timeout(tool)),
     };
     Ok(Output {
