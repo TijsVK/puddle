@@ -197,4 +197,12 @@ mod tests {
         let err = DataLock::acquire(dir.path()).unwrap_err();
         assert!(matches!(err, LockError::Io { .. }), "{err}");
     }
+
+    #[test]
+    fn a_lock_file_that_cannot_be_created_reports_why() {
+        let dir = tempfile::tempdir().unwrap();
+        // The folder is missing, so creating the file fails for a reason other than "exists".
+        let err = open_lock_file(&dir.path().join("missing").join(LOCK_FILE)).unwrap_err();
+        assert_ne!(err.kind(), io::ErrorKind::AlreadyExists, "{err}");
+    }
 }
