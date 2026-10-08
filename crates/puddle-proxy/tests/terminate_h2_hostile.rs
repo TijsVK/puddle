@@ -308,6 +308,64 @@ async fn a_content_length_that_the_body_does_not_match_is_never_forwarded_as_a_c
     assert!(h1.recorded().is_empty(), "{:?}", h1.recorded());
 }
 
+/// A guest that resets its stream with `NO_ERROR` after fewer bytes than it declared must not
+/// make the proxy end the upstream request as if it were complete: a server behind a front end
+/// that translates HTTP/2 to HTTP/1.1 would take the missing bytes from the next request.
+#[tokio::test]
+async fn a_stream_reset_cleanly_short_of_its_content_length_never_ends_upstream_as_complete() {
+    let pki = Pki::new();
+    let (addr, frames, _server) =
+        terminate_support::h2_rig::record_frames(&pki, "bound.test", true).await;
+    let rig = rig_with(&pki, addr, ProxyConfig::default(), TestInjector::always());
+    let mut guest = rig.guest().await;
+    let client = guest
+        .tls_with("bound.test:443", None, &[b"h2"], true)
+        .await
+        .unwrap();
+    let (mut send, connection) = h2::client::handshake(client.stream.into_inner())
+        .await
+        .unwrap();
+    tokio::spawn(connection);
+    let request = Request::builder()
+        .method("POST")
+        .uri("https://bound.test/up")
+        .header("content-length", "1000")
+        .body(())
+        .unwrap();
+    let (_response, mut body) = send.send_request(request, false).unwrap();
+    body.send_data(Bytes::from_static(b"0123456789"), false)
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    body.send_reset(h2::Reason::NO_ERROR);
+    let mut reset_seen = false;
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let seen = frames.lock().unwrap().clone();
+        reset_seen = seen
+            .iter()
+            .any(|&(kind, _, stream, _)| kind == 3 && stream == 1);
+        if reset_seen {
+            break;
+        }
+    }
+    let seen = frames.lock().unwrap().clone();
+    assert!(
+        seen.iter()
+            .any(|&(kind, _, stream, _)| kind == 1 && stream == 1),
+        "the request reached the server: {seen:?}"
+    );
+    assert!(
+        !seen
+            .iter()
+            .any(|&(kind, flags, stream, _)| kind == 0 && stream == 1 && flags & 1 != 0),
+        "the body was ended as if complete: {seen:?}"
+    );
+    assert!(
+        reset_seen,
+        "the server was not told the stream was cancelled: {seen:?}"
+    );
+}
+
 #[tokio::test]
 async fn headers_that_only_exist_to_smuggle_are_refused_before_the_server_sees_anything() {
     let pki = Pki::new();

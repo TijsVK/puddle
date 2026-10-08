@@ -628,3 +628,68 @@ pub(crate) async fn capture_first_headers_block(
     });
     (addr, rx, task)
 }
+
+/// One frame as it crossed the wire: its type, flags, stream and payload length.
+pub(crate) type RawFrame = (u8, u8, u32, usize);
+
+/// A server that speaks just enough HTTP/2 to keep a connection open and records every frame it
+/// is sent (after the preface). With `answer_early` it answers each request's `HEADERS` with a
+/// complete `200` at once, before the request body ends (which HTTP/2 allows); otherwise it never
+/// answers.
+pub(crate) async fn record_frames(
+    pki: &Pki,
+    name: &str,
+    answer_early: bool,
+) -> (SocketAddr, Arc<Mutex<Vec<RawFrame>>>, JoinHandle<()>) {
+    let mut config = Arc::into_inner(pki.server_config(name, super::Flaw::None)).unwrap();
+    config.alpn_protocols = vec![b"h2".to_vec()];
+    let acceptor = TlsAcceptor::from(Arc::new(config));
+    let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let frames = Arc::new(Mutex::new(Vec::new()));
+    let task = {
+        let frames = Arc::clone(&frames);
+        tokio::spawn(async move {
+            let Ok((tcp, _)) = listener.accept().await else {
+                return;
+            };
+            let Ok(mut tls) = acceptor.accept(tcp).await else {
+                return;
+            };
+            let mut preface = [0_u8; 24];
+            if tls.read_exact(&mut preface).await.is_err() {
+                return;
+            }
+            let _ = tls.write_all(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await;
+            loop {
+                let mut head = [0_u8; 9];
+                if tls.read_exact(&mut head).await.is_err() {
+                    return;
+                }
+                let len = (usize::from(head[0]) << 16)
+                    | (usize::from(head[1]) << 8)
+                    | usize::from(head[2]);
+                let mut payload = vec![0_u8; len];
+                if tls.read_exact(&mut payload).await.is_err() {
+                    return;
+                }
+                if head[3] == 4 && head[4] & 1 == 0 {
+                    let _ = tls.write_all(&[0, 0, 0, 4, 1, 0, 0, 0, 0]).await;
+                }
+                let stream = u32::from_be_bytes([head[5] & 0x7f, head[6], head[7], head[8]]);
+                if answer_early && head[3] == 1 {
+                    // `:status 200` (HPACK static index 8), END_STREAM | END_HEADERS.
+                    let mut answer = vec![0, 0, 1, 1, 0x5];
+                    answer.extend_from_slice(&stream.to_be_bytes());
+                    answer.push(0x88);
+                    let _ = tls.write_all(&answer).await;
+                }
+                frames
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push((head[3], head[4], stream, len));
+            }
+        })
+    };
+    (addr, frames, task)
+}

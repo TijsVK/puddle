@@ -30,6 +30,9 @@ pub(crate) type UpBody = UnsyncBoxBody<Bytes, BoxError>;
 /// Most upstream HTTP/1.1 connections one HTTP/2 guest connection opens.
 pub(crate) const MAX_POOLED: usize = 8;
 
+/// How long an idle pooled connection may take to prove it is still usable.
+const READY_WAIT: Duration = Duration::from_secs(10);
+
 /// How often an HTTP/2 connection with streams open is pinged, and how long it may stay silent
 /// after a ping before it is dropped. A gRPC watch or an event stream is idle by design; the ping
 /// is what tells a live peer from a dead one.
@@ -122,7 +125,13 @@ pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusa
     let io = TokioIo::new(tls);
     let setup_failed = |err: hyper::Error| {
         tracing::info!(host = %name, error = %err, "HTTP client setup failed");
-        Refusal::new("502 Bad Gateway", format!("could not talk HTTP to {name}"))
+        Refusal::new(
+            "502 Bad Gateway",
+            format!(
+                "could not talk HTTP to {name}: {}",
+                super::session::short(&err)
+            ),
+        )
     };
     let conn = match proto {
         Proto::H1 => {
@@ -211,7 +220,8 @@ impl H1Pool {
             let Some(mut conn) = idle else { break };
             // `ready` waits until the connection has settled after its last response, so one the
             // server closed (or fed stray bytes) is seen as closed here.
-            if conn.sender.ready().await.is_ok() {
+            // A connection that does not settle is as good as closed.
+            if let Ok(Ok(())) = tokio::time::timeout(READY_WAIT, conn.sender.ready()).await {
                 return Ok(Lease::new(conn, self, permit));
             }
         }

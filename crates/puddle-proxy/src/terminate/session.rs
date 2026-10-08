@@ -616,7 +616,7 @@ where
     (sent, pumped)
 }
 
-fn short(err: &hyper::Error) -> String {
+pub(crate) fn short(err: &hyper::Error) -> String {
     use std::error::Error as _;
     err.source()
         .map_or_else(|| err.to_string(), ToString::to_string)

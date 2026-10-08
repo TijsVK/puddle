@@ -355,6 +355,10 @@ async fn spliced_h2(
 
 /// Resident memory the process gains per idle connection, measured in a process of its own per
 /// kind of connection (a heap that an earlier kind grew and freed would flatter the next).
+#[expect(
+    clippy::print_stderr,
+    reason = "a measurement for the person running it by hand"
+)]
 async fn idle_memory(kind: &str) {
     use h2_perf::{bulk_h2_server, rss_kib};
     const N: usize = 400;

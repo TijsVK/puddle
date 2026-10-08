@@ -243,6 +243,44 @@ async fn trailers_and_te_trailers_pass_both_ways() {
 }
 
 #[tokio::test]
+async fn request_trailers_cannot_carry_credentials_or_framing() {
+    let pki = Pki::new();
+    let server = H2Server::recording(&pki, "bound.test", Arc::new(|_| reply(200, "ok"))).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    let mut guest = rig.guest().await;
+    let client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let mut sender = client.sender.clone();
+    let mut trailers = http::HeaderMap::new();
+    trailers.insert("x-kept", "yes".parse().unwrap());
+    trailers.insert("authorization", "Bearer guest".parse().unwrap());
+    trailers.insert("cookie", "a=b".parse().unwrap());
+    trailers.insert("content-length", "5".parse().unwrap());
+    trailers.insert("host", "evil.test".parse().unwrap());
+    let body = {
+        use http_body_util::BodyExt as _;
+        http_body_util::StreamBody::new(futures_util::stream::iter([
+            Ok::<_, terminate_support::h2_rig::BoxError>(http_body::Frame::data(
+                bytes::Bytes::from_static(b"in"),
+            )),
+            Ok(http_body::Frame::trailers(trailers)),
+        ]))
+        .boxed_unsync()
+    };
+    let request = http::Request::builder()
+        .method("POST")
+        .uri("https://bound.test/x")
+        .body(body)
+        .unwrap();
+    let got = terminate_support::h2_rig::collect(sender.send_request(request).await.unwrap()).await;
+    assert_eq!(got.status, 200);
+    let seen = server.recorded();
+    let trailers = seen[0].trailers.clone().unwrap();
+    assert_eq!(trailers, vec![("x-kept".to_owned(), "yes".to_owned())]);
+}
+
+#[tokio::test]
 async fn a_request_that_is_not_for_the_connection_host_or_not_valid_h2_is_refused() {
     let pki = Pki::new();
     let server = H2Server::recording(&pki, "bound.test", ok("fine")).await;
@@ -404,8 +442,10 @@ async fn a_refused_upgrade_is_an_ordinary_answer_and_the_connection_goes_on() {
 async fn a_websocket_over_http2_extended_connect_reaches_an_http11_server_as_an_upgrade() {
     let pki = Pki::new();
     let server = WsServer::start(&pki, "bound.test").await;
+    let injector = TestInjector::always();
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
+        .injector(injector.clone())
         .build();
     let mut guest = rig.guest().await;
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
@@ -440,6 +480,9 @@ async fn a_websocket_over_http2_extended_connect_reaches_an_http11_server_as_an_
     assert_eq!(find("authorization"), Some(&*format!("Basic {CANARY}")));
     assert_eq!(find("upgrade"), Some("websocket"));
     assert!(find("sec-websocket-key").is_some_and(|k| k != KEY));
+    // The rules judged the `GET` the server was sent, not the guest's extended `CONNECT`.
+    let asked = injector.seen.lock().unwrap().clone();
+    assert_eq!(asked, vec![("GET".to_owned(), "/chat".to_owned())]);
 }
 
 #[tokio::test]

@@ -278,8 +278,11 @@ fn refusal_response(refusal: &Refusal) -> Response<RespBody> {
         HeaderValue::from_static("text/plain; charset=utf-8"),
     );
     for (name, value) in &refusal.headers {
-        if let Ok(value) = HeaderValue::from_str(value) {
-            headers.insert(HeaderName::from_static(name), value);
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(value),
+        ) {
+            headers.insert(name, value);
         }
     }
     response
@@ -436,14 +439,14 @@ async fn exchange(
         ));
     }
     let mut route = shared.route().await?;
-    let injection = match decide(shared, &checked, request.headers()).await {
+    let version = route.version();
+    let injection = match decide(shared, &checked, request.headers(), version).await {
         Ok(injection) => injection,
         Err(refusal) => {
             route.unused();
             return Err(refusal);
         }
     };
-    let version = route.version();
     let headers =
         request::upstream_headers_h2(request.headers(), &cx.target, injection.as_ref(), version)?;
     record_injection(shared, injection.as_ref());
@@ -455,7 +458,17 @@ async fn exchange(
     let activity = Arc::new(Activity::new());
     let sent = Arc::new(Sent::default());
     let (_, body) = request.into_parts();
-    let body: UpBody = GuestBody::new(body, &activity, &sent).boxed_unsync();
+    let injected = injection
+        .as_ref()
+        .map(|injection| {
+            injection
+                .headers()
+                .iter()
+                .map(|header| header.name().clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let body: UpBody = GuestBody::new(body, &activity, &sent, injected).boxed_unsync();
     let upstream_request =
         build_request(cx, version, checked.method, &checked.path, headers, body)?;
     let response = send(shared, &mut route, upstream_request, &sent).await?;
@@ -474,15 +487,26 @@ async fn decide(
     shared: &Shared,
     checked: &Checked,
     headers: &HeaderMap,
+    version: UpstreamVersion,
 ) -> Result<Option<Injection>, Refusal> {
     let cx = &shared.cx;
-    let lines = header_lines(headers, &cx.target.host.to_string());
+    let mut lines = header_lines(headers, &cx.target.host.to_string());
+    // A WebSocket over an extended CONNECT reaches an HTTP/1.1 server as a `GET` with `Upgrade`
+    // headers; the rules judge what the server will be sent.
+    let websocket_over_h1 = checked.protocol.is_some() && version == UpstreamVersion::H1;
+    let method = if websocket_over_h1 {
+        lines.push("connection: upgrade".to_owned());
+        lines.push("upgrade: websocket".to_owned());
+        Method::GET.as_str()
+    } else {
+        checked.method.as_str()
+    };
     let context = InjectContext {
         workspace: &cx.workspace,
         host: &cx.target.host,
     };
     let view = RequestView {
-        method: checked.method.as_str(),
+        method,
         target: &checked.path,
         headers: &lines,
     };
@@ -835,6 +859,7 @@ impl IdleTimer {
 }
 
 fn timed_out() -> BoxError {
+    tracing::info!("an HTTP/2 stream moved no frame for too long and was reset");
     Box::new(io::Error::new(
         io::ErrorKind::TimedOut,
         "the stream was idle for too long",
@@ -842,26 +867,76 @@ fn timed_out() -> BoxError {
 }
 
 /// The guest's request body on its way upstream.
+///
+/// A guest may end a stream with `RST_STREAM(NO_ERROR)` after fewer bytes than its
+/// `Content-Length`; the HTTP/2 library reports that as a clean end. Forwarded as it is, the
+/// upstream request would be framed as complete with a body shorter than it declared, which is how
+/// a server that translates HTTP/2 to HTTP/1.1 behind us gets desynchronised. So the bytes are
+/// counted and a body that ends short is an error, which resets the upstream stream.
 struct GuestBody {
     inner: Incoming,
     activity: Arc<Activity>,
     sent: Arc<Sent>,
     timer: IdleTimer,
+    /// The `Content-Length` the guest declared, if any.
+    expected: Option<u64>,
+    received: u64,
+    /// Headers the proxy sets itself: a guest may not send them in a trailer either.
+    injected: Vec<HeaderName>,
 }
 
 impl GuestBody {
-    fn new(inner: Incoming, activity: &Arc<Activity>, sent: &Arc<Sent>) -> Self {
+    fn new(
+        inner: Incoming,
+        activity: &Arc<Activity>,
+        sent: &Arc<Sent>,
+        injected: Vec<HeaderName>,
+    ) -> Self {
         if inner.is_end_stream() {
             sent.finish();
         }
         activity.touch();
         Self {
+            expected: inner.size_hint().exact(),
+            received: 0,
+            injected,
             inner,
             activity: Arc::clone(activity),
             sent: Arc::clone(sent),
             timer: IdleTimer::new(activity),
         }
     }
+}
+
+/// Takes out of a trailer block what must not travel there (RFC 9110 §6.5.1: framing, routing and
+/// authentication fields) and what the proxy injected into the head.
+fn scrub_trailers(trailers: &mut HeaderMap, injected: &[HeaderName]) {
+    let names: Vec<HeaderName> = trailers
+        .keys()
+        .filter(|name| {
+            request::is_proxy_owned(name)
+                || matches!(
+                    name.as_str(),
+                    "authorization"
+                        | "cookie"
+                        | "content-encoding"
+                        | "content-type"
+                        | "content-range"
+                )
+                || injected.contains(name)
+        })
+        .cloned()
+        .collect();
+    for name in names {
+        trailers.remove(&name);
+    }
+}
+
+fn body_ended_short() -> BoxError {
+    Box::new(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "the request body ended before its Content-Length",
+    ))
 }
 
 impl Body for GuestBody {
@@ -876,6 +951,19 @@ impl Body for GuestBody {
         match Pin::new(&mut this.inner).poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {
                 this.activity.touch();
+                let frame = match frame.into_data() {
+                    Ok(data) => {
+                        this.received = this.received.saturating_add(data.len() as u64);
+                        Frame::data(data)
+                    }
+                    Err(frame) => match frame.into_trailers() {
+                        Ok(mut trailers) => {
+                            scrub_trailers(&mut trailers, &this.injected);
+                            Frame::trailers(trailers)
+                        }
+                        Err(frame) => frame,
+                    },
+                };
                 if this.inner.is_end_stream() {
                     this.sent.finish();
                 }
@@ -883,6 +971,12 @@ impl Body for GuestBody {
             }
             Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(Box::new(err)))),
             Poll::Ready(None) => {
+                if this
+                    .expected
+                    .is_some_and(|expected| expected != this.received)
+                {
+                    return Poll::Ready(Some(Err(body_ended_short())));
+                }
                 this.sent.finish();
                 Poll::Ready(None)
             }
@@ -1213,6 +1307,30 @@ mod tests {
     }
 
     #[test]
+    fn trailers_lose_framing_routing_authentication_and_injected_names() {
+        let mut trailers = HeaderMap::new();
+        for name in [
+            "x-kept",
+            "grpc-status",
+            "authorization",
+            "cookie",
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "x-api-key",
+        ] {
+            trailers.insert(
+                HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                "v".parse().unwrap(),
+            );
+        }
+        scrub_trailers(&mut trailers, &[HeaderName::from_static("x-api-key")]);
+        let mut left: Vec<&str> = trailers.keys().map(HeaderName::as_str).collect();
+        left.sort_unstable();
+        assert_eq!(left, ["grpc-status", "x-kept"]);
+    }
+
+    #[test]
     fn connection_specific_response_headers_are_dropped() {
         for name in [
             "connection",
@@ -1238,7 +1356,7 @@ mod tests {
         let mut timer = IdleTimer::new(&activity);
         let mut cx = TaskContext::from_waker(std::task::Waker::noop());
         assert!(timer.poll_expired(&mut cx).is_pending());
-        tokio::time::advance(STREAM_IDLE - Duration::from_secs(1)).await;
+        tokio::time::advance(STREAM_IDLE.saturating_sub(Duration::from_secs(1))).await;
         activity.touch();
         tokio::time::advance(Duration::from_secs(2)).await;
         // The timer's own deadline passed, but a frame moved a moment ago.
