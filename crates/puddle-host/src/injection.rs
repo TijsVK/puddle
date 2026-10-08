@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The host's side of credential injection: one CA for each running sandbox, the registry that
-//! tells the proxy which hosts each workspace decrypts, the injector all workspaces share and the
-//! cache of secrets behind it.
+//! tells the proxy which hosts each workspace decrypts, the injector of each start and the cache of
+//! secrets behind it.
 //!
 //! A sandbox's CA is made when the sandbox starts and dropped when it stops: it lives in this
 //! process's memory only, and its certificate goes into the guest's trust at boot. The CA has no
@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_ca::{CaBuilder, CaCertificate, WorkspaceCa};
-use puddle_proxy::{Injector, Termination, TerminationSource, Terminations};
+use puddle_proxy::{Injector, NoInjection, Termination, TerminationSource, Terminations};
 use puddle_secrets::{Fetch, SecretCache, Sources};
 use puddle_store::{Store, WorkspaceGit};
 use puddle_types::{Event, EventSink, WorkspaceName};
@@ -21,7 +21,7 @@ use tokio::task::JoinHandle;
 
 use crate::git_hosts::decrypt_set;
 
-/// What an injector is built from when the host starts.
+/// What an injector is built from.
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct InjectorInputs {
@@ -30,6 +30,8 @@ pub struct InjectorInputs {
     /// The host's one cache of secrets read from the user's own sign-ins (`gh`, Git, the operating
     /// system's store). Every workspace shares it, so one source is read once at a time.
     pub secrets: Arc<SecretCache<Sources>>,
+    /// Where a notice for the user goes (a sign-in that is needed, a push that was refused).
+    pub events: Arc<dyn EventSink>,
 }
 
 impl std::fmt::Debug for InjectorInputs {
@@ -38,9 +40,10 @@ impl std::fmt::Debug for InjectorInputs {
     }
 }
 
-/// Builds the injector every terminated request is decided by (one for the host: the request
-/// names its workspace).
-pub type InjectorFactory = Arc<dyn Fn(&InjectorInputs) -> Arc<dyn Injector> + Send + Sync>;
+/// Builds the injector that decides, for each request on a host a workspace decrypts, which
+/// credential is added. Called once for each start of a workspace's sandbox, with that workspace.
+pub type InjectorFactory =
+    Arc<dyn Fn(&InjectorInputs, &WorkspaceName) -> Arc<dyn Injector> + Send + Sync>;
 
 /// What a sandbox needs from [`Injection::begin`].
 pub(crate) struct Began {
@@ -50,11 +53,19 @@ pub(crate) struct Began {
     pub(crate) git: WorkspaceGit,
 }
 
+/// What a running sandbox holds in memory: its CA and the injector made for this start.
+#[derive(Clone)]
+struct Running {
+    ca: Arc<WorkspaceCa>,
+    injector: Arc<dyn Injector>,
+}
+
 pub(crate) struct Injection {
     terminations: Arc<Terminations>,
-    injector: Arc<dyn Injector>,
-    store: Arc<Store>,
-    running: Mutex<BTreeMap<WorkspaceName, Arc<WorkspaceCa>>>,
+    inputs: InjectorInputs,
+    /// Without one, nothing is added to a request on a decrypted host.
+    factory: Option<InjectorFactory>,
+    running: Mutex<BTreeMap<WorkspaceName, Running>>,
     /// Held while a workspace's settings are read and what it decrypts is changed to match, so
     /// the last change to run is the last one to read: a slow reader never puts back an old set.
     syncing: Mutex<()>,
@@ -63,25 +74,26 @@ pub(crate) struct Injection {
 impl Injection {
     pub(crate) fn new(
         terminations: Arc<Terminations>,
-        injector: Arc<dyn Injector>,
-        store: Arc<Store>,
+        inputs: InjectorInputs,
+        factory: Option<InjectorFactory>,
     ) -> Self {
         Self {
             terminations,
-            injector,
-            store,
+            inputs,
+            factory,
             running: Mutex::new(BTreeMap::new()),
             syncing: Mutex::new(()),
         }
     }
 
-    fn running(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceName, Arc<WorkspaceCa>>> {
+    fn running(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceName, Running>> {
         self.running.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The workspace's Git settings, from the database.
     pub(crate) fn git(&self, workspace: &WorkspaceName) -> Result<WorkspaceGit, String> {
-        self.store
+        self.inputs
+            .store
             .workspace_git(workspace)
             .map_err(|e| format!("cannot read {workspace}'s Git settings: {e}"))
     }
@@ -102,14 +114,18 @@ impl Injection {
                 .map_err(|e| format!("cannot make {workspace}'s certificate authority: {e}"))?,
         );
         let certificate = ca.certificate().clone();
+        let injector = self.factory.as_ref().map_or_else(
+            || Arc::new(NoInjection) as Arc<dyn Injector>,
+            |make| make(&self.inputs, workspace),
+        );
         // The registry and the list of running CAs change together, under the list's lock, so a
-        // `refresh` or an `end` never sees one without the other.
+        // `resync` or an `end` never sees one without the other.
         let mut running = self.running();
         self.terminations.insert(
             workspace.clone(),
-            Termination::new(decrypt_set(&git), Arc::clone(&ca), self.injector.clone()),
+            Termination::new(decrypt_set(&git), Arc::clone(&ca), Arc::clone(&injector)),
         );
-        running.insert(workspace.clone(), ca);
+        running.insert(workspace.clone(), Running { ca, injector });
         drop(running);
         Ok(Began { certificate, git })
     }
@@ -123,12 +139,12 @@ impl Injection {
         // Held until the registry is changed: an `end` in between would otherwise leave a CA
         // registered for a sandbox that is gone.
         let running = self.running();
-        let Some(ca) = running.get(workspace).cloned() else {
+        let Some(Running { ca, injector }) = running.get(workspace).cloned() else {
             return Ok(None);
         };
         self.terminations.insert(
             workspace.clone(),
-            Termination::new(decrypt_set(&git), ca, self.injector.clone()),
+            Termination::new(decrypt_set(&git), ca, injector),
         );
         drop(running);
         Ok(Some(git))
@@ -180,7 +196,6 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    use puddle_proxy::NoInjection;
     use puddle_secrets::{AccountName, Fetched, HostName, SourceError, SourceSpec};
     use puddle_store::{
         Author, Clock, Coverage, CredentialBinding, IdentityDraft, Limits, ManualClock, Owner,
@@ -198,13 +213,20 @@ mod tests {
         WorkspaceName::new(name).unwrap()
     }
 
+    fn inputs(store: &Arc<Store>) -> InjectorInputs {
+        InjectorInputs {
+            store: Arc::clone(store),
+            secrets: Arc::new(SecretCache::new(Sources::new(
+                puddle_secrets::ToolPaths::resolve(),
+                Arc::new(puddle_secrets::MemoryStore::new()),
+            ))),
+            events: Arc::new(Events::default()),
+        }
+    }
+
     fn injection(store: &Arc<Store>) -> (Injection, Arc<Terminations>) {
         let terminations = Arc::new(Terminations::new());
-        let injection = Injection::new(
-            Arc::clone(&terminations),
-            Arc::new(NoInjection),
-            Arc::clone(store),
-        );
+        let injection = Injection::new(Arc::clone(&terminations), inputs(store), None);
         (injection, terminations)
     }
 
@@ -395,12 +417,47 @@ mod tests {
 
     #[test]
     fn the_inputs_print_without_what_they_hold() {
-        let store = store();
-        let secrets = Arc::new(SecretCache::new(Sources::new(
-            puddle_secrets::ToolPaths::resolve(),
-            Arc::new(puddle_secrets::MemoryStore::new()),
-        )));
-        let text = format!("{:?}", InjectorInputs { store, secrets });
+        let text = format!("{:?}", inputs(&store()));
         assert_eq!(text, "InjectorInputs { .. }");
+    }
+
+    #[derive(Debug)]
+    struct Marked;
+
+    impl Injector for Marked {
+        fn decide<'a>(
+            &'a self,
+            _: &'a puddle_proxy::InjectContext<'a>,
+            _: &'a puddle_proxy::RequestView<'a>,
+        ) -> puddle_proxy::BoxFuture<'a, puddle_proxy::InjectDecision> {
+            Box::pin(async { puddle_proxy::InjectDecision::PassThrough })
+        }
+    }
+
+    #[test]
+    fn each_start_gets_an_injector_made_for_its_workspace_and_it_stays_across_changes() {
+        let store = store();
+        let made = Arc::new(Mutex::new(Vec::new()));
+        let record = Arc::clone(&made);
+        let factory: InjectorFactory = Arc::new(move |_, workspace| {
+            record.lock().unwrap().push(workspace.clone());
+            Arc::new(Marked)
+        });
+        let terminations = Arc::new(Terminations::new());
+        let injection = Injection::new(Arc::clone(&terminations), inputs(&store), Some(factory));
+        let (a, b) = (workspace("alpha"), workspace("beta"));
+        injection.begin(&a).unwrap();
+        injection.begin(&b).unwrap();
+        assert_eq!(*made.lock().unwrap(), [a.clone(), b]);
+        // A change to a running workspace keeps its injector (it may hold state of its own).
+        let before = format!("{:?}", terminations.termination(&a).unwrap());
+        attach(&store, &a, "ada", "github.com");
+        assert!(injection.resync(&a).unwrap().is_some());
+        assert_eq!(made.lock().unwrap().len(), 2);
+        assert!(format!("{:?}", terminations.termination(&a).unwrap()).contains("Marked"));
+        assert!(before.contains("Marked"));
+        // A restart makes a new one.
+        injection.begin(&a).unwrap();
+        assert_eq!(made.lock().unwrap().len(), 3);
     }
 }

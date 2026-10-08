@@ -2457,21 +2457,26 @@ impl puddle_proxy::Injector for MarkedInjector {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_injector_is_built_once_from_the_hosts_store_and_secrets_and_serves_every_workspace() {
+async fn each_start_gets_an_injector_built_for_its_workspace_from_the_hosts_store() {
     let rig = Rig::new();
     let built = Arc::new(Mutex::new(Vec::new()));
     let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
     let mut options = HostOptions::default();
     let record = built.clone();
-    options.injector = Some(Arc::new(move |inputs: &puddle_host::InjectorInputs| {
-        record.lock().unwrap().push(inputs.store.clone());
-        Arc::new(MarkedInjector)
-    }));
+    options.injector = Some(Arc::new(
+        move |inputs: &puddle_host::InjectorInputs, workspace: &WorkspaceName| {
+            record
+                .lock()
+                .unwrap()
+                .push((workspace.clone(), inputs.store.clone()));
+            Arc::new(MarkedInjector)
+        },
+    ));
     let host = Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
         .await
         .unwrap();
-    assert_eq!(built.lock().unwrap().len(), 1);
-    assert!(Arc::ptr_eq(&built.lock().unwrap()[0], host.store()));
+    // Nothing is made before a workspace starts.
+    assert!(built.lock().unwrap().is_empty());
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
@@ -2483,7 +2488,19 @@ async fn the_injector_is_built_once_from_the_hosts_store_and_secrets_and_serves_
             "{termination:?}"
         );
     }
-    assert_eq!(built.lock().unwrap().len(), 1);
+    let made = built.lock().unwrap().clone();
+    let workspaces: Vec<&WorkspaceName> = made.iter().map(|(w, _)| w).collect();
+    assert_eq!(workspaces, [&name("acme"), &name("beta")]);
+    assert!(
+        made.iter()
+            .all(|(_, store)| Arc::ptr_eq(store, host.store()))
+    );
+    // A start in place makes a new one.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(built.lock().unwrap().len(), 3);
     host.shutdown().await;
 }
 
@@ -2768,30 +2785,4 @@ async fn missed_events_are_made_up_for_by_looking_at_every_running_workspace_aga
     eventually("the set follows", || decrypts(&host, "acme", "github.com")).await;
     rig.guest.boots_reach(before + 1).await;
     host.shutdown().await;
-}
-
-#[test]
-fn the_inputs_to_an_injector_print_without_what_they_hold() {
-    // Printed through the host's own factory type, as a user of the library sees it.
-    let seen = Arc::new(Mutex::new(String::new()));
-    let record = seen.clone();
-    let factory: puddle_host::InjectorFactory = Arc::new(move |inputs| {
-        *record.lock().unwrap() = format!("{inputs:?}");
-        Arc::new(MarkedInjector)
-    });
-    let rig = Rig::new();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
-        let mut options = HostOptions::default();
-        options.injector = Some(factory);
-        let host = Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
-            .await
-            .unwrap();
-        host.shutdown().await;
-    });
-    assert_eq!(*seen.lock().unwrap(), "InjectorInputs { .. }");
 }

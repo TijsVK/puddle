@@ -26,9 +26,7 @@ use puddle_compute::{Runtime, SandboxInfo};
 use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
-use puddle_proxy::{
-    Injector, NoInjection, Proxy, ProxyUrl, PullProxy, PullRoute, Terminations, Upstream,
-};
+use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Terminations, Upstream};
 use puddle_secrets::{KeyringStore, SecretCache, Sources, ToolPaths};
 use puddle_settings::resolve;
 use puddle_store::{DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
@@ -260,8 +258,9 @@ pub struct HostOptions {
     pub launcher: Arc<dyn Launcher>,
     /// The proxy discovery to use instead of the system's (tests).
     pub discovery: Option<Arc<Discovery>>,
-    /// Builds the injector that decides, for every request on a decrypted host, which credential
-    /// is added. Without one nothing is added (decrypted requests pass as the guest sent them).
+    /// Builds, for each start of a workspace's sandbox, the injector that decides which credential
+    /// is added to a request on a decrypted host. Without one nothing is added (decrypted requests
+    /// pass as the guest sent them).
     pub injector: Option<InjectorFactory>,
 }
 
@@ -416,7 +415,7 @@ impl<R: Runtime + Clone> Host<R> {
 
         // Credential injection: what each workspace decrypts, the injector and the secrets behind
         // it, and the client that verifies the real servers of decrypted hosts.
-        let injecting = Injecting::build(&options, &store, &roots)?;
+        let injecting = Injecting::build(&options, &store, &events, &roots)?;
 
         // The way out: the company network (discovery, sign-in as the user, then Basic) for the
         // sandbox proxy and the pull proxy alike.
@@ -720,6 +719,7 @@ impl Injecting {
     fn build(
         options: &HostOptions,
         store: &Arc<Store>,
+        events: &Arc<EventHub>,
         roots: &CorporateRoots,
     ) -> Result<Self, HostError> {
         // The secrets read from the user's own sign-ins (`gh`, Git, the operating system's store).
@@ -727,21 +727,16 @@ impl Injecting {
             ToolPaths::resolve(),
             Arc::new(KeyringStore),
         )));
-        let injector: Arc<dyn Injector> = options.injector.as_ref().map_or_else(
-            || Arc::new(NoInjection) as Arc<dyn Injector>,
-            |make| {
-                make(&InjectorInputs {
-                    store: store.clone(),
-                    secrets: secrets.clone(),
-                })
-            },
-        );
         // The proxy asks this registry, once per connection, what the workspace decrypts.
         let terminations = Arc::new(Terminations::new());
         let injection = Arc::new(Injection::new(
             terminations.clone(),
-            injector,
-            store.clone(),
+            InjectorInputs {
+                store: store.clone(),
+                secrets: secrets.clone(),
+                events: events.clone() as Arc<dyn EventSink>,
+            },
+            options.injector.clone(),
         ));
         // The platform's roots plus the company's, as the guest is given.
         let tls = TlsClient::new(roots.certificates().iter().map(der_of))?;
