@@ -13,10 +13,11 @@
 # Set CARGO to run every Cargo command through a wrapper, e.g. CARGO=mbx for the shared build
 # cache (docs/STANDARDS.md, "Shared build cache"); unset, it runs plain cargo.
 # Coverage (docs/STANDARDS.md, "Coverage"): the floors live here, the ratchet baseline in
-# scripts/coverage-baseline.json; raise them, never lower them without the owner's OK. A change's
-# added lines must also be covered (gates `coverage` for Rust, `ui` for the UI, `diff-coverage` by hand);
-# DIFF_BASE names the commit to measure from (CI sets it to the PR or push base), else the merge base
-# with origin/develop.
+# scripts/coverage-baseline.json; raise them, never lower them without the owner's OK. The ratchet
+# lets a total measure up to 0.05 points below its baseline (run-to-run wobble); the floors are exact.
+# A change's added lines must also be covered (gates `coverage` for Rust, `ui` for the UI,
+# `diff-coverage` by hand); DIFF_BASE names the commit to measure from (CI sets it to the PR or push
+# base), else the merge base with origin/develop.
 set -eu
 
 COV_LINES=92

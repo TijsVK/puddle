@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The coverage ratchet (docs/STANDARDS.md, "Coverage"): the workspace's line and region coverage
-// must stay at or above the floor (lines 92 %, regions 90 %) and at or above the committed baseline
-// in scripts/coverage-baseline.json. The baseline only goes up: when coverage rises a local run
-// writes the new value (rounded down to 0.1) for you to commit, and a change that lowers the
+// must stay at or above the floor (lines 92 %, regions 90 %) and no more than 0.05 points below the
+// committed baseline in scripts/coverage-baseline.json. The floor has no tolerance. The 0.05 is
+// measurement wobble: runs of the same code differ by a few hundredths, and a baseline set from
+// one run would otherwise fail the next. The baseline only goes up: when coverage rises a local
+// run writes the new value (rounded down to 0.1) for you to commit, and a change that lowers the
 // committed baseline fails unless COVERAGE_BASELINE_LOWER_OK=1, which scripts/check.sh sets only
 // when a commit of the change carries the trailer `Owner-OK: coverage-baseline`.
 //
@@ -33,12 +35,22 @@ export function readTotals(json: string): Totals {
   return { lines: t["lines"].percent, regions: t["regions"].percent };
 }
 
+/**
+ * How far below the baseline a total may measure and still pass, in percentage points. Only the
+ * baseline has it; the floors are exact.
+ */
+export const WOBBLE = 0.05;
+
 /** The value as printed (two decimals): what the gate compares, so a printed 93.70 meets a 93.7 baseline. */
 const shown = (n: number) => Math.round(n * 100) / 100;
+/** The same in whole hundredths, so "exactly 0.05 below" is an integer comparison, not a float one. */
+const hundredths = (n: number) => Math.round(n * 100);
 const down = (n: number) => Math.floor(n * 10 + 1e-9) / 10;
 
 export interface Verdict {
   failures: string[];
+  /** One line per total that passed only because of the wobble allowance. */
+  notes: string[];
   /** The baseline to commit when coverage went up, else undefined. */
   raised: Totals | undefined;
 }
@@ -51,15 +63,22 @@ export function judge(
   lowerOk: boolean,
 ): Verdict {
   const failures: string[] = [];
+  const notes: string[] = [];
+  const wobble = hundredths(WOBBLE);
   for (const k of ["lines", "regions"] as const) {
-    const need = Math.max(floor[k], baseline[k]);
-    if (shown(measured[k]) < need) {
-      const why =
-        baseline[k] > floor[k]
-          ? `baseline ${baseline[k]}`
-          : `floor ${floor[k]}`;
+    const have = hundredths(measured[k]);
+    const base = hundredths(baseline[k]);
+    if (shown(measured[k]) < floor[k]) {
       failures.push(
-        `${k} coverage ${measured[k].toFixed(2)} % is below the ${why} %`,
+        `${k} coverage ${measured[k].toFixed(2)} % is below the floor ${floor[k]} %`,
+      );
+    } else if (have < base - wobble) {
+      failures.push(
+        `${k} coverage ${measured[k].toFixed(2)} % is more than ${WOBBLE} points below the baseline ${baseline[k]} %`,
+      );
+    } else if (have < base) {
+      notes.push(
+        `${k} coverage ${measured[k].toFixed(2)} % is below the baseline ${baseline[k]} % by ${((base - have) / 100).toFixed(2)} points, within the allowed wobble of ${WOBBLE} points`,
       );
     }
     if (previous && baseline[k] < previous[k] && !lowerOk) {
@@ -76,7 +95,7 @@ export function judge(
     next.lines > baseline.lines || next.regions > baseline.regions
       ? next
       : undefined;
-  return { failures, raised };
+  return { failures, notes, raised };
 }
 
 function parseBaseline(text: string): Totals {
@@ -120,6 +139,7 @@ export function main(argv: string[]): number {
     for (const f of v.failures) console.error(`coverage ratchet: ${f}`);
     return 1;
   }
+  for (const n of v.notes) console.log(`coverage ratchet: ${n}`);
   if (v.raised) {
     if (argv.includes("--write")) {
       writeFileSync(file, `${JSON.stringify(v.raised, null, 2)}\n`);

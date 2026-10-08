@@ -255,10 +255,19 @@ the owner, then tagged `vX.Y.Z` on `main`.
 - Measured by `cargo llvm-cov nextest` over the whole workspace on Linux, in every CI run; the UI by
   vitest's v8 coverage (`npm test`).
 - **Gate: lines ≥ 92 %, regions ≥ 90 %** (workspace totals, floors in `scripts/check.sh`), and a
-  **ratchet**: coverage may not fall below `scripts/coverage-baseline.json`, the best value reached so far
-  (rounded down to 0.1). The floors and the baseline only go up; lowering either needs the owner's OK, and
-  a change that lowers the committed baseline fails the gate unless one of its commits carries the trailer
-  `Owner-OK: coverage-baseline` (the owner's OK; the environment can't grant it).
+  **ratchet**: coverage may not fall more than 0.05 points below `scripts/coverage-baseline.json`, the best
+  value reached so far (rounded down to 0.1). The floors and the baseline only go up; lowering either needs
+  the owner's OK, and a change that lowers the committed baseline fails the gate unless one of its commits
+  carries the trailer `Owner-OK: coverage-baseline` (the owner's OK; the environment can't grant it).
+- **The ratchet allows 0.05 points of wobble, the floors none.** Measurement varies by a few hundredths
+  between runs of the same code, and a baseline taken from one run would sometimes fail a rerun of the
+  same code, which costs a full check. So each total (lines, regions) passes while the value as printed
+  (two decimals) is at most 0.05 below the baseline, and the gate logs one line per total saying how far
+  below it measured and the allowed wobble; anything further below fails. The allowance doesn't move the
+  baseline: it is still raised to the measured value when coverage rises, and still never lowered without
+  the trailer above, so repeated wobble can't wear it down. A drop of more than 0.05 points still fails;
+  a smaller one passes (and is logged), and the diff gate (below) is what holds the lines a change adds.
+  The owner accepted this allowance on 2026-10-08.
 - **Raising the baseline is automatic.** A local `scripts/check.sh coverage` (the pre-push hook runs it)
   rewrites the baseline when coverage rose; commit the changed file with your change. CI never writes it,
   it only compares and tells you when the baseline is behind. If two branches raise it, take the higher
