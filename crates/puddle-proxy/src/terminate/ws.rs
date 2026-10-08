@@ -72,9 +72,9 @@ where
     G: AsyncRead + AsyncWrite + Unpin,
 {
     let mut upstream = TokioIo::new(upstream);
-    if let Err(err) = tokio::io::copy_bidirectional(guest, &mut upstream).await {
-        tracing::debug!(error = %err, "WebSocket ended with an error");
-    }
+    let _ = tokio::io::copy_bidirectional(guest, &mut upstream)
+        .await
+        .inspect_err(|err| tracing::debug!(error = %err, "WebSocket ended with an error"));
 }
 
 /// The header `name` of `headers` as text, if there is exactly one.

@@ -296,16 +296,17 @@ pub(crate) fn upstream_headers_h2(
     }
     if let Some(injection) = injection {
         for header in injection.headers() {
-            let Some(value) = header.header_value() else {
-                return Err(Refusal::new(
-                    "502 Bad Gateway",
-                    "an injected header could not be built",
-                ));
-            };
+            let value = header.header_value().ok_or_else(unbuildable_header)?;
             map.insert(header.name().clone(), value);
         }
     }
     Ok(map)
+}
+
+/// An injected header that [`InjectedHeader::new`] accepted could not be turned into a header
+/// value: the two checks disagree, and nothing is sent.
+fn unbuildable_header() -> Refusal {
+    Refusal::new("502 Bad Gateway", "an injected header could not be built")
 }
 
 #[cfg(test)]
@@ -491,6 +492,11 @@ mod tests {
 
 #[cfg(test)]
 mod h2_tests {
+    #[test]
+    fn an_unbuildable_injected_header_is_a_bad_gateway() {
+        assert_eq!(unbuildable_header().status, "502 Bad Gateway");
+    }
+
     use puddle_types::Host;
 
     use super::*;

@@ -83,3 +83,7 @@ crates/puddle-fs/src/lock.rs | return Err(LockError::Io { | as above
 crates/puddle-fs/src/lock.rs | path: lock_path, | as above
 crates/puddle-fs/src/lock.rs | source, | as above
 crates/puddle-fs/src/lock.rs | }); | as above
+crates/puddle-proxy/src/terminate/h2.rs | None => None, | a lease holds its connection until it is dropped (the Option only lets Drop move the connection back into the pool), so a lease in use always has one; no test can build a lease without it
+crates/puddle-proxy/src/terminate/h2.rs | None => Err(Refusal::new("502 Bad Gateway", "the upstream connection is gone")), | the same lease, seen from the other side: it always holds its connection while a request is sent
+crates/puddle-proxy/src/terminate/leg.rs | Self::H2(_) => Err(not_offered()), | the offer was `http/1.1` only and TLS never settles on a protocol that was not offered, so no test server can answer otherwise
+crates/puddle-proxy/src/terminate/session.rs | the CA cannot sign for a name it was checked to permit | `Termination::new` rejects a CA whose name constraints leave out a bound name, so signing the leaf for the `CONNECT` host fails only when the CA itself is broken, which no test can cause

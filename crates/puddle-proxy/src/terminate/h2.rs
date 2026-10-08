@@ -619,9 +619,7 @@ async fn websocket(
             if !ws::version_ok(&headers) {
                 return Err(bad("only Sec-WebSocket-Version 13 is supported"));
             }
-            let fresh = ws::new_key().ok_or_else(|| {
-                Refusal::new("502 Bad Gateway", "no random bytes for the WebSocket key")
-            })?;
+            let fresh = ws::new_key().ok_or_else(no_random_bytes)?;
             headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
             headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
             headers.insert(
@@ -681,18 +679,26 @@ async fn websocket(
     tokio::spawn(async move {
         let _guard = guard;
         let _lease = lease;
-        let (guest, upstream) = tokio::join!(guest_upgrade, upstream_upgrade);
-        match (guest, upstream) {
-            (Ok(guest), Ok(upstream)) => {
-                let mut guest = TokioIo::new(guest);
-                ws::splice(&mut guest, upstream).await;
-            }
-            (guest, upstream) => {
-                tracing::debug!(guest = ?guest.err(), upstream = ?upstream.err(), "the WebSocket upgrade did not complete");
-            }
+        let _ = async {
+            let guest = guest_upgrade
+                .await
+                .inspect_err(|err| tracing::debug!(error = %err, "the guest's WebSocket upgrade did not complete"))
+                .ok()?;
+            let upstream = upstream_upgrade
+                .await
+                .inspect_err(|err| tracing::debug!(error = %err, "the server's WebSocket upgrade did not complete"))
+                .ok()?;
+            ws::splice(&mut TokioIo::new(guest), upstream).await;
+            Some(())
         }
+        .await;
     });
     Ok(answer)
+}
+
+/// The system had no random bytes for a WebSocket key.
+fn no_random_bytes() -> Refusal {
+    Refusal::new("502 Bad Gateway", "no random bytes for the WebSocket key")
 }
 
 fn record_injection(shared: &Shared, injection: Option<&Injection>) {
@@ -729,6 +735,27 @@ fn is_connection_specific(name: &HeaderName) -> bool {
     )
 }
 
+/// `headers` without those that describe one connection (`Connection` and what it names,
+/// `Keep-Alive`, `Transfer-Encoding`, `Upgrade`, ...): they mean nothing on the guest's HTTP/2
+/// connection.
+fn end_to_end_headers(headers: &HeaderMap) -> HeaderMap {
+    let named_in_connection: Vec<String> = headers
+        .get_all(header::CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(|token| token.trim().to_ascii_lowercase())
+        .collect();
+    let mut kept = HeaderMap::with_capacity(headers.len());
+    for (name, value) in headers {
+        if is_connection_specific(name) || named_in_connection.iter().any(|t| t == name.as_str()) {
+            continue;
+        }
+        kept.append(name.clone(), value.clone());
+    }
+    kept
+}
+
 /// The upstream's response, for the HTTP/2 guest: connection-specific headers removed, the body
 /// (and its trailers) streamed through.
 fn guest_response(
@@ -740,22 +767,7 @@ fn guest_response(
     guard: StreamGuard,
 ) -> Response<RespBody> {
     let (mut parts, body) = response.into_parts();
-    let named_in_connection: Vec<String> = parts
-        .headers
-        .get_all(header::CONNECTION)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .map(|token| token.trim().to_ascii_lowercase())
-        .collect();
-    let mut headers = HeaderMap::with_capacity(parts.headers.len());
-    for (name, value) in &parts.headers {
-        if is_connection_specific(name) || named_in_connection.iter().any(|t| t == name.as_str()) {
-            continue;
-        }
-        headers.append(name.clone(), value.clone());
-    }
-    parts.headers = headers;
+    parts.headers = end_to_end_headers(&parts.headers);
     parts.version = ::http::Version::HTTP_2;
     let body: RespBody = if head_only {
         // `HEAD` and `304` describe a body they do not carry; an HTTP/2 stream just ends.
@@ -1336,6 +1348,27 @@ mod tests {
         assert!(!is_connection_specific(&HeaderName::from_static(
             "content-type"
         )));
+    }
+
+    #[test]
+    fn a_response_loses_the_headers_of_its_http11_connection_and_those_it_names() {
+        let mut headers = HeaderMap::new();
+        headers.append("connection", "keep-alive, X-Hop".parse().unwrap());
+        headers.append("keep-alive", "timeout=5".parse().unwrap());
+        headers.append("x-hop", "only for this connection".parse().unwrap());
+        headers.append("x-kept", "one".parse().unwrap());
+        headers.append("x-kept", "two".parse().unwrap());
+        headers.append("content-type", "text/plain".parse().unwrap());
+        let kept = end_to_end_headers(&headers);
+        let mut names: Vec<&str> = kept.keys().map(HeaderName::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["content-type", "x-kept"]);
+        assert_eq!(kept.get_all("x-kept").iter().count(), 2);
+    }
+
+    #[test]
+    fn the_refusal_without_random_bytes_is_a_bad_gateway() {
+        assert_eq!(no_random_bytes().status, "502 Bad Gateway");
     }
 
     #[tokio::test(start_paused = true)]

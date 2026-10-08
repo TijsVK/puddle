@@ -369,3 +369,28 @@ async fn a_guest_that_stops_its_handshake_after_the_hello_is_dropped_at_the_hand
     assert!(ended.is_ok(), "the proxy hung up");
     assert_eq!(rig.events(1).await.len(), 1);
 }
+
+#[tokio::test]
+async fn a_guest_that_sends_no_hello_at_all_is_dropped_at_the_handshake_timeout() {
+    let pki = Pki::new();
+    let server = H2Server::recording(&pki, "bound.test", ok("x")).await;
+    let defaults = ProxyConfig::default();
+    let config = defaults.with_terminate_timeouts(
+        Duration::from_millis(400),
+        defaults.keepalive_timeout,
+        defaults.upstream_head_timeout,
+        defaults.body_idle_timeout,
+    );
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .config(config)
+        .build();
+    let mut guest = rig.guest().await;
+    let (code, mut tunnel) = guest.connect_to("bound.test:443").await;
+    assert_eq!(code, 200);
+    let mut sink = Vec::new();
+    let ended = tokio::time::timeout(Duration::from_secs(10), tunnel.read_to_end(&mut sink)).await;
+    assert!(ended.is_ok(), "the proxy hung up");
+    assert!(server.recorded().is_empty());
+    assert_eq!(rig.events(1).await.len(), 1);
+}

@@ -78,6 +78,41 @@ impl Connected {
             Self::H2(_) => Proto::H2,
         }
     }
+
+    /// The HTTP/1.1 connection, for a caller that offered only `http/1.1`.
+    ///
+    /// # Errors
+    /// The server answered with a protocol that was not offered.
+    pub(crate) fn into_h1(self) -> Result<H1Conn, Refusal> {
+        match self {
+            Self::H1(conn) => Ok(conn),
+            Self::H2(_) => Err(not_offered()),
+        }
+    }
+}
+
+/// The server chose a protocol the proxy did not offer (TLS does not allow it).
+fn not_offered() -> Refusal {
+    Refusal::new(
+        "502 Bad Gateway",
+        "the server chose a protocol that was not offered",
+    )
+}
+
+/// The HTTP client library could not start on a verified connection.
+fn setup_refusal(name: &str, cause: &str) -> Refusal {
+    Refusal::new(
+        "502 Bad Gateway",
+        format!("could not talk HTTP to {name}: {cause}"),
+    )
+}
+
+/// Every connection of the pool is in use and none came back in time.
+fn busy_refusal(host: impl std::fmt::Display) -> Refusal {
+    Refusal::new(
+        "503 Service Unavailable",
+        format!("all {MAX_POOLED} connections to {host} are busy"),
+    )
 }
 
 /// A connection and what the audit learns from making it.
@@ -123,16 +158,7 @@ pub(crate) async fn connect(cx: &Context, alpn: &[&[u8]]) -> Result<Made, Refusa
     };
     let proto = Proto::from_alpn(tls.get_ref().1.alpn_protocol());
     let io = TokioIo::new(tls);
-    let setup_failed = |err: hyper::Error| {
-        tracing::info!(host = %name, error = %err, "HTTP client setup failed");
-        Refusal::new(
-            "502 Bad Gateway",
-            format!(
-                "could not talk HTTP to {name}: {}",
-                super::session::short(&err)
-            ),
-        )
-    };
+    let setup_failed = |err: hyper::Error| setup_refusal(&name, &super::session::short(&err));
     let conn = match proto {
         Proto::H1 => {
             let (sender, connection) = http1::Builder::new()
@@ -199,17 +225,11 @@ impl H1Pool {
     /// # Errors
     /// No connection could be had: the refusal to give the guest.
     pub(crate) async fn checkout(&self, cx: &Context, wait: Duration) -> Result<Lease, Refusal> {
-        let acquired =
-            tokio::time::timeout(wait, Arc::clone(&self.inner.permits).acquire_owned()).await;
-        let Ok(Ok(permit)) = acquired else {
-            return Err(Refusal::new(
-                "503 Service Unavailable",
-                format!(
-                    "all {MAX_POOLED} connections to {} are busy",
-                    cx.target.host
-                ),
-            ));
-        };
+        let permit = tokio::time::timeout(wait, Arc::clone(&self.inner.permits).acquire_owned())
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .ok_or_else(|| busy_refusal(&cx.target.host))?;
         loop {
             let idle = self
                 .inner
@@ -225,13 +245,8 @@ impl H1Pool {
                 return Ok(Lease::new(conn, self, permit));
             }
         }
-        match connect(cx, &[ALPN_HTTP11]).await?.conn {
-            Connected::H1(conn) => Ok(Lease::new(conn, self, permit)),
-            Connected::H2(_) => Err(Refusal::new(
-                "502 Bad Gateway",
-                "the server chose a protocol that was not offered",
-            )),
-        }
+        let conn = connect(cx, &[ALPN_HTTP11]).await?.conn.into_h1()?;
+        Ok(Lease::new(conn, self, permit))
     }
 }
 
@@ -276,5 +291,24 @@ impl Drop for Lease {
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(conn);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_refusals_of_the_upstream_leg_say_what_happened() {
+        let busy = busy_refusal("bound.test");
+        assert_eq!(busy.status, "503 Service Unavailable");
+        assert_eq!(busy.message, "all 8 connections to bound.test are busy");
+        let setup = setup_refusal("bound.test", "connection reset");
+        assert_eq!(setup.status, "502 Bad Gateway");
+        assert_eq!(
+            setup.message,
+            "could not talk HTTP to bound.test: connection reset"
+        );
+        assert_eq!(not_offered().status, "502 Bad Gateway");
     }
 }

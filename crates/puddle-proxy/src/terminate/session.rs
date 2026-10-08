@@ -110,7 +110,7 @@ where
             return outcome;
         }
         Err(_) => {
-            tracing::debug!(host = %cx.target.host, "guest TLS handshake timed out");
+            tracing::debug!(host = %cx.target.host, "guest TLS hello timed out");
             return outcome;
         }
     };
@@ -135,14 +135,13 @@ where
         None if hello.offers_h1 => Proto::H1,
         None => Proto::H2,
     };
-    let (server_config, _) =
-        match server_config(cx.termination.ca(), &cx.target.host, &[guest_proto.alpn()]) {
-            Ok(pair) => pair,
-            Err(err) => {
-                tracing::error!(error = %err, "could not build the guest TLS configuration");
-                return outcome;
-            }
-        };
+    let built = server_config(cx.termination.ca(), &cx.target.host, &[guest_proto.alpn()])
+        .inspect_err(
+            |err| tracing::error!(error = %err, "could not build the guest TLS configuration"),
+        );
+    let Ok((server_config, _)) = built else {
+        return outcome; // the CA cannot sign for a name it was checked to permit
+    };
     let tls = match tokio::time::timeout(
         config.tls_handshake_timeout,
         start.into_stream(server_config),
@@ -359,18 +358,13 @@ where
             }
         }
         self.upstream = None;
-        // The first connection of the guest connection is the one the audit record names.
-        let made = leg::connect(self.cx, &[ALPN_HTTP11]).await?;
-        match made.conn {
-            Connected::H1(conn) => {
-                self.upstream = Some(conn);
-                Ok(())
-            }
-            Connected::H2(_) => Err(Refusal::new(
-                "502 Bad Gateway",
-                "the server chose a protocol that was not offered",
-            )),
-        }
+        self.upstream = Some(
+            leg::connect(self.cx, &[ALPN_HTTP11])
+                .await?
+                .conn
+                .into_h1()?,
+        );
+        Ok(())
     }
 
     /// Writes `response` to the guest while the guest's read side is polled (see [`keep_reading`]).
@@ -410,18 +404,24 @@ where
             head.extend_from_slice(b"\r\n");
         }
         head.extend_from_slice(b"\r\n");
-        if let Err(err) = self.writer.write_all(&head).await {
-            tracing::debug!(error = %err, "guest went away before the WebSocket answer");
-            return Flow::Abort;
+        let host = &self.cx.target.host;
+        let piped = async {
+            self.writer
+                .write_all(&head)
+                .await
+                .inspect_err(|err| tracing::debug!(error = %err, "guest went away before the WebSocket answer"))
+                .ok()?;
+            let upgraded = upgraded
+                .await
+                .inspect_err(|_| tracing::info!(host = %host, "the WebSocket upgrade did not complete"))
+                .ok()?;
+            // Bytes the guest sent right behind its handshake are still in the reader's buffer.
+            let mut guest = tokio::io::join(&mut self.reader, &mut self.writer);
+            ws::splice(&mut guest, upgraded).await;
+            Some(())
         }
-        let Ok(upgraded) = upgraded.await else {
-            tracing::info!(host = %self.cx.target.host, "the WebSocket upgrade did not complete");
-            return Flow::Abort;
-        };
-        // Bytes the guest sent right behind its handshake are still in the reader's buffer.
-        let mut guest = tokio::io::join(&mut self.reader, &mut self.writer);
-        ws::splice(&mut guest, upgraded).await;
-        Flow::Close
+        .await;
+        piped.map_or(Flow::Abort, |()| Flow::Close)
     }
 
     /// Sends `parsed` with `headers` upstream and its response to the guest.
