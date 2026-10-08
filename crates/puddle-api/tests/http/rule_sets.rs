@@ -276,3 +276,54 @@ async fn your_own_sets_take_rules_and_inbox_approvals() {
     }
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
+    let api = start().await;
+    for name in ["ssh", "other"] {
+        let reply = api
+            .send(
+                "POST",
+                "/api/workspaces",
+                Some(&json!({"name": name, "repo_url": "https://github.com/acme/api.git"})),
+            )
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+    }
+    assert!(!decide(&api, "ssh", "marketplace.visualstudio.com").is_allow());
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings/sandboxes/ssh",
+            Some(&json!({"overrides": {"direct_ssh": true}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(decide(&api, "ssh", "marketplace.visualstudio.com").is_allow());
+    assert!(!decide(&api, "other", "marketplace.visualstudio.com").is_allow());
+    let list = api.get("/api/rule-sets").await.json();
+    assert!(
+        list["system_managed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| { h["reason"] == "direct_ssh" && h["sandbox"] == "ssh" })
+    );
+    // The global default on: a workspace made afterwards gets them too.
+    api.send(
+        "PUT",
+        "/api/settings",
+        Some(&json!({"sandbox_defaults": {"direct_ssh": true}})),
+    )
+    .await;
+    assert!(decide(&api, "other", "marketplace.visualstudio.com").is_allow());
+    // Off again for one: gone there.
+    api.send(
+        "PUT",
+        "/api/settings/sandboxes/ssh",
+        Some(&json!({"overrides": {"direct_ssh": false}})),
+    )
+    .await;
+    assert!(!decide(&api, "ssh", "marketplace.visualstudio.com").is_allow());
+    api.running.shutdown().await;
+}

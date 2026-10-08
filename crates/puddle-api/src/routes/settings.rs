@@ -99,7 +99,8 @@ pub(crate) async fn put_global(
     crate::extract::Json(body): crate::extract::Json<GlobalSettingsRequest>,
 ) -> Result<Json<GlobalSettingsView>, ApiError> {
     let workspaces = state.workspaces.clone();
-    let _lock = state.settings_lock.lock().await;
+    let after = state.clone();
+    let lock = state.settings_lock.lock().await;
     let loaded = blocking(move || {
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;
@@ -119,12 +120,13 @@ pub(crate) async fn put_global(
             ));
         }
         repo.save_global(loaded.settings.to_document())?;
-        crate::system_managed::refresh(&state.store, repo)?;
         Ok(loaded)
     })
     .await?;
     tracing::info!("global settings changed");
     workspaces.settings_changed().await;
+    drop(lock);
+    crate::system_managed::refresh(&after).await;
     Ok(Json(GlobalSettingsView::new(&loaded)))
 }
 
@@ -176,7 +178,8 @@ pub(crate) async fn put_sandbox(
     crate::extract::Json(body): crate::extract::Json<SandboxSettingsRequest>,
 ) -> Result<Json<SandboxSettingsView>, ApiError> {
     let workspaces = state.workspaces.clone();
-    let _lock = state.settings_lock.lock().await;
+    let after = state.clone();
+    let lock = state.settings_lock.lock().await;
     let view = blocking(move || {
         let repo = state.settings.as_ref();
         let global = load_global(repo)?;
@@ -188,6 +191,8 @@ pub(crate) async fn put_sandbox(
     })
     .await?;
     workspaces.settings_changed().await;
+    drop(lock);
+    crate::system_managed::refresh(&after).await;
     Ok(Json(view))
 }
 
@@ -230,16 +235,18 @@ pub(crate) async fn put_consent(
     crate::extract::Json(body): crate::extract::Json<ConsentRequest>,
 ) -> Result<Json<Consents>, ApiError> {
     let consent = body.into_consent(state.clock.now_ms())?;
-    let _lock = state.settings_lock.lock().await;
+    let after = state.clone();
+    let lock = state.settings_lock.lock().await;
     let consents = blocking(move || {
         let repo = state.settings.as_ref();
         let mut loaded = load_global(repo)?;
         loaded.settings.consents.set(kind.into(), consent);
         repo.save_global(loaded.settings.to_document())?;
-        crate::system_managed::refresh(&state.store, repo)?;
         Ok(Consents::from(&loaded.settings.consents))
     })
     .await?;
+    drop(lock);
+    crate::system_managed::refresh(&after).await;
     tracing::info!(kind = ?kind, "consent recorded");
     Ok(Json(consents))
 }

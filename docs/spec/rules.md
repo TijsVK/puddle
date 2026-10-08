@@ -317,7 +317,8 @@ the API. *Added 2026-10-08.*
   Telemetry, experiment and certificate-status hosts are not in it: they are ordinary traffic
   (R-1). When the reasons change, one `system_managed_changed` record per scope says which reasons
   were added and removed, and open requests the new hosts decide are closed by `system` (R-37).
-  Until the direct SSH switch exists, no sandbox has it on.
+  Direct SSH is the workspace's effective `direct_ssh` setting (its own value, else the global
+  default).
 - **R-42 A set's allow reaches a local destination only like a wildcard.** After resolving a name
   a set allowed, an address in a local category counts as reached by a wildcard rule (R-14): with
   "wildcards reach local addresses" off, it needs an own exact allow of the name or the address,

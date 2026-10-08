@@ -4,12 +4,14 @@
 //! or consent change, so the allows follow the choices that justify them.
 
 use puddle_settings::{Consent, ConsentKind, GlobalSettings, ServerChoice};
-use puddle_store::{Store, SystemPlan, SystemReason};
+use puddle_store::{SystemPlan, SystemReason};
 use puddle_types::SandboxName;
 
-use crate::error::ApiError;
-use crate::routes::settings::load_global;
-use crate::settings::SettingsRepo;
+use puddle_settings::resolve;
+
+use crate::error::blocking;
+use crate::routes::AppState;
+use crate::routes::settings::{load_global, load_sandbox};
 
 /// The System managed reasons for a setup.
 ///
@@ -47,21 +49,47 @@ pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[SandboxName]) -> Syste
     plan
 }
 
-/// Derives the plan from the stored settings and hands it to the store. Blocking. Direct SSH is
-/// not a setting yet, so no sandbox gets the `direct_ssh` hosts.
+/// Derives the plan from the stored settings and the workspaces, and hands it to the store. Run
+/// at start and after every change that can move it: global or workspace settings, a consent, a
+/// workspace made or deleted. Takes the settings lock itself, so call it after releasing it.
 ///
-/// # Errors
-/// The settings can't be read (the store keeps the reasons it had), or the store fails.
-pub(crate) fn refresh(store: &Store, settings: &dyn SettingsRepo) -> Result<(), ApiError> {
-    let global = load_global(settings)?;
-    let closed = store.set_system_managed(&plan(&global.settings, &[]))?;
-    if !closed.is_empty() {
-        tracing::info!(
-            closed = closed.len(),
-            "System managed hosts decided waiting requests"
-        );
+/// A failure is logged and leaves the store's reasons as they were. A workspace list that can't
+/// be read counts as no workspace with direct SSH on (an allow is only ever dropped then).
+pub(crate) async fn refresh(state: &AppState) {
+    let names: Vec<SandboxName> = match state.workspaces.list().await {
+        Ok(records) => records.into_iter().map(|w| w.name).collect(),
+        Err(_) => Vec::new(),
+    };
+    let (store, settings) = (state.store.clone(), state.settings.clone());
+    let _lock = state.settings_lock.lock().await;
+    let result = blocking(move || {
+        let repo = settings.as_ref();
+        let global = load_global(repo)?;
+        let direct: Vec<SandboxName> = names
+            .into_iter()
+            .filter(|name| {
+                load_sandbox(repo, name).is_ok_and(|own| {
+                    resolve(&global.settings, Some(&own.settings))
+                        .direct_ssh
+                        .value
+                })
+            })
+            .collect();
+        Ok(store.set_system_managed(&plan(&global.settings, &direct))?)
+    })
+    .await;
+    match result {
+        Ok(closed) if !closed.is_empty() => {
+            tracing::info!(
+                closed = closed.len(),
+                "System managed hosts decided waiting requests"
+            );
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!(error = ?err, "System managed hosts not derived; the stored ones stay");
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]

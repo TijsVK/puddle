@@ -105,6 +105,8 @@ pub(crate) async fn create_workspace(
     crate::extract::Json(body): crate::extract::Json<NewWorkspaceRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
     let record = state.workspaces.create(body.into_new()?).await?;
+    // A new workspace may start with direct SSH on (the global default).
+    crate::system_managed::refresh(&state).await;
     Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
 }
 
