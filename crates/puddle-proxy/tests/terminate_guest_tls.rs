@@ -98,14 +98,21 @@ print("accepted")
 sys.exit(1)
 "#;
 
+fn python_available() -> bool {
+    if Command::new("python3").arg("--version").output().is_ok() {
+        return true;
+    }
+    assert!(
+        std::env::var_os("PUDDLE_TOOLS_REQUIRED").is_none(),
+        "PUDDLE_TOOLS_REQUIRED is set but python3 is not on the path"
+    );
+    eprintln!("skipped: python3 not found");
+    false
+}
+
 #[tokio::test]
 async fn a_real_tool_that_refuses_the_certificate_is_recorded_too() {
-    if Command::new("python3").arg("--version").output().is_err() {
-        assert!(
-            std::env::var_os("PUDDLE_TOOLS_REQUIRED").is_none(),
-            "PUDDLE_TOOLS_REQUIRED is set but python3 is not on the path"
-        );
-        eprintln!("skipped: python3 not found");
+    if !python_available() {
         return;
     }
     let pki = Pki::new();

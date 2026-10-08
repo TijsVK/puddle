@@ -433,7 +433,7 @@ mod tests {
         let (_, seen) = problems();
         let sink = Arc::clone(&seen);
         watch_loop(|| ERROR_SUCCESS, || WAIT_FAILED, &|| {}, &move |why| {
-            sink.lock().unwrap().push(why)
+            sink.lock().unwrap().push(why);
         });
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 1, "{seen:?}");
