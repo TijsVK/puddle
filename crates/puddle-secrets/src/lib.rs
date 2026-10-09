@@ -24,6 +24,7 @@
 #![forbid(unsafe_code)]
 
 mod cache;
+mod chunked;
 mod discovery;
 mod error;
 mod keyring_store;
@@ -36,6 +37,7 @@ mod spec;
 mod store;
 
 pub use cache::{SecretCache, SignInNeeded, Ttl, Ttls};
+pub use chunked::{CHUNK_UNITS, ChunkedStore};
 pub use discovery::{DiscoveredAccount, Discovery, Listing, discover};
 pub use error::{Refusal, SourceError, Tool};
 pub use keyring_store::{KeyringStore, keyring_available};

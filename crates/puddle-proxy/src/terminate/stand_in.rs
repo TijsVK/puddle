@@ -108,6 +108,10 @@ pub enum StandInError {
     /// The operating system has no randomness to give.
     #[error("the operating system has no randomness to give")]
     Random,
+    /// An entry handed to [`StandIns::replace_origin`] is of another origin than the one being
+    /// replaced.
+    #[error("an entry is not of the origin being replaced")]
+    Origin,
 }
 
 /// One stand-in and what it stands for.
@@ -277,6 +281,54 @@ impl StandIns {
         }
         entries.push(Arc::new(entry));
         Ok(())
+    }
+
+    /// Makes the entries of `origin` exactly `entries`, in one step: a request sees the old
+    /// entries or the new ones, never a registry with a stand-in missing. Entries of other origins
+    /// stay. An entry that is in both lists (the same stand-in) is replaced, so a new real value
+    /// or new hosts apply from the next request.
+    ///
+    /// # Errors
+    /// [`StandInError::Overlaps`] when two stand-ins of the result equal or contain each other;
+    /// the registry is not changed then. [`StandInError::Origin`] when an entry is not of `origin`.
+    pub fn replace_origin(
+        &self,
+        origin: StandInOrigin,
+        entries: Vec<StandIn>,
+    ) -> Result<(), StandInError> {
+        if entries.iter().any(|e| e.origin != origin) {
+            return Err(StandInError::Origin);
+        }
+        let mut held = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        let others: Vec<Arc<StandIn>> = held
+            .iter()
+            .filter(|e| e.origin != origin)
+            .cloned()
+            .collect();
+        let mut next = others;
+        next.extend(entries.into_iter().map(Arc::new));
+        let overlap = next.iter().enumerate().any(|(i, a)| {
+            next.iter()
+                .skip(i + 1)
+                .any(|b| a.text.contains(&b.text) || b.text.contains(&a.text))
+        });
+        if overlap {
+            return Err(StandInError::Overlaps);
+        }
+        *held = next;
+        Ok(())
+    }
+
+    /// The ids of the entries, `stand-in:secret:<name>` or `stand-in:login:<name>`, in the order
+    /// they were registered. Names only: for logs, tests and screens.
+    #[must_use]
+    pub fn ids(&self) -> Vec<String> {
+        self.entries
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|e| e.id())
+            .collect()
     }
 
     /// Removes the entry whose stand-in is `stand_in`. `true` when there was one.
@@ -536,6 +588,101 @@ mod tests {
         assert_eq!(report.unbound, Vec::<String>::new());
         assert!(headers["authorization"].is_sensitive());
         assert!(!headers["user-agent"].is_sensitive());
+    }
+
+    fn login(name: &str, text: &str, real: &str) -> StandIn {
+        StandIn::new(
+            StandInOrigin::CapturedLogin,
+            name,
+            text,
+            SecretValue::new(real),
+            TerminationSet::parse(["login.example.com"]).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn replacing_an_origin_changes_its_entries_in_one_step_and_leaves_the_others() {
+        let registry = registry();
+        const LOGIN: &str = "login-token-abcdefghijklmnop";
+        registry
+            .insert(login("claude", LOGIN, "real-login"))
+            .unwrap();
+        assert_eq!(
+            registry.ids(),
+            [
+                "stand-in:secret:GH_TOKEN",
+                "stand-in:secret:API_KEY",
+                "stand-in:login:claude"
+            ]
+        );
+        // GH_TOKEN stays with a new real value and hosts, API_KEY goes, NEW comes.
+        const NEW: &str = "puddle-secret-NEW-0000000000000000000000000000000a";
+        registry
+            .replace_origin(
+                StandInOrigin::Secret,
+                vec![
+                    entry("GH_TOKEN", GH, "ghp_rotated", &["gitlab.com"]),
+                    entry("NEW", NEW, "real-new", &["new.example.com"]),
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            registry.ids(),
+            [
+                "stand-in:login:claude",
+                "stand-in:secret:GH_TOKEN",
+                "stand-in:secret:NEW"
+            ]
+        );
+        let (headers, _) = swap(&registry, &[("a", GH)], "gitlab.com");
+        assert_eq!(headers["a"], "ghp_rotated");
+        let (headers, report) = swap(&registry, &[("a", GH)], "github.com");
+        assert_eq!(headers["a"], GH, "its old host no longer swaps it");
+        assert_eq!(report.unbound, ["stand-in:secret:GH_TOKEN"]);
+        let (headers, _) = swap(&registry, &[("a", API)], "api.example.com");
+        assert_eq!(headers["a"], API, "a removed stand-in is just text");
+        let (headers, _) = swap(&registry, &[("a", LOGIN)], "login.example.com");
+        assert_eq!(
+            headers["a"], "real-login",
+            "the login entry was not touched"
+        );
+        let hosts = registry.hosts();
+        assert!(hosts.contains(&host("new.example.com")));
+        assert!(hosts.contains(&host("login.example.com")));
+        assert!(!hosts.contains(&host("api.example.com")));
+        // An empty list removes every entry of the origin.
+        registry
+            .replace_origin(StandInOrigin::Secret, Vec::new())
+            .unwrap();
+        assert_eq!(registry.ids(), ["stand-in:login:claude"]);
+    }
+
+    #[test]
+    fn a_replacement_that_overlaps_or_is_of_another_origin_changes_nothing() {
+        let registry = registry();
+        let before = registry.ids();
+        let twin = format!("{GH}-more-text");
+        for bad in [
+            vec![
+                entry("A", GH, "x1", &["a.example.com"]),
+                entry("B", &twin, "x2", &["b.example.com"]),
+            ],
+            vec![login("claude", "login-token-abcdefghijklmnop", "r")],
+        ] {
+            assert!(registry.replace_origin(StandInOrigin::Secret, bad).is_err());
+            assert_eq!(registry.ids(), before);
+        }
+        // A secret's stand-in that equals a login's is refused too.
+        registry
+            .insert(login("claude", "login-token-abcdefghijklmnop", "r"))
+            .unwrap();
+        let clash = entry("C", "login-token-abcdefghijklmnop", "x", &["c.example.com"]);
+        assert_eq!(
+            registry.replace_origin(StandInOrigin::Secret, vec![clash]),
+            Err(StandInError::Overlaps)
+        );
+        assert_eq!(registry.len(), 3);
     }
 
     #[test]

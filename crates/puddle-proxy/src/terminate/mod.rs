@@ -140,7 +140,9 @@ impl Termination {
         &self.injector
     }
 
-    pub(crate) fn stand_ins(&self) -> &StandIns {
+    /// The workspace's stand-ins, as [`Self::with_stand_ins`] was given them.
+    #[must_use]
+    pub fn stand_ins(&self) -> &Arc<StandIns> {
         &self.stand_ins
     }
 }

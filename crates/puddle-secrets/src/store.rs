@@ -54,6 +54,15 @@ impl MemoryStore {
         *self.broken.lock().unwrap_or_else(PoisonError::into_inner) = true;
     }
 
+    /// The ids held, sorted: for tests that look for what a caller left behind.
+    #[must_use]
+    pub fn ids(&self) -> Vec<String> {
+        let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut ids: Vec<String> = entries.keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+
     fn check(&self) -> Result<(), StoreError> {
         if *self.broken.lock().unwrap_or_else(PoisonError::into_inner) {
             return Err(StoreError);
