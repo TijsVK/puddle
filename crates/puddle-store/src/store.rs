@@ -1954,6 +1954,49 @@ mod tests {
         assert_eq!(summarised_connections(&store), 5);
     }
 
+    fn puddle_event() -> ConnectionEvent {
+        ConnectionEvent::puddle(
+            Host::parse_normalised("api.github.com").unwrap(),
+            443,
+            ConnectionDecision::Allow,
+            ConnectionReason::PuddleRequest,
+        )
+    }
+
+    #[test]
+    fn a_failed_sweep_flush_keeps_the_summary_of_puddles_own_connections_too() {
+        let clock = Arc::new(ManualClock::new(1_000_000));
+        let limits = Limits {
+            connection_records_per_second: 1,
+            ..Limits::default()
+        };
+        let store = Store::open_in_memory(clock.clone(), limits).unwrap();
+        for _ in 0..4 {
+            store.record_connection(&puddle_event()).unwrap();
+        }
+        store.fail_audit_writes("connection");
+        clock.advance(2_000);
+        assert!(store.sweep().is_err());
+        store.audit_writes_work_again();
+        store.sweep().unwrap();
+        assert_eq!(summarised_connections(&store), 3);
+    }
+
+    #[test]
+    fn a_summary_is_written_alone_when_the_new_second_admits_no_record() {
+        let clock = Arc::new(ManualClock::new(1_000_000));
+        let limits = Limits {
+            connection_records_per_second: 0,
+            ..Limits::default()
+        };
+        let store = Store::open_in_memory(clock.clone(), limits).unwrap();
+        store.record_connection(&puddle_event()).unwrap();
+        clock.advance(1_000);
+        store.record_connection(&puddle_event()).unwrap();
+        assert_eq!(summarised_connections(&store), 1);
+        assert_eq!(recorded_count(&store, "connection", "count"), 1);
+    }
+
     #[test]
     fn debug_does_not_dump_the_database() {
         let (_, store) = store();

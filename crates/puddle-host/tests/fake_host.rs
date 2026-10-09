@@ -147,6 +147,8 @@ struct Guest {
     dirty: AtomicBool,
     fail_clone: AtomicBool,
     fail_boot: AtomicBool,
+    /// The folder the guest is asked to make for the workspace cannot be made.
+    fail_layout: AtomicBool,
     /// What the lock-clearing script answers, as exit code and stdout, instead of "nothing to do".
     locks_answer: Mutex<Option<(i32, &'static str)>>,
     /// The disk trim fails, in a running workspace's stop.
@@ -198,6 +200,11 @@ impl Guest {
                 ExecOutput::new(0, "puddle-boot: ready\n", "")
             }
             "boot" => ExecOutput::new(0, "puddle-boot: ready\n", ""),
+            "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
+                1,
+                "",
+                "mkdir: cannot create directory: read-only file system",
+            ),
             "locks" => match *self.locks_answer.lock().unwrap() {
                 Some((code, out)) => ExecOutput::new(code, out, ""),
                 None => ExecOutput::new(0, "D\n", ""),
@@ -3854,5 +3861,99 @@ async fn listing_the_repositories_of_an_identity_is_in_the_activity_log_as_puddl
         "{records:?}"
     );
     assert!(!records[0].to_string().contains("CANARY"), "{records:?}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_image_pull_that_cannot_be_cleaned_up_names_what_is_left() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    rig.runtime.inject(
+        Op::PullImage,
+        Fault::once(puddle_compute::ComputeError::ImagePull {
+            image: "x".into(),
+            reason: "offline".into(),
+        }),
+    );
+    rig.runtime
+        .inject(Op::RemoveVolume, Fault::always(disk_error("remove volume")));
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    let detail = end["detail"].as_str().unwrap();
+    assert!(detail.contains("offline"), "the cause: {detail}");
+    assert!(
+        detail.contains("remove the new volume"),
+        "what is left: {detail}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_that_cannot_make_its_folder_is_taken_down_again_and_the_leftovers_are_named() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    rig.guest.fail_layout.store(true, Ordering::SeqCst);
+    // Taking the machine down fails too: it may still run, and its record stays.
+    rig.runtime
+        .inject(Op::Stop, Fault::once(disk_error("stop")).only_for("acme"));
+    rig.runtime.inject(
+        Op::Remove,
+        Fault::once(disk_error("remove")).only_for("acme"),
+    );
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let detail = end["detail"].as_str().unwrap();
+    assert!(
+        detail.contains("read-only file system"),
+        "the cause: {detail}"
+    );
+    assert!(detail.contains("may still be running"), "{detail}");
+    assert!(detail.contains("sandbox acme was not removed"), "{detail}");
+    assert!(detail.contains("next start"), "the way out: {detail}");
+
+    // Without the faults, the same failure on a start of an existing workspace ends crashed.
+    rig.guest.fail_layout.store(false, Ordering::SeqCst);
+    let reply = api.post("/api/workspaces", &new_workspace("other")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events.until(ended("other"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/other/stop", "").await;
+    events.until(ended("other"), Duration::from_secs(20)).await;
+    rig.guest.fail_layout.store(true, Ordering::SeqCst);
+    api.post("/api/workspaces/other/start", "").await;
+    let end = events.until(ended("other"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end["detail"].as_str().unwrap().contains("read-only"),
+        "{end}"
+    );
+    assert_eq!(
+        status_of(&api.get("/api/workspaces/other").await),
+        "crashed"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn locks_that_could_not_be_removed_one_by_one_are_listed_in_the_problem() {
+    let rig = Rig::new();
+    *rig.guest.locks_answer.lock().unwrap() =
+        Some((0, "E\tapi/.git/index.lock\tPermission denied\nD\n"));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let problems = host.problems().list();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0]
+            .detail
+            .contains("api/.git/index.lock: Permission denied"),
+        "{problems:?}"
+    );
     host.shutdown().await;
 }

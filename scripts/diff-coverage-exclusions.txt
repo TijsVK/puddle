@@ -95,3 +95,12 @@ crates/puddle-proxy/src/terminate/session.rs | tracing::debug!(error = %err, "gu
 crates/puddle-proxy/src/terminate/session.rs | Err(refusal) => return self.refuse(&refusal).await, | `upstream_headers` fails only for a header the strict head parser already refused; the line moved with the extraction of the injector step and was never reached by a test
 crates/puddle-logins/src/logins.rs | workspace = %self.inner.workspace, | an argument of a `tracing` event: it runs only when a subscriber enables the event, and the tests run without one; the event's own line is covered
 crates/puddle-logins/src/logins.rs | role = field.role.key(), | as above
+crates/puddle-compute-msb/src/sandbox.rs | forced: AtomicBool::new(false), | the flag a stop sets when msb had to kill the VM; runs only against a real msb, covered by the VM tier (the decision above it is tested on the fake: `StopOutcome::Forced`, `StopReport::forced`)
+crates/puddle-compute-msb/src/sandbox.rs | fn stopped_by_force(&self) -> bool { | as above: the VM tier
+crates/puddle-compute-msb/src/sandbox.rs | self.forced.load(Ordering::Relaxed) | as above: the VM tier
+crates/puddle-compute-msb/src/sandbox.rs | .map_err(|e| map("kill", self.name.as_str(), e))?; | the kill after a graceful stop that timed out needs a VM that ignores the stop signal; the VM tier
+crates/puddle-compute-msb/src/sandbox.rs | self.forced.store(true, Ordering::Relaxed); | as above: the VM tier
+crates/puddle-compute-msb/src/sandbox.rs | Ok(()) | as above: the VM tier (the `Ok(())` after the kill)
+crates/puddle-host/src/workspaces.rs | Err(reason) => return Err(self.abort_attachment(attachment, reason).await), | the egress route failing to open (a socket or named pipe that cannot be made) cannot be made to fail on the fake runtime; the same arm for a failed image config is tested (`a_failed_image_pull_that_cannot_be_cleaned_up_names_what_is_left`)
+crates/puddle-lifecycle/src/reconcile.rs | StopOutcome::Panicked => {} | only `Lifecycle::shutdown` makes this outcome, when the task running the stop died; `trim_and_stop`, which reconcile calls, never returns it
+crates/puddle-lifecycle/src/shutdown.rs | StopOutcome::Panicked => {} | as above: `trim_and_stop` never returns it; `Lifecycle::shutdown` makes it (tested)
