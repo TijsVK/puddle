@@ -738,6 +738,56 @@ async fn the_network_health_report_is_the_hosts_own_and_follows_a_network_change
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_repository_lists_run_on_the_real_engine_and_a_host_it_does_not_know_is_asked_nothing()
+{
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+
+    // Wired: no identities is an empty answer, not a 503.
+    let none = api.get("/api/repos").await;
+    assert_eq!(none.status, 200, "{}", none.body);
+    assert_eq!(
+        none.json(),
+        json!({"sources": [], "repos": [], "total": 0, "offset": 0, "limit": 100})
+    );
+
+    // A credential for a host that is neither GitHub nor Azure DevOps: the engine says so and
+    // sends nothing (no token is read, no connection is made).
+    let made = api
+        .post(
+            "/api/identities",
+            &json!({
+                "label": "Other",
+                "author": {"name": "Other", "email": "other@example.org"},
+                "credentials": [{
+                    "host": "git.example.org",
+                    "source": {"kind": "stored", "id": "tok-1", "host": "git.example.org", "org": null},
+                    "covers": {"owners": [], "rest_of_host": true}
+                }]
+            })
+            .to_string(),
+        )
+        .await;
+    assert_eq!(made.status, 201, "{}", made.body);
+    let listing = api.get("/api/repos").await.json();
+    assert_eq!(listing["sources"][0]["state"], "unavailable", "{listing}");
+    assert_eq!(listing["sources"][0]["problem"]["code"], "unsupported");
+    assert_eq!(listing["total"], 0);
+
+    let profile = api
+        .post(
+            "/api/credentials/profile",
+            &json!({"source": {"kind": "stored", "id": "tok-1", "host": "git.example.org", "org": null}})
+                .to_string(),
+        )
+        .await;
+    assert_eq!(profile.status, 200, "{}", profile.body);
+    assert_eq!(profile.json()["problem"]["code"], "unsupported");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_system_check_looks_at_the_runtime_folder_the_host_was_started_with() {
     let rig = Rig::new();
     let host = rig.start().await;

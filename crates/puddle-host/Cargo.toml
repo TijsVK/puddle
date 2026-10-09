@@ -30,6 +30,7 @@ puddle-ipc = { workspace = true }
 puddle-lifecycle = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true }
+puddle-repos = { workspace = true }
 puddle-runtime = { workspace = true }
 puddle-secrets = { workspace = true }
 puddle-settings = { workspace = true }

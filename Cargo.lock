@@ -6082,6 +6082,7 @@ dependencies = [
  "puddle-lifecycle",
  "puddle-netpolicy",
  "puddle-proxy",
+ "puddle-repos",
  "puddle-runtime",
  "puddle-secrets",
  "puddle-settings",

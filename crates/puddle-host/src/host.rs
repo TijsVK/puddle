@@ -27,6 +27,7 @@ use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Terminations, Upstream};
+use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{ChunkedStore, KeyringStore, SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
 use puddle_store::{DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
@@ -499,11 +500,12 @@ impl<R: Runtime + Clone> Host<R> {
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
         steps.push(Step::WorkspacesReady);
 
-        let services = Services::new(store.clone(), settings, events.clone(), clock)
+        let services = Services::new(store.clone(), settings, events.clone(), clock.clone())
             .with_workspaces(Arc::new(service.clone()))
             .with_network_health(network_health)
             .with_secret_store(vault.clone())
             .with_credentials(Arc::new(HostCredentials::new(ToolPaths::resolve(), vault)))
+            .with_repos(injecting.repos(&egress.chain, &clock))
             .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
             .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
@@ -710,6 +712,16 @@ impl Injecting {
     /// What the egress proxy terminates with: the registry it asks and the TLS client.
     fn termination(&self) -> (Arc<Terminations>, TlsClient) {
         (self.terminations.clone(), self.tls.clone())
+    }
+
+    /// The repository lists: read from the Git hosts' APIs over the company-proxy route with the
+    /// secrets the proxy's injection uses.
+    fn repos(&self, chain: &Arc<Chain>, clock: &Arc<SystemClock>) -> Arc<Repos> {
+        Arc::new(Repos::new(
+            Arc::new(HostApi::new(chain.clone(), self.tls.clone())),
+            self.secrets.clone(),
+            clock.clone(),
+        ))
     }
 
     /// Starts following the changes that reach a running workspace: its identities (what it

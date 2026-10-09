@@ -25,9 +25,9 @@ use std::time::Duration;
 use puddle_api::wire::{FoundAccount, FoundVia};
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DoctorService, EventHub,
-    FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakeWorkspaces, Launcher,
-    Listing, MemorySettings, NetworkHealthService, Operation, RepoFindings, RepoUrl, RunningApi,
-    Services, SettingsRepo, Unsaved, WorkspaceRecord,
+    FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakeRepos, FakeWorkspaces,
+    Launcher, Listing, MemorySettings, NetworkHealthService, Operation, RepoFindings, RepoService,
+    RepoUrl, RunningApi, Services, SettingsRepo, Unsaved, WorkspaceRecord,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -146,6 +146,7 @@ struct State {
     /// Where the values of environment secrets are kept: in memory, so the screens can set one and
     /// the tests can see that it never comes back.
     secrets: Arc<puddle_secrets::MemoryStore>,
+    repos: Arc<FakeRepos>,
     doctor: Arc<FakeDoctor>,
     api: Option<RunningApi>,
 }
@@ -201,6 +202,7 @@ impl Fixture {
         );
         let network = Arc::new(FakeNetworkHealth::new(clock.clone() as Arc<dyn Clock>));
         let credentials = Arc::new(FakeCredentials::new());
+        let repos = Arc::new(FakeRepos::new());
         let doctor = Arc::new(FakeDoctor::new());
         let state = State {
             store,
@@ -211,6 +213,7 @@ impl Fixture {
             network,
             credentials,
             secrets: Arc::new(puddle_secrets::MemoryStore::new()),
+            repos,
             doctor,
             api: None,
         };
@@ -234,6 +237,7 @@ impl Fixture {
             .with_network_health(state.network.clone() as Arc<dyn NetworkHealthService>)
             .with_credentials(state.credentials.clone() as Arc<dyn CredentialService>)
             .with_secret_store(state.secrets.clone())
+            .with_repos(state.repos.clone() as Arc<dyn RepoService>)
             .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>);
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),

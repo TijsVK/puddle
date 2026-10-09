@@ -840,6 +840,26 @@ async fn the_git_identities_scenario_seeds_identities_tables_and_what_the_creden
 }
 
 #[tokio::test]
+async fn the_fixture_answers_the_repository_endpoints_with_nothing_listed() {
+    let run = start("git-identities").await;
+    let listing = run.get("/api/repos").await;
+    assert_eq!(listing.status, 200, "{}", listing.body);
+    assert_eq!(
+        listing.json(),
+        json!({"sources": [], "repos": [], "total": 0, "offset": 0, "limit": 100})
+    );
+    let profile = run
+        .api(
+            "POST",
+            "/api/credentials/profile",
+            Some(&json!({"source": {"kind": "gh", "host": "github.com", "account": "me"}})),
+        )
+        .await;
+    assert_eq!(profile.status, 200, "{}", profile.body);
+    assert_eq!(profile.json()["problem"]["code"], "unreachable");
+}
+
+#[tokio::test]
 async fn the_credentials_service_can_report_accounts_from_every_listing_and_listings_that_could_not_run()
  {
     let scenario: Scenario = serde_json::from_value(json!({
