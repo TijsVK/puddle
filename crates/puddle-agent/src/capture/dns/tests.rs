@@ -729,16 +729,30 @@ async fn tcp_connections_over_the_limit_are_closed() {
     );
 }
 
+/// A loopback port held on both UDP and TCP, below the range the OS picks from for port 0 and for
+/// outgoing connections (Linux 32768-60999, Windows and macOS 49152-65535). A port 0 address is
+/// only UDP's: its TCP side may be in use elsewhere, and another process asking for any port can
+/// take it between the test letting it go and the server binding it.
+fn held_port() -> (std::net::UdpSocket, std::net::TcpListener, SocketAddr) {
+    let first = u16::try_from(std::process::id() % 10_000).unwrap_or(0);
+    (0..10_000u16)
+        .map(|i| SocketAddr::from(([127, 0, 0, 1], 20_000 + (first + i) % 10_000)))
+        .find_map(|addr| {
+            let udp = std::net::UdpSocket::bind(addr).ok()?;
+            Some((udp, std::net::TcpListener::bind(addr).ok()?, addr))
+        })
+        .expect("a loopback port free on both UDP and TCP in 20000-29999")
+}
+
 #[tokio::test]
 async fn binding_waits_for_an_address_that_is_taken_and_then_serves() {
-    let taken = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let listen = taken.local_addr().unwrap();
+    let (udp, tcp, listen) = held_port();
     let (stub, _, _) = answers_with(stand_in());
     assert!(DnsServer::bind(stub.clone(), listen).await.is_err());
     let task = tokio::spawn(bind_when_ready(stub, listen));
     tokio::time::sleep(Duration::from_millis(1200)).await;
     assert!(!task.is_finished());
-    drop(taken);
+    drop((udp, tcp));
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     // The server needs both UDP and TCP on `listen`: once it is up, a query is answered.
     let mut answered = false;
