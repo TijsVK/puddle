@@ -470,13 +470,10 @@ mod tests {
             "/acme/web.git/info/refs?service=git-upload-pack",
             &lines,
         );
-        match injector.decide(&context, &view).await {
-            InjectDecision::Refuse(refusal) => {
-                assert_eq!(refusal.code(), "credential_unavailable");
-                assert!(refusal.message().contains("sign in to it in puddle"));
-            }
-            other => panic!("expected a refusal, got {other:?}"),
-        }
+        let decision = injector.decide(&context, &view).await;
+        assert!(matches!(&decision, InjectDecision::Refuse(refusal)
+                if refusal.code() == "credential_unavailable"
+                    && refusal.message().contains("sign in to it in puddle")));
         for _ in 0..200 {
             if !events.0.lock().unwrap().is_empty() {
                 break;
@@ -518,10 +515,10 @@ mod tests {
             &lines,
         );
         let injector = Arc::clone(&injection.running().get(&ws).unwrap().injector);
-        match injector.decide(&context, &view).await {
-            InjectDecision::Refuse(refusal) => assert_eq!(refusal.code(), "push_denied"),
-            other => panic!("expected a refusal, got {other:?}"),
-        }
+        let decision = injector.decide(&context, &view).await;
+        assert!(
+            matches!(&decision, InjectDecision::Refuse(refusal) if refusal.code() == "push_denied")
+        );
     }
 
     #[test]
