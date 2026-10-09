@@ -5939,6 +5939,7 @@ dependencies = [
 name = "puddle-ca"
 version = "0.0.0"
 dependencies = [
+ "pem",
  "proptest",
  "puddle-types",
  "rcgen",

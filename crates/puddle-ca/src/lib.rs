@@ -23,5 +23,5 @@ mod error;
 mod name;
 
 pub use authority::{CaBuilder, WorkspaceCa};
-pub use bundle::{CaCertificate, GUEST_BUNDLE_PATH, TrustBundle};
+pub use bundle::{CaCertificate, GUEST_BUNDLE_PATH, TrustBundle, certificate_pem};
 pub use error::CaError;

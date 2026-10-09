@@ -93,7 +93,7 @@ impl SyncedCert {
     /// The certificate as one PEM block (LF line ends).
     #[must_use]
     pub fn pem(&self) -> String {
-        to_pem(&self.der)
+        puddle_ca::certificate_pem(&self.der)
     }
 
     /// SHA-256 of the DER.
@@ -297,14 +297,6 @@ fn unix_seconds(t: SystemTime) -> i64 {
         Ok(d) => i64::try_from(d.as_secs()).unwrap_or(i64::MAX),
         Err(e) => i64::try_from(e.duration().as_secs()).map_or(i64::MIN, |s| -s),
     }
-}
-
-/// `der` as one PEM certificate block with LF line ends.
-pub(crate) fn to_pem(der: &[u8]) -> String {
-    pem::encode_config(
-        &pem::Pem::new("CERTIFICATE", der),
-        pem::EncodeConfig::new().set_line_ending(pem::LineEnding::LF),
-    )
 }
 
 #[cfg(test)]

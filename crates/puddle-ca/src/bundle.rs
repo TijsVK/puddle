@@ -19,11 +19,22 @@ pub struct CaCertificate {
     pem: String,
 }
 
+/// `der` as one PEM certificate block with LF line ends on every host. The text goes into a
+/// Linux guest, so the line ends cannot follow the build target the way `rcgen`'s own `pem()`
+/// does (CRLF when built for Windows).
+#[must_use]
+pub fn certificate_pem(der: &[u8]) -> String {
+    pem::encode_config(
+        &pem::Pem::new("CERTIFICATE", der),
+        pem::EncodeConfig::new().set_line_ending(pem::LineEnding::LF),
+    )
+}
+
 impl CaCertificate {
     pub(crate) fn new(cert: &rcgen::Certificate) -> Self {
         Self {
             der: cert.der().clone(),
-            pem: cert.pem(),
+            pem: certificate_pem(cert.der()),
         }
     }
 
@@ -33,7 +44,7 @@ impl CaCertificate {
         &self.der
     }
 
-    /// The certificate as one PEM block.
+    /// The certificate as one PEM block, LF line ends on every host.
     #[must_use]
     pub fn pem(&self) -> &str {
         &self.pem
@@ -107,6 +118,32 @@ mod tests {
     #[test]
     fn empty_bundle_writes_nothing() {
         assert_eq!(TrustBundle::new().guest_files(), [] as [GuestFile; 0]);
+    }
+
+    #[test]
+    fn the_ca_text_and_every_guest_file_have_lf_line_ends_on_any_host() {
+        let bundle = TrustBundle::new()
+            .with(cert("puddle proxy CA"))
+            .with(cert("puddle second CA"));
+        for ca in bundle.certificates() {
+            let text = ca.pem();
+            assert!(
+                text.starts_with("-----BEGIN CERTIFICATE-----\n"),
+                "{text:?}"
+            );
+            assert!(text.ends_with("-----END CERTIFICATE-----\n"), "{text:?}");
+            assert!(!text.contains('\r'), "{text:?}");
+            assert_eq!(pem::parse(text).unwrap().contents(), ca.der().as_ref());
+        }
+        let files = bundle.guest_files();
+        assert_eq!(files.len(), 3);
+        for file in &files {
+            assert!(
+                !file.contents().contains(&b'\r'),
+                "{} has a carriage return",
+                file.path().as_str()
+            );
+        }
     }
 
     #[test]

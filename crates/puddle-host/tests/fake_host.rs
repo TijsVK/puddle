@@ -216,6 +216,11 @@ impl Guest {
         self.commands.lock().unwrap().clone()
     }
 
+    /// The boot plan number `n` (from 0) as sent to the guest.
+    fn plan_bytes(&self, n: usize) -> Vec<u8> {
+        self.plans.lock().unwrap()[n].1.clone()
+    }
+
     /// The files the boot plan number `n` (from 0) wrote, by guest path.
     fn plan_files(&self, n: usize) -> std::collections::BTreeMap<String, Vec<u8>> {
         plan_files(&self.plans.lock().unwrap()[n].1)
@@ -2336,6 +2341,53 @@ async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     assert!(!pem_of(&files, "/etc/puddle/gitconfig").contains("[user]"));
     assert!(!files.contains_key("/etc/puddle/git-author-1.gitconfig"));
+    host.shutdown().await;
+}
+
+/// The guest is Linux, so no byte puddle puts into it may be a carriage return, whatever line
+/// ends the host's own text uses (the certificate text of a Windows build ends its lines with
+/// CRLF unless it is made with LF on purpose).
+#[tokio::test(flavor = "multi_thread")]
+async fn nothing_the_boot_plan_puts_into_the_guest_has_a_carriage_return() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let booted = rig.guest.boots();
+    // Two identities, one naming an owner: the CA files, the environment file, the git settings
+    // and both kinds of author file all end up in the plan.
+    let personal = make_identity(&api, "Personal", "github.com", &[]).await;
+    let work = make_identity(&api, "Work", "github.com", &["Acme"]).await;
+    attach(&api, "acme", personal).await;
+    rig.guest.boots_reach(booted + 1).await;
+    attach(&api, "acme", work).await;
+    rig.guest.boots_reach(booted + 2).await;
+
+    for n in 0..rig.guest.boots() {
+        let plan = rig.guest.plan_bytes(n);
+        assert!(!plan.contains(&b'\r'), "plan {n} has a carriage return");
+        for (path, bytes) in rig.guest.plan_files(n) {
+            assert!(!bytes.contains(&b'\r'), "plan {n}: {path}");
+        }
+    }
+    // The scan saw what it is about: the last plan has every file kind named above.
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    for path in [
+        "/etc/puddle/extra-cas.pem",
+        "/etc/puddle/puddle-cas.pem",
+        "/usr/local/share/ca-certificates/puddle/puddle-ca-1.crt",
+        "/etc/profile.d/01-puddle-env.sh",
+        "/etc/puddle/gitconfig",
+        "/etc/puddle/git-author-1.gitconfig",
+        "/etc/puddle/git-author-2.gitconfig",
+    ] {
+        assert!(
+            files.contains_key(path),
+            "{path} is not in {:?}",
+            files.keys()
+        );
+    }
     host.shutdown().await;
 }
 

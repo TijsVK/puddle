@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use puddle_ca::{CaCertificate, TrustBundle};
 use puddle_types::{GuestEnv, GuestFile, GuestPath};
 
-use crate::select::{CorporateRoots, Fingerprint, to_pem};
+use crate::select::{CorporateRoots, Fingerprint};
 
 /// Directory for the synced host certificates, one `<fingerprint prefix>.crt` each, inside
 /// `update-ca-certificates`' input so the system store gets them (Debian, Ubuntu, Alpine).
@@ -139,7 +139,7 @@ impl GuestTrust {
             .puddle
             .certificates()
             .iter()
-            .map(|c: &CaCertificate| (Fingerprint::of(c.der()), to_pem(c.der())));
+            .map(|c: &CaCertificate| (Fingerprint::of(c.der()), c.pem().to_owned()));
         host.chain(puddle)
             .filter(|(fp, _)| seen.insert(*fp))
             .map(|(_, pem)| pem)
@@ -230,7 +230,7 @@ mod tests {
         let extra = text(&files, EXTRA_CAS_PATH);
         assert_eq!(extra.matches("-----BEGIN CERTIFICATE-----").count(), 3);
         assert!(extra.starts_with(&corp.certificates()[0].pem()));
-        assert!(extra.ends_with(&to_pem(ca.der())));
+        assert!(extra.ends_with(ca.pem()));
         let step = files
             .iter()
             .find(|f| f.path().as_str() == BUNDLE_STEP_PATH)

@@ -280,7 +280,7 @@ fn first_boot_appends_roots_and_puddle_cas_to_the_distro_bundle_each_once() {
         let bodies: Vec<&str> = c.iter().map(|(b, _)| b.as_str()).collect();
         // Distro roots first, in their order, then the rest.
         assert_eq!(&bodies[..3], [body(&d1), body(&d2), body(&public)]);
-        for extra in [&corp, &ca.pem().replace("\r\n", "\n")] {
+        for extra in [corp.as_str(), ca.pem()] {
             assert!(bodies.contains(&body(extra).as_str()));
         }
         // The system bundle got them too (through update-ca-certificates).

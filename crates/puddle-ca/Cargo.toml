@@ -11,6 +11,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+pem = { workspace = true }
 puddle-types = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true }
