@@ -216,10 +216,12 @@ mod tests {
 
     #[test]
     fn applying_twice_changes_nothing_the_second_time() {
-        let Merged::Write(first) = applied("Host *\n    Port 22\n") else {
-            panic!()
-        };
-        assert_eq!(spec().apply(Some(&first), &[]).unwrap(), Merged::Unchanged);
+        let first = format!("{}Host *\n    Port 22\n", line());
+        assert_eq!(
+            applied("Host *\n    Port 22\n"),
+            Merged::Write(first.clone().into_bytes())
+        );
+        assert_eq!(applied(&first), Merged::Unchanged);
     }
 
     #[test]
