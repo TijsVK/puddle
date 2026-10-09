@@ -149,7 +149,9 @@ async fn remove(state: &AppState, scope: EnvScope, name: &str) -> Result<(), Api
     tag = "environment",
     responses((status = OK, description = "the global variables", body = EnvList))
 )]
-pub(crate) async fn list_global(State(state): State<AppState>) -> Result<Json<EnvList>, ApiError> {
+pub(crate) async fn list_global_env(
+    State(state): State<AppState>,
+) -> Result<Json<EnvList>, ApiError> {
     let list = blocking(move || {
         let variables = state
             .store
@@ -177,7 +179,7 @@ pub(crate) async fn list_global(State(state): State<AppState>) -> Result<Json<En
         (status = SERVICE_UNAVAILABLE, description = "the credential store is not available", body = ApiErrorBody)
     )
 )]
-pub(crate) async fn put_global(
+pub(crate) async fn put_global_env(
     State(state): State<AppState>,
     Path(name): Path<String>,
     crate::extract::Json(body): crate::extract::Json<EnvSetRequest>,
@@ -197,7 +199,7 @@ pub(crate) async fn put_global(
         (status = SERVICE_UNAVAILABLE, description = "the credential store is not available; nothing was removed", body = ApiErrorBody)
     )
 )]
-pub(crate) async fn delete_global(
+pub(crate) async fn delete_global_env(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<StatusCode, ApiError> {
@@ -217,7 +219,7 @@ pub(crate) async fn delete_global(
         (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody)
     )
 )]
-pub(crate) async fn list_workspace(
+pub(crate) async fn list_workspace_env(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceEnv>, ApiError> {
@@ -257,7 +259,7 @@ pub(crate) async fn list_workspace(
         (status = SERVICE_UNAVAILABLE, description = "the credential store is not available", body = ApiErrorBody)
     )
 )]
-pub(crate) async fn put_workspace(
+pub(crate) async fn put_workspace_env(
     State(state): State<AppState>,
     Path((id, name)): Path<(String, String)>,
     crate::extract::Json(body): crate::extract::Json<EnvSetRequest>,
@@ -284,7 +286,7 @@ pub(crate) async fn put_workspace(
         (status = SERVICE_UNAVAILABLE, description = "the credential store is not available; nothing was removed", body = ApiErrorBody)
     )
 )]
-pub(crate) async fn delete_workspace(
+pub(crate) async fn delete_workspace_env(
     State(state): State<AppState>,
     Path((id, name)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {

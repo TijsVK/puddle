@@ -632,6 +632,11 @@ mod tests {
         let vars = start(&store, "a");
         assert_eq!(vars.len(), 1);
         assert_eq!(vars[0].value, StartValue::Plain("mine".into()));
+        assert_eq!(
+            vars[0].value.stand_in(),
+            None,
+            "a plain variable has no stand-in"
+        );
         let held: i64 = lock(&store.conn)
             .query_row("SELECT count(*) FROM env_stand_ins", [], |r| r.get(0))
             .unwrap();

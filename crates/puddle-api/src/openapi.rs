@@ -216,6 +216,23 @@ mod tests {
         }
     }
 
+    /// The generated TypeScript names an operation by its id, so two handlers with the same name
+    /// would silently replace one another's types.
+    #[test]
+    fn every_operation_has_its_own_id() {
+        let s = spec();
+        let mut seen = BTreeSet::new();
+        for (path, item) in s["paths"].as_object().unwrap() {
+            for (method, op) in item.as_object().unwrap() {
+                let id = op["operationId"].as_str().unwrap();
+                assert!(
+                    seen.insert(id.to_owned()),
+                    "{method} {path} reuses the id {id}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_ref_resolves() {
         fn refs(v: &Value, out: &mut Vec<String>) {

@@ -906,7 +906,7 @@
           "environment"
         ],
         "summary": "The global variables and secrets, by name. A secret shows its hosts and never its value.",
-        "operationId": "list_global",
+        "operationId": "list_global_env",
         "responses": {
           "200": {
             "description": "the global variables",
@@ -967,7 +967,7 @@
           "environment"
         ],
         "summary": "Sets a global variable or secret: every workspace gets it at its next start, unless it has its\nown of the same name. A secret's hosts and value apply at once in running workspaces.",
-        "operationId": "put_global",
+        "operationId": "put_global_env",
         "parameters": [
           {
             "name": "name",
@@ -1067,7 +1067,7 @@
           "environment"
         ],
         "summary": "Removes a global variable or secret, and a secret's value from the credential store.",
-        "operationId": "delete_global",
+        "operationId": "delete_global_env",
         "parameters": [
           {
             "name": "name",
@@ -4215,7 +4215,7 @@
           "environment"
         ],
         "summary": "What a workspace sees: its own variables and the global ones, by name. A global variable that\nthe workspace's own of the same name hides follows it with `overridden` set.",
-        "operationId": "list_workspace",
+        "operationId": "list_workspace_env",
         "parameters": [
           {
             "name": "id",
@@ -4297,7 +4297,7 @@
           "environment"
         ],
         "summary": "Sets a variable or secret for one workspace; it wins over a global one of the same name. The\nworkspace's environment is read when it starts, so a plain variable reaches a running workspace\nat its next start; a secret's hosts and value apply from the next connection.",
-        "operationId": "put_workspace",
+        "operationId": "put_workspace_env",
         "parameters": [
           {
             "name": "id",
@@ -4416,7 +4416,7 @@
           "environment"
         ],
         "summary": "Removes a variable or secret from one workspace, and a secret's value from the credential\nstore. A global variable of the same name applies again.",
-        "operationId": "delete_workspace",
+        "operationId": "delete_workspace_env",
         "parameters": [
           {
             "name": "id",

@@ -190,7 +190,7 @@ export interface paths {
             cookie?: never;
         };
         /** The global variables and secrets, by name. A secret shows its hosts and never its value. */
-        get: operations["list_global"];
+        get: operations["list_global_env"];
         put?: never;
         post?: never;
         delete?: never;
@@ -211,10 +211,10 @@ export interface paths {
          * Sets a global variable or secret: every workspace gets it at its next start, unless it has its
          *     own of the same name. A secret's hosts and value apply at once in running workspaces.
          */
-        put: operations["put_global"];
+        put: operations["put_global_env"];
         post?: never;
         /** Removes a global variable or secret, and a secret's value from the credential store. */
-        delete: operations["delete_global"];
+        delete: operations["delete_global_env"];
         options?: never;
         head?: never;
         patch?: never;
@@ -714,7 +714,7 @@ export interface paths {
          * What a workspace sees: its own variables and the global ones, by name. A global variable that
          *     the workspace's own of the same name hides follows it with `overridden` set.
          */
-        get: operations["list_workspace"];
+        get: operations["list_workspace_env"];
         put?: never;
         post?: never;
         delete?: never;
@@ -736,13 +736,13 @@ export interface paths {
          *     workspace's environment is read when it starts, so a plain variable reaches a running workspace
          *     at its next start; a secret's hosts and value apply from the next connection.
          */
-        put: operations["put_workspace"];
+        put: operations["put_workspace_env"];
         post?: never;
         /**
          * Removes a variable or secret from one workspace, and a secret's value from the credential
          *     store. A global variable of the same name applies again.
          */
-        delete: operations["delete_workspace"];
+        delete: operations["delete_workspace_env"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3725,7 +3725,7 @@ export interface operations {
             };
         };
     };
-    list_global: {
+    list_global_env: {
         parameters: {
             query?: never;
             header?: never;
@@ -3781,7 +3781,7 @@ export interface operations {
             };
         };
     };
-    put_global: {
+    put_global_env: {
         parameters: {
             query?: never;
             header?: never;
@@ -3862,7 +3862,7 @@ export interface operations {
             };
         };
     };
-    delete_global: {
+    delete_global_env: {
         parameters: {
             query?: never;
             header?: never;
@@ -6527,7 +6527,7 @@ export interface operations {
             };
         };
     };
-    list_workspace: {
+    list_workspace_env: {
         parameters: {
             query?: never;
             header?: never;
@@ -6595,7 +6595,7 @@ export interface operations {
             };
         };
     };
-    put_workspace: {
+    put_workspace_env: {
         parameters: {
             query?: never;
             header?: never;
@@ -6687,7 +6687,7 @@ export interface operations {
             };
         };
     };
-    delete_workspace: {
+    delete_workspace_env: {
         parameters: {
             query?: never;
             header?: never;

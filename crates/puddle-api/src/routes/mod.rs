@@ -113,12 +113,15 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(credentials::store_token))
         .routes(routes!(credentials::forget_token))
         .routes(routes!(credentials::sign_in))
-        .routes(routes!(environment::list_global))
-        .routes(routes!(environment::put_global, environment::delete_global))
-        .routes(routes!(environment::list_workspace))
+        .routes(routes!(environment::list_global_env))
         .routes(routes!(
-            environment::put_workspace,
-            environment::delete_workspace
+            environment::put_global_env,
+            environment::delete_global_env
+        ))
+        .routes(routes!(environment::list_workspace_env))
+        .routes(routes!(
+            environment::put_workspace_env,
+            environment::delete_workspace_env
         ))
         .routes(routes!(identities::get_workspace_git))
         .routes(routes!(
