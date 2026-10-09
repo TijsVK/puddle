@@ -4033,17 +4033,17 @@ dependencies = [
  "libc",
  "microsandbox-agent-client",
  "microsandbox-control-client",
- "microsandbox-db",
+ "microsandbox-db 0.7.7-puddle.17",
  "microsandbox-filesystem",
  "microsandbox-image",
  "microsandbox-metrics",
  "microsandbox-migration",
  "microsandbox-network",
- "microsandbox-protocol",
+ "microsandbox-protocol 0.7.7-puddle.17",
  "microsandbox-protocol-client",
- "microsandbox-runtime",
- "microsandbox-types",
- "microsandbox-utils",
+ "microsandbox-runtime 0.7.7-puddle.17",
+ "microsandbox-types 0.7.7-puddle.17",
+ "microsandbox-utils 0.7.7-puddle.17",
  "nix 0.31.3",
  "notify",
  "object",
@@ -4079,7 +4079,7 @@ dependencies = [
  "ciborium",
  "libc",
  "memmap2",
- "microsandbox-protocol",
+ "microsandbox-protocol 0.7.7-puddle.17",
  "microsandbox-protocol-client",
  "nix 0.31.3",
  "serde",
@@ -4094,9 +4094,9 @@ name = "microsandbox-control-client"
 version = "0.7.7-puddle.17"
 source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.17#a91c0c944d0f69db4cd58bd756b9ab16a1bd445a"
 dependencies = [
- "microsandbox-protocol",
+ "microsandbox-protocol 0.7.7-puddle.17",
  "microsandbox-protocol-client",
- "microsandbox-utils",
+ "microsandbox-utils 0.7.7-puddle.17",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -4107,11 +4107,26 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-db"
+version = "0.7.7-puddle.7"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.7#02725cd7a237e4d8d61b79b693254addd388e5e4"
+dependencies = [
+ "async-trait",
+ "microsandbox-types 0.7.7-puddle.7",
+ "sea-orm",
+ "semver",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "microsandbox-db"
 version = "0.7.7-puddle.17"
 source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.17#a91c0c944d0f69db4cd58bd756b9ab16a1bd445a"
 dependencies = [
  "async-trait",
- "microsandbox-types",
+ "microsandbox-types 0.7.7-puddle.17",
  "sea-orm",
  "semver",
  "serde_json",
@@ -4129,7 +4144,7 @@ dependencies = [
  "crossbeam-channel",
  "hex",
  "libc",
- "microsandbox-utils",
+ "microsandbox-utils 0.7.7-puddle.17",
  "msb_krun",
  "msb_krun_utils",
  "scopeguard",
@@ -4153,8 +4168,8 @@ dependencies = [
  "futures",
  "hex",
  "libc",
- "microsandbox-types",
- "microsandbox-utils",
+ "microsandbox-types 0.7.7-puddle.17",
+ "microsandbox-utils 0.7.7-puddle.17",
  "msb-imago",
  "oci-client",
  "oci-spec",
@@ -4188,7 +4203,7 @@ name = "microsandbox-migration"
 version = "0.7.7-puddle.17"
 source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.17#a91c0c944d0f69db4cd58bd756b9ab16a1bd445a"
 dependencies = [
- "microsandbox-db",
+ "microsandbox-db 0.7.7-puddle.17",
  "sea-orm-migration",
  "serde_json",
 ]
@@ -4200,12 +4215,29 @@ source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.17#a91c0c
 dependencies = [
  "hickory-proto",
  "ipnetwork",
- "microsandbox-protocol",
- "microsandbox-types",
- "microsandbox-utils",
+ "microsandbox-protocol 0.7.7-puddle.17",
+ "microsandbox-types 0.7.7-puddle.17",
+ "microsandbox-utils 0.7.7-puddle.17",
  "serde",
  "thiserror 2.0.21",
  "tracing",
+ "zeroize",
+]
+
+[[package]]
+name = "microsandbox-protocol"
+version = "0.7.7-puddle.7"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.7#02725cd7a237e4d8d61b79b693254addd388e5e4"
+dependencies = [
+ "bytes",
+ "chrono",
+ "ciborium",
+ "microsandbox-types 0.7.7-puddle.7",
+ "serde",
+ "serde_bytes",
+ "strum 0.28.0",
+ "thiserror 2.0.21",
+ "tokio",
  "zeroize",
 ]
 
@@ -4217,7 +4249,7 @@ dependencies = [
  "bytes",
  "chrono",
  "ciborium",
- "microsandbox-types",
+ "microsandbox-types 0.7.7-puddle.17",
  "serde",
  "serde_bytes",
  "strum 0.28.0",
@@ -4231,10 +4263,36 @@ name = "microsandbox-protocol-client"
 version = "0.7.7-puddle.17"
 source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.17#a91c0c944d0f69db4cd58bd756b9ab16a1bd445a"
 dependencies = [
- "microsandbox-protocol",
+ "microsandbox-protocol 0.7.7-puddle.17",
  "serde",
  "thiserror 2.0.21",
  "tokio",
+ "zeroize",
+]
+
+[[package]]
+name = "microsandbox-runtime"
+version = "0.7.7-puddle.7"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.7#02725cd7a237e4d8d61b79b693254addd388e5e4"
+dependencies = [
+ "base64 0.23.1",
+ "cap-primitives",
+ "chrono",
+ "ciborium-ll",
+ "libc",
+ "microsandbox-db 0.7.7-puddle.7",
+ "microsandbox-protocol 0.7.7-puddle.7",
+ "microsandbox-types 0.7.7-puddle.7",
+ "microsandbox-utils 0.7.7-puddle.7",
+ "nix 0.31.3",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "tokio-util",
+ "tracing",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 
@@ -4249,12 +4307,12 @@ dependencies = [
  "ciborium-ll",
  "hex",
  "libc",
- "microsandbox-db",
+ "microsandbox-db 0.7.7-puddle.17",
  "microsandbox-image",
  "microsandbox-network",
- "microsandbox-protocol",
- "microsandbox-types",
- "microsandbox-utils",
+ "microsandbox-protocol 0.7.7-puddle.17",
+ "microsandbox-types 0.7.7-puddle.17",
+ "microsandbox-utils 0.7.7-puddle.17",
  "msb_krun",
  "nix 0.31.3",
  "rand 0.10.3",
@@ -4273,13 +4331,30 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-types"
+version = "0.7.7-puddle.7"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.7#02725cd7a237e4d8d61b79b693254addd388e5e4"
+dependencies = [
+ "chrono",
+ "hex",
+ "ipnetwork",
+ "microsandbox-types-macros 0.7.7-puddle.7",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "typed-path",
+ "zeroize",
+]
+
+[[package]]
+name = "microsandbox-types"
 version = "0.7.7-puddle.17"
 source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.17#a91c0c944d0f69db4cd58bd756b9ab16a1bd445a"
 dependencies = [
  "chrono",
  "hex",
  "ipnetwork",
- "microsandbox-types-macros",
+ "microsandbox-types-macros 0.7.7-puddle.17",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4290,12 +4365,34 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-types-macros"
+version = "0.7.7-puddle.7"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.7#02725cd7a237e4d8d61b79b693254addd388e5e4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
+
+[[package]]
+name = "microsandbox-types-macros"
 version = "0.7.7-puddle.17"
 source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.17#a91c0c944d0f69db4cd58bd756b9ab16a1bd445a"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "microsandbox-utils"
+version = "0.7.7-puddle.7"
+source = "git+https://github.com/TijsVK/microsandbox?tag=v0.7.7-puddle.7#02725cd7a237e4d8d61b79b693254addd388e5e4"
+dependencies = [
+ "dirs",
+ "libc",
+ "reflink-copy",
+ "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4828,7 +4925,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
 dependencies = [
- "proc-macro-crate 3.5.0",
+ "proc-macro-crate 1.3.1",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -5984,7 +6081,7 @@ version = "0.0.0"
 dependencies = [
  "microsandbox",
  "microsandbox-image",
- "microsandbox-runtime",
+ "microsandbox-runtime 0.7.7-puddle.7",
  "puddle-compute",
  "puddle-ipc",
  "puddle-netpolicy",
