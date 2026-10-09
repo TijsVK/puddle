@@ -367,11 +367,7 @@ async fn vm_clone_through_the_route_survives_a_sandbox_rebuild() {
     .await;
 
     let report = w.stop(sb.ungated()).await.unwrap();
-    assert!(
-        report.trims[0].is_ok() || !DISCARD,
-        "trim on stop: {:?}",
-        report.trims
-    );
+    assert!(report.trims[0].is_ok(), "trim on stop: {:?}", report.trims);
     drop(sb);
     rt.remove(&name).await.unwrap();
     w.sandbox_removed(&name);
@@ -629,32 +625,18 @@ fn check_reclaimed(what: &str, full: u64, after: u64) {
     );
 }
 
-/// Whether msb passes discard through to the host image. msb 0.7.7 doesn't on Linux: its
-/// bounded writeback for raw disks (on by default there) hides `VIRTIO_BLK_F_DISCARD`, so the
-/// guest's `fstrim` fails with "the discard operation is not supported". On Windows it does.
-const DISCARD: bool = cfg!(windows);
-
-/// Checks one trim: > 80 % of the deleted 1 GiB back where msb passes discard through; else the
-/// "not supported" failure (so the test notices when msb starts passing it through).
+/// Checks one trim: it succeeds and > 80 % of the deleted 1 GiB is back in the host image. msb
+/// keeps `VIRTIO_BLK_F_DISCARD` on every host, including Linux's bounded writeback for raw disks,
+/// so a refusal ("the discard operation is not supported") is a failure.
 fn expect_trim(
     what: &str,
     trim: Result<puddle_workspace::TrimReport, puddle_workspace::WorkspaceError>,
     full: u64,
     image: &Path,
 ) {
-    if DISCARD {
-        let report = trim.unwrap_or_else(|e| panic!("{what}: {e}"));
-        eprintln!("{what}: {report:?}");
-        check_reclaimed(what, full, allocated(image));
-    } else {
-        let err = trim.expect_err("msb now passes discard through on Linux: make the K bar strict");
-        assert!(
-            err.to_string()
-                .contains("discard operation is not supported"),
-            "{what}: {err}"
-        );
-        eprintln!("{what}: {err} (expected on Linux with msb 0.7.7)");
-    }
+    let report = trim.unwrap_or_else(|e| panic!("{what}: {e}"));
+    eprintln!("{what}: {report:?}");
+    check_reclaimed(what, full, allocated(image));
 }
 
 /// `fstrim` on stop, "reclaim space" in the running holder, and "reclaim space" of a stopped
