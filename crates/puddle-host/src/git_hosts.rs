@@ -384,11 +384,9 @@ mod tests {
         /// user's own configuration, and `root`'s `etc/gitconfig` as the system config.
         fn git_in(root: &Path, dir: &Path, args: &[&str]) -> std::process::Output {
             let mut cmd = Command::new("git");
-            for (key, _) in std::env::vars_os() {
-                if key.to_string_lossy().starts_with("GIT_") {
-                    cmd.env_remove(key);
-                }
-            }
+            cmd.env_clear().envs(
+                std::env::vars_os().filter(|(key, _)| !key.to_string_lossy().starts_with("GIT_")),
+            );
             cmd.current_dir(dir)
                 .env("GIT_CONFIG_SYSTEM", root.join("etc/gitconfig"))
                 .env("GIT_CONFIG_GLOBAL", root.join("no-such-global"))
