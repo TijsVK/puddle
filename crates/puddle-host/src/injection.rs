@@ -16,6 +16,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use puddle_ca::{CaBuilder, CaCertificate, WorkspaceCa};
 use puddle_inject::{CredentialSource, GitInjector, StoreSettings};
@@ -95,6 +96,10 @@ fn decrypted(git: &WorkspaceGit, stand_ins: &StandIns) -> TerminationSet {
     set
 }
 
+/// How long a workspace's secrets may take to read from the credential store. A locked keyring
+/// waits for the user to unlock it; past this the start fails and says so, instead of hanging.
+const VAULT_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub(crate) struct Injection {
     terminations: Arc<Terminations>,
     inputs: InjectorInputs,
@@ -106,10 +111,12 @@ pub(crate) struct Injection {
     /// Held while a workspace's settings are read and what it decrypts is changed to match, so
     /// the last change to run is the last one to read: a slow reader never puts back an old set.
     syncing: Mutex<()>,
-    /// Held while a workspace's environment is read (the credential store can take a while) and
-    /// applied or registered, so a start and a change to the environment never cross: whichever
-    /// comes second reads what the first left.
-    environment: tokio::sync::Mutex<()>,
+    /// One lock for each workspace, held while its environment is read (the credential store can
+    /// take a while) and applied or registered, so a start and a change to the environment never
+    /// cross: whichever comes second reads what the first left. Per workspace, so a credential
+    /// store that is slow for one workspace's secrets holds up no other workspace.
+    environment: Mutex<BTreeMap<WorkspaceName, Arc<tokio::sync::Mutex<()>>>>,
+    vault_timeout: Duration,
 }
 
 impl Injection {
@@ -126,20 +133,44 @@ impl Injection {
             vault,
             running: Mutex::new(BTreeMap::new()),
             syncing: Mutex::new(()),
-            environment: tokio::sync::Mutex::new(()),
+            environment: Mutex::new(BTreeMap::new()),
+            vault_timeout: VAULT_TIMEOUT,
         }
     }
 
-    /// Reads `workspace`'s environment off the async threads.
+    /// The same with another limit on how long the credential store may take (tests).
+    #[cfg(test)]
+    fn with_vault_timeout(mut self, timeout: Duration) -> Self {
+        self.vault_timeout = timeout;
+        self
+    }
+
+    /// `workspace`'s environment lock.
+    fn environment_lock(&self, workspace: &WorkspaceName) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self
+            .environment
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(locks.entry(workspace.clone()).or_default())
+    }
+
+    /// Reads `workspace`'s environment off the async threads, giving up when the credential store
+    /// does not answer in time.
     async fn environment_of(&self, workspace: &WorkspaceName) -> Result<Resolved, String> {
         let (store, vault, name) = (
             Arc::clone(&self.inputs.store),
             Arc::clone(&self.vault),
             workspace.clone(),
         );
-        tokio::task::spawn_blocking(move || resolve(&store, vault.as_ref(), &name))
-            .await
-            .map_err(|e| format!("cannot read {workspace}'s environment: {e}"))?
+        let read = tokio::task::spawn_blocking(move || resolve(&store, vault.as_ref(), &name));
+        match tokio::time::timeout(self.vault_timeout, read).await {
+            Ok(done) => done.map_err(|e| format!("cannot read {workspace}'s environment: {e}"))?,
+            Err(_) => Err(format!(
+                "the operating system's credential store did not answer within {} seconds while \
+                 reading {workspace}'s secrets; unlock it or check that it is running, then try again",
+                self.vault_timeout.as_secs().max(1)
+            )),
+        }
     }
 
     fn running(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceName, Running>> {
@@ -163,7 +194,8 @@ impl Injection {
     pub(crate) async fn begin(&self, workspace: &WorkspaceName) -> Result<Began, String> {
         // Held until the workspace is registered: a change to its environment in the meantime
         // waits for that and then finds it running.
-        let _environment = self.environment.lock().await;
+        let lock = self.environment_lock(workspace);
+        let _environment = lock.lock().await;
         let resolved = self.environment_of(workspace).await?;
         self.register(workspace, resolved)
     }
@@ -227,7 +259,8 @@ impl Injection {
     /// A workspace that does not run reads its environment at its next start. A failure leaves
     /// what the workspace had and is logged: the next change tries again.
     pub(crate) async fn environment_changed(&self, workspace: &WorkspaceName) {
-        let _environment = self.environment.lock().await;
+        let lock = self.environment_lock(workspace);
+        let _environment = lock.lock().await;
         if !self.running().contains_key(workspace) {
             return;
         }
@@ -740,6 +773,63 @@ mod tests {
                 .unwrap(),
             []
         );
+    }
+
+    /// A credential store that does not answer for a while (a keyring waiting for the user to
+    /// unlock it), and says when it was asked.
+    struct SlowStore {
+        inner: MemoryStore,
+        delay: Duration,
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl SecretStore for SlowStore {
+        fn get(&self, id: &StoredId) -> Result<Option<Secret>, puddle_secrets::StoreError> {
+            self.asked.lock().unwrap().push(id.to_string());
+            std::thread::sleep(self.delay);
+            self.inner.get(id)
+        }
+
+        fn set(&self, id: &StoredId, secret: &Secret) -> Result<(), puddle_secrets::StoreError> {
+            self.inner.set(id, secret)
+        }
+
+        fn delete(&self, id: &StoredId) -> Result<(), puddle_secrets::StoreError> {
+            self.inner.delete(id)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_credential_store_that_does_not_answer_fails_that_workspace_in_time_and_holds_up_no_other()
+     {
+        let store = store();
+        let vault = Arc::new(SlowStore {
+            inner: MemoryStore::new(),
+            delay: Duration::from_millis(1500),
+            asked: Mutex::new(Vec::new()),
+        });
+        let injection = Injection::new(
+            Arc::new(Terminations::new()),
+            inputs(&store),
+            None,
+            vault.clone(),
+        )
+        .with_vault_timeout(Duration::from_millis(200));
+        let (stuck, free) = (workspace("stuck"), workspace("free"));
+        add_secret(&store, &vault.inner, &stuck, "T", &["x.example.org"]);
+
+        let waiting = injection.begin(&stuck);
+        let others = async {
+            // A workspace without secrets never asks the store, so it is not held up.
+            let began = injection.begin(&free).await;
+            assert!(began.is_ok());
+        };
+        let (stuck_result, ()) = tokio::join!(waiting, others);
+        let err = stuck_result.err().unwrap();
+        assert!(err.contains("did not answer within"), "{err}");
+        assert!(err.contains("stuck") && err.contains("unlock"), "{err}");
+        assert_eq!(vault.asked.lock().unwrap().len(), 1);
+        assert_eq!(injection.running_workspaces(), [free]);
     }
 
     /// Two stand-ins of which one contains the other: the proxy cannot tell which to swap, so it

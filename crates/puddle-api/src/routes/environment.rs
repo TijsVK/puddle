@@ -56,10 +56,10 @@ fn drop_value(vault: &Arc<dyn SecretStore>, id: &StoredId) {
 /// secret (two requests crossed) leaves its value behind with nothing that names it.
 fn drop_replaced(
     vault: &Arc<dyn SecretStore>,
-    replaced: Option<EnvEntry>,
+    replaced: Option<&EnvEntry>,
     kept: Option<&StoredId>,
 ) {
-    if let Some(old) = replaced.as_ref().and_then(|e| e.value.as_secret())
+    if let Some(old) = replaced.and_then(|e| e.value.as_secret())
         && Some(&old.id) != kept
     {
         drop_value(vault, &old.id);
@@ -80,7 +80,7 @@ async fn set(
         EnvSetRequest::Plain { value } => {
             let draft = EnvDraft::plain(&value)?;
             let change = store.set_env(&scope, &name, draft)?;
-            drop_replaced(&vault, change.replaced, None);
+            drop_replaced(&vault, change.replaced.as_ref(), None);
             Ok(EnvVariable::from_store(change.entry, false))
         }
         EnvSetRequest::Secret { value, hosts } => {
@@ -115,7 +115,7 @@ async fn set(
                     return Err(err.into());
                 }
             };
-            drop_replaced(&vault, change.replaced, Some(&id));
+            drop_replaced(&vault, change.replaced.as_ref(), Some(&id));
             Ok(EnvVariable::from_store(change.entry, false))
         }
     })
@@ -324,27 +324,20 @@ mod tests {
         let plain = entry_of(&store, "P", EnvDraft::plain("x").unwrap());
 
         // Kept: the same id stays. Another request's secret replaced it: the other id goes.
-        drop_replaced(&vault, Some(secret_a.clone()), Some(&id("env-a")));
+        drop_replaced(&vault, Some(&secret_a), Some(&id("env-a")));
         assert_eq!(memory.ids(), ["env-a", "env-b"]);
-        drop_replaced(&vault, Some(secret_a.clone()), Some(&id("env-b")));
+        drop_replaced(&vault, Some(&secret_a), Some(&id("env-b")));
         assert_eq!(memory.ids(), ["env-b"]);
         // Nothing replaced, or a plain variable replaced: nothing to remove.
         drop_replaced(&vault, None, Some(&id("env-b")));
-        drop_replaced(&vault, Some(plain), None);
+        drop_replaced(&vault, Some(&plain), None);
         assert_eq!(memory.ids(), ["env-b"]);
         // A secret that became plain has no value to keep.
-        drop_replaced(
-            &vault,
-            Some(entry_of(
-                &store,
-                "B",
-                EnvDraft::secret(id("env-b"), hosts()).unwrap(),
-            )),
-            None,
-        );
+        let secret_b = entry_of(&store, "B", EnvDraft::secret(id("env-b"), hosts()).unwrap());
+        drop_replaced(&vault, Some(&secret_b), None);
         assert_eq!(memory.ids(), Vec::<String>::new());
         // A credential store that fails is logged, not an error.
         memory.break_it();
-        drop_replaced(&vault, Some(secret_a), None);
+        drop_replaced(&vault, Some(&secret_a), None);
     }
 }

@@ -69,9 +69,15 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     }
 
     async fn all_environments_changed(&self) {
-        for name in self.inner.injection.running_workspaces() {
-            self.inner.injection.environment_changed(&name).await;
-        }
+        // Together: a credential store that is slow for one workspace's secrets holds up no other.
+        let injection = &self.inner.injection;
+        futures_util::future::join_all(
+            injection
+                .running_workspaces()
+                .iter()
+                .map(|name| injection.environment_changed(name)),
+        )
+        .await;
     }
 }
 
