@@ -1051,15 +1051,18 @@ async fn vm_host_carries_2000_concurrent_guest_connections_through_agent_and_pro
 
     let name = format!("{}-held", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
-    host.store()
-        .add_rule(&NewRule {
-            scope: Scope::Workspace(sandbox.clone()),
-            pattern: Pattern::parse("127.0.0.1").unwrap(),
-            effect: Effect::Allow,
-            expires_at: None,
-            created_by: Actor::Cli,
-        })
-        .unwrap();
+    // The repository host for the clone, and the host's own address for the connections.
+    for site in [REPO_HOST, "127.0.0.1"] {
+        host.store()
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(sandbox.clone()),
+                pattern: Pattern::parse(site).unwrap(),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
