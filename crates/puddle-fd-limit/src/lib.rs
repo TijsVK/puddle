@@ -16,6 +16,7 @@ use std::fmt;
 
 /// What the soft limit is lifted to when the hard limit is "unlimited", and the largest value that
 /// macOS accepts as a soft limit no matter what the hard limit says (`OPEN_MAX`).
+#[cfg(unix)]
 const FALLBACK: [u64; 2] = [1_048_576, 10_240];
 
 /// The open-file limit of the process, before and after [`raise_open_file_limit`].
@@ -66,6 +67,7 @@ impl fmt::Display for OpenFileLimit {
 
 /// The soft limits to try, best first: the hard limit itself, then what a system that rejects
 /// it (macOS caps a soft limit at `OPEN_MAX`) accepts. Never lower than `soft`.
+#[cfg(unix)]
 fn candidates(soft: u64, hard: Option<u64>) -> Vec<u64> {
     let mut tries: Vec<u64> = match hard {
         Some(hard) => std::iter::once(hard)
@@ -145,17 +147,20 @@ pub fn raise_open_file_limit(_reach: Reach) -> OpenFileLimit {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn the_hard_limit_is_tried_first_then_the_macos_ceiling() {
         assert_eq!(candidates(1024, Some(524_288)), [524_288, 10_240]);
         assert_eq!(candidates(1024, Some(4096)), [4096]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_unlimited_hard_limit_tries_a_million_then_the_macos_ceiling() {
         assert_eq!(candidates(1024, None), [1_048_576, 10_240]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn nothing_at_or_below_the_current_soft_limit_is_tried() {
         assert_eq!(candidates(4096, Some(4096)), Vec::<u64>::new());
