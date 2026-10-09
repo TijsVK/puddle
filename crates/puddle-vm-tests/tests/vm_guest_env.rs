@@ -55,16 +55,10 @@ const SETUP_STEPS: &[(&str, &str)] = &[
          .catch((e) => { console.log('debian failed ms=' + (Date.now() - t) + ' ' + e); process.exit(1); })\"",
     ),
     (
-        // eatmydata turns fsync into a no-op for the install: on the Linux KVM host one fsync in
-        // the guest took ~0.4 s (the host's own ~14 ms), and dpkg syncs for every package, so
-        // the unpack alone ran past five minutes. The tools are only needed for this test.
-        "apt install eatmydata",
-        "apt-get install -y -q --no-install-recommends eatmydata",
-    ),
-    (
-        // Output kept (no -qq): a stall shows the last package unpacked.
+        // Output kept (no -qq): a stall shows the last package unpacked. A plain install: dpkg
+        // syncs for every package, so this step is also the guest's fsync cost on a fresh image.
         "apt install (JDK 21, maven, tools)",
-        "eatmydata apt-get install -y -o Dpkg::Use-Pty=0 --no-install-recommends ca-certificates \
+        "apt-get install -y -o Dpkg::Use-Pty=0 --no-install-recommends ca-certificates \
          curl wget git sudo unzip python3-pip openjdk-21-jdk-headless maven",
     ),
     (
