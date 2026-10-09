@@ -579,44 +579,44 @@ test.describe("a long log", () => {
     test.setTimeout(600_000);
     await backend.control.step({ do: "history", count: RECORDS });
     await openActivity(page, backend, "?range=all");
-    await page.evaluate(() => {
-      const w = window as unknown as { __long: number[] };
-      w.__long = [];
-      new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) w.__long.push(entry.duration);
-      }).observe({ type: "longtask", buffered: true });
-    });
     const target = 36 * 1000;
-    for (let guard = 0; guard < 400; guard += 1) {
-      const top = await region(page).evaluate(async (el, goal) => {
+    // The whole scroll is one call in the page, and only the tasks from its start count. The page
+    // load is not the scroll, and a test step per scroll would run Playwright's own work on the
+    // page's main thread (finding the element, the trace's DOM snapshot), counted as the page's.
+    const scrolled = await region(page).evaluate(async (el, goal) => {
+      const measured =
+        PerformanceObserver.supportedEntryTypes.includes("longtask");
+      const long: number[] = [];
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) long.push(entry.duration);
+      });
+      if (measured) observer.observe({ type: "longtask" });
+      const frame = () => new Promise((done) => requestAnimationFrame(done));
+      while (el.scrollTop < goal) {
         el.scrollTop = Math.min(el.scrollTop + 36 * 20, goal);
-        await new Promise((r) => requestAnimationFrame(r));
-        return el.scrollTop;
-      }, target);
-      if (top >= target) break;
-      // Reached the end of what is loaded: the next page comes, then the scroll goes on.
-      await expect
-        .poll(
-          () =>
-            region(page).evaluate(
-              (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
-            ),
-          { timeout: 30_000 },
-        )
-        .toBeGreaterThan(0);
-    }
-    expect(
-      await region(page).evaluate((el) => el.scrollTop),
-    ).toBeGreaterThanOrEqual(target);
+        await frame();
+        // Reached the end of what is loaded: the next page comes, then the scroll goes on.
+        let waited = 0;
+        while (el.scrollHeight - el.clientHeight <= el.scrollTop) {
+          waited += 1;
+          if (waited > 2_000) throw new Error("the next page did not come");
+          await frame();
+        }
+      }
+      // An entry is delivered after the task it measures: one more turn lets the last one in.
+      await new Promise((done) => setTimeout(done, 0));
+      observer.disconnect();
+      return { top: el.scrollTop, long, measured };
+    }, target);
+    expect(scrolled.top).toBeGreaterThanOrEqual(target);
     // Without a clock: the table never holds more rows than a screen and its overscan.
     expect(await rows(page).count()).toBeLessThan(60);
-    const long = await page.evaluate(
-      () => (window as unknown as { __long: number[] }).__long,
-    );
-    const worst = Math.max(0, ...long);
+    const worst = Math.max(0, ...scrolled.long);
     test.info().annotations.push({
       type: "activity-100k",
-      description: `${RECORDS} records, 1000 rows scrolled: ${long.length} long tasks, worst ${worst.toFixed(0)} ms (target ${LONG_TASK_TARGET_MS} ms)`,
+      description: scrolled.measured
+        ? `${RECORDS} records, 1000 rows scrolled: ${scrolled.long.length} long tasks, worst ${worst.toFixed(0)} ms (target ${LONG_TASK_TARGET_MS} ms)`
+        : `${RECORDS} records, 1000 rows scrolled: this browser has no long-task timing, so only the window is checked`,
     });
     expect(worst, "longest task while scrolling").toBeLessThan(
       LONG_TASK_TARGET_MS * 4,
