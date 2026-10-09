@@ -145,10 +145,6 @@ impl<'de> Deserialize<'de> for SecretText {
                 Err(E::custom("the value must be a string, not a number"))
             }
 
-            fn visit_unit<E: de::Error>(self) -> Result<SecretText, E> {
-                Err(E::custom("the value must be a string, not null"))
-            }
-
             fn visit_seq<A: de::SeqAccess<'de>>(self, _: A) -> Result<SecretText, A::Error> {
                 Err(de::Error::custom("the value must be a string, not a list"))
             }
@@ -219,6 +215,10 @@ mod tests {
                 "{err}"
             );
         }
+        // A kind of value serde_json never produces still gets a refusal that quotes nothing.
+        let bytes = de::value::BytesDeserializer::<de::value::Error>::new(b"CANARY-bytes");
+        let err = SecretText::deserialize(bytes).err().unwrap().to_string();
+        assert!(err.contains("a string") && !err.contains("CANARY"), "{err}");
         // The value may be left out: the secret keeps what it has.
         assert!(matches!(
             serde_json::from_str::<EnvSetRequest>(r#"{"kind":"secret","hosts":["a.example.com"]}"#)

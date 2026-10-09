@@ -559,6 +559,41 @@ async fn a_scope_holds_at_most_256_variables() {
             .contains("256 variables")
     );
     assert_eq!(put(&api, "/api/env/V0", &plain("y")).await.status, 200);
+
+    // A new secret in a full scope is refused, and the value it wrote is taken back.
+    let secret_over = put(
+        &api,
+        "/api/env/A_SECRET",
+        &secret(Some(CANARY), &["a.example.com"]),
+    )
+    .await;
+    assert_eq!(secret_over.status, 422, "{}", secret_over.body);
+    assert_eq!(
+        api.secrets.ids(),
+        Vec::<String>::new(),
+        "no value left behind"
+    );
+}
+
+#[tokio::test]
+async fn a_secret_made_plain_while_the_credential_store_is_down_is_changed_and_only_its_old_value_is_left()
+ {
+    let api = start().await;
+    put(
+        &api,
+        "/api/env/T",
+        &secret(Some(CANARY), &["a.example.com"]),
+    )
+    .await;
+    api.secrets.break_it();
+    let now_plain = put(&api, "/api/env/T", &plain("open")).await;
+    assert_eq!(now_plain.status, 200, "{}", now_plain.body);
+    assert_eq!(now_plain.json()["kind"], "plain");
+    // The old value could not be removed: it stays in the credential store with nothing naming it,
+    // and the variable no longer refers to it.
+    api.secrets.heal();
+    assert_eq!(api.secrets.ids().len(), 1);
+    assert_eq!(names(&api.get("/api/env").await.json()), ["T"]);
 }
 
 #[tokio::test]

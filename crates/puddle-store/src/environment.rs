@@ -331,6 +331,17 @@ pub enum EnvValue {
     Secret(EnvSecret),
 }
 
+impl EnvValue {
+    /// The secret's reference, when this is one.
+    #[must_use]
+    pub fn as_secret(&self) -> Option<&EnvSecret> {
+        match self {
+            Self::Secret(secret) => Some(secret),
+            Self::Plain(_) => None,
+        }
+    }
+}
+
 /// What to store under a name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnvDraft {
@@ -410,6 +421,17 @@ pub struct EnvRow {
     pub entry: EnvEntry,
     /// A global entry that the workspace's own entry of the same name hides.
     pub overridden: bool,
+}
+
+impl StartValue {
+    /// The stand-in, when this is a secret.
+    #[must_use]
+    pub fn stand_in(&self) -> Option<&str> {
+        match self {
+            Self::Secret { stand_in, .. } => Some(stand_in),
+            Self::Plain(_) => None,
+        }
+    }
 }
 
 /// A variable a workspace starts with, its secrets already given their stand-in.
@@ -533,12 +555,15 @@ mod tests {
         let hosts = ["b.example.com", "a.example.com", "b.example.com"]
             .map(|h| SecretHost::new(h).unwrap())
             .to_vec();
-        let EnvDraft::Secret { hosts, .. } = EnvDraft::secret(id.clone(), hosts).unwrap() else {
-            panic!("a secret")
-        };
+        let draft = EnvDraft::secret(id.clone(), hosts).unwrap();
         assert_eq!(
-            hosts.iter().map(SecretHost::as_str).collect::<Vec<_>>(),
-            ["a.example.com", "b.example.com"]
+            draft,
+            EnvDraft::Secret {
+                id: id.clone(),
+                hosts: ["a.example.com", "b.example.com"]
+                    .map(|h| SecretHost::new(h).unwrap())
+                    .to_vec()
+            }
         );
         let many = (0..=MAX_SECRET_HOSTS)
             .map(|i| SecretHost::new(&format!("h{i}.example.com")).unwrap())

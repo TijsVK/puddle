@@ -403,6 +403,18 @@ mod tests {
     }
 
     #[test]
+    fn a_build_without_a_credential_store_keeps_nothing_and_says_so_at_every_call() {
+        let id = StoredId::new("env-1").unwrap();
+        let none = NoSecretStore;
+        assert!(none.get(&id).is_err());
+        assert!(
+            none.set(&id, &puddle_secrets::Secret::new("v".into()))
+                .is_err()
+        );
+        assert!(none.delete(&id).is_err());
+    }
+
+    #[test]
     fn every_refusal_has_its_status_and_the_services_describe_themselves_without_a_value() {
         use axum::http::StatusCode;
         for (err, status) in [
@@ -427,6 +439,11 @@ mod tests {
         )
         .with_sign_ins(SignIns::new(ToolPaths::new(None, None)));
         assert_eq!(format!("{real:?}"), "HostCredentials { .. }");
+        // The computer's own sources are built without touching the credential store.
+        assert_eq!(
+            format!("{:?}", HostCredentials::on_this_computer()),
+            "HostCredentials { .. }"
+        );
         assert_eq!(
             format!("{:?}", FakeCredentials::new()),
             "FakeCredentials { .. }"

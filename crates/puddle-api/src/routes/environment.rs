@@ -13,7 +13,9 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_secrets::{SecretStore, StoredId};
-use puddle_store::{EnvDraft, EnvName, EnvScope, EnvValue, SecretHost, Store, check_secret_value};
+use puddle_store::{
+    EnvDraft, EnvEntry, EnvName, EnvScope, EnvValue, SecretHost, Store, check_secret_value,
+};
 
 use crate::ApiErrorBody;
 use crate::error::{ApiError, ErrorCode, blocking};
@@ -49,6 +51,21 @@ fn drop_value(vault: &Arc<dyn SecretStore>, id: &StoredId) {
     }
 }
 
+/// Removes the value of the secret a change replaced, unless the new entry keeps it (`kept`): a
+/// secret that became a plain variable has none to keep, and one replaced by another request's
+/// secret (two requests crossed) leaves its value behind with nothing that names it.
+fn drop_replaced(
+    vault: &Arc<dyn SecretStore>,
+    replaced: Option<EnvEntry>,
+    kept: Option<&StoredId>,
+) {
+    if let Some(old) = replaced.as_ref().and_then(|e| e.value.as_secret())
+        && Some(&old.id) != kept
+    {
+        drop_value(vault, &old.id);
+    }
+}
+
 /// Sets `name` in `scope`.
 async fn set(
     state: &AppState,
@@ -63,10 +80,7 @@ async fn set(
         EnvSetRequest::Plain { value } => {
             let draft = EnvDraft::plain(&value)?;
             let change = store.set_env(&scope, &name, draft)?;
-            // A secret that became a plain variable has no value to keep.
-            if let Some(EnvValue::Secret(old)) = change.replaced.map(|e| e.value) {
-                drop_value(&vault, &old.id);
-            }
+            drop_replaced(&vault, change.replaced, None);
             Ok(EnvVariable::from_store(change.entry, false))
         }
         EnvSetRequest::Secret { value, hosts } => {
@@ -101,13 +115,7 @@ async fn set(
                     return Err(err.into());
                 }
             };
-            // A value that replaced another secret's (two requests crossed) leaves that one alone
-            // in the credential store.
-            if let Some(EnvValue::Secret(old)) = change.replaced.map(|e| e.value)
-                && old.id != id
-            {
-                drop_value(&vault, &old.id);
-            }
+            drop_replaced(&vault, change.replaced, Some(&id));
             Ok(EnvVariable::from_store(change.entry, false))
         }
     })
@@ -121,16 +129,13 @@ async fn remove(state: &AppState, scope: EnvScope, name: &str) -> Result<(), Api
     let (store, vault): (Arc<Store>, Arc<dyn SecretStore>) =
         (Arc::clone(&state.store), Arc::clone(&state.secrets));
     blocking(move || {
-        let Some(entry) = store.env_entry(&scope, &name)? else {
-            // Says it in the store's words: no such variable in this scope.
-            store.delete_env(&scope, &name)?;
-            return Ok(());
-        };
         // The value first: when the credential store is not there, the variable stays and the
         // user can try again, instead of a value left behind with nothing naming it.
-        if let EnvValue::Secret(secret) = &entry.value {
+        let entry = store.env_entry(&scope, &name)?;
+        if let Some(secret) = entry.as_ref().and_then(|e| e.value.as_secret()) {
             vault.delete(&secret.id).map_err(|_| unavailable())?;
         }
+        // A name that is not set says so here, in the store's words: no such variable in this scope.
         store.delete_env(&scope, &name)?;
         Ok(())
     })
@@ -286,4 +291,58 @@ pub(crate) async fn delete_workspace(
     let workspace = workspace(&state, &id).await?;
     remove(&state, EnvScope::Workspace(workspace), &name).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use puddle_secrets::{MemoryStore, Secret};
+    use puddle_store::{Limits, ManualClock};
+
+    use super::*;
+
+    fn entry_of(store: &Store, name: &str, draft: EnvDraft) -> EnvEntry {
+        store
+            .set_env(&EnvScope::Global, &EnvName::new(name).unwrap(), draft)
+            .unwrap()
+            .entry
+    }
+
+    #[test]
+    fn the_value_of_a_replaced_secret_is_removed_unless_the_new_entry_keeps_it() {
+        let store =
+            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+        let memory = Arc::new(MemoryStore::new());
+        let vault: Arc<dyn SecretStore> = memory.clone();
+        let id = |text: &str| StoredId::new(text).unwrap();
+        let hosts = || SecretHost::list(&["a.example.com"]).unwrap();
+        for name in ["env-a", "env-b"] {
+            memory.set(&id(name), &Secret::new("v".to_owned())).unwrap();
+        }
+        let secret_a = entry_of(&store, "A", EnvDraft::secret(id("env-a"), hosts()).unwrap());
+        let plain = entry_of(&store, "P", EnvDraft::plain("x").unwrap());
+
+        // Kept: the same id stays. Another request's secret replaced it: the other id goes.
+        drop_replaced(&vault, Some(secret_a.clone()), Some(&id("env-a")));
+        assert_eq!(memory.ids(), ["env-a", "env-b"]);
+        drop_replaced(&vault, Some(secret_a.clone()), Some(&id("env-b")));
+        assert_eq!(memory.ids(), ["env-b"]);
+        // Nothing replaced, or a plain variable replaced: nothing to remove.
+        drop_replaced(&vault, None, Some(&id("env-b")));
+        drop_replaced(&vault, Some(plain), None);
+        assert_eq!(memory.ids(), ["env-b"]);
+        // A secret that became plain has no value to keep.
+        drop_replaced(
+            &vault,
+            Some(entry_of(
+                &store,
+                "B",
+                EnvDraft::secret(id("env-b"), hosts()).unwrap(),
+            )),
+            None,
+        );
+        assert_eq!(memory.ids(), Vec::<String>::new());
+        // A credential store that fails is logged, not an error.
+        memory.break_it();
+        drop_replaced(&vault, Some(secret_a), None);
+    }
 }

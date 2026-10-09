@@ -350,12 +350,8 @@ mod tests {
                 Some(old.as_str()),
                 "step {step}"
             );
-            assert_eq!(
-                held(&store).len(),
-                before.len(),
-                "step {step}: {:?}",
-                held(&store)
-            );
+            let left = held(&store);
+            assert_eq!(left.len(), before.len(), "step {step}: {left:?}");
             store.inner.writes.store(writes, Ordering::SeqCst);
         }
         // The head write (the fifth for a value of four pieces) failing is covered too.

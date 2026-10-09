@@ -534,9 +534,7 @@ mod tests {
                 secret("env-1", &["registry.npmjs.org"]),
             )
             .unwrap();
-        let EnvValue::Secret(kept) = made.entry.value else {
-            panic!("a secret")
-        };
+        let kept = made.entry.value.as_secret().unwrap();
         assert_eq!(kept.id.as_str(), "env-1");
         assert_eq!(kept.hosts[0].as_str(), "registry.npmjs.org");
         // The database holds the reference and the hosts, no value column filled.
@@ -563,10 +561,7 @@ mod tests {
         let again = start(&store, "a");
         assert_eq!(first, again, "the same stand-in at every start");
         let other = start(&store, "b");
-        let text = |vars: &[StartVar]| match &vars[0].value {
-            StartValue::Secret { stand_in, .. } => stand_in.clone(),
-            StartValue::Plain(_) => panic!("a secret"),
-        };
+        let text = |vars: &[StartVar]| vars[0].value.stand_in().unwrap().to_owned();
         assert_ne!(text(&first), text(&other), "each workspace has its own");
 
         // A new value or new hosts under the same row keep the stand-in.
@@ -579,10 +574,10 @@ mod tests {
             .unwrap();
         let moved = start(&store, "a");
         assert_eq!(text(&moved), text(&first));
-        let StartValue::Secret { hosts, .. } = &moved[0].value else {
-            panic!("a secret")
-        };
-        assert_eq!(hosts[0].as_str(), "other.example.com");
+        assert!(matches!(
+            &moved[0].value,
+            StartValue::Secret { hosts, .. } if hosts[0].as_str() == "other.example.com"
+        ));
 
         // Removing the secret and making it again is a new secret with a new stand-in.
         store.delete_env(&EnvScope::Global, &name("TOKEN")).unwrap();
@@ -845,6 +840,26 @@ mod tests {
             .execute("UPDATE env_vars SET name = '1bad', secret_id = 'env-1'", [])
             .unwrap();
         assert!(store.env_entries(&scope).is_err(), "a name that is not one");
+    }
+
+    #[test]
+    fn a_row_of_the_wrong_shape_is_reported_even_if_the_table_checks_were_bypassed() {
+        let store = store();
+        let scope = EnvScope::Workspace(ws("a"));
+        store
+            .set_env(&scope, &name("T"), secret("env-1", &["x.example.com"]))
+            .unwrap();
+        // A plain variable that also has a secret's id: the table's own checks refuse it, so the
+        // checks are switched off for the one edit.
+        lock(&store.conn)
+            .execute_batch(
+                "PRAGMA ignore_check_constraints = ON;
+                 UPDATE env_vars SET kind = 'plain', value = 'x';
+                 PRAGMA ignore_check_constraints = OFF;",
+            )
+            .unwrap();
+        let err = store.env_entries(&scope).unwrap_err().to_string();
+        assert!(err.contains("wrong shape"), "{err}");
     }
 
     #[test]

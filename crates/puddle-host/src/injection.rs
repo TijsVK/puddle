@@ -231,29 +231,34 @@ impl Injection {
         if !self.running().contains_key(workspace) {
             return;
         }
-        let resolved = match self.environment_of(workspace).await {
-            Ok(resolved) => resolved,
-            Err(reason) => {
-                tracing::warn!(workspace = %workspace, %reason, "the workspace's secrets are not updated");
-                return;
-            }
+        let applied = match self.environment_of(workspace).await {
+            Ok(resolved) => self.apply_environment(workspace, resolved),
+            Err(reason) => Err(reason),
         };
+        if let Err(reason) = applied {
+            tracing::warn!(workspace = %workspace, %reason, "the workspace's secrets are not updated");
+        }
+    }
+
+    /// Makes the registry of the running `workspace` hold `resolved`'s entries, then makes what it
+    /// decrypts follow the registry. Not an error when the workspace stopped meanwhile: its next
+    /// start reads its secrets itself.
+    fn apply_environment(
+        &self,
+        workspace: &WorkspaceName,
+        resolved: Resolved,
+    ) -> Result<(), String> {
         let Some(stand_ins) = self
             .running()
             .get(workspace)
             .map(|r| Arc::clone(&r.stand_ins))
         else {
-            // It stopped while its secrets were read; its next start reads them itself.
-            return;
+            return Ok(());
         };
-        if let Err(err) = stand_ins.replace_origin(StandInOrigin::Secret, resolved.entries) {
-            tracing::warn!(workspace = %workspace, %err, "the workspace's secrets are not updated");
-            return;
-        }
-        // The decrypted hosts follow the registry.
-        if let Err(reason) = self.resync(workspace) {
-            tracing::warn!(workspace = %workspace, %reason, "what the workspace decrypts is not updated");
-        }
+        stand_ins
+            .replace_origin(StandInOrigin::Secret, resolved.entries)
+            .map_err(|e| format!("the secrets of {workspace} cannot be registered: {e}"))?;
+        self.resync(workspace).map(|_| ())
     }
 
     /// Reads the running `workspace`'s settings again and changes what it decrypts to match, with
@@ -303,7 +308,7 @@ impl Injection {
             Arc::clone(&self.vault),
             workspace.clone(),
         );
-        let done = tokio::task::spawn_blocking(move || {
+        let outcome = tokio::task::spawn_blocking(move || {
             let deletion = store
                 .delete_workspace(&name)
                 .map_err(|e| format!("cannot remove {name}'s rules and environment: {e}"))?;
@@ -314,13 +319,12 @@ impl Injection {
             }
             Ok::<(), String>(())
         })
-        .await;
-        let reason = match done {
-            Ok(Ok(())) => return,
-            Ok(Err(reason)) => reason,
-            Err(err) => err.to_string(),
-        };
-        tracing::warn!(workspace = %workspace, %reason, "a deleted workspace's settings are not removed");
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|removed| removed);
+        if let Err(reason) = outcome {
+            tracing::warn!(workspace = %workspace, %reason, "a deleted workspace's settings are not removed");
+        }
     }
 
     /// The workspaces that have a CA now.
@@ -736,6 +740,45 @@ mod tests {
                 .unwrap(),
             []
         );
+    }
+
+    /// Two stand-ins of which one contains the other: the proxy cannot tell which to swap, so it
+    /// refuses to hold both. Puddle makes none like that; a hand-edited database can.
+    fn overlapping_stand_ins(store: &Store, ws: &WorkspaceName) {
+        store
+            .env_for_start(ws, &mut |name| {
+                let first = "puddle-secret-A-0123456789abcdef0123456789abcdef";
+                Ok(if name.as_str() == "A" {
+                    first.to_owned()
+                } else {
+                    format!("{first}-{name}")
+                })
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn stand_ins_that_overlap_stop_a_start_and_leave_a_running_workspace_as_it_was() {
+        let store = store();
+        let (injection, terminations, vault) = injection_with_vault(&store);
+        let ws = workspace("alpha");
+        add_secret(&store, &vault, &ws, "A", &["a.example.org"]);
+        add_secret(&store, &vault, &ws, "B", &["b.example.org"]);
+        overlapping_stand_ins(&store, &ws);
+        let err = injection.begin(&ws).await.err().unwrap();
+        assert!(err.contains("cannot be registered"), "{err}");
+        assert!(terminations.termination(&ws).is_none());
+
+        // The same while it runs: it keeps the secret it had.
+        let other = workspace("beta");
+        add_secret(&store, &vault, &other, "A", &["a.example.org"]);
+        overlapping_stand_ins(&store, &other);
+        injection.begin(&other).await.unwrap();
+        add_secret(&store, &vault, &other, "B", &["b.example.org"]);
+        overlapping_stand_ins(&store, &other);
+        injection.environment_changed(&other).await;
+        assert_eq!(stand_ins(&terminations, &other), ["stand-in:secret:A"]);
+        assert!(!decrypts(&terminations, &other, "b.example.org"));
     }
 
     /// A source that always needs the user to sign in.
