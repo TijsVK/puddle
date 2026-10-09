@@ -525,7 +525,7 @@ async fn azure_devops_takes_a_pat_as_basic_an_entra_token_as_a_bearer_and_every_
 // A source that cannot supply its secret.
 
 #[tokio::test]
-async fn a_source_that_needs_a_sign_in_is_a_502_with_one_notice_and_never_a_401() {
+async fn a_source_that_needs_a_sign_in_is_a_502_that_says_so_and_never_a_401() {
     tokio::time::pause();
     let w = world();
     let work = &w.store.identities().unwrap()[0];
@@ -538,15 +538,8 @@ async fn a_source_that_needs_a_sign_in_is_a_502_with_one_notice_and_never_a_401(
     assert!(message.contains("not signed in"), "{message}");
     assert!(message.contains("sign in to it in puddle"), "{message}");
     assert!(message.contains("t-work"), "names the source: {message}");
-    let _ = w.decide("github.com", "GET", FETCH, &[]).await;
-    assert_eq!(
-        w.events.take(),
-        [Event::CredentialSignInNeeded {
-            host: "github.com".into(),
-            source: source.describe(),
-        }],
-        "one notice for two requests"
-    );
+    // The source's cache raises the sign-in notice, not the injector: no second one.
+    assert_eq!(w.events.take(), []);
     // The same request with the workspace's own header does not need the source.
     assert!(matches!(
         w.decide("github.com", "GET", FETCH, &[OWN]).await,

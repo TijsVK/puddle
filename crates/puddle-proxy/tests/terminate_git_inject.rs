@@ -462,10 +462,8 @@ async fn a_source_that_cannot_supply_its_secret_is_a_502_never_a_401_and_the_ser
         answer.text()
     );
     assert!(t.server.recorded().is_empty());
-    assert!(matches!(
-        t.raised().as_slice(),
-        [Event::CredentialSignInNeeded { .. }]
-    ));
+    // The notice for a sign-in that is needed comes from the cache the secret is read through.
+    assert_eq!(t.raised(), []);
 }
 
 // The same over HTTP/2.

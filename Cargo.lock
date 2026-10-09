@@ -6075,6 +6075,7 @@ dependencies = [
  "puddle-doctor",
  "puddle-fs",
  "puddle-guest-env",
+ "puddle-inject",
  "puddle-ipc",
  "puddle-lifecycle",
  "puddle-netpolicy",

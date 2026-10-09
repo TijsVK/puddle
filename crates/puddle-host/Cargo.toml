@@ -25,6 +25,7 @@ puddle-compute-msb = { workspace = true }
 puddle-doctor = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-guest-env = { workspace = true }
+puddle-inject = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-lifecycle = { workspace = true }
 puddle-netpolicy = { workspace = true }

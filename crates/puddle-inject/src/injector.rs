@@ -12,8 +12,9 @@
 //!    dropped, and a `401` to it is the server's answer.
 //! 4. Otherwise the identity that covers the repository's owner supplies the credential. No
 //!    covering identity: the request goes out without one and the server's `401` is its answer. A
-//!    source that cannot supply the secret: `502` and a sign-in notice. A `401` to the credential
-//!    puddle added becomes a `403`: the workspace holds no credential to answer it with.
+//!    source that cannot supply the secret: `502` (the cache the secret is read through raises the
+//!    sign-in notice). A `401` to the credential puddle added becomes a `403` and a sign-in notice:
+//!    the workspace holds no credential to answer it with.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -249,13 +250,9 @@ impl GitInjector {
             Ok(credential) => credential,
             Err(err) => {
                 tracing::info!(workspace = %self.workspace, source = %source.describe(), "the credential could not be read: {err}");
+                // The cache the source is read through says when a sign-in is needed (and the host
+                // turns that into a notice), so it is not said twice here.
                 let advice = if err.needs_sign_in() {
-                    if self.notices.first(format!("sign_in:{}", source.describe())) {
-                        self.events.emit(Event::CredentialSignInNeeded {
-                            host: path.credential_host.clone(),
-                            source: source.describe(),
-                        });
-                    }
                     "sign in to it in puddle"
                 } else {
                     "check it in puddle"

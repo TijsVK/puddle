@@ -13,7 +13,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_ca::{CaBuilder, CaCertificate, WorkspaceCa};
-use puddle_proxy::{Injector, NoInjection, Termination, TerminationSource, Terminations};
+use puddle_inject::{CredentialSource, GitInjector, StoreSettings};
+use puddle_proxy::{Injector, Termination, TerminationSource, Terminations};
 use puddle_secrets::{Fetch, SecretCache, Sources};
 use puddle_store::{Store, WorkspaceGit};
 use puddle_types::{Event, EventSink, WorkspaceName};
@@ -45,6 +46,20 @@ impl std::fmt::Debug for InjectorInputs {
 pub type InjectorFactory =
     Arc<dyn Fn(&InjectorInputs, &WorkspaceName) -> Arc<dyn Injector> + Send + Sync>;
 
+/// The injector a workspace gets when the host was given no factory: puddle's own, for Git hosts.
+/// It reads the workspace's identities and lists from the store for each request, and the secret
+/// of an identity from the cache at the moment it is needed.
+fn git_injector(inputs: &InjectorInputs, workspace: &WorkspaceName) -> Arc<dyn Injector> {
+    let settings = StoreSettings::new(Arc::clone(&inputs.store), workspace.clone());
+    let credentials: Arc<dyn CredentialSource> = inputs.secrets.clone();
+    Arc::new(GitInjector::new(
+        workspace.clone(),
+        Arc::new(settings),
+        credentials,
+        Arc::clone(&inputs.events),
+    ))
+}
+
 /// What a sandbox needs from [`Injection::begin`].
 pub(crate) struct Began {
     /// The CA's public certificate, for the guest's trust.
@@ -63,7 +78,7 @@ struct Running {
 pub(crate) struct Injection {
     terminations: Arc<Terminations>,
     inputs: InjectorInputs,
-    /// Without one, nothing is added to a request on a decrypted host.
+    /// Without one, each workspace gets [`git_injector`].
     factory: Option<InjectorFactory>,
     running: Mutex<BTreeMap<WorkspaceName, Running>>,
     /// Held while a workspace's settings are read and what it decrypts is changed to match, so
@@ -115,7 +130,7 @@ impl Injection {
         );
         let certificate = ca.certificate().clone();
         let injector = self.factory.as_ref().map_or_else(
-            || Arc::new(NoInjection) as Arc<dyn Injector>,
+            || git_injector(&self.inputs, workspace),
             |make| make(&self.inputs, workspace),
         );
         // The registry and the list of running CAs change together, under the list's lock, so a
@@ -196,6 +211,7 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
+    use puddle_proxy::{InjectContext, InjectDecision, NoInjection, RequestView};
     use puddle_secrets::{AccountName, Fetched, HostName, SourceError, SourceSpec};
     use puddle_store::{
         Author, Clock, Coverage, CredentialBinding, IdentityDraft, Limits, ManualClock, Owner,
@@ -424,6 +440,34 @@ mod tests {
     fn the_inputs_print_without_what_they_hold() {
         let text = format!("{:?}", inputs(&store()));
         assert_eq!(text, "InjectorInputs { .. }");
+    }
+
+    #[tokio::test]
+    async fn without_a_factory_a_workspace_gets_puddles_git_injector_which_reads_the_store() {
+        let store = store();
+        let (injection, terminations) = injection(&store);
+        let ws = workspace("alpha");
+        injection.begin(&ws).unwrap();
+        let termination = terminations.termination(&ws).unwrap();
+        assert!(format!("{termination:?}").contains("GitInjector"));
+        // A push to a repository that is not on the workspace's list is refused, so the injector
+        // read the workspace's settings from the store.
+        let host = Host::parse_normalised("github.com").unwrap();
+        let context = InjectContext {
+            workspace: &ws,
+            host: &host,
+        };
+        let lines = ["host: github.com".to_owned()];
+        let view = RequestView::new(
+            "GET",
+            "/acme/web.git/info/refs?service=git-receive-pack",
+            &lines,
+        );
+        let injector = Arc::clone(&injection.running().get(&ws).unwrap().injector);
+        match injector.decide(&context, &view).await {
+            InjectDecision::Refuse(refusal) => assert_eq!(refusal.code(), "push_denied"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
     }
 
     #[test]

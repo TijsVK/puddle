@@ -259,8 +259,8 @@ pub struct HostOptions {
     /// The proxy discovery to use instead of the system's (tests).
     pub discovery: Option<Arc<Discovery>>,
     /// Builds, for each start of a workspace's sandbox, the injector that decides which credential
-    /// is added to a request on a decrypted host. Without one nothing is added (decrypted requests
-    /// pass as the guest sent them).
+    /// is added to a request on a decrypted host. Without one a workspace gets puddle's own Git
+    /// injector (tests give another, for instance one that adds nothing).
     pub injector: Option<InjectorFactory>,
 }
 
