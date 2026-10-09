@@ -79,12 +79,18 @@ impl Platform for FakePlatform {
 
 /// The company roots of a machine that has one: a single self-signed root.
 fn company_roots() -> CorporateRoots {
+    company_roots_with(|_| {})
+}
+
+/// As [`company_roots`], with `tweak` applied to the certificate's parameters first.
+fn company_roots_with(tweak: impl FnOnce(&mut rcgen::CertificateParams)) -> CorporateRoots {
     let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     params
         .distinguished_name
         .push(rcgen::DnType::CommonName, "Corp Root CA");
     params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     params.not_after = rcgen::date_time_ymd(2090, 1, 1);
+    tweak(&mut params);
     let key = rcgen::KeyPair::generate().unwrap();
     let cert = params.self_signed(&key).unwrap();
     let mut snapshot = StoreSnapshot::new();
@@ -2561,6 +2567,40 @@ async fn the_company_roots_go_into_the_clients_that_verify_decrypted_hosts() {
     let files = rig.guest.plan_files(0);
     let extra = pem_of(&files, "/etc/puddle/extra-cas.pem");
     assert_eq!(extra.matches("BEGIN CERTIFICATE").count(), 2, "{extra}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_company_root_the_hosts_own_tls_client_cannot_use_is_reported_as_left_out() {
+    // The root states its extended key usage twice: the guest still gets it (its own verifiers
+    // decide), but the host's TLS client for decrypted hosts leaves it out.
+    let rig = Rig::new();
+    let mut platform = FakePlatform::new(&rig.log);
+    platform.roots = company_roots_with(|params| {
+        for _ in 0..2 {
+            params
+                .custom_extensions
+                .push(rcgen::CustomExtension::from_oid_content(
+                    &[2, 5, 29, 37],
+                    vec![48, 0],
+                ));
+        }
+    });
+    let fingerprint = platform.roots.certificates()[0].fingerprint().to_string();
+    let prepared = prepare(rig.config(), &platform).unwrap();
+    let host = Host::start(
+        prepared,
+        &FakeFactory::new(&rig.runtime, &rig.log),
+        HostOptions::default(),
+    )
+    .await
+    .unwrap();
+    let report = api(&host).get("/api/network-health").await.json();
+    let left_out = &report["roots"]["left_out_of_tls"];
+    assert_eq!(left_out.as_array().map(Vec::len), Some(1), "{report}");
+    assert_eq!(left_out[0]["subject"], "Corp Root CA");
+    assert_eq!(left_out[0]["fingerprint"], fingerprint.as_str());
+    assert_ne!(left_out[0]["reason"], "", "{left_out}");
     host.shutdown().await;
 }
 
