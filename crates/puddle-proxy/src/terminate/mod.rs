@@ -46,10 +46,13 @@
 //! - **Responses**: framed by an HTTP client library, then rebuilt for the guest, trailers
 //!   included. Redirects are passed through, never followed. A `401` is replaced by the
 //!   injector's own refusal when the injector added the request's credential ([`Unauthorized`]);
-//!   otherwise it is the server's answer like any other.
+//!   otherwise it is the server's answer like any other. The HTTP/3 entries of `Alt-Svc` are
+//!   removed on both HTTP versions: a workspace has no UDP path, so a client would only try
+//!   HTTP/3 and fail.
 //! - **WebSocket**: HTTP/1.1 `Upgrade` and HTTP/2 extended `CONNECT` (RFC 8441) are checked and
 //!   injected like any request; once the server agrees, the two connections are a byte pipe.
 
+mod alt_svc;
 mod body;
 mod guest;
 mod h2;

@@ -68,7 +68,8 @@ pub(crate) async fn write<W: AsyncWrite + Unpin>(
     close_requested: bool,
     idle: Duration,
 ) -> io::Result<Written> {
-    let (parts, mut body) = response.into_parts();
+    let (mut parts, mut body) = response.into_parts();
+    super::alt_svc::strip_h3(&mut parts.headers);
     let status = parts.status;
     let no_body = method.eq_ignore_ascii_case("HEAD")
         || status.is_informational()

@@ -920,6 +920,7 @@ fn guest_response(
 ) -> Response<RespBody> {
     let (mut parts, body) = response.into_parts();
     parts.headers = end_to_end_headers(&parts.headers);
+    super::alt_svc::strip_h3(&mut parts.headers);
     parts.version = ::http::Version::HTTP_2;
     let body: RespBody = if head_only {
         // `HEAD` and `304` describe a body they do not carry; an HTTP/2 stream just ends.
