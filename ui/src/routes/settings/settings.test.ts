@@ -304,6 +304,24 @@ describe("workspace defaults and the network", () => {
     await waitFor(() => expect(api.layer.capture_logins).toBe(true));
   });
 
+  it("puts the login capture box back when puddle cannot save the change", async () => {
+    await open();
+    api.refuse.set("PUT /api/settings", {
+      status: 500,
+      error: "internal",
+      message: "x",
+    });
+    await fireEvent.click(
+      screen.getByLabelText("Keep logins made in workspaces"),
+    );
+    await screen.findByRole("alert");
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText("Keep logins made in workspaces"),
+      ).toBeChecked(),
+    );
+  });
+
   it("cancelling the global trust text changes nothing", async () => {
     await open();
     await fireEvent.click(
