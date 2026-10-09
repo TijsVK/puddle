@@ -27,6 +27,7 @@ libc = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+rustix = { workspace = true }
 tempfile = { workspace = true }
 puddle-agent-proto = { workspace = true, features = ["testing"] }
 puddle-guest-env = { workspace = true }

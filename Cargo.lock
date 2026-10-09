@@ -5837,6 +5837,7 @@ dependencies = [
  "puddle-ipc",
  "puddle-proxy",
  "puddle-types",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

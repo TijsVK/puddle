@@ -78,7 +78,28 @@ impl Rig {
     }
 }
 
+/// Raises this process's open-file soft limit (to 8192, or the hard limit if lower). A test runs
+/// every party of its connections here (client, agent, host side, server: about four descriptors
+/// each), so 256 at once run out under the 1024 a process often starts with.
+fn enough_open_files() {
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+    const WANT: u64 = 8192;
+    let limit = getrlimit(Resource::Nofile);
+    let want = limit.maximum.map_or(WANT, |max| max.min(WANT));
+    if limit.current.is_some_and(|current| current < want) {
+        setrlimit(
+            Resource::Nofile,
+            Rlimit {
+                current: Some(want),
+                maximum: limit.maximum,
+            },
+        )
+        .unwrap();
+    }
+}
+
 pub fn start_host(socket: &Path, sink: Arc<dyn EventSink>) -> JoinHandle<()> {
+    enough_open_files();
     let listener = UnixListener::bind(socket).unwrap();
     tokio::spawn(async move {
         let mut sessions = tokio::task::JoinSet::new();
