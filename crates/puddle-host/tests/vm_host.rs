@@ -967,6 +967,7 @@ const HELD_CONNECTIONS_SCRIPT: &str = r#"
 set -u
 ulimit -n $((HELD * 2 + 256)) 2>/dev/null || ulimit -n "$(ulimit -Hn)"
 echo "guest shell limit: $(ulimit -n)"
+echo "agent started: $(grep -h 'open-file limit' /run/puddle/agent.log 2>&1 | tail -1)"
 echo "agent limits: $(grep -i 'open files' /proc/$(pidof puddle-agent | cut -d' ' -f1)/limits)"
 opened=0; refused=0; fds=()
 for ((i = 0; i < HELD; i++)); do
