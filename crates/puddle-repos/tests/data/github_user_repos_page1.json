@@ -1,0 +1,31 @@
+[
+  {
+    "id": 1296269,
+    "node_id": "MDEwOlJlcG9zaXRvcnkxMjk2MjY5",
+    "name": "Hello-World",
+    "full_name": "octocat/Hello-World",
+    "private": false,
+    "owner": { "login": "octocat", "id": 1, "type": "User", "site_admin": false },
+    "html_url": "https://github.com/octocat/Hello-World",
+    "description": "My first repository on GitHub!",
+    "fork": false,
+    "url": "https://api.github.com/repos/octocat/Hello-World",
+    "archived": false,
+    "disabled": false,
+    "visibility": "public",
+    "pushed_at": "2025-01-02T15:04:05Z",
+    "permissions": { "admin": true, "maintain": true, "push": true, "triage": true, "pull": true }
+  },
+  {
+    "id": 1296270,
+    "name": "acme-secret",
+    "full_name": "Acme-Corp/acme-secret",
+    "private": true,
+    "owner": { "login": "Acme-Corp", "id": 2, "type": "Organization" },
+    "html_url": "https://github.com/Acme-Corp/acme-secret",
+    "fork": true,
+    "archived": true,
+    "visibility": "private",
+    "permissions": { "admin": false, "maintain": false, "push": true, "triage": true, "pull": true }
+  }
+]

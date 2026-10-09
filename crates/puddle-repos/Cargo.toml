@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-repos"
+description = "Which repositories an identity's credentials reach: GitHub and Azure DevOps listing over puddle's own route, cached in memory, with rate limits honoured"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# `FakeApi`: scripted answers in place of a Git host (never in product code).
+testing = []
+
+[dependencies]
+base64 = { workspace = true }
+bytes = { workspace = true }
+futures-util = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+puddle-secrets = { workspace = true }
+puddle-store = { workspace = true }
+puddle-upstream = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+puddle-repos = { path = ".", features = ["testing"] }
+puddle-upstream = { workspace = true, features = ["testing"] }
+rcgen = { workspace = true }
+serde_json = { workspace = true }
+rustls = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+tokio-rustls = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,4 @@
+[
+  { "login": "github", "id": 9919, "url": "https://api.github.com/orgs/github", "description": "How people build software." },
+  { "login": "acme-corp", "id": 4242, "url": "https://api.github.com/orgs/acme-corp", "description": null }
+]

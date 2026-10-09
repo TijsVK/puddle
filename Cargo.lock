@@ -6206,6 +6206,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-repos"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "puddle-repos",
+ "puddle-secrets",
+ "puddle-store",
+ "puddle-upstream",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
 name = "puddle-runtime"
 version = "0.0.0"
 dependencies = [

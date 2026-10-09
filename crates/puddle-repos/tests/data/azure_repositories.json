@@ -1,0 +1,36 @@
+{
+  "count": 3,
+  "value": [
+    {
+      "id": "5febef5a-833d-4e14-b9c0-14cb638f91e6",
+      "name": "AnotherRepository",
+      "url": "https://dev.azure.com/acme/9f2a6b80-1111-4e14-8a31-123456789abc/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6",
+      "project": {
+        "id": "9f2a6b80-1111-4e14-8a31-123456789abc",
+        "name": "Fabrikam Fiber",
+        "state": "wellFormed",
+        "visibility": "private"
+      },
+      "defaultBranch": "refs/heads/main",
+      "size": 728,
+      "remoteUrl": "https://acme@dev.azure.com/acme/Fabrikam%20Fiber/_git/AnotherRepository",
+      "sshUrl": "git@ssh.dev.azure.com:v3/acme/Fabrikam%20Fiber/AnotherRepository",
+      "webUrl": "https://dev.azure.com/acme/Fabrikam%20Fiber/_git/AnotherRepository",
+      "isDisabled": false,
+      "isInMaintenance": false
+    },
+    {
+      "id": "278d5cd2-584d-4b63-824a-2ba458937249",
+      "name": "Web",
+      "project": { "id": "0d0a1a62-2222-4c2a-9d4e-abcdefabcdef", "name": "Web", "state": "wellFormed", "visibility": "public" },
+      "isFork": true,
+      "isDisabled": true,
+      "remoteUrl": "https://acme@dev.azure.com/acme/Web/_git/Web"
+    },
+    {
+      "id": "0d8c2b8a-1b7e-4a52-bb71-0123456789ab",
+      "name": "Tools",
+      "project": { "id": "0d0a1a62-2222-4c2a-9d4e-abcdefabcdef", "name": "Web", "state": "wellFormed" }
+    }
+  ]
+}

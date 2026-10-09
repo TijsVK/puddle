@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1296271,
+    "name": "docs",
+    "full_name": "acme-corp/docs",
+    "private": true,
+    "html_url": "https://github.com/acme-corp/docs",
+    "fork": false,
+    "archived": false,
+    "permissions": { "admin": false, "maintain": false, "push": false, "triage": false, "pull": true }
+  },
+  {
+    "id": 1296272,
+    "name": "intranet",
+    "full_name": "acme-corp/intranet",
+    "private": true,
+    "visibility": "internal",
+    "html_url": "https://github.com/acme-corp/intranet"
+  }
+]
