@@ -175,8 +175,8 @@
       open = false;
       reset();
       const warning = result.value.identity?.warning;
-      if (warning) {
-        // Nothing covers the repository: say which identity the workspace got and what that
+      if (warning && !forAddress) {
+        // Nothing covers the repository (and the picker did not choose identities): say which identity the workspace got and what that
         // means, and offer the tab where it is changed. The toast stays long enough to read.
         const id = result.value.id;
         toasts.push(warning, {

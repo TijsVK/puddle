@@ -28,7 +28,6 @@ vi.mock("#lib/stores/repos.svelte.ts", async (original) => {
   };
 });
 
-
 vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 
 afterEach(() => {
