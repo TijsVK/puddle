@@ -18,8 +18,7 @@
 # gate finishes, followed by `-- <gate>: ok, N s`. A failed gate prints `-- <gate>: FAILED` at once
 # and its whole log at the end, in reverse run order, so the earliest failure in run order is the
 # last `==> ` line, as it was when the run stopped there. The exit status is that gate's.
-# Not seen: a signal reaches the streams' children only through the terminal or the caller's
-# process group; this script kills its own stream shells, not their grandchildren.
+# On INT, TERM or HUP it stops every stream and all that they started (a process tree walk with ps).
 
 # shellcheck disable=SC2086 # the gate lists are space-separated names by design
 
@@ -82,10 +81,31 @@ gate_stream_run() {
     done
 }
 
-# Stops the streams' shells and removes the logs (the one place the run's temporary directory goes).
+# Prints the pids of every descendant of the pids in $1. A background job of a non-interactive shell
+# ignores SIGINT, and so do the tools it starts, so Ctrl-C reaches only this script: it has to stop
+# the gates itself, and a plain kill of the stream shells would leave cargo and node running.
+gate_descendants() {
+    ps -A -o pid= -o ppid= 2>/dev/null | awk -v roots="$1" '
+        { pid[NR] = $1; par[NR] = $2 }
+        END {
+            n = split(roots, r, " ")
+            for (i = 1; i <= n; i++) known[r[i]] = 1
+            do {
+                grew = 0
+                for (i = 1; i <= NR; i++)
+                    if ((par[i] in known) && !(pid[i] in known)) { known[pid[i]] = 1; grew = 1; print pid[i] }
+            } while (grew)
+        }'
+}
+
+# Stops the streams and everything they started, and removes the logs (the one place the run's
+# temporary directory goes).
 gate_cleanup() {
-    # shellcheck disable=SC2086 # a list of pids
-    [ -z "$gate_pids" ] || kill $gate_pids 2>/dev/null || true
+    if [ -n "$gate_pids" ]; then
+        victims="$(gate_descendants "$gate_pids") $gate_pids"
+        # shellcheck disable=SC2086 # a list of pids
+        kill -TERM $victims 2>/dev/null || true
+    fi
     gate_pids=
     rm -rf "$run_tmp"
     run_tmp=
