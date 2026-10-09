@@ -99,6 +99,17 @@ pub enum StoreError {
     /// The repository is already in the workspace's table.
     #[error("{0} is already in the repository table")]
     RepoListed(String),
+    /// An environment variable, secret or host was refused; the text says why.
+    #[error("{0}")]
+    EnvInvalid(String),
+    /// No such variable in this scope.
+    #[error("no variable {name} in {scope}")]
+    UnknownEnv {
+        /// The scope, in words.
+        scope: String,
+        /// The variable.
+        name: String,
+    },
     /// An audit record couldn't be written.
     #[error(transparent)]
     Audit(#[from] AuditError),

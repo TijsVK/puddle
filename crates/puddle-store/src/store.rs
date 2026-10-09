@@ -33,6 +33,7 @@ use crate::ratelimit::TokenBucket;
 use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
 use crate::schema;
 
+mod environment;
 mod identities;
 mod sets;
 
@@ -116,12 +117,15 @@ pub struct SweepReport {
 }
 
 /// What deleting a workspace removed (R-21).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WorkspaceDeletion {
     /// Its rules, deleted.
     pub rules_deleted: u64,
     /// Its open pending rows, expired.
     pub pending_expired: u64,
+    /// The ids, in the operating system's credential store, of the secrets it had of its own (the
+    /// values are not in the database, so the caller removes them there).
+    pub secret_ids: Vec<puddle_secrets::StoredId>,
 }
 
 /// The least time between two [`Event::SuppressionChanged`] for a growing count.
@@ -712,7 +716,8 @@ impl Store {
         self.commit(tx, head, Vec::new())
     }
 
-    /// Removes a deleted workspace's rules and expires its open rows, in one transaction (R-21).
+    /// Removes a deleted workspace's rules and environment and expires its open rows, in one
+    /// transaction (R-21).
     /// Call it from the transaction-equivalent step of workspace deletion, not on stop.
     ///
     /// # Errors
@@ -769,9 +774,17 @@ impl Store {
                     workspace: workspace.clone(),
                 });
             }
+            // Its variables and stand-ins go with it; the global ones stay.
+            let (secret_ids, had_env) = environment::delete_workspace_rows(tx, workspace)?;
+            if had_env {
+                fx.push(Event::WorkspaceEnvChanged {
+                    workspace: workspace.clone(),
+                });
+            }
             Ok(WorkspaceDeletion {
                 rules_deleted: rules.len() as u64,
                 pending_expired: expired,
+                secret_ids,
             })
         })?;
         let state = lock(&self.workspaces).remove(workspace);

@@ -160,6 +160,15 @@ pub enum Event {
         /// The workspace.
         workspace: WorkspaceName,
     },
+    /// The global environment (variables and secrets every workspace gets) changed. Carries no
+    /// data: refetch `GET /api/env`, and a workspace's page refetches its own list too.
+    GlobalEnvChanged {},
+    /// A workspace's own environment changed. Refetch `GET /api/workspaces/{id}/env`. Never carries
+    /// a value.
+    WorkspaceEnvChanged {
+        /// The workspace.
+        workspace: WorkspaceName,
+    },
     /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
     /// or the sign-in ran out). The user signs in from puddle; a request never opens a sign-in
     /// window. Global: every subscriber gets it. Names only, never a value.
@@ -316,10 +325,12 @@ impl Event {
             | Self::PendingClosed { workspace, .. }
             | Self::SuppressionChanged { workspace, .. }
             | Self::GitAccessDenied { workspace, .. }
-            | Self::WorkspaceGitChanged { workspace } => Some(workspace),
+            | Self::WorkspaceGitChanged { workspace }
+            | Self::WorkspaceEnvChanged { workspace } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
             | Self::IdentitiesChanged {}
+            | Self::GlobalEnvChanged {}
             | Self::CredentialSignInNeeded { .. }
             | Self::AuditAppended { .. }
             | Self::NetworkChanged { .. } => None,
@@ -578,6 +589,18 @@ mod tests {
                 Some(WorkspaceName::new("box").unwrap()),
             ),
             (
+                Event::GlobalEnvChanged {},
+                r#"{"type":"global_env_changed"}"#,
+                None,
+            ),
+            (
+                Event::WorkspaceEnvChanged {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                },
+                r#"{"type":"workspace_env_changed","workspace":"box"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
+            ),
+            (
                 Event::AuditAppended { id: 99 },
                 r#"{"type":"audit_appended","id":99}"#,
                 None,
@@ -690,6 +713,8 @@ mod tests {
                 "rules_changed",
                 "identities_changed",
                 "workspace_git_changed",
+                "global_env_changed",
+                "workspace_env_changed",
                 "credential_sign_in_needed",
                 "git_access_denied",
                 "audit_appended",
