@@ -638,3 +638,76 @@ async fn a_known_workspace_wins_over_an_interrupted_mark() {
     assert!(report.volumes_removed.is_empty() && report.unknown_volumes.is_empty());
     assert!(rt.volume(&vol("ws-both")).await.unwrap().is_some());
 }
+
+#[tokio::test]
+async fn a_known_workspace_with_no_volume_is_reported_missing_and_nothing_is_changed() {
+    let rt = FakeRuntime::new();
+    rt.create_volume(VolumeSpec {
+        name: vol("ws-here"),
+        size: DiskSize::mib(8),
+    })
+    .await
+    .unwrap();
+    let (here, gone) = (
+        WorkspaceId::new("here").unwrap(),
+        WorkspaceId::new("gone").unwrap(),
+    );
+    let inventory = Inventory {
+        workspaces: BTreeSet::from([here, gone.clone()]),
+        ..Inventory::default()
+    };
+
+    let report = reconcile(&rt, &inventory, &ShutdownConfig::default())
+        .await
+        .unwrap();
+
+    assert_eq!(report.missing_volumes, [gone]);
+    assert!(report.volumes_removed.is_empty() && report.failures.is_empty());
+    assert!(rt.volume(&vol("ws-here")).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn finding_missing_volumes_costs_one_listing_however_many_workspaces_there_are() {
+    let rt = FakeRuntime::new();
+    let ids: Vec<_> = (0..50)
+        .map(|n| WorkspaceId::new(&format!("w{n}")).unwrap())
+        .collect();
+    // Every other workspace has lost its volume.
+    for id in ids.iter().step_by(2) {
+        rt.create_volume(VolumeSpec {
+            name: id.volume_name(),
+            size: DiskSize::mib(8),
+        })
+        .await
+        .unwrap();
+    }
+    let inventory = Inventory {
+        workspaces: ids.iter().cloned().collect(),
+        ..Inventory::default()
+    };
+    let before = rt.calls().len();
+
+    let started = std::time::Instant::now();
+    let report = reconcile(&rt, &inventory, &ShutdownConfig::default())
+        .await
+        .unwrap();
+    let took = started.elapsed();
+
+    let expected: BTreeSet<_> = ids.iter().skip(1).step_by(2).cloned().collect();
+    assert_eq!(
+        report
+            .missing_volumes
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        expected
+    );
+    let calls = rt.calls().split_off(before);
+    let count = |op: Op| calls.iter().filter(|c| c.op == op).count();
+    assert_eq!(count(Op::ListVolumes), 1, "{calls:?}");
+    assert_eq!(count(Op::Volume), 0, "{calls:?}");
+    eprintln!(
+        "missing-volume scan, 50 workspaces: {} calls, {took:?}",
+        calls.len()
+    );
+}

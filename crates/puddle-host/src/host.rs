@@ -937,11 +937,21 @@ async fn reconcile_with<R: Runtime>(
     for failure in &report.failures {
         tracing::warn!(item = %failure.item, action = failure.action, error = %failure.error, "reconcile did not finish this");
     }
-    let status = report
+    let mut status: BTreeMap<WorkspaceName, WorkspaceStatus> = report
         .crashed
         .iter()
         .filter_map(|name| Some((name.workspace_name()?, WorkspaceStatus::Crashed)))
         .collect();
+    // A workspace whose volume is gone shows that right away, not as stopped until a start
+    // fails. It wins over `crashed`: the start would be refused anyway.
+    for stored in stored {
+        let missing = puddle_types::WorkspaceId::new(&stored.id)
+            .is_ok_and(|id| report.missing_volumes.contains(&id));
+        if let (true, Ok(name)) = (missing, WorkspaceName::new(&stored.name)) {
+            tracing::warn!(workspace = %name, "a workspace's volume is gone; it shows as volume_missing");
+            status.insert(name, WorkspaceStatus::VolumeMissing);
+        }
+    }
     Ok((report, status))
 }
 

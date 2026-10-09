@@ -578,6 +578,10 @@ async fn vm_sigkill_ends_the_vms_within_5s_10_of_10() {
 // Reconcile (K and W).
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario over every kind of reconcile item"
+)]
 async fn vm_reconcile_touches_only_what_puddle_owns() {
     let world = World::new("l4").await;
     let rt = &world.rt;
@@ -630,7 +634,8 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
 
     let inventory = Inventory {
         sandboxes: BTreeSet::from([sb("known")]),
-        workspaces: BTreeSet::from([ws("known")]),
+        // `lost` is listed but has no volume in msb's catalog.
+        workspaces: BTreeSet::from([ws("known"), ws("lost")]),
         interrupted: BTreeSet::from([ws("half")]),
         ..Inventory::default()
     };
@@ -645,6 +650,7 @@ async fn vm_reconcile_touches_only_what_puddle_owns() {
     assert_eq!(report.stale_dirs_removed, [sb("stale")]);
     assert_eq!(report.volumes_removed, [ws("half").volume_name()]);
     assert_eq!(report.unknown_volumes, [ws("unknown").volume_name()]);
+    assert_eq!(report.missing_volumes, [ws("lost")]);
     for f in [foreign.as_str(), "Foreign_Dir", "data"] {
         assert!(
             report.foreign.iter().any(|x| x == f),

@@ -71,6 +71,10 @@ pub struct ReconcileReport {
     /// `ws-*` volumes no known workspace claims, kept: they may hold work, and the list that
     /// lacks them may be the thing that is wrong. The caller reports them (the host logs them).
     pub unknown_volumes: Vec<VolumeName>,
+    /// Known workspaces whose `ws-*` volume the runtime does not have. Nothing is changed for
+    /// them; the caller shows them as `volume_missing` so the state is visible before any start
+    /// finds the gap. Taken from the one volume listing reconcile already reads.
+    pub missing_volumes: Vec<WorkspaceId>,
     /// Foreign sandboxes, directories and volumes, left untouched.
     pub foreign: Vec<String>,
     /// Steps that failed.
@@ -116,6 +120,7 @@ pub async fn reconcile<R: Runtime>(
         }
     }
 
+    let mut present = BTreeSet::new();
     for volume in runtime.list_volumes().await? {
         let Some((name, workspace)) = volume
             .volume_name()
@@ -125,6 +130,7 @@ pub async fn reconcile<R: Runtime>(
             continue;
         };
         if inventory.workspaces.contains(&workspace) {
+            present.insert(workspace);
             continue;
         }
         if !inventory.interrupted.contains(&workspace) {
@@ -153,7 +159,9 @@ pub async fn reconcile<R: Runtime>(
 
     report.foreign.sort();
     report.unknown_volumes.sort();
+    report.missing_volumes = inventory.workspaces.difference(&present).cloned().collect();
     tracing::info!(
+        missing_volumes = report.missing_volumes.len(),
         stopped = report.stopped.len(),
         removed = report.removed.len(),
         stale_dirs = report.stale_dirs_removed.len(),

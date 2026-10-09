@@ -1993,6 +1993,50 @@ async fn a_refused_start_for_a_missing_volume_shows_the_volume_missing_state() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_restart_shows_a_workspace_whose_volume_is_gone_as_volume_missing_before_any_start() {
+    let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let shown = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(shown["status"], "volume_missing", "{shown}");
+    let listed = api.get("/api/workspaces").await.json();
+    assert_eq!(
+        listed["workspaces"][0]["status"], "volume_missing",
+        "{listed}"
+    );
+    // Only the start-up reads were made: nothing was created or removed for it.
+    assert!(volume_names(&rig).await.is_empty());
+    // The way out is the same as after a refused start: restore the volume, then Start.
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("acme").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_keeps_a_workspace_with_its_volume_stopped() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    let again = rig.start().await;
+    let shown = api(&again).get("/api/workspaces/acme").await.json();
+    assert_ne!(shown["status"], "volume_missing", "{shown}");
+    again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_whose_volume_is_gone_can_be_deleted_without_a_check_in_a_sandbox() {
     let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
     let api = api(&host);

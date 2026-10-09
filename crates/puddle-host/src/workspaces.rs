@@ -306,6 +306,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             record.disk_size_mib = stored.disk_size_mib;
             record.status = match status.get(&name) {
                 Some(WorkspaceStatus::Crashed) => WorkspaceStatus::Crashed,
+                Some(WorkspaceStatus::VolumeMissing) => WorkspaceStatus::VolumeMissing,
                 _ => WorkspaceStatus::Stopped,
             };
             slots.insert(
