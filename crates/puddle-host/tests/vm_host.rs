@@ -738,7 +738,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
         runtime,
         settings,
         secrets,
-    } = start_vm_host().await;
+    } = start_vm_host("env").await;
     let name = format!("{}-env", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
     for site in ["github.com", "example.com", "example.org", "example.net"] {
