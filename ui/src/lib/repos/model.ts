@@ -72,9 +72,9 @@ export function freshness(source: RepoSource, now: number): string {
     case "stale":
       return `${count} from the last good read${read === null ? "" : `, ${read}`}. The newest read did not work.`;
     case "failed":
-      return "Nothing read yet.";
+      return "Nothing read yet. Refresh tries again.";
     case "unavailable":
-      return "puddle cannot list this one.";
+      return "puddle cannot list this one. Edit the identity to change its sign-in.";
   }
 }
 

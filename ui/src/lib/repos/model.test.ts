@@ -104,10 +104,10 @@ describe("freshness", () => {
 
   it("says a failed or impossible list holds nothing", () => {
     expect(freshness(repoSource({ state: "failed" }), NOW)).toBe(
-      "Nothing read yet.",
+      "Nothing read yet. Refresh tries again.",
     );
     expect(freshness(repoSource({ state: "unavailable" }), NOW)).toBe(
-      "puddle cannot list this one.",
+      "puddle cannot list this one. Edit the identity to change its sign-in.",
     );
   });
 });
