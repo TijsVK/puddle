@@ -145,7 +145,23 @@ struct WorkspaceState {
     connections: ConnectionWindow,
 }
 
+/// What a failed audit write must put back: the suppression count that was taken out of memory
+/// for it, and the state it changed on the way.
+#[derive(Debug, Clone, Copy)]
+struct Taken {
+    count: u64,
+    last_record_at: u64,
+    was_suppressing: bool,
+}
+
 impl WorkspaceState {
+    /// Puts back what [`Taken`] took, so the count is written by the next record or sweep.
+    fn restore(&mut self, taken: Taken) {
+        self.unrecorded += taken.count;
+        self.last_record_at = taken.last_record_at;
+        self.suppressing = taken.was_suppressing;
+    }
+
     fn new(limits: &Limits, now: u64) -> Self {
         Self {
             bucket: TokenBucket::new(limits.new_rows_burst, limits.new_rows_refill_ms, now),
@@ -191,6 +207,13 @@ impl WorkspaceState {
         }
         None
     }
+}
+
+/// A count [`Store::flush_limits`] took out of memory for one audit record.
+enum Flushed {
+    Suppressed(WorkspaceName, Taken),
+    /// A finished second's excess: the workspace (`None` for puddle's own), its start and count.
+    Connections(Option<WorkspaceName>, u64, u64),
 }
 
 /// puddle's rules, pending requests and audit log, in one SQLite database.
@@ -312,9 +335,23 @@ impl Store {
         let tx = conn.transaction()?;
         let head = audit_head(&tx)?;
         let mut fx = Vec::new();
-        let outcome = self.record_pending(&tx, request, now, &mut fx)?;
-        self.commit(tx, head, fx)?;
-        Ok(Decision::Pending(outcome))
+        let mut taken = None;
+        let outcome = self
+            .record_pending(&tx, request, now, &mut fx, &mut taken)
+            .and_then(|outcome| self.commit(tx, head, fx).map(|()| outcome));
+        match outcome {
+            Ok(outcome) => Ok(Decision::Pending(outcome)),
+            Err(err) => {
+                // The transaction rolled back, so the count it carried is not in the audit:
+                // keep it for the next record instead of losing it.
+                if let Some(taken) = taken
+                    && let Some(state) = lock(&self.workspaces).get_mut(&request.workspace)
+                {
+                    state.restore(taken);
+                }
+                Err(err)
+            }
+        }
     }
 
     fn match_rules(
@@ -335,6 +372,7 @@ impl Store {
         request: &EgressRequest,
         now: u64,
         fx: &mut Vec<Event>,
+        taken: &mut Option<Taken>,
     ) -> Result<PendingOutcome, StoreError> {
         let (workspace, host) = (request.workspace.as_str(), request.host.to_string());
         let existing: Option<i64> = tx
@@ -371,6 +409,11 @@ impl Store {
             let state = workspaces
                 .entry(request.workspace.clone())
                 .or_insert_with(|| WorkspaceState::new(&self.limits, now));
+            let before = Taken {
+                count: 0,
+                last_record_at: state.last_record_at,
+                was_suppressing: state.suppressing,
+            };
             if below_cap && state.bucket.try_take(now) {
                 if state.suppressing {
                     fx.push(Event::SuppressionChanged {
@@ -379,10 +422,19 @@ impl Store {
                         count: state.episode,
                     });
                 }
-                (true, state.end_suppression())
+                let ended = state.end_suppression();
+                *taken = Some(Taken {
+                    count: ended.unwrap_or(0),
+                    ..before
+                });
+                (true, ended)
             } else {
                 let every = self.limits.suppressed_record_every_ms;
                 let recorded = state.suppress(now, every);
+                *taken = Some(Taken {
+                    count: recorded.unwrap_or(0),
+                    ..before
+                });
                 if state.episode == 1
                     || now.saturating_sub(state.last_event_at) >= SUPPRESSION_EVENT_EVERY_MS
                 {
@@ -703,18 +755,29 @@ impl Store {
         if !admitted && summary.is_none() {
             return Ok(());
         }
-        let mut conn = lock(&self.conn);
-        let tx = conn.transaction()?;
-        let head = audit_head(&tx)?;
-        if let Some((ts, count)) = summary {
-            let record = ConnectionRecord::suppressed_summary(ts, event.workspace.as_ref(), count);
-            append(&tx, &AuditRecord::Connection(record))?;
+        let written = (|| {
+            let mut conn = lock(&self.conn);
+            let tx = conn.transaction()?;
+            let head = audit_head(&tx)?;
+            if let Some((ts, count)) = summary {
+                let record =
+                    ConnectionRecord::suppressed_summary(ts, event.workspace.as_ref(), count);
+                append(&tx, &AuditRecord::Connection(record))?;
+            }
+            if admitted {
+                let record = ConnectionRecord::from_event(now, event);
+                append(&tx, &AuditRecord::Connection(record))?;
+            }
+            self.commit(tx, head, Vec::new())
+        })();
+        if let (Err(_), Some((ts, count))) = (&written, summary) {
+            self.put_back(vec![Flushed::Connections(
+                event.workspace.clone(),
+                ts,
+                count,
+            )]);
         }
-        if admitted {
-            let record = ConnectionRecord::from_event(now, event);
-            append(&tx, &AuditRecord::Connection(record))?;
-        }
-        self.commit(tx, head, Vec::new())
+        written
     }
 
     /// Removes a deleted workspace's rules and environment and expires its open rows, in one
@@ -857,38 +920,83 @@ impl Store {
         })
     }
 
-    /// Writes suppression counts and connection summaries that are due.
+    /// Writes suppression counts and connection summaries that are due. They are taken out of
+    /// memory first; when the write fails they are put back, so the next sweep writes them.
     fn flush_limits(&self) -> Result<(), StoreError> {
         let now = self.clock.now_ms();
         let every = self.limits.suppressed_record_every_ms;
         let mut records = Vec::new();
+        let mut taken = Vec::new();
         for (workspace, state) in lock(&self.workspaces).iter_mut() {
+            let last_record_at = state.last_record_at;
             if let Some(count) = state.flush_due(now, every) {
                 records.push(AuditRecord::PendingSuppressed {
                     ts: now,
                     workspace_id: workspace.to_string(),
                     count,
                 });
+                taken.push(Flushed::Suppressed(
+                    workspace.clone(),
+                    Taken {
+                        count,
+                        last_record_at,
+                        was_suppressing: state.suppressing,
+                    },
+                ));
             }
             if let Some((ts, count)) = state.connections.roll(now) {
                 let record = ConnectionRecord::suppressed_summary(ts, Some(workspace), count);
                 records.push(AuditRecord::Connection(record));
+                taken.push(Flushed::Connections(Some(workspace.clone()), ts, count));
             }
         }
         if let Some((ts, count)) = lock(&self.puddle_connections).roll(now) {
             let record = ConnectionRecord::suppressed_summary(ts, None, count);
             records.push(AuditRecord::Connection(record));
+            taken.push(Flushed::Connections(None, ts, count));
         }
         if records.is_empty() {
             return Ok(());
         }
-        let mut conn = lock(&self.conn);
-        let tx = conn.transaction()?;
-        let head = audit_head(&tx)?;
-        for record in &records {
-            append(&tx, record)?;
+        let written = (|| {
+            let mut conn = lock(&self.conn);
+            let tx = conn.transaction()?;
+            let head = audit_head(&tx)?;
+            for record in &records {
+                append(&tx, record)?;
+            }
+            self.commit(tx, head, Vec::new())
+        })();
+        if written.is_err() {
+            self.put_back(taken);
         }
-        self.commit(tx, head, Vec::new())
+        written
+    }
+
+    /// Returns counts taken for an audit write that failed.
+    fn put_back(&self, taken: Vec<Flushed>) {
+        let mut workspaces = lock(&self.workspaces);
+        for item in taken {
+            match item {
+                Flushed::Suppressed(workspace, taken) => {
+                    if let Some(state) = workspaces.get_mut(&workspace) {
+                        // `suppressing` is whatever it is now: a request that ended the episode
+                        // in the meantime already wrote its own count.
+                        let suppressing = state.suppressing;
+                        state.restore(taken);
+                        state.suppressing = suppressing;
+                    }
+                }
+                Flushed::Connections(Some(workspace), ts, count) => {
+                    if let Some(state) = workspaces.get_mut(&workspace) {
+                        state.connections.owe(ts, count);
+                    }
+                }
+                Flushed::Connections(None, ts, count) => {
+                    lock(&self.puddle_connections).owe(ts, count);
+                }
+            }
+        }
     }
 
     /// Deletes the oldest audit records while the audit is over its cap, then records the trim.
@@ -1490,6 +1598,7 @@ fn load_pending(conn: &Connection, id: PendingId) -> Result<PendingRow, StoreErr
 mod tests {
     use super::*;
     use crate::clock::ManualClock;
+    use puddle_types::{ConnectionDecision, ConnectionReason};
 
     fn store() -> (Arc<ManualClock>, Store) {
         let clock = Arc::new(ManualClock::new(1_000_000));
@@ -1678,6 +1787,155 @@ mod tests {
         assert_eq!(state.suppress(130_000, 60_000), Some(1));
         assert_eq!(state.suppress(130_001, 60_000), None);
         assert_eq!(state.end_suppression(), Some(1));
+    }
+
+    /// Makes every audit write of `kind` fail, as a full disk would, until the trigger is dropped.
+    fn fail_audit_writes(store: &Store, kind: &str) {
+        lock(&store.conn)
+            .execute_batch(&format!(
+                "CREATE TRIGGER audit_write_fails BEFORE INSERT ON audit WHEN NEW.type = '{kind}'
+                 BEGIN SELECT RAISE(ABORT, 'disk full'); END"
+            ))
+            .unwrap();
+    }
+
+    fn audit_writes_work_again(store: &Store) {
+        lock(&store.conn)
+            .execute_batch("DROP TRIGGER audit_write_fails")
+            .unwrap();
+    }
+
+    /// The counts the audit holds, summed: what the user can read in the activity log.
+    fn recorded_count(store: &Store, kind: &str, field: &str) -> u64 {
+        store
+            .audit_lines(0, 100_000)
+            .unwrap()
+            .into_iter()
+            .map(|(_, line)| serde_json::from_str::<serde_json::Value>(&line).unwrap())
+            .filter(|v| v["type"] == kind)
+            .map(|v| v[field].as_u64().unwrap())
+            .sum()
+    }
+
+    /// The connections the `suppressed` summaries stand for.
+    fn summarised_connections(store: &Store) -> u64 {
+        store
+            .audit_lines(0, 100_000)
+            .unwrap()
+            .into_iter()
+            .map(|(_, line)| serde_json::from_str::<serde_json::Value>(&line).unwrap())
+            .filter(|v| v["type"] == "connection" && v["reason"] == "suppressed")
+            .map(|v| v["count"].as_u64().unwrap())
+            .sum()
+    }
+
+    fn request(workspace: &str, host: &str) -> EgressRequest {
+        EgressRequest::new(
+            WorkspaceName::new(workspace).unwrap(),
+            Host::parse_normalised(host).unwrap(),
+            443,
+        )
+    }
+
+    fn one_row_a_burst() -> (Arc<ManualClock>, Store) {
+        let clock = Arc::new(ManualClock::new(1_000_000));
+        let limits = Limits {
+            new_rows_burst: 1,
+            new_rows_refill_ms: 1000,
+            ..Limits::default()
+        };
+        let store = Store::open_in_memory(clock.clone(), limits).unwrap();
+        (clock, store)
+    }
+
+    #[test]
+    fn a_failed_suppression_record_keeps_the_count_for_the_next_one() {
+        let (_, store) = one_row_a_burst();
+        let decide = |host: &str| store.decide(&request("a", host), SuffixAllows::Count);
+        decide("one.example").unwrap();
+        fail_audit_writes(&store, "pending_suppressed");
+        assert!(matches!(
+            decide("two.example"),
+            Err(StoreError::Database(_))
+        ));
+        audit_writes_work_again(&store);
+        assert_eq!(
+            decide("three.example").unwrap(),
+            Decision::Pending(PendingOutcome::Suppressed)
+        );
+        // Both held-back requests are in the log, the failed one included.
+        assert_eq!(recorded_count(&store, "pending_suppressed", "count"), 2);
+    }
+
+    #[test]
+    fn a_failed_record_at_the_end_of_suppression_keeps_the_count_and_the_episode() {
+        let (clock, store) = one_row_a_burst();
+        let decide = |host: &str| store.decide(&request("a", host), SuffixAllows::Count);
+        decide("one.example").unwrap();
+        decide("two.example").unwrap();
+        decide("three.example").unwrap();
+        assert_eq!(recorded_count(&store, "pending_suppressed", "count"), 1);
+        fail_audit_writes(&store, "pending_suppressed");
+        clock.advance(1000);
+        assert!(decide("four.example").is_err());
+        assert!(
+            store.suppression(&WorkspaceName::new("a").unwrap()).active,
+            "the episode did not end"
+        );
+        audit_writes_work_again(&store);
+        clock.advance(1000);
+        decide("five.example").unwrap();
+        assert!(!store.suppression(&WorkspaceName::new("a").unwrap()).active);
+        assert_eq!(recorded_count(&store, "pending_suppressed", "count"), 2);
+    }
+
+    #[test]
+    fn a_failed_sweep_flush_keeps_suppression_counts_and_connection_summaries() {
+        let (clock, store) = one_row_a_burst();
+        let decide = |host: &str| store.decide(&request("a", host), SuffixAllows::Count);
+        decide("one.example").unwrap();
+        decide("two.example").unwrap();
+        decide("three.example").unwrap();
+        decide("four.example").unwrap();
+        let event = ConnectionEvent::new(
+            &request("a", "x.example"),
+            ConnectionDecision::Allow,
+            ConnectionReason::Rule,
+        );
+        // The default limit is 200 a second: overshoot it, then let the second pass.
+        for _ in 0..205 {
+            store.record_connection(&event).unwrap();
+        }
+        fail_audit_writes(&store, "pending_suppressed");
+        clock.advance(61_000);
+        assert!(store.sweep().is_err());
+        audit_writes_work_again(&store);
+        store.sweep().unwrap();
+        assert_eq!(recorded_count(&store, "pending_suppressed", "count"), 3);
+        assert_eq!(
+            summarised_connections(&store),
+            5,
+            "the connections over the limit are in one summary"
+        );
+    }
+
+    #[test]
+    fn a_failed_connection_summary_write_is_written_with_the_next_connection() {
+        let (clock, store) = one_row_a_burst();
+        let event = ConnectionEvent::new(
+            &request("a", "x.example"),
+            ConnectionDecision::Allow,
+            ConnectionReason::Rule,
+        );
+        for _ in 0..205 {
+            store.record_connection(&event).unwrap();
+        }
+        fail_audit_writes(&store, "connection");
+        clock.advance(1000);
+        assert!(store.record_connection(&event).is_err());
+        audit_writes_work_again(&store);
+        store.record_connection(&event).unwrap();
+        assert_eq!(summarised_connections(&store), 5);
     }
 
     #[test]
