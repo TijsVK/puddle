@@ -258,10 +258,11 @@
           <p class="desc" id="ws-capture-desc">
             When you sign in to Claude Code, GitHub or Copilot inside this
             workspace, puddle keeps the real token on this computer. The
-            workspace gets a stand-in that works only through puddle, so nothing
-            running in the workspace can copy your login. A change takes effect
-            when the workspace next starts; turning it off leaves the logins
-            puddle already kept unused, so sign in again in the workspace.
+            workspace gets a stand-in that works only through puddle, so while
+            capture works nothing running in the workspace can copy your login.
+            A change takes effect when the workspace next starts; turning it off
+            leaves the logins puddle already kept unused, so sign in again in
+            the workspace.
             <span class="chip"
               >{sourceLabel(effective.capture_logins.source)}</span
             >
