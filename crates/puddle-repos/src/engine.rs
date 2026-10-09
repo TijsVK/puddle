@@ -191,23 +191,33 @@ fn unsupported(host: &str) -> Problem {
     )
 }
 
-/// The Azure DevOps organisations a credential names: those it covers, the one a pasted token
-/// belongs to, the one a Git credential is for.
-fn azure_organisations(binding: &CredentialBinding) -> BTreeSet<String> {
-    let covered = binding.covers.owners.iter().map(|o| o.as_str().to_owned());
-    let mut orgs: BTreeSet<String> = match &binding.source {
-        SourceSpec::Stored { scope, .. } => scope
-            .org
-            .iter()
-            .map(|o| o.as_str().to_ascii_lowercase())
-            .collect(),
-        _ => covered.collect(),
-    };
-    if let SourceSpec::GitCredential { path, .. } = &binding.source
-        && let Some(first) = path.as_str().split('/').next()
-    {
-        orgs.insert(first.to_ascii_lowercase());
+/// The organisation a credential's own source is for, lower case: the one a pasted token belongs
+/// to, the first segment of the path a Git credential is for.
+fn source_organisation(source: &SourceSpec) -> Option<String> {
+    match source {
+        SourceSpec::Stored { scope, .. } => {
+            scope.org.as_ref().map(|o| o.as_str().to_ascii_lowercase())
+        }
+        SourceSpec::GitCredential { path, .. } => {
+            path.as_str().split('/').next().map(str::to_ascii_lowercase)
+        }
+        _ => None,
     }
+}
+
+/// The Azure DevOps organisations a credential names: the one its source is for and, unless it is a
+/// pasted token (which belongs to one organisation), those it covers.
+fn azure_organisations(binding: &CredentialBinding) -> BTreeSet<String> {
+    let mut orgs: BTreeSet<String> = match &binding.source {
+        SourceSpec::Stored { .. } => BTreeSet::new(),
+        _ => binding
+            .covers
+            .owners
+            .iter()
+            .map(|o| o.as_str().to_owned())
+            .collect(),
+    };
+    orgs.extend(source_organisation(&binding.source));
     orgs
 }
 
@@ -601,21 +611,7 @@ fn limited_until(until: u64) -> Problem {
 /// An Azure DevOps credential's own answer: the organisation it names, and why the author is not
 /// filled in.
 fn azure_profile(source: &SourceSpec) -> Profile {
-    let organisations = match source {
-        SourceSpec::Stored { scope, .. } => scope
-            .org
-            .iter()
-            .map(|o| o.as_str().to_ascii_lowercase())
-            .collect(),
-        SourceSpec::GitCredential { path, .. } => path
-            .as_str()
-            .split('/')
-            .next()
-            .map(str::to_ascii_lowercase)
-            .into_iter()
-            .collect(),
-        _ => Vec::new(),
-    };
+    let organisations = source_organisation(source).into_iter().collect();
     Profile {
         organisations,
         notes: vec![Note::new(
@@ -640,21 +636,13 @@ impl Entry {
 
     fn fail(&mut self, problem: Problem, now: u64, target: &Target) {
         self.failed_at = Some(now);
+        let host = target.source.scope().host;
         if problem.kind == ProblemKind::RateLimited {
             self.strikes = self.strikes.saturating_add(1);
             self.blocked_until = problem.retry_at;
-            tracing::warn!(
-                host = %target.source.scope().host,
-                strikes = self.strikes,
-                retry_at = ?problem.retry_at,
-                "a git host is limiting requests; its repository list waits"
-            );
+            tracing::warn!(%host, strikes = self.strikes, retry_at = ?problem.retry_at, "a git host is limiting requests; its repository list waits");
         } else {
-            tracing::debug!(
-                host = %target.source.scope().host,
-                kind = ?problem.kind,
-                "a repository list could not be read"
-            );
+            tracing::debug!(%host, kind = ?problem.kind, "a repository list could not be read");
         }
         self.problem = Some(problem);
     }
@@ -690,4 +678,36 @@ fn snapshot(meta: Meta, resolved: &Resolved, now: u64) -> SourceList {
         }
     }
     list
+}
+
+#[cfg(test)]
+mod tests {
+    use puddle_secrets::{AccountName, HostName, OrgName, StoredId, TokenScope, UrlPath};
+
+    use super::*;
+
+    #[test]
+    fn a_sources_own_organisation_is_the_pasted_tokens_or_the_git_credentials_path_and_no_other_has_one()
+     {
+        let host = HostName::new("dev.azure.com").unwrap();
+        let stored = SourceSpec::Stored {
+            id: StoredId::new("tok-1").unwrap(),
+            scope: TokenScope {
+                host: host.clone(),
+                org: Some(OrgName::new("Acme").unwrap()),
+            },
+        };
+        let git = SourceSpec::GitCredential {
+            host: host.clone(),
+            path: UrlPath::new("Contoso/Fabrikam").unwrap(),
+            username: None,
+        };
+        let gh = SourceSpec::Gh {
+            host,
+            account: AccountName::new("me").unwrap(),
+        };
+        assert_eq!(source_organisation(&stored).as_deref(), Some("acme"));
+        assert_eq!(source_organisation(&git).as_deref(), Some("contoso"));
+        assert_eq!(source_organisation(&gh), None);
+    }
 }

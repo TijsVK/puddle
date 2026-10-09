@@ -11,6 +11,7 @@ use bytes::Bytes;
 use futures_util::future::pending;
 use http_body_util::Full;
 use hyper::body::Incoming;
+use hyper::header::HeaderValue;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
@@ -47,6 +48,8 @@ impl Seen {
 struct Reply {
     status: u16,
     headers: Vec<(&'static str, &'static str)>,
+    /// Headers with bytes outside printable ASCII, which a client cannot read as text.
+    raw_headers: Vec<(&'static str, &'static [u8])>,
     body: Vec<u8>,
 }
 
@@ -55,6 +58,7 @@ impl Reply {
         Self {
             status: 200,
             headers: Vec::new(),
+            raw_headers: Vec::new(),
             body: body.as_bytes().to_vec(),
         }
     }
@@ -166,6 +170,10 @@ impl Server {
                                     for (name, value) in reply.headers {
                                         response = response.header(name, value);
                                     }
+                                    for (name, value) in reply.raw_headers {
+                                        response = response
+                                            .header(name, HeaderValue::from_bytes(value).unwrap());
+                                    }
                                     Ok::<_, std::convert::Infallible>(
                                         response.body(Full::new(Bytes::from(reply.body))).unwrap(),
                                     )
@@ -239,6 +247,7 @@ async fn a_request_goes_out_with_the_headers_a_git_host_expects_and_the_answer_c
                 ("x-repeated", "first"),
                 ("x-repeated", "second"),
             ],
+            raw_headers: vec![("x-not-text", b"value-\xe9")],
             body: br#"[{"full_name":"a/b"}]"#.to_vec(),
         })),
     )
@@ -258,6 +267,8 @@ async fn a_request_goes_out_with_the_headers_a_git_host_expects_and_the_answer_c
         Some(r#"<https://api.example.test/next>; rel="next""#)
     );
     assert_eq!(reply.header("x-repeated"), Some("first"));
+    // A header whose value is not text is left out; the rest of the answer is unaffected.
+    assert_eq!(reply.header("x-not-text"), None);
     let seen = server.seen();
     assert_eq!(seen.len(), 1);
     assert_eq!(
@@ -318,6 +329,7 @@ async fn a_redirect_is_handed_back_never_followed() {
         Mode::Answer(Arc::new(|_| Reply {
             status: 302,
             headers: vec![("location", "https://evil.example/steal")],
+            raw_headers: Vec::new(),
             body: Vec::new(),
         })),
     )
@@ -342,6 +354,7 @@ async fn an_answer_over_the_size_limit_is_refused() {
         Mode::Answer(Arc::new(|_| Reply {
             status: 200,
             headers: Vec::new(),
+            raw_headers: Vec::new(),
             body: vec![b' '; MAX_BODY + 1],
         })),
     )
@@ -433,7 +446,12 @@ async fn a_host_that_never_answers_times_out() {
 #[tokio::test]
 async fn a_host_that_hangs_up_or_does_not_speak_http_is_a_protocol_failure() {
     let pki = Pki::new("localhost");
-    for mode in [Mode::HangUp, Mode::Raw(b"NOT HTTP AT ALL\r\n\r\n")] {
+    for mode in [
+        Mode::HangUp,
+        Mode::Raw(b"NOT HTTP AT ALL\r\n\r\n"),
+        // An answer that promises a hundred bytes and stops after five.
+        Mode::Raw(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\nshort"),
+    ] {
         let server = Server::start(&pki, mode).await;
         let host = format!("localhost:{}", server.addr.port());
         let err = api(direct_chain(), &pki)

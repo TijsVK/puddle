@@ -8,9 +8,10 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use puddle_repos::{
-    Api, ApiReply, ApiRequest, Config, Freshness, ListState, ProblemKind, Repos, TransportError,
+    Api, ApiReply, ApiRequest, Config, Freshness, ListState, ProblemKind, Read, Repos,
+    TransportError,
 };
-use puddle_secrets::SourceError;
+use puddle_secrets::{Credential, Fetch, Fetched, Secret, SecretCache, SourceError, SourceSpec};
 use puddle_store::{Clock, ManualClock};
 
 use crate::common::{REPOS_PATH, Rig, T0, Tokens, binding, data, gh, identities, ok_json, stored};
@@ -443,7 +444,7 @@ async fn many_screens_asking_at_once_cause_one_read() {
                 repos
                     .lists(
                         &ids,
-                        puddle_repos::Read {
+                        Read {
                             only: None,
                             freshness: Freshness::Cached,
                         },
@@ -492,7 +493,7 @@ async fn a_read_that_takes_too_long_gives_up_with_the_reason() {
     let lists = repos
         .lists(
             &one_gh_identity(),
-            puddle_repos::Read {
+            Read {
                 only: None,
                 freshness: Freshness::Cached,
             },
@@ -519,4 +520,105 @@ fn the_defaults_are_ten_minutes_thirty_seconds_ten_seconds_and_four_reads() {
         Arc::new(ManualClock::new(T0)),
     );
     assert_eq!(format!("{repos:?}"), "Repos { .. }");
+}
+
+/// A source that counts how often it is asked.
+struct CountingSource {
+    asked: Arc<AtomicUsize>,
+}
+
+impl Fetch for CountingSource {
+    fn fetch(
+        &self,
+        _spec: &SourceSpec,
+    ) -> impl Future<Output = Result<Fetched, SourceError>> + Send {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        std::future::ready(Ok(Fetched {
+            credential: Credential {
+                username: None,
+                secret: Arc::new(Secret::new(CANARY.to_owned())),
+            },
+            valid_for: None,
+        }))
+    }
+}
+
+#[tokio::test]
+async fn the_shared_secrets_cache_serves_the_token_until_the_host_rejects_it_then_asks_its_source_again()
+ {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let cache = Arc::new(SecretCache::new(CountingSource {
+        asked: asked.clone(),
+    }));
+    let api = Arc::new(puddle_repos::FakeApi::new());
+    api.reply(
+        "api.github.com",
+        REPOS_PATH,
+        ok_json("github_user_repos_page2.json"),
+    );
+    let clock = Arc::new(ManualClock::new(T0));
+    let repos = Repos::new(api.clone(), cache, clock.clone());
+    let ids = one_gh_identity();
+    let read = Read {
+        only: None,
+        freshness: Freshness::Reload,
+    };
+
+    repos.lists(&ids, read).await;
+    clock.advance(11_000);
+    repos.lists(&ids, read).await;
+    // The second read used the cached token.
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+
+    // The host rejects it: the cache forgets it, so the next read asks `gh` again.
+    api.clear("api.github.com", REPOS_PATH);
+    api.reply("api.github.com", REPOS_PATH, ApiReply::new(401, "{}"));
+    clock.advance(11_000);
+    let rejected = repos.lists(&ids, read).await;
+    assert_eq!(
+        rejected[0].problem.as_ref().unwrap().kind,
+        ProblemKind::TokenRejected
+    );
+    clock.advance(11_000);
+    repos.lists(&ids, read).await;
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_profile_that_takes_too_long_gives_up_with_the_reason() {
+    let tokens = Arc::new(Tokens::default());
+    tokens.set(&gh("github.com", "octocat"), CANARY);
+    let repos = Repos::with_config(
+        Arc::new(Silent),
+        tokens,
+        Arc::new(ManualClock::new(T0)),
+        Config {
+            deadline: Duration::from_secs(2),
+            ..Config::default()
+        },
+    );
+    let read = repos.profile(&gh("github.com", "octocat")).await;
+    let problem = read.problem.unwrap();
+    assert_eq!(problem.kind, ProblemKind::Unreachable);
+    assert_eq!(
+        problem.message,
+        "the host could not be reached: no answer within 2 seconds"
+    );
+}
+
+#[tokio::test]
+async fn a_tool_that_did_not_answer_in_time_is_a_sign_in_problem_with_its_name() {
+    let rig = Rig::new();
+    rig.tokens.fail(
+        &gh("github.com", "octocat"),
+        SourceError::Timeout(puddle_secrets::Tool::Git),
+    );
+    let lists = rig.lists(&one_gh_identity(), Freshness::Cached).await;
+    let problem = lists[0].problem.as_ref().unwrap();
+    assert_eq!(problem.kind, ProblemKind::NotSignedIn);
+    assert!(problem.needs_sign_in);
+    assert_eq!(
+        problem.message,
+        "git did not answer in time; it may be waiting for a sign-in"
+    );
 }
