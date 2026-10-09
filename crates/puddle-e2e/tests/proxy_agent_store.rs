@@ -239,6 +239,65 @@ async fn parallel_connects_256_through_agent_proxy_and_store() {
     assert_eq!(accounted, 256);
 }
 
+/// The load bar at a real tool's worst case, with the process limit the product gives its own
+/// processes: 2 000 `CONNECT`s through the real agent, proxy and rules engine, all open at the
+/// same moment (each side of each connection holds a descriptor in this one process, 8 000 in
+/// all), every one echoes a line back, none refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_thousand_connections_held_open_at_once_all_succeed() {
+    const HELD: usize = 2000;
+    let limit = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft);
+    eprintln!("{limit}");
+    assert!(
+        limit.allows(4 * HELD as u64 + 512),
+        "this machine's hard open-file limit cannot hold {HELD} connections through one process: {limit}"
+    );
+    let rig = rig().await;
+    allow(&rig.store, "echo.test");
+    let echo = echo_server().await;
+    let authority = format!("echo.test:{}", echo.port());
+    let agent = rig.agent.local_addr();
+    let all_open = Arc::new(tokio::sync::Barrier::new(HELD));
+    let mut set = tokio::task::JoinSet::new();
+    for i in 0..HELD {
+        let authority = authority.clone();
+        let all_open = Arc::clone(&all_open);
+        set.spawn(async move {
+            let opened = connect_via(agent, &authority).await;
+            // Nobody sends before everybody has tried to connect: 2 000 are open at this point,
+            // and a refused connection does not leave the others waiting.
+            all_open.wait().await;
+            let (code, mut conn) = opened?;
+            if code != 200 {
+                return Err(io::Error::other(format!("connection {i}: status {code}")));
+            }
+            conn.write_all(format!("line {i}\n").as_bytes()).await?;
+            let mut line = String::new();
+            conn.read_line(&mut line).await?;
+            if line != format!("line {i}\n") {
+                return Err(io::Error::other(format!("connection {i}: echoed {line:?}")));
+            }
+            Ok(())
+        });
+    }
+    let results = tokio::time::timeout(Duration::from_secs(120), async {
+        let mut out = Vec::new();
+        while let Some(r) = set.join_next().await {
+            out.push(r.unwrap());
+        }
+        out
+    })
+    .await
+    .expect("2000 held connections did not finish within 120 s");
+    let failures: Vec<_> = results.iter().filter_map(|r| r.as_ref().err()).collect();
+    assert!(
+        failures.is_empty(),
+        "{} of {HELD} failed: {:?}",
+        failures.len(),
+        failures.first()
+    );
+}
+
 /// R-24/R-25 end to end: the proxy's connection events land in the store's audit with decision,
 /// rule or pending row, address and bytes, and no query string.
 #[tokio::test]

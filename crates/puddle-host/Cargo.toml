@@ -21,6 +21,7 @@ puddle-boot = { workspace = true }
 puddle-ca = { workspace = true }
 puddle-certs = { workspace = true }
 puddle-compute = { workspace = true }
+puddle-fd-limit = { workspace = true }
 puddle-compute-msb = { workspace = true }
 puddle-doctor = { workspace = true }
 puddle-fs = { workspace = true }
