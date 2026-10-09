@@ -51,6 +51,7 @@ pub(crate) fn hypervisor_vendor() -> Option<String> {
 }
 
 /// The printable part of a CPUID vendor signature, or `unknown`.
+#[cfg(target_arch = "x86_64")]
 fn vendor_name(bytes: &[u8]) -> String {
     let s: String = bytes
         .iter()
@@ -70,6 +71,7 @@ fn vendor_name(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn vendor_names() {
         assert_eq!(vendor_name(b"Microsoft Hv"), "Microsoft Hv");
