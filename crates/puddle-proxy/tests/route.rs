@@ -1058,7 +1058,8 @@ async fn connect_to_port_80_and_absolute_form_http_get_the_same_decision() {
 
 /// Hostile guest: a tunnel to an allowed name that carries a request for another host
 /// still reaches only the checked address, and is recorded under the tunnel's name. A tunnel
-/// that doesn't start with an HTTP/1.x request line is relayed as before, with no request line.
+/// that doesn't start with an HTTP/1.x request line (here TLS) is relayed as before, with no
+/// request line.
 #[tokio::test]
 async fn a_tunnel_only_ever_reaches_the_checked_address_whatever_it_carries() {
     let response = "HTTP/1.1 204 No Content\r\n\r\n";
@@ -1101,10 +1102,10 @@ async fn a_tunnel_only_ever_reaches_the_checked_address_whatever_it_carries() {
     rig.policy.allow(&host("127.0.0.1"));
     let (code, mut reader) = guest.connect_to(&echo.to_string()).await;
     assert_eq!(code, 200);
-    let ssh = b"SSH-2.0-OpenSSH_9.6p1 Ubuntu-3\r\n";
-    reader.get_mut().write_all(ssh).await.unwrap();
+    let hello = b"\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03";
+    reader.get_mut().write_all(hello).await.unwrap();
     reader.get_mut().shutdown().await.unwrap();
-    assert_eq!(read_all(&mut reader).await.unwrap(), ssh);
+    assert_eq!(read_all(&mut reader).await.unwrap(), hello);
     let events = rig.events(2).await;
     assert_eq!(events[1].http, None);
 }

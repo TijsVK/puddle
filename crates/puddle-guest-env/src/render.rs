@@ -17,6 +17,11 @@ pub const APT_CONF_GUEST: &str = "/etc/apt/apt.conf.d/99puddle-proxy";
 /// requires.
 pub const SUDOERS_GUEST: &str = "/etc/sudoers.d/puddle-proxy";
 
+/// `ssh`'s system-wide drop-in (`/etc/ssh/ssh_config.d` is included by the distributions'
+/// `ssh_config`). It comes before the rest of the system config, and a user's own `~/.ssh/config`
+/// before it, so a `ProxyCommand` or `ProxyJump` the user sets wins.
+pub const SSH_CONFIG_GUEST: &str = "/etc/ssh/ssh_config.d/00-puddle.conf";
+
 /// Maven settings with the proxy, passed as Maven's global settings through `MAVEN_ARGS`, so the
 /// user's own `~/.m2/settings.xml` stays untouched and still applies on top.
 pub const MAVEN_SETTINGS_GUEST: &str = "/etc/puddle/maven/settings.xml";
@@ -133,6 +138,7 @@ pub fn guest_proxy_config(
             &format!("{gradle_home}/{GRADLE_INIT_RELATIVE}"),
             gradle_init(settings.proxy, &java_bypass),
         )?,
+        file(SSH_CONFIG_GUEST, ssh_config(settings)?)?,
     ];
     if let Some(container) = settings.container_proxy {
         let docker_dir = image_dir(image("DOCKER_CONFIG"))
@@ -310,6 +316,37 @@ fn gradle_init(proxy: SocketAddr, java_bypass: &str) -> String {
     )
 }
 
+/// Every outbound `ssh` connection goes through the agent, which says that SSH is not supported
+/// yet. What is inside the workspace is not outbound and stays direct: loopback and the
+/// container bridge's /16 (`ssh localhost`, a container running an SSH server).
+fn ssh_config(settings: &ProxySettings) -> Result<String, ConfigError> {
+    let agent = settings.agent.as_str();
+    if agent.contains('%') || agent.chars().any(char::is_control) {
+        return Err(ConfigError::GuestPath {
+            reason: format!("the agent path {agent:?} can't be a ProxyCommand"),
+        });
+    }
+    let command = format!("'{}' connect %h %p %n", agent.replace('\'', "'\\''"));
+    let mut direct = vec!["localhost".to_owned(), "127.*".to_owned(), "::1".to_owned()];
+    if let Some(SocketAddr::V4(bridge)) = settings.container_proxy {
+        let [a, b, ..] = bridge.ip().octets();
+        direct.push(format!("{a}.{b}.*"));
+    }
+    let skip = direct
+        .iter()
+        .map(|pattern| format!("!{pattern}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok(format!(
+        "# {GENERATED}\n\
+         # SSH from a workspace is not supported yet: ssh runs the agent as its ProxyCommand, which\n\
+         # refuses the connection and says why. Loopback and the container bridge stay direct. A\n\
+         # ProxyCommand or ProxyJump in ~/.ssh/config comes first and wins.\n\
+         Match host \"*,{skip}\"\n    \
+         ProxyCommand {command}\n"
+    ))
+}
+
 /// The Docker CLI passes these to every container and build it starts. Containers reach the
 /// guest's proxy at the bridge gateway, not at loopback; the bypass list is the guest's.
 ///
@@ -406,6 +443,7 @@ mod tests {
                 (SUDOERS_GUEST, 0o440),
                 (MAVEN_SETTINGS_GUEST, 0o644),
                 ("/root/.gradle/init.d/puddle-proxy.gradle", 0o644),
+                (SSH_CONFIG_GUEST, 0o644),
                 ("/root/.docker/config.json", 0o600),
             ]
         );
@@ -429,6 +467,66 @@ Acquire::http::Proxy::172.17.0.1 \"DIRECT\";
 Acquire::https::Proxy::172.17.0.1 \"DIRECT\";
 "
         );
+    }
+
+    #[test]
+    fn ssh_config_snapshot() {
+        let c = default_config();
+        assert_eq!(
+            text(file_at(&c, SSH_CONFIG_GUEST)),
+            "\
+# Written by puddle at every boot; changes here are overwritten.
+# SSH from a workspace is not supported yet: ssh runs the agent as its ProxyCommand, which
+# refuses the connection and says why. Loopback and the container bridge stay direct. A
+# ProxyCommand or ProxyJump in ~/.ssh/config comes first and wins.
+Match host \"*,!localhost,!127.*,!::1,!172.17.*\"
+    ProxyCommand '/puddle/puddle-agent' connect %h %p %n
+"
+        );
+    }
+
+    #[test]
+    fn ssh_config_keeps_only_loopback_direct_without_a_container_bridge() {
+        for container_proxy in [None, Some("[fd00::1]:3128".parse().unwrap())] {
+            let settings = ProxySettings {
+                container_proxy,
+                ..ProxySettings::default()
+            };
+            let c = guest_proxy_config(&settings, &[]).unwrap();
+            assert!(
+                text(file_at(&c, SSH_CONFIG_GUEST))
+                    .contains("Match host \"*,!localhost,!127.*,!::1\"\n"),
+                "{container_proxy:?}"
+            );
+        }
+        let settings = ProxySettings {
+            container_proxy: Some("10.200.0.1:3128".parse().unwrap()),
+            ..ProxySettings::default()
+        };
+        let c = guest_proxy_config(&settings, &[]).unwrap();
+        assert!(text(file_at(&c, SSH_CONFIG_GUEST)).contains("!::1,!10.200.*\""));
+    }
+
+    #[test]
+    fn the_agent_path_is_one_shell_word_in_the_proxy_command() {
+        let settings = ProxySettings {
+            agent: GuestPath::new("/opt/it's puddle/agent").unwrap(),
+            ..ProxySettings::default()
+        };
+        let c = guest_proxy_config(&settings, &[]).unwrap();
+        let ssh = text(file_at(&c, SSH_CONFIG_GUEST));
+        assert!(
+            ssh.ends_with("ProxyCommand '/opt/it'\\''s puddle/agent' connect %h %p %n\n"),
+            "{ssh}"
+        );
+        for bad in ["/opt/100%/agent", "/opt/new\nline/agent"] {
+            let settings = ProxySettings {
+                agent: GuestPath::new(bad).unwrap(),
+                ..ProxySettings::default()
+            };
+            let err = guest_proxy_config(&settings, &[]).unwrap_err();
+            assert!(err.to_string().contains("ProxyCommand"), "{bad}: {err}");
+        }
     }
 
     #[test]

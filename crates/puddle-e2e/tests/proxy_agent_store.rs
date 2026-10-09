@@ -578,3 +578,65 @@ async fn the_bridge_listener_gets_the_same_policy_and_audit_as_loopback() {
     assert_eq!(records[2]["decision"], "allow");
     assert_eq!(records[2]["workspace_id"], "e2e");
 }
+
+/// Every SSH connection is refused at once with its own audit reason, whatever the host, the port
+/// and the rules: it never becomes a pending row, never counts as an allow, and the host that a
+/// rule allows is refused just the same. The client is the agent's `connect` command (what `ssh`
+/// runs as its `ProxyCommand`) speaking an SSH identification line.
+#[tokio::test]
+async fn ssh_is_refused_never_pending_and_audited_with_its_own_reason() {
+    let rig = rig().await;
+    allow(&rig.store, "echo.test");
+    let settings = puddle_agent::connect::Settings::from_config(&Config {
+        listen: rig.agent.local_addr(),
+        ..Config::default()
+    });
+    let destinations = [
+        ("echo.test", 22),
+        ("new.test", 2222),
+        ("sink.test", 443),
+        ("github.com", 22),
+        ("ssh.github.com", 443),
+        ("2001:db8::1", 22),
+    ];
+    for (host, port) in destinations {
+        let request = puddle_agent::connect::Request::parse(&[host, &port.to_string()]).unwrap();
+        let (mut ssh, stdin) = tokio::io::duplex(1024);
+        let (stdout, mut printed) = tokio::io::duplex(1024);
+        ssh.write_all(b"SSH-2.0-OpenSSH_10.0p2\r\n").await.unwrap();
+        let mut stderr = Vec::new();
+        let exit =
+            puddle_agent::connect::run(&settings, &request, stdin, stdout, &mut stderr).await;
+        assert_eq!(exit, puddle_agent::connect::Exit::Failed, "{host}:{port}");
+        let mut out = Vec::new();
+        printed.read_to_end(&mut out).await.unwrap_or_default();
+        assert!(out.is_empty(), "nothing a client could take for a server");
+        let stderr = String::from_utf8(stderr).unwrap();
+        assert!(
+            stderr.starts_with("puddle: SSH is not supported yet"),
+            "{host}:{port}: {stderr}"
+        );
+        assert_eq!(
+            stderr.contains("use HTTPS"),
+            host.ends_with("github.com"),
+            "{host}"
+        );
+    }
+    let records = wait_for_records(&rig.store, destinations.len()).await;
+    assert_eq!(records.len(), destinations.len(), "{records:?}");
+    for (record, (host, port)) in records.iter().zip(destinations) {
+        assert_eq!(record["host"], host, "{record}");
+        assert_eq!(record["port"], port, "{record}");
+        assert_eq!(record["decision"], "blocked", "{record}");
+        assert_eq!(record["reason"], "ssh_unsupported", "{record}");
+        assert!(record["pending_id"].is_null(), "{record}");
+        assert!(record["resolved_ip"].is_null(), "never connected: {record}");
+    }
+    assert_eq!(
+        rig.store.open_pending(None).unwrap().len(),
+        0,
+        "nothing in the inbox"
+    );
+    // No rule was made, and the one that allows echo.test still decides everything else.
+    assert_eq!(rig.store.rules().len(), 1);
+}

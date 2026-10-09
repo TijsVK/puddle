@@ -8,8 +8,9 @@
 //! `connection` record can name the method and path, as it does for an absolute-form request.
 //!
 //! The tap never waits for bytes, never holds them back and never changes them: a tunnel that
-//! doesn't start with an HTTP/1.x request line (TLS, SSH, a server-first protocol) behaves exactly
-//! as before and is recorded without a request line.
+//! doesn't start with an HTTP/1.x request line (TLS, a server-first protocol) behaves exactly
+//! as before and is recorded without a request line. (An SSH identification line ends the tunnel
+//! instead: [`crate::ssh`].)
 
 use std::io;
 use std::pin::Pin;

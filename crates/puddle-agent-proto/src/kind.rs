@@ -10,7 +10,7 @@
 //! |---|---|---|
 //! | `control` v1 | agent | served: [`crate::AgentMessage`] lines, guest → host |
 //! | `resolve` v1 | agent | served: one name lookup per stream ([`crate::resolve`]), for the guest's stub DNS |
-//! | `connect` | agent | reserved: `puddle-agent connect` (ssh `ProxyCommand`) |
+//! | `connect` | agent | reserved: a raw connection to a named destination (`puddle-agent connect`, the `ssh` `ProxyCommand`, goes through the agent's listener as a `CONNECT` for now: [`crate::ssh`]) |
 //! | `ssh-agent` | agent | reserved: filtered SSH agent / signing |
 //! | `host-control` | host | reserved: [`crate::control::HostMessage`] lines, host → guest |
 //!
@@ -34,7 +34,7 @@ pub enum StreamKind {
     Control,
     /// One name lookup for the guest's stub DNS: a query line, an answer line.
     Resolve,
-    /// Reserved: a raw connection for `puddle-agent connect` (ssh `ProxyCommand`).
+    /// Reserved: a raw connection to a named destination.
     Connect,
     /// Reserved: the guest side of a filtered SSH agent.
     SshAgent,

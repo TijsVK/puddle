@@ -90,6 +90,12 @@ mod tests {
     }
 
     #[test]
+    fn ssh_runs_the_agent_where_the_hook_mounts_it() {
+        // The guest's ssh_config names the agent by path; puddle-guest-env can't see this crate.
+        assert_eq!(puddle_guest_env::DEFAULT_AGENT, AGENT_GUEST);
+    }
+
+    #[test]
     #[should_panic(expected = "is not valid")]
     fn an_invalid_constant_is_a_bug() {
         let _ = guest_path("relative");

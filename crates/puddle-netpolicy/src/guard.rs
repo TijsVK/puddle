@@ -179,7 +179,7 @@ pub fn block_message(host: &Host, workspace: &WorkspaceName, reasons: &[BlockRea
             Some(BlockReason::PuddleEndpoint) => format!(
                 "{host} is one of puddle's own endpoints; workspaces never reach them, and no rule or toggle changes this"
             ),
-            Some(BlockReason::SshUnsupported) => "SSH is not supported yet, use HTTPS".to_owned(),
+            Some(BlockReason::SshUnsupported) => ssh_unsupported_message(host),
             _ => format!("{host} is a local address puddle does not connect to"),
         };
     }
@@ -196,6 +196,43 @@ pub fn block_message(host: &Host, workspace: &WorkspaceName, reasons: &[BlockRea
     format!(
         "{host} is {what}, and that toggle is off. To allow it, turn on {switch} globally or for workspace {workspace}; it then still needs an allow rule or an approval. Approving it alone does not change this"
     )
+}
+
+/// The HTTPS form of a repository on a well-known Git host that people reach over SSH, with the
+/// parts that differ per repository in capitals; `None` for any other host.
+///
+/// ```
+/// use puddle_netpolicy::git_https_remote;
+/// use puddle_types::Host;
+///
+/// let host = Host::parse_normalised("ssh.github.com").unwrap();
+/// assert_eq!(git_https_remote(&host), Some("https://github.com/OWNER/REPO.git"));
+/// let other = Host::parse_normalised("git.example.com").unwrap();
+/// assert_eq!(git_https_remote(&other), None);
+/// ```
+#[must_use]
+pub fn git_https_remote(host: &Host) -> Option<&'static str> {
+    let Host::Name(name) = host else {
+        return None;
+    };
+    match name.as_str() {
+        "github.com" | "ssh.github.com" => Some("https://github.com/OWNER/REPO.git"),
+        "gitlab.com" => Some("https://gitlab.com/GROUP/PROJECT.git"),
+        "bitbucket.org" => Some("https://bitbucket.org/WORKSPACE/REPO.git"),
+        "ssh.dev.azure.com" | "vs-ssh.visualstudio.com" => {
+            Some("https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO")
+        }
+        _ => None,
+    }
+}
+
+/// The refusal text for SSH: every SSH connection gets it, a Git host's also names the HTTPS form
+/// of the remote.
+fn ssh_unsupported_message(host: &Host) -> String {
+    match git_https_remote(host) {
+        Some(https) => format!("SSH is not supported yet, use HTTPS: the remote becomes {https}"),
+        None => "SSH is not supported yet".to_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -398,11 +435,55 @@ mod tests {
             block_message(&host, &workspace(), &[BlockReason::PuddleEndpoint])
                 .contains("puddle's own endpoints")
         );
-        assert!(block_message(&host, &workspace(), &[BlockReason::SshUnsupported]).contains("SSH"));
+        assert_eq!(
+            block_message(&host, &workspace(), &[BlockReason::SshUnsupported]),
+            "SSH is not supported yet"
+        );
         assert!(
             block_message(&host, &workspace(), &[BlockReason::LocalAddress])
                 .contains("local address")
         );
         assert!(block_message(&host, &workspace(), &[]).contains("local address"));
+    }
+
+    #[test]
+    fn ssh_to_a_git_host_names_the_https_form_of_the_remote_and_any_other_host_does_not() {
+        for (host, https) in [
+            ("github.com", "https://github.com/OWNER/REPO.git"),
+            ("ssh.github.com", "https://github.com/OWNER/REPO.git"),
+            ("gitlab.com", "https://gitlab.com/GROUP/PROJECT.git"),
+            ("bitbucket.org", "https://bitbucket.org/WORKSPACE/REPO.git"),
+            (
+                "ssh.dev.azure.com",
+                "https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO",
+            ),
+            (
+                "vs-ssh.visualstudio.com",
+                "https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO",
+            ),
+        ] {
+            let host = Host::parse_normalised(host).unwrap();
+            assert_eq!(git_https_remote(&host), Some(https));
+            assert_eq!(
+                block_message(&host, &workspace(), &[BlockReason::SshUnsupported]),
+                format!("SSH is not supported yet, use HTTPS: the remote becomes {https}")
+            );
+        }
+        for other in [
+            "git.example.com",
+            "gitlab.com.evil.example",
+            "notgithub.com",
+            "dev.azure.com",
+            "203.0.113.7",
+            "2001:db8::1",
+        ] {
+            let host = Host::parse_normalised(other).unwrap();
+            assert_eq!(git_https_remote(&host), None, "{other}");
+            assert_eq!(
+                block_message(&host, &workspace(), &[BlockReason::SshUnsupported]),
+                "SSH is not supported yet",
+                "{other}"
+            );
+        }
     }
 }

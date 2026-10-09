@@ -32,10 +32,7 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Command::Reserved(name) => {
-            eprintln!("puddle-agent {name}: not available in this version");
-            ExitCode::from(2)
-        }
+        Command::Connect(request) => connect(&request),
         Command::Usage(msg) => {
             eprintln!("{msg}");
             ExitCode::from(2)
@@ -61,6 +58,43 @@ fn main() -> ExitCode {
             }
         }
     }
+}
+
+/// The ssh `ProxyCommand`: stdin and stdout are the ssh client's connection.
+#[expect(
+    clippy::print_stderr,
+    reason = "CLI output before logging is set up; the refusal itself goes to stderr"
+)]
+fn connect(request: &puddle_agent::connect::Request) -> ExitCode {
+    let ready = Config::from_lookup(|k| std::env::var(k).ok())
+        .map_err(|err| err.to_string())
+        .and_then(|config| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| err.to_string())?;
+            Ok((
+                puddle_agent::connect::Settings::from_config(&config),
+                runtime,
+            ))
+        });
+    let (settings, runtime) = match ready {
+        Ok(ready) => ready,
+        Err(err) => {
+            eprintln!("puddle-agent connect: {err}");
+            return ExitCode::from(puddle_agent::connect::Exit::Failed.code());
+        }
+    };
+    let exit = runtime.block_on(puddle_agent::connect::run(
+        &settings,
+        request,
+        tokio::io::stdin(),
+        tokio::io::stdout(),
+        &mut tokio::io::stderr(),
+    ));
+    // A read of stdin may still be waiting on its thread; don't wait for it.
+    runtime.shutdown_background();
+    ExitCode::from(exit.code())
 }
 
 fn run(config: Config) -> std::io::Result<()> {

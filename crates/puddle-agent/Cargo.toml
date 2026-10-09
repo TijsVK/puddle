@@ -17,7 +17,7 @@ puddle-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-std", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-yamux = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -29,6 +29,9 @@ libc = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 puddle-agent-proto = { workspace = true, features = ["testing"] }
+puddle-guest-env = { workspace = true }
+puddle-ipc = { workspace = true }
+puddle-proxy = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints]

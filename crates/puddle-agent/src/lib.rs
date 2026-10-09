@@ -13,7 +13,8 @@
 //! - answers DNS for tools that ignore the proxy settings, when switched on: a stub on one
 //!   address hands out stand-in addresses and asks the host about each name ([`capture`]).
 //!
-//! It also applies merged guest files for the boot hook ([`merge_file`]).
+//! It also applies merged guest files for the boot hook ([`merge_file`]) and is the `ProxyCommand`
+//! of the guest's `ssh` ([`connect`]), which today only refuses: SSH is not supported yet.
 //!
 //! The wire protocol is in `puddle-agent-proto`. Settings come from environment variables
 //! ([`config`]). The binary's `main` only parses the command line ([`cli`]) and starts an
@@ -23,6 +24,7 @@ pub mod bridge;
 pub mod capture;
 pub mod cli;
 pub mod config;
+pub mod connect;
 pub mod control;
 #[cfg(target_os = "linux")]
 mod ifaddrs;

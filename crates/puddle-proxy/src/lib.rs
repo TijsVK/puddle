@@ -63,6 +63,7 @@ mod pull;
 mod records;
 mod resolve;
 mod route;
+mod ssh;
 mod tap;
 mod target;
 pub mod terminate;

@@ -26,8 +26,8 @@ fn prints_version_line() {
 }
 
 #[test]
-fn bad_arguments_settings_and_reserved_subcommands_exit_2() {
-    for args in [&["--nope"][..], &["connect", "host", "22"], &[]] {
+fn bad_arguments_and_settings_exit_2() {
+    for args in [&["--nope"][..], &["connect", "host"], &[]] {
         let out = agent(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert_ne!(out.stderr, b"");

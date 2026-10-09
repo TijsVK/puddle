@@ -15,6 +15,9 @@ pub const DEFAULT_PROXY: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCAL
 pub const DEFAULT_CONTAINER_PROXY: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 1)), 3128);
 
+/// Where `puddle-boot` mounts the agent binary in the guest.
+pub const DEFAULT_AGENT: &str = "/puddle/puddle-agent";
+
 /// Home of the user sessions run as (root; `puddle-boot` writes VS Code's Machine settings
 /// there too).
 pub const DEFAULT_HOME: &str = "/root";
@@ -45,6 +48,8 @@ pub struct ProxySettings {
     pub no_proxy: Vec<NoProxyEntry>,
     /// The session user's home, for per-user tool config (Gradle, Docker CLI).
     pub home: GuestPath,
+    /// The agent binary, which `ssh` runs as its `ProxyCommand`.
+    pub agent: GuestPath,
 }
 
 impl Default for ProxySettings {
@@ -54,8 +59,17 @@ impl Default for ProxySettings {
             container_proxy: Some(DEFAULT_CONTAINER_PROXY),
             no_proxy: Vec::new(),
             home: default_home(),
+            agent: default_agent(),
         }
     }
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "invariant: DEFAULT_AGENT is a constant valid guest path (unit test)"
+)]
+fn default_agent() -> GuestPath {
+    GuestPath::new(DEFAULT_AGENT).expect("DEFAULT_AGENT is a valid guest path")
 }
 
 #[expect(

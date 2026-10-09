@@ -10,7 +10,7 @@
 //! | address | [`NetPolicy::check_address`], [`AddressVerdict`] | allow, exact-allow only (toggle on), or block naming the toggle |
 //! | settings | [`LocalAccess`], [`LocalAccessSource`] | one workspace's toggles and "wildcards reach local addresses", from `puddle-settings` |
 //! | endpoints | [`PuddleEndpoints`], [`EndpointKind`] | the registry every puddle listener joins when it binds |
-//! | message | [`block_message`] | the `403` text: what was found and which toggle would allow it |
+//! | message | [`block_message`] | the `403` text: what was found and which toggle would allow it; for SSH, the refusal and (on a Git host) the HTTPS form of the remote |
 //!
 //! The rules it applies:
 //!
@@ -34,6 +34,6 @@ mod name;
 pub use access::{LocalAccess, LocalAccessSource};
 pub use classify::{AddressClass, classify_ip};
 pub use endpoints::{EndpointKind, HostAddrs, OwnAddresses, PuddleEndpoints, Registration};
-pub use guard::{AddressVerdict, NetPolicy, block_message};
+pub use guard::{AddressVerdict, NetPolicy, block_message, git_https_remote};
 pub use name::{MAX_RAW_HOST_LEN, NameError, Target, normalise_host};
 pub use puddle_types::LocalCategory;

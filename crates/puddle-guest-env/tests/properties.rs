@@ -4,8 +4,8 @@
 
 use proptest::prelude::*;
 use puddle_guest_env::{
-    APT_CONF_GUEST, MAVEN_SETTINGS_GUEST, NoProxyEntry, ProxySettings, SUDOERS_GUEST,
-    guest_proxy_config,
+    APT_CONF_GUEST, MAVEN_SETTINGS_GUEST, NoProxyEntry, ProxySettings, SSH_CONFIG_GUEST,
+    SUDOERS_GUEST, guest_proxy_config,
 };
 
 /// Characters a generated value may hold beyond letters and digits.
@@ -86,6 +86,12 @@ proptest! {
             let inner = line.trim().trim_start_matches("<nonProxyHosts>").trim_end_matches("</nonProxyHosts>");
             prop_assert!(!inner.contains(['<', '>', '&', '"']), "{}", inner);
         }
+        // ssh: one Match and its ProxyCommand, whatever the user's NO_PROXY entries are.
+        let ssh = file(SSH_CONFIG_GUEST);
+        let active: Vec<&str> = ssh.lines().filter(|l| !l.starts_with('#')).collect();
+        prop_assert_eq!(active.len(), 2, "{}", ssh);
+        prop_assert!(active[0].starts_with("Match host \"*,!"), "{}", active[0]);
+        prop_assert!(active[1].starts_with("    ProxyCommand '"), "{}", active[1]);
         // Every user entry is in NO_PROXY once.
         let no_proxy: Vec<&str> = c.env.get("NO_PROXY").unwrap().split(',').collect();
         for e in &settings.no_proxy {

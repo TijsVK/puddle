@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The command line: `puddle-agent` runs the agent, `puddle-agent --version` prints the version.
 //! `puddle-agent merge-file ...` applies a merged guest file for the boot hook
-//! ([`crate::merge_file`]). `puddle-agent connect` is reserved for the ssh `ProxyCommand` (a
-//! `connect` stream).
+//! ([`crate::merge_file`]). `puddle-agent connect <host> <port> [<name>]` is the ssh
+//! `ProxyCommand` ([`crate::connect`]).
 
-use crate::merge_file;
+use crate::{connect, merge_file};
 
 /// What the command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,8 +15,8 @@ pub enum Command {
     Version,
     /// Apply, remove or forget a merged guest file.
     MergeFile(merge_file::Request),
-    /// A subcommand that is reserved but not built yet.
-    Reserved(&'static str),
+    /// Carry stdin and stdout to a destination through the proxy (the ssh `ProxyCommand`).
+    Connect(connect::Request),
     /// Anything else: print this usage error, exit 2.
     Usage(String),
 }
@@ -31,7 +31,9 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Command {
     match args {
         [] => Command::Run,
         [one] if matches!(one.as_ref(), "--version" | "-V") => Command::Version,
-        [first, ..] if first.as_ref() == "connect" => Command::Reserved("connect"),
+        [first, rest @ ..] if first.as_ref() == "connect" => {
+            connect::Request::parse(rest).map_or_else(Command::Usage, Command::Connect)
+        }
         [first, rest @ ..] if first.as_ref() == "merge-file" => {
             merge_file::Request::parse(rest).map_or_else(Command::Usage, Command::MergeFile)
         }
@@ -51,7 +53,22 @@ mod tests {
         assert_eq!(parse::<&str>(&[]), Command::Run);
         assert_eq!(parse(&["--version"]), Command::Version);
         assert_eq!(parse(&["-V"]), Command::Version);
-        assert_eq!(parse(&["connect", "h", "22"]), Command::Reserved("connect"));
+        assert!(matches!(
+            parse(&["connect", "h", "22"]),
+            Command::Connect(_)
+        ));
+        assert!(matches!(
+            parse(&["connect", "h", "22", "alias"]),
+            Command::Connect(_)
+        ));
+        for bad in [
+            &["connect"][..],
+            &["connect", "h"],
+            &["connect", "h", "0"],
+            &["connect", "h", "x"],
+        ] {
+            assert!(matches!(parse(bad), Command::Usage(_)), "{bad:?}");
+        }
         let Command::Usage(msg) = parse(&["--help"]) else {
             panic!("not usage");
         };

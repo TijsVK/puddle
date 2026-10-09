@@ -32,6 +32,7 @@ use crate::counted::Counted;
 use crate::destination::{AddressCheck, AddressVerdict, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
 use crate::records::{RecordResolver, SystemRecords};
+use crate::ssh;
 use crate::tap::RequestTap;
 use crate::target::Target;
 use crate::terminate::{self, TerminationSource};
@@ -512,6 +513,8 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
         EgressRequest::new(handler.workspace.clone(), target.host.clone(), target.port);
     if path.is_some() {
         request = request.with_protocol(ProtocolHint::Http);
+    } else if ssh::announced(&head) || ssh::started(reader.buffer()) {
+        request = request.with_protocol(ProtocolHint::Ssh);
     }
     let mut event = relay(proxy, reader, &request, &head, &target, path, body).await;
     event.bytes_up = counts.read();
@@ -588,7 +591,13 @@ async fn relay(
     event.resolved_ip = out.addr.map(|addr| addr.ip());
     event.upstream = out.hop;
     match path {
-        None => event.http = tunnel(reader, out.stream).await,
+        None => {
+            let end = tunnel(reader, out.stream, Some(request)).await;
+            event.http = end.http;
+            if end.ssh {
+                note_block(&mut event, BlockReason::SshUnsupported);
+            }
+        }
         Some(path) => {
             forward(
                 reader,
@@ -705,6 +714,13 @@ async fn admit_into(
 ) -> Result<Admitted, Refusal> {
     let host = &request.host;
     let port = request.port;
+    // SSH is refused whatever the destination is: before the name stage (so the reason is the
+    // protocol, not a toggle that turning on would only lead to the same refusal) and before
+    // any rule, so it never becomes a pending row or an allow.
+    if request.protocol == Some(ProtocolHint::Ssh) {
+        note_block(event, BlockReason::SshUnsupported);
+        return Err(block(request, &[BlockReason::SshUnsupported]));
+    }
     // Name stage: a literal or a name that is blocked by itself never reaches the rules, so it
     // never becomes a pending row (R-14).
     let target = puddle_netpolicy::Target::from_host(host.clone());
@@ -1041,18 +1057,36 @@ fn shown_reason(reasons: &[BlockReason]) -> BlockReason {
 
 pub(crate) use puddle_upstream::connect_first;
 
+/// What a [`tunnel`] saw.
+#[derive(Debug, Default)]
+pub(crate) struct TunnelEnd {
+    /// The tunnel's first request line, if it carried plain HTTP/1.x.
+    pub(crate) http: Option<HttpRequestLine>,
+    /// The guest started SSH: nothing of it was passed on, and the guest got the refusal.
+    pub(crate) ssh: bool,
+}
+
 /// `CONNECT`: answer `200`, pass on bytes the guest sent early, splice. On an error both ends
 /// reset: [`splice`] sets zero linger on the server socket, and the guest stream is dropped
 /// without a shutdown.
 ///
-/// Returns the tunnel's first request line if it carried plain HTTP/1.x (Node `fetch` and Yarn
+/// Reports the tunnel's first request line if it carried plain HTTP/1.x (Node `fetch` and Yarn
 /// Berry tunnel `http://` this way), for the audit. The bytes are relayed unchanged.
+///
+/// With `ssh_for` (the tunnel's request), a tunnel whose first upload bytes are an SSH
+/// identification line is ended instead: the line is not passed on, the guest gets the SSH
+/// refusal and a clean close, and the server a reset ([`ssh::Gate`]). That is how SSH to a host a
+/// rule allows is still refused, on any port.
 pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     reader: ClientReader<S>,
     mut server: TcpStream,
-) -> Option<HttpRequestLine> {
+    ssh_for: Option<&EgressRequest>,
+) -> TunnelEnd {
     let early = reader.buffer().to_vec();
-    let mut guest = RequestTap::new(reader.into_inner(), &early);
+    let mut guest = ssh::Gate::new(
+        RequestTap::new(reader.into_inner(), &early),
+        ssh_for.is_some() && early.is_empty(),
+    );
     let opened = async {
         guest
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -1062,7 +1096,10 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     if let Err(err) = opened.await {
         tracing::debug!(error = %err, "tunnel failed before the splice");
         abort(&server);
-        return guest.request_line();
+        return TunnelEnd {
+            http: guest.inner().request_line(),
+            ssh: false,
+        };
     }
     match splice(&mut server, &mut guest).await {
         Ok((up, down)) => tracing::debug!(
@@ -1070,9 +1107,28 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
             bytes_down = down,
             "tunnel closed"
         ),
-        Err(err) => tracing::debug!(error = %err, "tunnel aborted"),
+        Err(err) => {
+            if let Some(request) = ssh_for.filter(|_| guest.ssh_seen()) {
+                tracing::info!(host = %request.host, port = request.port, "ssh in a tunnel refused");
+                let message = block_message(
+                    &request.host,
+                    &request.workspace,
+                    &[BlockReason::SshUnsupported],
+                );
+                let _ = guest.write_all(&ssh::pre_banner(&message)).await;
+                let _ = guest.shutdown().await;
+                return TunnelEnd {
+                    http: None,
+                    ssh: true,
+                };
+            }
+            tracing::debug!(error = %err, "tunnel aborted");
+        }
     }
-    guest.request_line()
+    TunnelEnd {
+        http: guest.inner().request_line(),
+        ssh: false,
+    }
 }
 
 /// Plain HTTP: one request per connection, `Host` rewritten to the checked target, body framed

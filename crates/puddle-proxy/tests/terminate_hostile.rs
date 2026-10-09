@@ -69,6 +69,55 @@ async fn hostile_hg15_a_request_for_another_host_is_421_and_the_injector_never_h
 }
 
 #[tokio::test]
+async fn hostile_hg15_ssh_to_a_bound_host_on_port_22_is_refused_and_the_injector_never_hears_of_it()
+{
+    // A bound host on port 22 (or 443, announced) is SSH, not a request to decrypt: nothing is
+    // asked of the injector, nothing reaches the server, and the canary stays put.
+    let pki = Pki::new();
+    let server = FakeServer::plain(Arc::new(|_| Reply::ok("never"))).await;
+    let injector = TestInjector::always();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(injector.clone())
+        .build();
+    let mut guest = rig.guest().await;
+    for authority in ["bound.test:22", "bound.test:443"] {
+        let mut stream = guest.control.open_stream().await.unwrap();
+        stream
+            .write_all(
+                format!(
+                    "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nx-puddle-protocol: ssh\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer).await.unwrap();
+        let answer = String::from_utf8_lossy(&answer).into_owned();
+        assert!(answer.starts_with("HTTP/1.1 403"), "{authority}: {answer}");
+        assert!(
+            answer.contains("x-puddle-blocked: ssh_unsupported"),
+            "{authority}: {answer}"
+        );
+    }
+    // Not announced: the tunnel to port 22 opens (an ordinary destination) and ends at the
+    // client's identification line.
+    let (code, mut tunnel) = guest.connect_to("bound.test:22").await;
+    assert_eq!(code, 200);
+    tunnel
+        .write_all(b"SSH-2.0-OpenSSH_10.0p2\r\n")
+        .await
+        .unwrap();
+    let mut answer = Vec::new();
+    tunnel.read_to_end(&mut answer).await.unwrap();
+    assert_eq!(answer, b"puddle: SSH is not supported yet\r\n");
+    assert_eq!(injector.calls(), 0);
+    assert!(server.recorded().is_empty());
+    assert!(!captured_logs().contains(CANARY));
+}
+
+#[tokio::test]
 async fn hostile_hg15_the_connect_name_is_what_counts_not_what_the_guest_says_next() {
     // CONNECT to a host that is not bound, then TLS for the bound name: spliced, so the workspace
     // CA never gets to vouch for it and the bound upstream never sees a connection.

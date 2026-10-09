@@ -12,6 +12,10 @@
 //! modes, the env given to each exec. Until the boot hook runs in VMs, the files are
 //! written by this test; the content is exactly `guest_proxy_config`'s.
 //!
+//! The `ssh` probes run the real `puddle-agent connect` as the drop-in's `ProxyCommand`: the fixture
+//! answers an SSH client with the refusal the host proxy gives, and the probe checks that `ssh`
+//! and `git` print it.
+//!
 //! Tools that still fail are listed in [`KNOWN_GAPS`] (capture gaps in the proxy): the test fails when
 //! a tool outside the list fails, and also when a listed one starts working, so the list stays
 //! true.
@@ -59,7 +63,7 @@ const SETUP_STEPS: &[(&str, &str)] = &[
         // syncs for every package, so this step is also the guest's fsync cost on a fresh image.
         "apt install (JDK 21, maven, tools)",
         "apt-get install -y -o Dpkg::Use-Pty=0 --no-install-recommends ca-certificates \
-         curl wget git sudo unzip python3-pip openjdk-21-jdk-headless maven",
+         curl wget git openssh-client sudo unzip python3-pip openjdk-21-jdk-headless maven",
     ),
     (
         "gradle download",
@@ -100,8 +104,12 @@ net.createServer((s) => {
     s.removeAllListeners('data');
     const lines = buf.slice(0, end).split('\r\n');
     const host = (lines.find((l) => /^host:/i.test(l)) || 'host:').slice(5).trim();
-    fs.writeSync(log, lines[0] + ' host=' + host + '\n');
-    if (lines[0].startsWith('CONNECT ')) {
+    const hint = (lines.find((l) => /^x-puddle-protocol:/i.test(l)) || ':').split(':').slice(1).join(':').trim();
+    fs.writeSync(log, lines[0] + ' host=' + host + (hint ? ' protocol=' + hint : '') + '\n');
+    if (hint === 'ssh') {
+      const body = 'puddle: SSH is not supported yet\n';
+      s.end('HTTP/1.1 403 Forbidden\r\nContent-Length: ' + body.length + '\r\nConnection: close\r\n\r\n' + body);
+    } else if (lines[0].startsWith('CONNECT ')) {
       s.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
     } else {
       s.end('HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 15\r\nConnection: close\r\n\r\npuddle-fixture\n');
@@ -134,6 +142,8 @@ struct Probe {
     name: &'static str,
     hosts: &'static [&'static str],
     script: String,
+    /// Text the tool's own output must contain as well.
+    prints: Option<&'static str>,
 }
 
 fn probe(name: &'static str, hosts: &'static [&'static str], script: &str) -> Probe {
@@ -141,6 +151,20 @@ fn probe(name: &'static str, hosts: &'static [&'static str], script: &str) -> Pr
         name,
         hosts,
         script: script.to_owned(),
+        prints: None,
+    }
+}
+
+/// A probe that also passes only when the tool prints `prints`.
+fn probe_printing(
+    name: &'static str,
+    hosts: &'static [&'static str],
+    script: &str,
+    prints: &'static str,
+) -> Probe {
+    Probe {
+        prints: Some(prints),
+        ..probe(name, hosts, script)
     }
 }
 
@@ -359,6 +383,20 @@ fn probes() -> Vec<Probe> {
             &["javahc-tls.fixture.test"],
             "java /tmp/Fetch.java https://javahc-tls.fixture.test/a client",
         ),
+        // SSH is not supported yet: `ssh` runs the agent as its ProxyCommand (the drop-in), which
+        // announces the SSH banner to the proxy and prints the refusal it gets back.
+        probe_printing(
+            "ssh refused with a message",
+            &["ssh.fixture.test:22 HTTP/1.1 host=ssh.fixture.test:22 protocol=ssh"],
+            "ssh -T -o StrictHostKeyChecking=no -o BatchMode=yes git@ssh.fixture.test true",
+            "puddle: SSH is not supported yet",
+        ),
+        probe_printing(
+            "git over ssh refused with a message",
+            &["ssh-git.fixture.test:22 HTTP/1.1 host=ssh-git.fixture.test:22 protocol=ssh"],
+            "git ls-remote git@ssh-git.fixture.test:owner/repo.git",
+            "puddle: SSH is not supported yet",
+        ),
         probe(
             "sudo keeps the vars (curl)",
             &["sudo.fixture.test"],
@@ -516,6 +554,15 @@ async fn tools_reach_the_fixture(env: &VmEnv) -> Result<Vec<Outcome>, HarnessErr
         for f in &config.files {
             write_file(&sb, f.path().as_str(), f.mode(), f.contents()).await;
         }
+        // The agent binary the ssh drop-in runs as its ProxyCommand (the static build, as the boot
+        // hook's VM tests use).
+        let agent_bin = std::env::var_os("PUDDLE_AGENT_BIN");
+        assert!(
+            agent_bin.is_some(),
+            "PUDDLE_AGENT_BIN: the static puddle-agent (ci/build-agent.sh)"
+        );
+        let agent = std::fs::read(agent_bin.unwrap()).unwrap();
+        write_file(&sb, "/puddle/puddle-agent", 0o755, &agent).await;
         write_file(&sb, "/tmp/fixture.js", 0o644, FIXTURE.as_bytes()).await;
         write_file(&sb, "/tmp/Fetch.java", 0o644, JAVA_FETCH.as_bytes()).await;
         let up = within(
@@ -538,7 +585,8 @@ async fn tools_reach_the_fixture(env: &VmEnv) -> Result<Vec<Outcome>, HarnessErr
             let (code, tail) = run(&sb, &config, &p.script).await;
             let secs = started.elapsed().as_secs_f32();
             let seen: Vec<String> = fixture_log(&sb).await.split_off(before);
-            let reached = seen.iter().any(|l| p.hosts.iter().any(|h| l.contains(h)));
+            let reached = seen.iter().any(|l| p.hosts.iter().any(|h| l.contains(h)))
+                && p.prints.is_none_or(|text| tail.contains(text));
             outcomes.push(Outcome { name: p.name, reached, code, seen, tail, secs });
         }
 

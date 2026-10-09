@@ -21,6 +21,7 @@
 //! | apt | `/etc/apt/apt.conf.d/99puddle-proxy` |
 //! | sudo | `/etc/sudoers.d/puddle-proxy`: `env_keep` for every variable above |
 //! | containers (Docker CLI) | `~/.docker/config.json` `proxies.default`, at the bridge gateway, merged |
+//! | `ssh` (and `git`, `scp`, `rsync` over it) | `/etc/ssh/ssh_config.d/00-puddle.conf`: the agent as `ProxyCommand`, which refuses SSH with a message (not supported yet); loopback and the container bridge stay direct |
 //!
 //! Every file is one puddle owns outright, except the Docker CLI config, where puddle owns only
 //! `proxies.default` and the boot hook merges it in (`docker login`'s `auths` survive a restart).
@@ -35,9 +36,10 @@ mod settings;
 
 pub use error::ConfigError;
 pub use render::{
-    APT_CONF_GUEST, GRADLE_INIT_RELATIVE, GuestProxyConfig, MAVEN_SETTINGS_GUEST, SUDOERS_GUEST,
-    guest_proxy_config,
+    APT_CONF_GUEST, GRADLE_INIT_RELATIVE, GuestProxyConfig, MAVEN_SETTINGS_GUEST, SSH_CONFIG_GUEST,
+    SUDOERS_GUEST, guest_proxy_config,
 };
 pub use settings::{
-    DEFAULT_CONTAINER_PROXY, DEFAULT_HOME, DEFAULT_PROXY, NoProxyEntry, ProxySettings,
+    DEFAULT_AGENT, DEFAULT_CONTAINER_PROXY, DEFAULT_HOME, DEFAULT_PROXY, NoProxyEntry,
+    ProxySettings,
 };
