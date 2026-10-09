@@ -3,7 +3,8 @@
 # runs nightly (skipped when this workflow already has a green run on develop's head), on pull
 # requests to main, and by hand. Linux CI already cross-checks clippy for the msvc target.
 # Four jobs run side by side (clippy, tests, UI, release build), so the run takes as long as the
-# slowest one instead of the sum. Each restores its own cache entry; only develop saves them.
+# slowest one instead of the sum. Two cache entries (debug builds, release build); only develop saves
+# them. Clippy has none: its check builds were no faster with one.
 # The nightly also reruns each failed test once and lists the ones that pass only on retry
 # (ci/flaky-report.py); it never turns the run red.
 name: windows
@@ -52,11 +53,6 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      # Only develop saves the cache (10 GB cap for the whole repo); other refs restore it.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: steps.changed.outputs.run == 'true'
-        with:
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - name: clippy
         if: steps.changed.outputs.run == 'true'
         shell: bash
@@ -84,10 +80,12 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      # Only develop saves the cache (10 GB cap for the whole repo); other refs restore it.
+      # One entry for the debug builds (this job saves it, the UI job restores it); only develop
+      # saves, and cache-gc.yml deletes the superseded one (10 GB cap for the whole repo).
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.changed.outputs.run == 'true'
         with:
+          shared-key: windows
           save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         if: steps.changed.outputs.run == 'true'
@@ -148,11 +146,11 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      # Only develop saves the cache (10 GB cap for the whole repo); other refs restore it.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.changed.outputs.run == 'true'
         with:
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
+          shared-key: windows # saved by the tests job
+          save-if: false
       - name: Node for the UI
         if: steps.changed.outputs.run == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -213,10 +211,10 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      # Only develop saves the cache (10 GB cap for the whole repo); other refs restore it.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.changed.outputs.run == 'true'
         with:
+          shared-key: windows-release
           save-if: ${{ github.ref == 'refs/heads/develop' }}
       # The binaries embed ui/build, so it is built first, as the release build always saw it.
       - name: Node for the UI

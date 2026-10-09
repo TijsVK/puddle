@@ -43,19 +43,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the diff-coverage gate needs the base commit
-      - name: Free disk space (preinstalled SDKs this job doesn't use)
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup
-          df -h /
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
-      # Only develop saves the cache (the repo's 10 GB cap holds one entry per workflow, so the
-      # cargo-xwin cache below isn't evicted); every other ref restores develop's.
+      # The 4 GB entry is saved only by a develop run that changed Cargo.lock (or a dispatch), not by
+      # every manifest edit: the repo's 10 GB cap holds one entry per workflow, and a restore of a
+      # slightly older entry only rebuilds what changed. cache-gc.yml deletes the superseded one.
+      - name: Does this run refresh the dependency cache?
+        id: cache-save
+        run: |
+          save=false
+          if [ "$GITHUB_REF" = refs/heads/develop ]; then
+            if [ "$GITHUB_EVENT_NAME" != push ] || ! git diff --quiet "${{ github.event.before }}" HEAD -- Cargo.lock 2>/dev/null; then
+              save=true
+            fi
+          fi
+          echo "save=$save" >> "$GITHUB_OUTPUT"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: linux # the UI job restores this entry
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
+          save-if: ${{ steps.cache-save.outputs.save == 'true' }}
       - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
           tool: cargo-nextest@0.9.146,cargo-llvm-cov@0.9.1,cargo-deny@0.20.2,typos@1.50.3,cargo-xwin@0.23.1,shellcheck@0.11.0,cargo-about@0.9.2
@@ -65,10 +71,13 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: crates/puddle-api/openapi/package-lock.json
-      - name: WebKitGTK for the desktop shell (puddle-app links it on Linux)
+      - name: System packages (WebKitGTK for the desktop shell, Squid for the upstream-chaining e2e)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev squid
+          # The package starts its own daemon; the test runs its own Squid on a free port.
+          sudo systemctl stop squid || true
+          test -x /usr/sbin/squid
       - name: llvm-rc for the msvc cross-check (tauri-winres compiles the shell's Windows resources)
         run: |
           rc=$(ls /usr/lib/llvm-*/bin/llvm-rc 2>/dev/null | sort -V | tail -n 1 || true)
@@ -102,6 +111,12 @@ jobs:
         run: |
           ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
           PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
+      - name: hooks (pre-push hook and runtime fetch tests)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh hooks
+      - name: git-env (gates run with the variables git sets for a hook)
+        if: ${{ !cancelled() }}
+        run: scripts/check.sh git-env
       - name: clippy (linux)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy
@@ -120,14 +135,6 @@ jobs:
       - name: doc tests and rustdoc
         if: ${{ !cancelled() }}
         run: scripts/check.sh doc
-      - name: Squid for the upstream-chaining e2e (Basic-auth company proxy)
-        # Like the gates around it, runs after an earlier red step: skipped, the e2e fails on a missing binary.
-        if: ${{ !cancelled() }}
-        run: |
-          sudo apt-get install -y --no-install-recommends squid
-          # The package starts its own daemon; the test runs its own Squid on a free port.
-          sudo systemctl stop squid || true
-          test -x /usr/sbin/squid
       - name: tests with coverage gate
         if: ${{ !cancelled() }}
         env:
@@ -175,11 +182,21 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      - name: Playwright browsers (Chromium and WebKit, with their system libraries)
+      - name: Playwright browsers cache
+        id: browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: Playwright browsers (Chromium and WebKit; their system libraries every time)
         run: |
           cd ui
           npm ci --ignore-scripts --no-audit --no-fund
-          npx playwright install --with-deps chromium webkit
+          if [ "${{ steps.browsers.outputs.cache-hit }}" = true ]; then
+            npx playwright install-deps chromium webkit
+          else
+            npx playwright install --with-deps chromium webkit
+          fi
       - name: UI (format, lint, types, unit and component tests with coverage, build)
         run: scripts/check.sh ui
       - name: UI licences (npm packages in the bundle)

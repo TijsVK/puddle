@@ -6,6 +6,12 @@ name: cache-gc
 on:
   schedule:
     - cron: "45 3 * * *"
+  # Right after a develop run that may have saved a new entry, so the superseded one (1-4 GB) does
+  # not wait for the nightly run.
+  workflow_run:
+    workflows: [ci, windows, vm-windows, vm-linux]
+    types: [completed]
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
