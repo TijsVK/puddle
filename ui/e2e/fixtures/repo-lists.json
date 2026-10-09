@@ -1,0 +1,333 @@
+{
+  "name": "repo-lists",
+  "workspaces": [
+    {
+      "name": "web-shop",
+      "repo_url": "https://github.com/acme/web-shop.git",
+      "status": "stopped",
+      "ago_ms": 86400000
+    }
+  ],
+  "identities": [
+    {
+      "label": "Work",
+      "author": {
+        "name": "Tijs Work",
+        "email": "tijs@acme.example"
+      },
+      "credentials": [
+        {
+          "host": "github.com",
+          "source": {
+            "kind": "gh",
+            "host": "github.com",
+            "account": "tijs-work"
+          },
+          "covers": {
+            "owners": ["acme", "acme-labs"],
+            "rest_of_host": false
+          }
+        },
+        {
+          "host": "dev.azure.com",
+          "source": {
+            "kind": "git_credential",
+            "host": "dev.azure.com",
+            "path": "contoso",
+            "username": null
+          },
+          "covers": {
+            "owners": ["contoso"],
+            "rest_of_host": false
+          }
+        }
+      ]
+    },
+    {
+      "label": "Personal",
+      "author": {
+        "name": "Tijs",
+        "email": "tijs@users.noreply.github.example"
+      },
+      "credentials": [
+        {
+          "host": "github.com",
+          "source": {
+            "kind": "gh",
+            "host": "github.com",
+            "account": "tijs-demo"
+          },
+          "covers": {
+            "owners": [],
+            "rest_of_host": true
+          }
+        }
+      ]
+    },
+    {
+      "label": "Contractor",
+      "author": {
+        "name": "Tijs",
+        "email": "tijs@northwind.example"
+      },
+      "credentials": [
+        {
+          "host": "github.com",
+          "source": {
+            "kind": "stored",
+            "id": "northwind-token",
+            "host": "github.com",
+            "org": null
+          },
+          "covers": {
+            "owners": ["northwind"],
+            "rest_of_host": false
+          }
+        }
+      ]
+    },
+    {
+      "label": "Fresh",
+      "author": {
+        "name": "Tijs",
+        "email": "tijs@fresh.example"
+      },
+      "credentials": [
+        {
+          "host": "github.com",
+          "source": {
+            "kind": "gh",
+            "host": "github.com",
+            "account": "tijs-fresh"
+          },
+          "covers": {
+            "owners": ["fresh-org"],
+            "rest_of_host": false
+          }
+        }
+      ]
+    },
+    {
+      "label": "Busy",
+      "author": {
+        "name": "Tijs",
+        "email": "tijs@busy.example"
+      },
+      "credentials": [
+        {
+          "host": "github.com",
+          "source": {
+            "kind": "gh",
+            "host": "github.com",
+            "account": "tijs-busy"
+          },
+          "covers": {
+            "owners": ["busy-org"],
+            "rest_of_host": false
+          }
+        }
+      ]
+    }
+  ],
+  "repo_lists": [
+    {
+      "identity": "Work",
+      "credential": 0,
+      "host": "github.com",
+      "refreshed_ago_ms": 180000,
+      "notes": [
+        {
+          "code": "organisations_may_be_hidden",
+          "message": "Organisations that restrict third-party apps, or that need single sign-on, can be missing from this list until you approve the sign-in for them on github.com (Settings, Applications)."
+        }
+      ],
+      "repos": [
+        {
+          "owner": "acme",
+          "name": "web-shop",
+          "role": "admin"
+        },
+        {
+          "owner": "acme",
+          "name": "billing",
+          "role": "write"
+        },
+        {
+          "owner": "acme",
+          "name": "design-tokens",
+          "visibility": "public",
+          "role": "read"
+        },
+        {
+          "owner": "acme",
+          "name": "legacy-portal",
+          "role": "read",
+          "archived": true
+        },
+        {
+          "owner": "acme",
+          "name": "web-shop-fork",
+          "role": "admin",
+          "fork": true
+        },
+        {
+          "owner": "acme-labs",
+          "name": "experiments",
+          "role": "write"
+        }
+      ]
+    },
+    {
+      "identity": "Work",
+      "credential": 1,
+      "host": "dev.azure.com",
+      "organisation": "contoso",
+      "refreshed_ago_ms": 240000,
+      "repos": [
+        {
+          "owner": "contoso",
+          "name": "api",
+          "project": "Platform"
+        },
+        {
+          "owner": "contoso",
+          "name": "web",
+          "project": "Platform"
+        },
+        {
+          "owner": "contoso",
+          "name": "scanner",
+          "project": "Shop Floor"
+        }
+      ]
+    },
+    {
+      "identity": "Personal",
+      "credential": 0,
+      "host": "github.com",
+      "refreshed_ago_ms": 180000,
+      "repos": [
+        {
+          "owner": "tijs-demo",
+          "name": "docs-site",
+          "visibility": "public",
+          "role": "admin"
+        },
+        {
+          "owner": "tijs-demo",
+          "name": "dotfiles",
+          "role": "admin"
+        },
+        {
+          "owner": "acme",
+          "name": "web-shop",
+          "role": "read"
+        }
+      ]
+    },
+    {
+      "identity": "Contractor",
+      "credential": 0,
+      "host": "github.com",
+      "refreshed_ago_ms": 60000,
+      "notes": [
+        {
+          "code": "fine_grained_token",
+          "message": "This token lists only the repositories it was granted, in one account. Repositories you can reach some other way are not shown; to list more, add a token or sign-in that covers them."
+        }
+      ],
+      "repos": [
+        {
+          "owner": "northwind",
+          "name": "ledger",
+          "role": "write"
+        }
+      ]
+    },
+    {
+      "identity": "Fresh",
+      "credential": 0,
+      "host": "github.com",
+      "refreshed_ago_ms": 30000,
+      "repos": []
+    },
+    {
+      "identity": "Busy",
+      "credential": 0,
+      "host": "github.com",
+      "state": "stale",
+      "refreshed_ago_ms": 900000,
+      "retry_in_ms": 600000,
+      "problem": {
+        "code": "rate_limited",
+        "message": "GitHub says this account asked too often. puddle asks again in 10 minutes; the list below is from 15 minutes ago."
+      },
+      "notes": [
+        {
+          "code": "host_limit_reached",
+          "message": "This hour's request budget on github.com is used up."
+        }
+      ],
+      "repos": [
+        {
+          "owner": "busy-org",
+          "name": "queue",
+          "role": "write"
+        },
+        {
+          "owner": "busy-org",
+          "name": "scheduler",
+          "role": "read"
+        }
+      ]
+    }
+  ],
+  "scripts": {
+    "hold_repos": [
+      {
+        "do": "hold_repos"
+      }
+    ],
+    "release_repos": [
+      {
+        "do": "release_repos"
+      }
+    ],
+    "personal_gains_a_repository": [
+      {
+        "do": "repo_lists",
+        "lists": [
+          {
+            "identity": "Personal",
+            "credential": 0,
+            "host": "github.com",
+            "refreshed_ago_ms": 0,
+            "repos": [
+              {
+                "owner": "tijs-demo",
+                "name": "docs-site",
+                "visibility": "public",
+                "role": "admin"
+              },
+              {
+                "owner": "tijs-demo",
+                "name": "dotfiles",
+                "role": "admin"
+              },
+              {
+                "owner": "tijs-demo",
+                "name": "new-idea",
+                "role": "admin"
+              },
+              {
+                "owner": "acme",
+                "name": "web-shop",
+                "role": "read"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

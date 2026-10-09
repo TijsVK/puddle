@@ -1,10 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { workspace } from "#lib/testing/fake-workspaces.ts";
+import {
+  credential,
+  ghSource,
+  identity,
+} from "#lib/testing/fake-identities.ts";
+import { FakeRepos, repoSource, repoView } from "#lib/testing/fake-repos.ts";
+import { toasts } from "#lib/stores/toasts.svelte.ts";
 import type { ActionResult } from "#lib/stores/workspaces.svelte.ts";
 import type { Workspace } from "#lib/workspaces/model.ts";
 import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
+
+const h = vi.hoisted(() => ({ repos: undefined as unknown, use: vi.fn() }));
+
+vi.mock("#lib/identities/attach.ts", () => ({ useIdentities: h.use }));
+vi.mock("#lib/stores/repos.svelte.ts", async (original) => {
+  const mod = await original<typeof import("#lib/stores/repos.svelte.ts")>();
+  return {
+    ...mod,
+    RepoLists: class extends mod.RepoLists {
+      constructor() {
+        super({ api: h.repos as never });
+      }
+    },
+  };
+});
 
 afterEach(cleanup);
 
@@ -171,5 +193,184 @@ describe("CreateWorkspaceDialog", () => {
     await type("Name", "half-done");
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
+describe("CreateWorkspaceDialog identities and repositories", () => {
+  const work = identity(1, {
+    label: "Work",
+    credentials: [
+      credential({
+        source: ghSource("tijs-work"),
+        owners: ["acme"],
+        rest: false,
+      }),
+    ],
+  });
+  const personal = identity(2, {
+    label: "Personal",
+    is_default: false,
+    credentials: [credential({ source: ghSource("tijs-demo"), rest: true })],
+  });
+  const ensureLoaded = vi.fn(async () => {});
+
+  beforeEach(() => {
+    const repos = new FakeRepos();
+    repos.repos = [repoView("acme", "web", { identities: [2, 1] })];
+    repos.sources = [repoSource({ repo_count: 1 })];
+    h.repos = repos;
+    h.use.mockReset();
+    h.use.mockResolvedValue({ ok: true });
+    ensureLoaded.mockClear();
+    for (const t of [...toasts.items]) toasts.dismiss(t.id);
+  });
+
+  function open(
+    prefill: { url: string; identity: number | null } | null = null,
+  ) {
+    const create = vi.fn(async (_body: unknown) => ({
+      ok: true as const,
+      value: workspace("web", { busy: "creating", status: "created" }),
+    }));
+    const onCreated = vi.fn();
+    render(CreateWorkspaceDialog, {
+      props: {
+        open: true,
+        store: { create },
+        identities: { identities: [work, personal], ensureLoaded },
+        prefill,
+        onCreated,
+      },
+    } as never);
+    return { create, onCreated };
+  }
+
+  const box = (name: RegExp) => screen.getByRole("checkbox", { name });
+
+  it("reads the identities when it opens", async () => {
+    open();
+    await screen.findByRole("dialog");
+    expect(ensureLoaded).toHaveBeenCalled();
+  });
+
+  it("offers the identities that cover a typed address and ticks the one that covers its owner", async () => {
+    open();
+    await screen.findByRole("dialog");
+    expect(screen.queryByRole("group", { name: "Git identities" })).toBeNull();
+    await type("Git repository (HTTPS)", "https://github.com/acme/web");
+    expect(screen.getByRole("group", { name: "Git identities" })).toBeVisible();
+    expect(box(/Work/)).toBeChecked();
+    expect(box(/Personal/)).not.toBeChecked();
+    await type("Git repository (HTTPS)", "https://github.com/someone/else");
+    expect(screen.queryByRole("checkbox", { name: /Work/ })).toBeNull();
+    expect(box(/Personal/)).toBeChecked();
+  });
+
+  it("offers nothing for an address no identity covers", async () => {
+    open();
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://gitlab.com/acme/web");
+    expect(screen.queryByRole("group", { name: "Git identities" })).toBeNull();
+  });
+
+  it('fills the repository from "Create a workspace for this" and ticks the identity that listed it', async () => {
+    open({ url: "https://github.com/acme/web", identity: 2 });
+    await screen.findByRole("dialog");
+    expect(field("Git repository (HTTPS)").value).toBe(
+      "https://github.com/acme/web",
+    );
+    expect(field("Name").value).toBe("web");
+    expect(box(/Personal.*listed this repository/)).toBeChecked();
+    expect(box(/Work/)).not.toBeChecked();
+  });
+
+  it("gives the new workspace the ticked identities, the one that listed it first", async () => {
+    const { create, onCreated } = open({
+      url: "https://github.com/acme/web",
+      identity: 2,
+    });
+    await screen.findByRole("dialog");
+    await fireEvent.click(box(/Work/));
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(h.use).toHaveBeenCalled());
+    expect(create).toHaveBeenCalled();
+    expect(onCreated).toHaveBeenCalled();
+    expect(h.use).toHaveBeenCalledWith("web", [2, 1], expect.any(Function));
+    expect(h.use.mock.calls[0]?.[2](2)).toBe("Personal");
+    expect(h.use.mock.calls[0]?.[2](9)).toBe("Identity 9");
+  });
+
+  it("can be told to use no identity, and unticking again restores the choice", async () => {
+    open({ url: "https://github.com/acme/web", identity: 1 });
+    await screen.findByRole("dialog");
+    await fireEvent.click(box(/Work/));
+    expect(box(/Work/)).not.toBeChecked();
+    await fireEvent.click(box(/Work/));
+    expect(box(/Work/)).toBeChecked();
+    await fireEvent.click(box(/Work/));
+    await fireEvent.click(submit());
+    await vi.waitFor(() =>
+      expect(h.use).toHaveBeenCalledWith("web", [], expect.any(Function)),
+    );
+  });
+
+  it("says when the identities could not be set, and that the workspace was made", async () => {
+    h.use.mockResolvedValue({
+      ok: false,
+      message: "Work and Personal both cover x.",
+    });
+    open({ url: "https://github.com/acme/web", identity: 1 });
+    await screen.findByRole("dialog");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(toasts.items.length).toBe(1));
+    expect(toasts.items[0]?.message).toContain("The workspace was made");
+    expect(toasts.items[0]?.message).toContain(
+      "Work and Personal both cover x.",
+    );
+    expect(toasts.items[0]?.message).toContain("Git tab");
+  });
+
+  it("touches no identity when none covers the address", async () => {
+    open();
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://gitlab.com/acme/web");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(h.use).not.toHaveBeenCalled();
+  });
+
+  it("takes the repository and identity of a pick from the list", async () => {
+    open();
+    await screen.findByRole("dialog");
+    await fireEvent.click(screen.getByText("Choose from your repositories"));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /acme\/web/ }),
+    );
+    expect(field("Git repository (HTTPS)").value).toBe(
+      "https://github.com/acme/web",
+    );
+    expect(field("Name")).toHaveFocus();
+    // The list names Personal first, so it listed the repository first.
+    expect(box(/Personal.*listed this repository/)).toBeChecked();
+  });
+
+  it("forgets the identity that listed it when the address is typed over", async () => {
+    open({ url: "https://github.com/acme/web", identity: 2 });
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/api");
+    expect(box(/Work/)).toBeChecked();
+    expect(screen.queryByText(/listed this repository/)).toBeNull();
+  });
+
+  it("warns about an Azure DevOps project with a space in the address", async () => {
+    open();
+    await screen.findByRole("dialog");
+    await type(
+      "Git repository (HTTPS)",
+      "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner",
+    );
+    expect(screen.getByTestId("table-cannot-hold")).toHaveTextContent(
+      "Only push to listed repos",
+    );
   });
 });

@@ -6023,6 +6023,7 @@ dependencies = [
  "puddle-ipc",
  "puddle-netpolicy",
  "puddle-proxy",
+ "puddle-repos",
  "puddle-secrets",
  "puddle-settings",
  "puddle-store",

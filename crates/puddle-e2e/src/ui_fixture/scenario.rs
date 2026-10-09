@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use puddle_api::wire::{
     CredentialSource, DoctorReport, FoundAccount, FoundVia, IdentityRequest, NetworkHealth,
-    SignInStarted,
+    RepoListState, RepoNoteCode, RepoProblemCode, RepoRole, RepoVisibility, SignInStarted,
 };
 use puddle_types::Event;
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,9 @@ pub struct Scenario {
     /// a sign-in shows.
     #[serde(default)]
     pub credentials: CredentialsSeed,
+    /// The repository lists the fake Git hosts answer with, one per credential of an identity.
+    #[serde(default)]
+    pub repo_lists: Vec<RepoListSeed>,
     /// How long the fake workspace service pauses between the steps of an operation (create,
     /// start, ...), in ms. Zero (the default) runs them back to back; tests that need to look
     /// at the busy state use the `hold_workspaces` step instead.
@@ -205,6 +208,104 @@ pub struct CredentialsSeed {
     /// What a sign-in shows; a code and address when left out.
     #[serde(default)]
     pub sign_in: Option<SignInStarted>,
+}
+
+const fn ok_state() -> RepoListState {
+    RepoListState::Ok
+}
+
+const fn read_role() -> RepoRole {
+    RepoRole::Read
+}
+
+const fn private_visibility() -> RepoVisibility {
+    RepoVisibility::Private
+}
+
+/// One credential's list of repositories (for an Azure DevOps credential, one organisation's),
+/// as the host reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoListSeed {
+    /// The label of the identity that holds the credential.
+    pub identity: String,
+    /// The credential's place in that identity's list (from 0).
+    #[serde(default)]
+    pub credential: usize,
+    /// The credential's host.
+    pub host: String,
+    /// The Azure DevOps organisation; left out elsewhere.
+    #[serde(default)]
+    pub organisation: Option<String>,
+    /// How current the list is; `ok` when left out.
+    #[serde(default = "ok_state")]
+    pub state: RepoListState,
+    /// Read this long before now (ms); never read when left out.
+    #[serde(default)]
+    pub refreshed_ago_ms: Option<u64>,
+    /// The host lets puddle ask again this long from now (ms).
+    #[serde(default)]
+    pub retry_in_ms: Option<u64>,
+    /// Why the newest read is missing or failed.
+    #[serde(default)]
+    pub problem: Option<RepoProblemSeed>,
+    /// What the list leaves out.
+    #[serde(default)]
+    pub notes: Vec<RepoNoteSeed>,
+    /// The repositories.
+    #[serde(default)]
+    pub repos: Vec<RepoItemSeed>,
+}
+
+/// Why a list could not be read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoProblemSeed {
+    /// The class.
+    pub code: RepoProblemCode,
+    /// What happened and the way out.
+    pub message: String,
+    /// Whether signing in again is the way out.
+    #[serde(default)]
+    pub needs_sign_in: bool,
+}
+
+/// What a list leaves out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoNoteSeed {
+    /// The class.
+    pub code: RepoNoteCode,
+    /// The note.
+    pub message: String,
+}
+
+/// One repository in a list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoItemSeed {
+    /// The user or organisation that owns it; the organisation on Azure DevOps.
+    pub owner: String,
+    /// The Azure DevOps project; left out elsewhere.
+    #[serde(default)]
+    pub project: Option<String>,
+    /// Its own name.
+    pub name: String,
+    /// The address to clone; built from the host, owner and name when left out.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Who can see it; private when left out.
+    #[serde(default = "private_visibility")]
+    pub visibility: RepoVisibility,
+    /// What the account can do in it; read when left out.
+    #[serde(default = "read_role")]
+    pub role: RepoRole,
+    /// Archived.
+    #[serde(default)]
+    pub archived: bool,
+    /// A fork.
+    #[serde(default)]
+    pub fork: bool,
 }
 
 /// A workspace's state at start.
@@ -418,6 +519,15 @@ pub enum Step {
         /// The accounts.
         accounts: Vec<FoundAccount>,
     },
+    /// Replaces the repository lists the fake Git hosts answer with.
+    RepoLists {
+        /// The lists.
+        lists: Vec<RepoListSeed>,
+    },
+    /// Holds the answers of the repository lists, so a slow list stays slow.
+    HoldRepos,
+    /// Lets held repository list answers go.
+    ReleaseRepos,
     /// Replaces what the system check reports from now on.
     Doctor(Box<DoctorReport>),
     /// Creates a rule.

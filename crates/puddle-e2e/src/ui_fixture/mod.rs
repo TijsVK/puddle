@@ -25,9 +25,9 @@ use std::time::Duration;
 use puddle_api::wire::{FoundAccount, FoundVia};
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DoctorService, EventHub,
-    FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakeRepos, FakeWorkspaces,
-    Launcher, Listing, MemorySettings, NetworkHealthService, Operation, RepoFindings, RepoService,
-    RepoUrl, RunningApi, Services, SettingsRepo, Unsaved, WorkspaceRecord,
+    FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakeWorkspaces, Launcher,
+    Listing, MemorySettings, NetworkHealthService, Operation, RepoFindings, RepoService, RepoUrl,
+    RunningApi, Services, SettingsRepo, Unsaved, WorkspaceRecord,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -46,16 +46,17 @@ use tokio::sync::Mutex;
 
 pub mod cli;
 pub mod control;
+mod repos;
 pub mod scenario;
 
 pub use scenario::{
-    ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, GitRepoSeed, GitSeed, RepoSeed,
-    RequestSeed, RuleSeed, Scenario, SettingsSeed, StatusSeed, Step, UnsavedSeed,
-    WorkspaceOperationSeed, WorkspaceSeed,
+    ConnectionSeed, CredentialsSeed, DecisionSeed, EffectSeed, GitRepoSeed, GitSeed, RepoItemSeed,
+    RepoListSeed, RepoNoteSeed, RepoProblemSeed, RepoSeed, RequestSeed, RuleSeed, Scenario,
+    SettingsSeed, StatusSeed, Step, UnsavedSeed, WorkspaceOperationSeed, WorkspaceSeed,
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 8] = [
+const BUILT_IN: [(&str, &str); 9] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -83,6 +84,10 @@ const BUILT_IN: [(&str, &str); 8] = [
     (
         "git-identities",
         include_str!("../../../../ui/e2e/fixtures/git-identities.json"),
+    ),
+    (
+        "repo-lists",
+        include_str!("../../../../ui/e2e/fixtures/repo-lists.json"),
     ),
     (
         "first-run",
@@ -146,7 +151,7 @@ struct State {
     /// Where the values of environment secrets are kept: in memory, so the screens can set one and
     /// the tests can see that it never comes back.
     secrets: Arc<puddle_secrets::MemoryStore>,
-    repos: Arc<FakeRepos>,
+    repos: Arc<repos::HeldRepos>,
     doctor: Arc<FakeDoctor>,
     api: Option<RunningApi>,
 }
@@ -202,7 +207,7 @@ impl Fixture {
         );
         let network = Arc::new(FakeNetworkHealth::new(clock.clone() as Arc<dyn Clock>));
         let credentials = Arc::new(FakeCredentials::new());
-        let repos = Arc::new(FakeRepos::new());
+        let repos = Arc::new(repos::HeldRepos::new());
         let doctor = Arc::new(FakeDoctor::new());
         let state = State {
             store,
@@ -485,6 +490,8 @@ impl State {
             self.workspace_git(workspace, &identities)?;
         }
         self.credentials_seed(&scenario.credentials)?;
+        self.repos
+            .set_lists(repos::lists(&scenario.repo_lists, &identities, start)?);
         if let Some(global) = &scenario.settings.global {
             self.settings
                 .save_global(global.clone())
@@ -508,6 +515,7 @@ impl State {
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines, reason = "one arm per step")]
     fn apply(&self, step: &Step) -> Result<(), String> {
         let now = self.clock.now_ms();
         match step {
@@ -590,6 +598,12 @@ impl State {
             Step::CredentialsFound { accounts } => {
                 self.credentials.set_found(found(accounts, &[])?);
             }
+            Step::RepoLists { lists } => {
+                let identities = self.identity_ids()?;
+                self.repos.set_lists(repos::lists(lists, &identities, now)?);
+            }
+            Step::HoldRepos => self.repos.hold(),
+            Step::ReleaseRepos => self.repos.release(),
             Step::Doctor(report) => self.doctor.set((**report).clone()),
             Step::Rule(rule) => self.add_rule(rule, now)?,
             Step::Connection(connection) => self.connection(connection, now)?,
@@ -678,6 +692,17 @@ impl State {
             },
         );
         Ok(())
+    }
+
+    /// The labels of the identities that exist, with their ids.
+    fn identity_ids(&self) -> Result<Vec<(String, IdentityId)>, String> {
+        Ok(self
+            .store
+            .identities()
+            .map_err(|err| err.to_string())?
+            .into_iter()
+            .map(|identity| (identity.label.clone(), identity.id))
+            .collect())
     }
 
     /// Makes the scenario's identities, in order; the labels with their ids.

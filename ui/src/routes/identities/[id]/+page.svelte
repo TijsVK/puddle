@@ -4,6 +4,8 @@
   import { page } from "$app/state";
   import { onMount, tick } from "svelte";
   import CheckChip from "#lib/components/CheckChip.svelte";
+  import CreateWorkspaceDialog from "#lib/components/CreateWorkspaceDialog.svelte";
+  import RepoBrowser from "#lib/components/RepoBrowser.svelte";
   import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
   import IdentityDialog from "#lib/components/IdentityDialog.svelte";
   import SignInDialog from "#lib/components/SignInDialog.svelte";
@@ -19,6 +21,8 @@
     identities as store,
     type SignInStart,
   } from "#lib/stores/identities.svelte.ts";
+  import type { RepoView } from "#lib/repos/model.ts";
+  import { RepoLists } from "#lib/stores/repos.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import "#lib/theme/controls.css";
 
@@ -32,6 +36,9 @@
   let signingIn = $state<Credential | null>(null);
   let started = $state<SignInStart | null>(null);
   let startError = $state<string | null>(null);
+  const repos = new RepoLists();
+  let createOpen = $state(false);
+  let createFor = $state<{ url: string; identity: number | null } | null>(null);
 
   // An identity that was here and is gone (deleted here or elsewhere) takes you back to the list.
   let seen = false;
@@ -55,6 +62,18 @@
     const result = await store.signIn(credential.source);
     if (result.ok) started = result.value;
     else startError = result.message;
+  }
+
+  // "Create a workspace for this" opens the create form on this page with the repository filled in.
+  function createFrom(repo: RepoView) {
+    createFor = { url: repo.url, identity: identity?.id ?? null };
+    createOpen = true;
+  }
+
+  // The identity page's Sign in, for the credential a list says is signed out.
+  function signInAt(index: number) {
+    const credential = identity?.credentials[index];
+    if (credential) void signIn(credential);
   }
 
   async function makeDefault() {
@@ -174,11 +193,18 @@
     {/if}
   </section>
 
-  <!-- A later task lists the repositories this identity can reach here, with "Create a workspace
-       for this" on each row; the section is its place. -->
-  <section aria-labelledby="repos" id="repos" data-testid="identity-repos">
-    <h2 id="repos">Repos it can reach</h2>
-    <p class="muted">This list is not available yet.</p>
+  <section
+    aria-labelledby="repos-heading"
+    id="repos"
+    data-testid="identity-repos"
+  >
+    <h2 id="repos-heading">Repos it can reach</h2>
+    <RepoBrowser
+      {identity}
+      store={repos}
+      onCreate={createFrom}
+      onSignIn={signInAt}
+    />
   </section>
 
   <section aria-labelledby="workspaces">
@@ -216,6 +242,12 @@
     confirmLabel="Delete {identity.label}"
     tone="deny"
     onConfirm={confirmDelete}
+  />
+  <CreateWorkspaceDialog
+    bind:open={createOpen}
+    prefill={createFor}
+    onCreated={(workspace) =>
+      void goto(`/workspaces/${encodeURIComponent(workspace.id)}`)}
   />
   <SignInDialog
     bind:open={signInOpen}

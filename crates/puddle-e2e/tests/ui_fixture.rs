@@ -159,6 +159,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("network-trouble", 0, 0),
         ("volume-missing", 0, 0),
         ("git-identities", 0, 0),
+        ("repo-lists", 0, 0),
         ("first-run", 0, 0),
     ];
     for (name, pending, rules_min) in counts {
@@ -185,6 +186,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "network-trouble",
             "volume-missing",
             "git-identities",
+            "repo-lists",
             "first-run"
         ]
     );
@@ -989,4 +991,141 @@ async fn a_scenario_whose_global_settings_are_not_an_object_fails_to_start() {
     .err()
     .expect("a start with unusable settings is refused");
     assert!(err.contains("not an object"), "{err}");
+}
+
+fn every_kind_of_list() -> Scenario {
+    let problems = [
+        "not_signed_in",
+        "source_unavailable",
+        "token_rejected",
+        "forbidden",
+        "not_found",
+        "rate_limited",
+        "unreachable",
+        "bad_answer",
+        "unsupported",
+        "organisation_needed",
+        "wrong_target",
+    ];
+    let notes = [
+        "sso_partial",
+        "organisations_may_be_hidden",
+        "fine_grained_token",
+        "truncated",
+        "author_unavailable",
+        "organisations_unavailable",
+        "host_limit_reached",
+    ];
+    let states = ["ok", "stale", "failed", "unavailable"];
+    let roles = ["admin", "maintain", "write", "triage", "read", "unknown"];
+    let visibilities = ["public", "private", "internal", "unknown"];
+    let lists: Vec<Value> = problems
+        .iter()
+        .enumerate()
+        .map(|(i, code)| {
+            json!({
+                "identity": "Me",
+                "credential": i,
+                "host": "github.com",
+                "state": states[i % states.len()],
+                "refreshed_ago_ms": 1000,
+                "retry_in_ms": 5000,
+                "problem": {"code": code, "message": "why", "needs_sign_in": i == 0},
+                "notes": notes.iter().map(|n| json!({"code": n, "message": "n"})).collect::<Vec<_>>(),
+                "repos": roles.iter().zip(visibilities.iter().cycle()).map(|(role, vis)| json!({
+                    "owner": "acme", "name": format!("r{i}-{role}"), "role": role, "visibility": vis,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    serde_json::from_value(json!({
+        "identities": [{
+            "label": "Me",
+            "author": {"name": "Me", "email": "me@example.com"},
+            "credentials": [],
+        }],
+        "repo_lists": lists,
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn seeded_repository_lists_keep_every_state_note_problem_role_and_visibility() {
+    let run = start_scenario(every_kind_of_list()).await;
+    let listing = run.get("/api/repos").await;
+    assert_eq!(listing.status, 200, "{}", listing.body);
+    let body = listing.json();
+    let sources = body["sources"].as_array().unwrap();
+    assert_eq!(sources.len(), 11);
+    assert_eq!(sources[2]["problem"]["code"], "token_rejected");
+    assert_eq!(sources[0]["problem"]["needs_sign_in"], true);
+    assert_eq!(sources[1]["state"], "stale");
+    assert_eq!(sources[0]["notes"].as_array().unwrap().len(), 7);
+    assert_eq!(
+        sources[0]["retry_at"],
+        sources[0]["refreshed_at"].as_u64().unwrap() + 6000
+    );
+    assert_eq!(body["total"], 66);
+}
+
+#[tokio::test]
+async fn an_azure_devops_project_with_a_space_gets_an_address_with_the_space_escaped() {
+    let scenario: Scenario = serde_json::from_value(json!({
+        "identities": [{"label": "Me", "author": {"name": "Me", "email": "me@example.com"}, "credentials": []}],
+        "repo_lists": [{
+            "identity": "Me", "host": "dev.azure.com", "organisation": "contoso",
+            "repos": [{"owner": "contoso", "project": "Shop Floor", "name": "scanner"}],
+        }],
+    }))
+    .unwrap();
+    let run = start_scenario(scenario).await;
+    let body = run.get("/api/repos").await.json();
+    assert_eq!(
+        body["repos"][0]["url"],
+        "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner"
+    );
+    assert_eq!(body["repos"][0]["full_name"], "contoso/Shop Floor/scanner");
+}
+
+#[tokio::test]
+async fn a_list_for_an_identity_that_is_not_there_fails_to_start() {
+    let scenario: Scenario = serde_json::from_value(json!({
+        "repo_lists": [{"identity": "Nobody", "host": "github.com"}],
+    }))
+    .unwrap();
+    let err = Fixture::start(FixtureOptions {
+        port: 0,
+        connection_file: None,
+        scenario,
+    })
+    .await
+    .err()
+    .unwrap();
+    assert!(err.contains("Nobody"), "{err}");
+}
+
+#[tokio::test]
+async fn repository_lists_can_be_held_released_and_replaced_by_steps() {
+    let run = start("repo-lists").await;
+    let step = |body: Value| {
+        let run = &run;
+        async move { run.control("POST", "/control/step", Some(&body)).await }
+    };
+    assert_eq!(step(json!({"do": "hold_repos"})).await.status, 204);
+    let held =
+        tokio::time::timeout(Duration::from_millis(300), run.get("/api/repos?identity=2")).await;
+    assert!(held.is_err(), "the answer should wait while held");
+    assert_eq!(step(json!({"do": "release_repos"})).await.status, 204);
+    let listing = run.get("/api/repos?identity=2").await.json();
+    assert_eq!(listing["total"], 3);
+    let replaced = step(json!({"do": "repo_lists", "lists": [
+        {"identity": "Personal", "host": "github.com", "repos": [{"owner": "me", "name": "only"}]}
+    ]}))
+    .await;
+    assert_eq!(replaced.status, 204, "{}", replaced.body);
+    let listing = run.get("/api/repos?identity=2").await.json();
+    assert_eq!(listing["total"], 1);
+    let bad =
+        step(json!({"do": "repo_lists", "lists": [{"identity": "Nobody", "host": "x"}]})).await;
+    assert_eq!(bad.status, 422, "{}", bad.body);
 }

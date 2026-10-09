@@ -22,7 +22,21 @@ vi.mock("$app/navigation", () => ({ goto }));
 
 const h = await vi.hoisted(async () => {
   const fake = await import("#lib/testing/fake-identities.ts");
-  return { api: new fake.FakeIdentities() };
+  const repos = await import("#lib/testing/fake-repos.ts");
+  return { api: new fake.FakeIdentities(), repos: new repos.FakeRepos() };
+});
+
+// The page makes its own lists; they read from the stand-in.
+vi.mock("#lib/stores/repos.svelte.ts", async (original) => {
+  const mod = await original<typeof import("#lib/stores/repos.svelte.ts")>();
+  return {
+    ...mod,
+    RepoLists: class extends mod.RepoLists {
+      constructor() {
+        super({ api: h.repos as never });
+      }
+    },
+  };
 });
 
 vi.mock("#lib/stores/identities.svelte.ts", async (original) => {
@@ -44,6 +58,9 @@ import {
   ghSource,
   identity,
 } from "#lib/testing/fake-identities.ts";
+import { repoSource, repoView } from "#lib/testing/fake-repos.ts";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+import { workspace } from "#lib/testing/fake-workspaces.ts";
 import Page from "./+page.svelte";
 
 const { api } = h;
@@ -76,6 +93,11 @@ beforeEach(() => {
     }),
     identity(2, { label: "Personal", is_default: false, credentials: [] }),
   ];
+  h.repos.repos = [repoView("acme", "web", { identities: [1, 2] })];
+  h.repos.sources = [repoSource({ repo_count: 1 })];
+  h.repos.down = false;
+  h.repos.refuse = null;
+  h.repos.calls = [];
   api.git = { "web-shop": { ids: [1], repos: [], push: true, pull: false } };
   api.calls = [];
   api.bodies = [];
@@ -109,6 +131,9 @@ describe("one identity", () => {
     expect(screen.getByTestId("identity-repos")).toHaveTextContent(
       "Repos it can reach",
     );
+    expect(
+      await screen.findByRole("row", { name: /acme\/web/ }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "web-shop" })).toHaveAttribute(
       "href",
       "/workspaces/web-shop/git",
@@ -313,5 +338,98 @@ describe("one identity", () => {
     expect(
       await screen.findByText(/Couldn't read the identity yet/),
     ).toBeInTheDocument();
+  });
+
+  it("opens the create form on this page with the repository and the identity that listed it", async () => {
+    render(Page);
+    await fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Create a workspace for acme/web",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    expect(within(dialog).getByLabelText("Git repository (HTTPS)")).toHaveValue(
+      "https://github.com/acme/web",
+    );
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("web");
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("checkbox", { name: /Work/ }),
+      ).toBeChecked(),
+    );
+  });
+
+  it("signs in from a list that says it is signed out", async () => {
+    h.repos.sources = [
+      repoSource({
+        state: "failed",
+        problem: {
+          code: "not_signed_in",
+          message: "Not signed in.",
+          needs_sign_in: true,
+        },
+      }),
+    ];
+    render(Page);
+    await fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Sign in to gh · tijs-work on github.com",
+      }),
+    );
+    await waitFor(() =>
+      expect(api.calls).toContain("POST /api/credentials/sign-in"),
+    );
+  });
+
+  it("ignores a sign-in for a credential the identity no longer has", async () => {
+    h.repos.sources = [
+      repoSource({
+        credential: 7,
+        state: "failed",
+        problem: {
+          code: "not_signed_in",
+          message: "Not signed in.",
+          needs_sign_in: true,
+        },
+      }),
+    ];
+    render(Page);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /Sign in to/ }),
+    );
+    expect(api.calls).not.toContain("POST /api/credentials/sign-in");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("goes to the new workspace after the form made it, and closes on cancel", async () => {
+    const create = vi
+      .spyOn(workspaces, "create")
+      .mockResolvedValue({ ok: true, value: workspace("web") });
+    render(Page);
+    await fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Create a workspace for acme/web",
+      }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Create workspace" }),
+    );
+    await waitFor(() => expect(goto).toHaveBeenCalledWith("/workspaces/web"));
+    expect(create).toHaveBeenCalledWith({
+      name: "web",
+      repo_url: "https://github.com/acme/web",
+    });
+    await fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Create a workspace for acme/web",
+      }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    create.mockRestore();
   });
 });

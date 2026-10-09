@@ -20,7 +20,9 @@ path = "src/bin/puddle-ui-fixture.rs"
 
 [dependencies]
 axum = { workspace = true }
+futures-util = { workspace = true }
 puddle-api = { workspace = true }
+puddle-repos = { workspace = true }
 puddle-secrets = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-store = { workspace = true }
