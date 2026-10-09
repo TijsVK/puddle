@@ -443,6 +443,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_git_request_whose_source_needs_a_sign_in_is_a_502_and_the_user_gets_one_notice() {
+        // The shape of the default injector, over a cache whose source is never signed in: the
+        // request is refused with the way out, and the one notice is the cache's, forwarded.
+        let store = store();
+        let ws = workspace("alpha");
+        attach(&store, &ws, "ada", "github.com");
+        let secrets = Arc::new(SecretCache::new(NotSignedIn(Mutex::new(0))));
+        let events = Arc::new(Events::default());
+        let task = forward_sign_in_needed(&secrets, events.clone());
+        let credentials: Arc<dyn CredentialSource> = secrets.clone();
+        let injector = GitInjector::new(
+            ws.clone(),
+            Arc::new(StoreSettings::new(store, ws.clone())),
+            credentials,
+            events.clone(),
+        );
+        let host = Host::parse_normalised("github.com").unwrap();
+        let context = InjectContext {
+            workspace: &ws,
+            host: &host,
+        };
+        let lines = ["host: github.com".to_owned()];
+        let view = RequestView::new(
+            "GET",
+            "/acme/web.git/info/refs?service=git-upload-pack",
+            &lines,
+        );
+        match injector.decide(&context, &view).await {
+            InjectDecision::Refuse(refusal) => {
+                assert_eq!(refusal.code(), "credential_unavailable");
+                assert!(refusal.message().contains("sign in to it in puddle"));
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        for _ in 0..200 {
+            if !events.0.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            *events.0.lock().unwrap(),
+            [Event::CredentialSignInNeeded {
+                host: "github.com".into(),
+                source: "gh account me on github.com".into(),
+            }]
+        );
+        drop(secrets);
+        drop(injector);
+        task.abort();
+    }
+
+    #[tokio::test]
     async fn without_a_factory_a_workspace_gets_puddles_git_injector_which_reads_the_store() {
         let store = store();
         let (injection, terminations) = injection(&store);
