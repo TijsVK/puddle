@@ -796,7 +796,8 @@ mod tests {
                 "git_access_denied",
                 "login_problem",
                 "audit_appended",
-                "network_changed"
+                "network_changed",
+                "problems_changed"
             ]
         );
         for v in variants {
