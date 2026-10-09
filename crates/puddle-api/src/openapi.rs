@@ -12,7 +12,7 @@ use crate::routes::{AppState, api_router, slow_router};
 
 /// The contract's version. Bump the minor version for additive changes and the major version
 /// for anything a generated client would break on.
-pub const API_VERSION: &str = "0.8.0";
+pub const API_VERSION: &str = "0.9.0";
 
 /// The security scheme's name in the spec.
 const BEARER: &str = "bearer";

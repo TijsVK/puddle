@@ -183,6 +183,9 @@ impl Services {
     #[must_use]
     pub fn with_secret_store(mut self, secrets: Arc<dyn SecretStore>) -> Self {
         self.secrets = secrets;
+        self
+    }
+
     /// These services with this repository lists implementation.
     #[must_use]
     pub fn with_repos(mut self, repos: Arc<dyn RepoService>) -> Self {
