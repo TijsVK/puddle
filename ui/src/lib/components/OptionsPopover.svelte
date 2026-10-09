@@ -17,7 +17,7 @@
   // The "more choices": every workspace, subdomains, duration. One instance serves the whole
   // list, anchored to the chevron of the row it was opened from (500 rows, one popover).
   let {
-    open = false,
+    open = $bindable(false),
     target,
     workspace,
     anchor,
@@ -65,7 +65,7 @@
 </script>
 
 <Popover.Root
-  {open}
+  bind:open
   onOpenChange={(next) => {
     if (!next) onClose();
   }}
@@ -91,7 +91,10 @@
       }}
       onCloseAutoFocus={(event) => {
         event.preventDefault();
-        if (anchor?.isConnected) anchor.focus();
+        // bits-ui also runs this while the popover stays open: opened again, it sets up its focus
+        // trap a second time once the opening transition ends, a frame later. Focus goes back to
+        // the chevron only on a real close; otherwise a choice focused in that frame is lost.
+        if (!open && anchor?.isConnected) anchor.focus();
       }}
     >
       <fieldset>

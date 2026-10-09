@@ -5,6 +5,12 @@ import ConfirmDialog from "./ConfirmDialog.svelte";
 
 afterEach(cleanup);
 
+async function frames(count: number): Promise<void> {
+  for (let i = 0; i < count; i += 1) {
+    await new Promise((done) => requestAnimationFrame(done));
+  }
+}
+
 function mount(over: Record<string, unknown> = {}) {
   const onConfirm = vi.fn();
   const onCancel = vi.fn();
@@ -47,6 +53,27 @@ describe("ConfirmDialog", () => {
     await vi.waitFor(() =>
       expect(screen.queryByRole("alertdialog")).toBeNull(),
     );
+  });
+
+  it("leaves focus where it was moved right after opening; a frame later it is not put back on Cancel", async () => {
+    const props = {
+      title: "Allow for every workspace?",
+      summary: "Allow example.com for every workspace, permanently",
+      confirmLabel: "Allow in every workspace",
+      onConfirm: vi.fn(),
+    };
+    const view = render(ConfirmDialog, {
+      props: { ...props, open: false },
+    } as never);
+    await view.rerender({ ...props, open: true });
+    // Opening puts focus on Cancel at once; a Tab before the next frame moves it on.
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    const action = screen.getByRole("button", {
+      name: "Allow in every workspace",
+    });
+    action.focus();
+    await frames(3);
+    expect(action).toHaveFocus();
   });
 
   it("cancels with Cancel and with Escape, and focuses Cancel first", async () => {

@@ -150,6 +150,35 @@ describe("OptionsPopover", () => {
     expect(onDecide).not.toHaveBeenCalled();
   });
 
+  it("opened again, keeps focus on a choice focused at once; the anchor gets it back only on close", async () => {
+    const anchor = document.createElement("button");
+    document.body.append(anchor);
+    const props = {
+      target,
+      workspace: "demo",
+      anchor,
+      onDecide: vi.fn(),
+      onClose: vi.fn(),
+    };
+    const view = render(OptionsPopover, {
+      props: { ...props, open: true },
+    } as never);
+    await show();
+    await view.rerender({ ...props, open: false });
+    await vi.waitFor(() => expect(anchor).toHaveFocus());
+    // Opened again, the popover settles a frame later (its opening transition ends). Focus that
+    // moved in before then stays where it was put.
+    await view.rerender({ ...props, open: true });
+    const every = within(await show()).getByRole("radio", {
+      name: /^Every workspace/,
+    });
+    every.focus();
+    for (let frame = 0; frame < 3; frame += 1) {
+      await new Promise((done) => requestAnimationFrame(done));
+    }
+    expect(every).toHaveFocus();
+  });
+
   it("offers no subdomain choice for the registrable domain itself or an exact-only request", async () => {
     mount({
       target: { host: "example.com", registrableDomain: "example.com" },
