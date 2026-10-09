@@ -331,9 +331,10 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
 - Declare versions once, in `[workspace.dependencies]`; crates use `dep = { workspace = true }`.
   Turn off default features you don't need.
 - `cargo deny check` gates licences (only GPL-3.0-or-later-compatible ones, list in `deny.toml`),
-  advisories (any RustSec advisory or yanked crate fails), bans (no wildcards) and sources
-  (crates.io only; puddle's own forks on GitHub once added). An exception names the advisory
-  or crate, the reason and a review date.
+  advisories (a RustSec vulnerability, unmaintained or unsound advisory in any dependency, direct
+  or transitive, or a yanked crate fails), bans (no wildcards) and sources (crates.io only;
+  puddle's own forks on GitHub once added). An exception names the advisory or crate, the reason
+  and a review date.
 - **Third-party notices:** `cargo xtask notices --check` (gate `notices`) fails when a shipped
   dependency has no licence entry in cargo-about's report (`about.toml`, whose `accepted` list
   mirrors `deny.toml`). Release notices for puddle and the bundled msb come from
