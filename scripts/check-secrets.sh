@@ -48,18 +48,23 @@ default_scope() {
     esac
 }
 
+# base_of <repo dir> <diff base>: what the head scope subtracts: the diff base if it names a commit
+# there, else origin/develop; nothing when neither exists.
+base_of() {
+    if [ -n "${2:-}" ] && git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null; then
+        echo "$2"
+    elif git -C "$1" rev-parse --verify -q origin/develop >/dev/null; then
+        echo origin/develop
+    fi
+}
+
 # log_opts <repo dir> <scope> <diff base>: the `git log` arguments that select the commits to
 # scan, empty for all refs. No spaces inside an argument: gitleaks splits the string on them.
 log_opts() {
     [ "$2" = head ] || return 0
-    base=
-    if [ -n "${3:-}" ] && git -C "$1" cat-file -e "$3^{commit}" 2>/dev/null; then
-        base=$3
-    elif git -C "$1" rev-parse --verify -q origin/develop >/dev/null; then
-        base=origin/develop
-    fi
-    if [ -n "$base" ]; then
-        echo "--full-history $base..HEAD"
+    from=$(base_of "$1" "${3:-}")
+    if [ -n "$from" ]; then
+        echo "--full-history $from..HEAD"
     else
         echo "--full-history HEAD"
     fi
@@ -73,7 +78,15 @@ scan() { # <repo dir> <scope> <diff base>: exit 1 when gitleaks reports a findin
 if [ "${1:-}" != "--self-test" ]; then
     scope=$(default_scope "${PUDDLE_SECRETS_SCOPE:-}" "${CI:-}")
     if [ "$scope" = head ]; then
-        echo "secrets: scanning HEAD's commits that ${DIFF_BASE:-origin/develop} lacks, not other branches (PUDDLE_SECRETS_SCOPE=all scans every ref, as CI does)" >&2
+        from=$(base_of . "${DIFF_BASE:-}")
+        if [ -n "${DIFF_BASE:-}" ] && [ "$from" != "$DIFF_BASE" ]; then
+            echo "secrets: DIFF_BASE $DIFF_BASE is not a commit here, so it is ignored" >&2
+        fi
+        if [ -n "$from" ]; then
+            echo "secrets: scanning HEAD's commits that $from lacks, not other branches (PUDDLE_SECRETS_SCOPE=all scans every ref, as CI does)" >&2
+        else
+            echo "secrets: no origin/develop to subtract (git fetch origin develop): scanning all of HEAD's history, not other branches" >&2
+        fi
     fi
     scan . "$scope" "${DIFF_BASE:-}"
     exit 0
@@ -142,11 +155,13 @@ git -C "$tmp/side" checkout -q dirty
 check fail dirty-commit-in-heads-range side head
 commit_file side src/app.rs '// the token is gone'
 check fail removed-token-still-in-heads-range side head
-base=$(git -C "$tmp/side" rev-parse HEAD)
+dbase=$(git -C "$tmp/side" rev-parse HEAD)
 commit_file side src/lib.rs '// clean again'
-check pass diff-base-after-the-dirty-commit side head "$base"
+check pass diff-base-after-the-dirty-commit side head "$dbase"
 check fail no-diff-base-uses-origin-develop side head
 check fail unknown-diff-base-uses-origin-develop side head 0000000000000000000000000000000000000001
+same base-of-diff-base "$dbase" "$(base_of "$tmp/side" "$dbase")"
+same base-of-unknown-diff-base origin/develop "$(base_of "$tmp/side" 0000000000000000000000000000000000000001)"
 git -C "$tmp/side" update-ref refs/remotes/origin/develop HEAD
 check pass dirty-commit-already-on-the-base side head
 check fail dirty-commit-already-on-the-base-scope-all side all
@@ -158,6 +173,7 @@ commit_file nobase src/app.rs "const T: &str = \"$token\";"
 git -C "$tmp/nobase" checkout -q -
 commit_file nobase src/lib.rs '// clean'
 check pass no-base-side-branch-dirty nobase head
+same base-of-no-base-ref '' "$(base_of "$tmp/nobase" '')"
 git -C "$tmp/nobase" -c user.name=t -c user.email=t@example.test -c commit.gpgsign=false merge -q --no-edit dirty
 check fail no-base-dirty-commit-in-history nobase head
 same scope-ci-default all "$(default_scope '' true)"

@@ -184,7 +184,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
   in the pre-push hook it scans the commits `HEAD` has that its base (`DIFF_BASE`, else
   `origin/develop`) lacks, so a dirty commit on another local branch never fails your push; with no
   base ref it scans all of `HEAD`'s history. `PUDDLE_SECRETS_SCOPE=all` runs the CI scan locally.
-  A secret already in the base is the CI scan's to catch. Test credentials are made-up values, kept
+  Like every gate in the hook it looks at the checked-out `HEAD`: pushing another branch from a
+  clean `HEAD` is not scanned, and a secret already in the base is the CI scan's to catch. Test credentials are made-up values, kept
   recognisable (`CANARY-<word>`, `user:puddle`), and need no special treatment unless a scanner flags
   them. A flagged fake gets an allowlist entry that fits its exact path and value, with the reason in
   the entry; the fixture itself stays as it is. The gate's self-test
