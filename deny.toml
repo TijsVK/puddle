@@ -5,10 +5,13 @@
 all-features = true
 
 [advisories]
-# Every RustSec advisory (vulnerability, unmaintained, unsound) fails the check, as does a
-# yanked crate. An exception goes in `ignore` with the advisory ID, a reason and a review date.
+# A RustSec vulnerability, unmaintained or unsound advisory fails the check for any dependency, direct or
+# transitive, as does a yanked crate. `unmaintained` and `unsound` default to "workspace" (direct
+# dependencies of workspace members only), so both are set to "all". An exception goes in `ignore`
+# with the advisory ID, a reason and a review date.
 yanked = "deny"
 unmaintained = "all"
+unsound = "all"
 ignore = [
     # Unmaintained, not vulnerable: bincode 2 comes in through the msb SDK (fork tag
     # v0.7.7-puddle.14: microsandbox-filesystem, msb_krun). Still there; review at each
@@ -23,6 +26,11 @@ ignore = [
     # wry/tao on Linux. tauri 2 stays on gtk-rs 0.18 until tauri 3 (alpha); nothing of it
     # runs at runtime. Review at each tauri bump, by 2027-01-06.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; build-time dependency of tauri's gtk-rs 0.18 on Linux" },
+    # Unsound `glib::VariantStrIter` (undefined behaviour in its iterator methods): glib 0.18 -> gtk 0.18
+    # -> tauri's wry/tao, Linux only. Only `Variant::array_iter_str` creates one and no crate in the Linux
+    # build graph calls it. tauri 2 stays on gtk-rs 0.18 (the fix is glib 0.20 or later) until tauri 3
+    # (alpha). Review at each tauri bump, by 2027-01-06.
+    { id = "RUSTSEC-2024-0429", reason = "glib VariantStrIter unsound; unused API, transitive via tauri's gtk-rs 0.18 on Linux" },
 ]
 
 [licenses]
