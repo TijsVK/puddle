@@ -160,10 +160,8 @@ pub async fn reconcile<R: Runtime>(
     report.foreign.sort();
     report.unknown_volumes.sort();
     report.missing_volumes = inventory.workspaces.difference(&present).cloned().collect();
-    tracing::info!(
-        missing = report.missing_volumes.len(),
-        "reconcile: listed workspaces without a volume"
-    );
+    let missing = report.missing_volumes.len();
+    tracing::info!(missing, "reconcile: workspaces without a volume");
     tracing::info!(
         stopped = report.stopped.len(),
         removed = report.removed.len(),
