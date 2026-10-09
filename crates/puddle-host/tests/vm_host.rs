@@ -92,14 +92,22 @@ struct VmHost {
     settings: Settings,
 }
 
-async fn start_vm_host() -> VmHost {
+/// Starts a host over its own store and workspace folder, named by `tag` (a few characters), so
+/// what one test creates (an identity, a rule, a workspace) is never in another's host. Tests of
+/// one binary share the run's prefix, and a host over a shared folder reads the identities an
+/// earlier test left.
+async fn start_vm_host(tag: &str) -> VmHost {
+    start_vm_host_with(tag, HostOptions::default()).await
+}
+
+async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .try_init();
     let settings = Settings::from_lookup(|var| std::env::var(var).ok()).expect("VM test settings");
     let pair = settings.prepare().expect("msb runtime pair");
-    let root = settings.scratch_home("host");
+    let root = settings.scratch_home(tag);
     std::fs::create_dir_all(&root).unwrap();
     let agent = std::path::PathBuf::from(
         std::env::var_os("PUDDLE_AGENT_BIN")
@@ -117,7 +125,7 @@ async fn start_vm_host() -> VmHost {
         opened: std::sync::Mutex::new(None),
     };
     let prepared = prepare(config, &HarnessPlatform).unwrap();
-    let host = Host::start(prepared, &factory, HostOptions::default())
+    let host = Host::start(prepared, &factory, options)
         .await
         .expect("the host starts");
     assert_eq!(host.steps(), START_STEPS);
@@ -135,7 +143,7 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
         host,
         runtime,
         settings,
-    } = start_vm_host().await;
+    } = start_vm_host("life").await;
 
     // The workspace's sandbox may reach the repository host, and nothing else.
     let name = format!("{}-host", settings.prefix.as_str());
@@ -265,6 +273,20 @@ fn issuer_script(host: &str) -> String {
     format!("curl -sv -o /dev/null --max-time 60 https://{host}/ 2>&1 | grep -i 'issuer:'")
 }
 
+/// Options for a test of what the host decrypts, trusts and writes: its identities name a `gh`
+/// account that is not signed in on the machine that runs the test, and the Git injector (the
+/// default) answers a request on a host such an identity covers with a `502` naming the missing
+/// sign-in. This injector adds nothing, so the clone of a public repository goes through the
+/// decrypting proxy with no credential. What the Git injector does with a credential is tested
+/// in `puddle-inject` and the proxy's terminate tests.
+fn options_without_injection() -> HostOptions {
+    let mut options = HostOptions::default();
+    options.injector = Some(std::sync::Arc::new(|_, _| {
+        std::sync::Arc::new(puddle_proxy::NoInjection)
+    }));
+    options
+}
+
 fn identity(label: &str, host: &str) -> IdentityDraft {
     let name = HostName::new(host).unwrap();
     IdentityDraft {
@@ -295,7 +317,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         host,
         runtime,
         settings,
-    } = start_vm_host().await;
+    } = start_vm_host_with("ca", options_without_injection()).await;
     let name = format!("{}-ca", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
     for site in ["github.com", "gitlab.com", "example.com"] {
@@ -499,7 +521,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
         host,
         runtime,
         settings,
-    } = start_vm_host().await;
+    } = start_vm_host("quic").await;
     let name = format!("{}-quic", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
     for site in [REPO_HOST, H3_HOST] {
