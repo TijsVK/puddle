@@ -113,8 +113,9 @@ run_gate() {
         ;;
     standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh ;;
     secrets)
-        # gitleaks over all history with the reviewed allowlist (.gitleaks.toml); needs the pinned
-        # gitleaks on PATH (ci/fetch-gitleaks.sh). Not in `fast`: it scans every commit.
+        # gitleaks with the reviewed allowlist (.gitleaks.toml) over HEAD's commits its base lacks
+        # (every ref when CI is set; scripts/check-secrets.sh has the scope rules); needs the pinned
+        # gitleaks on PATH (ci/fetch-gitleaks.sh). Not in `fast`: it scans commits.
         scripts/check-secrets.sh --self-test && scripts/check-secrets.sh
         ;;
     clippy)

@@ -179,12 +179,17 @@ the owner, then tagged `vX.Y.Z` on `main`.
   fail closed (deny on error), and add a hostile-guest test (§8) with the change.
 - **Secrets** (credentials, API tokens) are wrapped in a type whose `Debug`/`Display` redact
   (e.g. `secrecy::SecretString`), never logged, never in errors, never in test snapshots.
-- **Secret scanning:** `scripts/check.sh secrets` (pre-push and CI) runs gitleaks over every commit with
-  the default rules plus `.gitleaks.toml`. Test credentials are made-up values, kept recognisable
-  (`CANARY-<word>`, `user:puddle`), and need no special treatment unless a scanner flags them. A flagged
-  fake gets an allowlist entry that fits its exact path and value, with the reason in the entry; the
-  fixture itself stays as it is. The gate's self-test (`scripts/check-secrets.sh --self-test`) proves a
-  real-shaped token fails and a listed fake passes. External scanners (GitGuardian on the public
+- **Secret scanning:** `scripts/check.sh secrets` (pre-push and CI) runs gitleaks with the default
+  rules plus `.gitleaks.toml`. In CI it scans every commit the clone has, on every ref. Locally and
+  in the pre-push hook it scans the commits `HEAD` has that its base (`DIFF_BASE`, else
+  `origin/develop`) lacks, so a dirty commit on another local branch never fails your push; with no
+  base ref it scans all of `HEAD`'s history. `PUDDLE_SECRETS_SCOPE=all` runs the CI scan locally.
+  A secret already in the base is the CI scan's to catch. Test credentials are made-up values, kept
+  recognisable (`CANARY-<word>`, `user:puddle`), and need no special treatment unless a scanner flags
+  them. A flagged fake gets an allowlist entry that fits its exact path and value, with the reason in
+  the entry; the fixture itself stays as it is. The gate's self-test
+  (`scripts/check-secrets.sh --self-test`) proves a real-shaped token fails, a listed fake passes, and
+  each scope sees the commits it should (a dirty side branch fails `all`, passes `head`). External scanners (GitGuardian on the public
   repository) may flag fakes the gate doesn't; dismiss those as false positives, don't rewrite the test.
   A real secret that reached a commit is rotated first, then removed.
 
