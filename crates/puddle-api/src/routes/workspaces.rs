@@ -16,8 +16,8 @@ use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::wire::{
-    AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, NewWorkspaceRequest,
-    Workspace, WorkspaceList,
+    AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, NewWorkspaceIdentity,
+    NewWorkspaceRequest, Workspace, WorkspaceList,
 };
 
 /// The id in a path. A string that can't be an id names no workspace.
@@ -134,16 +134,21 @@ pub(crate) async fn list_workspaces(
 /// A new workspace's Git settings: the identity that covers its repository (else the default) and
 /// the repository in the table. A failure here does not undo the workspace: its Git tab then
 /// shows no identity, which says what is missing.
-async fn start_git(state: &AppState, record: &WorkspaceRecord) {
+async fn start_git(state: &AppState, record: &WorkspaceRecord) -> Option<NewWorkspaceIdentity> {
     let store = state.store.clone();
     let (name, url) = (record.name.clone(), record.repo_url.clone());
     let started = blocking(move || {
         let repo = puddle_store::RepoRef::from_https_url(&url)?;
-        Ok(store.start_workspace_git(&name, &repo)?)
+        let start = store.start_workspace_git(&name, &repo)?;
+        Ok(NewWorkspaceIdentity::from_store(&start, &repo))
     })
     .await;
-    if let Err(err) = started {
-        tracing::warn!(workspace = %record.name, error = ?err, "could not set up the new workspace's Git settings");
+    match started {
+        Ok(identity) => Some(identity),
+        Err(err) => {
+            tracing::warn!(workspace = %record.name, error = ?err, "could not set up the new workspace's Git settings");
+            None
+        }
     }
 }
 
@@ -166,10 +171,13 @@ pub(crate) async fn create_workspace(
     crate::extract::Json(body): crate::extract::Json<NewWorkspaceRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
     let record = state.workspaces.create(body.into_new()?).await?;
-    start_git(&state, &record).await;
+    let identity = start_git(&state, &record).await;
     // A new workspace may start with direct SSH on (the global default).
     crate::system_managed::refresh(&state).await;
-    Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(view(&state, record).await.with_identity(identity)),
+    ))
 }
 
 /// One workspace.

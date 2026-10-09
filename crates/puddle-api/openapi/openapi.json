@@ -1680,6 +1680,136 @@
         }
       }
     },
+    "/api/identities/git-defaults": {
+      "get": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "The default of the two \"only listed\" switches, for workspaces that have not set their own.",
+        "operationId": "get_git_defaults",
+        "responses": {
+          "200": {
+            "description": "the defaults",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitDefaultsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Sets the default of either switch (a switch left out stays). Workspaces that have not set\ntheir own follow at once; a workspace that has keeps its own.",
+        "operationId": "set_git_defaults",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitSwitchesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the defaults",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitDefaultsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/identities/order": {
       "put": {
         "tags": [
@@ -8638,6 +8768,24 @@
           "pull"
         ]
       },
+      "GitDefaultsView": {
+        "type": "object",
+        "description": "The default of the two switches, for every workspace that has not set its own.",
+        "required": [
+          "only_push_listed",
+          "only_pull_listed"
+        ],
+        "properties": {
+          "only_pull_listed": {
+            "type": "boolean",
+            "description": "Refuse a fetch from a repository not listed with Pull on (built in: off)."
+          },
+          "only_push_listed": {
+            "type": "boolean",
+            "description": "Refuse a push to a repository not listed with Push on (built in: on)."
+          }
+        }
+      },
       "GitRepoRequest": {
         "type": "object",
         "description": "Adds a repository to the table.",
@@ -9232,6 +9380,44 @@
           }
         },
         "additionalProperties": false
+      },
+      "NewWorkspaceIdentity": {
+        "type": "object",
+        "description": "What a new workspace's Git settings started with. Only the answer to creating a workspace\ncarries it; the Git tab shows the same thing afterwards.",
+        "required": [
+          "identity",
+          "basis",
+          "warning"
+        ],
+        "properties": {
+          "basis": {
+            "$ref": "#/components/schemas/NewWorkspaceIdentityBasis",
+            "description": "Why."
+          },
+          "identity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The label of the identity it got; `null` for none."
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to tell you when no identity covers the repository (which one it got and what that\nmeans); `null` when one does."
+          }
+        }
+      },
+      "NewWorkspaceIdentityBasis": {
+        "type": "string",
+        "description": "Why a new workspace got the identity it got.",
+        "enum": [
+          "covers",
+          "default",
+          "none"
+        ]
       },
       "NewWorkspaceRequest": {
         "type": "object",
@@ -11165,7 +11351,8 @@
           "disk_used_mib",
           "direct_ssh",
           "settings_error",
-          "first_connect_notice_due"
+          "first_connect_notice_due",
+          "identity"
         ],
         "properties": {
           "busy": {
@@ -11212,6 +11399,17 @@
           "id": {
             "type": "string",
             "description": "The id used in paths. Today it is the workspace's name."
+          },
+          "identity": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NewWorkspaceIdentity",
+                "description": "Which identity the new workspace got and why. Only the answer to creating a workspace has\nit (and only when its Git settings could be set up); `null` in every other answer, and the\nGit tab shows it afterwards."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "image": {
             "type": "string",

@@ -159,7 +159,6 @@ pub enum StartBasis {
 
 /// What [`crate::Store::start_workspace_git`] set up.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub struct GitStart {
     /// The identity attached (id and label), if any.
     pub identity: Option<(crate::IdentityId, String)>,

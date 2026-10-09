@@ -13,9 +13,9 @@ use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::wire::{
-    AttachIdentityRequest, GitRepoRequest, GitRepoToggles, GitRepoView, GitSwitchesRequest,
-    IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest, IdentityView,
-    WorkspaceGitView, WorkspaceIdentitiesRequest,
+    AttachIdentityRequest, GitDefaultsView, GitRepoRequest, GitRepoToggles, GitRepoView,
+    GitSwitchesRequest, IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest,
+    IdentityView, WorkspaceGitView, WorkspaceIdentitiesRequest,
 };
 
 fn view(store: &Store, identity: puddle_store::Identity) -> Result<IdentityView, ApiError> {
@@ -217,6 +217,42 @@ pub(crate) async fn reorder_identities(
     })
     .await?;
     Ok(Json(list))
+}
+
+/// The default of the two "only listed" switches, for workspaces that have not set their own.
+#[utoipa::path(
+    get,
+    path = "/api/identities/git-defaults",
+    tag = "identities",
+    responses((status = OK, description = "the defaults", body = GitDefaultsView))
+)]
+pub(crate) async fn get_git_defaults(
+    State(state): State<AppState>,
+) -> Result<Json<GitDefaultsView>, ApiError> {
+    let defaults = blocking(move || Ok(state.store.git_defaults()?)).await?;
+    Ok(Json(defaults.into()))
+}
+
+/// Sets the default of either switch (a switch left out stays). Workspaces that have not set
+/// their own follow at once; a workspace that has keeps its own.
+#[utoipa::path(
+    put,
+    path = "/api/identities/git-defaults",
+    tag = "identities",
+    request_body = GitSwitchesRequest,
+    responses((status = OK, description = "the defaults", body = GitDefaultsView))
+)]
+pub(crate) async fn set_git_defaults(
+    State(state): State<AppState>,
+    crate::extract::Json(body): crate::extract::Json<GitSwitchesRequest>,
+) -> Result<Json<GitDefaultsView>, ApiError> {
+    let defaults = blocking(move || {
+        Ok(state
+            .store
+            .set_git_defaults(body.only_push_listed, body.only_pull_listed)?)
+    })
+    .await?;
+    Ok(Json(defaults.into()))
 }
 
 /// A workspace's Git settings: identities in order, the repository table and the two switches.

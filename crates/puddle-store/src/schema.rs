@@ -636,7 +636,7 @@ mod tests {
         .unwrap();
         conn.pragma_update(None, "foreign_keys", true).unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), 5);
-        assert_eq!(version(&conn), 6);
+        assert_eq!(version(&conn), SCHEMA_VERSION);
         let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
         assert_eq!(count("SELECT count(*) FROM identities"), 1);
         assert_eq!(count("SELECT count(*) FROM env_vars"), 0);

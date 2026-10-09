@@ -320,6 +320,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/identities/git-defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The default of the two "only listed" switches, for workspaces that have not set their own. */
+        get: operations["get_git_defaults"];
+        /**
+         * Sets the default of either switch (a switch left out stays). Workspaces that have not set
+         *     their own follow at once; a workspace that has keeps its own.
+         */
+        put: operations["set_git_defaults"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/identities/order": {
         parameters: {
             query?: never;
@@ -2090,6 +2111,13 @@ export interface components {
          * @enum {string}
          */
         GitAccess: "push" | "pull";
+        /** @description The default of the two switches, for every workspace that has not set its own. */
+        GitDefaultsView: {
+            /** @description Refuse a fetch from a repository not listed with Pull on (built in: off). */
+            only_pull_listed: boolean;
+            /** @description Refuse a push to a repository not listed with Push on (built in: on). */
+            only_push_listed: boolean;
+        };
         /** @description Adds a repository to the table. */
         GitRepoRequest: {
             /** @description The host (`github.com`). */
@@ -2340,6 +2368,26 @@ export interface components {
             /** @description 1 to 64 characters, not used by another set. */
             name: string;
         };
+        /**
+         * @description What a new workspace's Git settings started with. Only the answer to creating a workspace
+         *     carries it; the Git tab shows the same thing afterwards.
+         */
+        NewWorkspaceIdentity: {
+            /** @description Why. */
+            basis: components["schemas"]["NewWorkspaceIdentityBasis"];
+            /** @description The label of the identity it got; `null` for none. */
+            identity: string | null;
+            /**
+             * @description What to tell you when no identity covers the repository (which one it got and what that
+             *     means); `null` when one does.
+             */
+            warning: string | null;
+        };
+        /**
+         * @description Why a new workspace got the identity it got.
+         * @enum {string}
+         */
+        NewWorkspaceIdentityBasis: "covers" | "default" | "none";
         /** @description `POST /api/workspaces`. */
         NewWorkspaceRequest: {
             /** @description The image to boot; left out or `null` is the default devcontainer image. */
@@ -3195,6 +3243,7 @@ export interface components {
             first_connect_notice_due: boolean;
             /** @description The id used in paths. Today it is the workspace's name. */
             id: string;
+            identity: components["schemas"]["NewWorkspaceIdentity"] | null;
             /** @description The image its workspace boots. */
             image: string;
             /**
@@ -4660,6 +4709,122 @@ export interface operations {
             };
             /** @description a value refused */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_git_defaults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the defaults */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitDefaultsView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    set_git_defaults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitSwitchesRequest"];
+            };
+        };
+        responses: {
+            /** @description the defaults */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitDefaultsView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
                 headers: {
                     [name: string]: unknown;
                 };

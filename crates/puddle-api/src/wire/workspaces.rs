@@ -74,6 +74,12 @@ pub struct Workspace {
     /// confirmation now. Read `direct_ssh` instead.
     #[deprecated(note = "always false; read `direct_ssh`")]
     pub first_connect_notice_due: bool,
+    /// Which identity the new workspace got and why. Only the answer to creating a workspace has
+    /// it (and only when its Git settings could be set up); `null` in every other answer, and the
+    /// Git tab shows it afterwards.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub identity: Option<crate::wire::NewWorkspaceIdentity>,
 }
 
 impl Workspace {
@@ -108,7 +114,15 @@ impl Workspace {
             direct_ssh,
             settings_error: None,
             first_connect_notice_due: false,
+            identity: None,
         }
+    }
+
+    /// The same workspace, with what its Git settings started with (the answer to creating it).
+    #[must_use]
+    pub fn with_identity(mut self, identity: Option<crate::wire::NewWorkspaceIdentity>) -> Self {
+        self.identity = identity;
+        self
     }
 
     /// The same workspace, with the reason its settings could not be read (if they could not).

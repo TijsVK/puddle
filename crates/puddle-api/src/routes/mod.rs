@@ -106,6 +106,10 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(identities::reorder_identities))
         .routes(routes!(
+            identities::get_git_defaults,
+            identities::set_git_defaults
+        ))
+        .routes(routes!(
             identities::get_identity,
             identities::update_identity,
             identities::delete_identity

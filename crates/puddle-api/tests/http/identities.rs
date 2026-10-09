@@ -28,7 +28,7 @@ async fn make(api: &Api, label: &str, owners: &[&str], rest: bool) -> i64 {
     reply.json()["id"].as_i64().unwrap()
 }
 
-async fn workspace(api: &Api, name: &str) {
+async fn workspace(api: &Api, name: &str) -> Value {
     let reply = api
         .send(
             "POST",
@@ -38,6 +38,7 @@ async fn workspace(api: &Api, name: &str) {
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     api.workspaces.idle().await;
+    reply.json()
 }
 
 #[tokio::test]
@@ -555,4 +556,113 @@ async fn a_repository_address_puddle_cannot_read_still_makes_the_workspace_with_
     let git = api.get("/api/workspaces/odd/git").await.json();
     assert_eq!(git["identities"], json!([]));
     assert_eq!(git["repos"], json!([]));
+}
+
+#[tokio::test]
+async fn creating_a_workspace_says_which_identity_it_got_and_warns_only_when_none_covers_it() {
+    let api = start().await;
+    // Nobody: no identity, and the answer says so.
+    let none = workspace(&api, "alone").await;
+    assert_eq!(none["identity"]["basis"], "none");
+    assert_eq!(none["identity"]["identity"], Value::Null);
+    assert!(
+        none["identity"]["warning"]
+            .as_str()
+            .unwrap()
+            .contains("no default identity")
+    );
+
+    // The default covers a different owner: it is attached, with a warning naming it and the place.
+    let _gitlab = make(&api, "Personal", &["me"], false).await;
+    let default = workspace(&api, "fallback").await;
+    assert_eq!(default["identity"]["basis"], "default");
+    assert_eq!(default["identity"]["identity"], "Personal");
+    let warning = default["identity"]["warning"].as_str().unwrap();
+    assert!(
+        warning.contains("Personal") && warning.contains("github.com/acme"),
+        "{warning}"
+    );
+    let git = api.get("/api/workspaces/fallback/git").await.json();
+    assert_eq!(git["identities"][0]["label"], "Personal");
+
+    // One that covers acme wins and there is nothing to warn about; a plain read has no field.
+    let _work = make(&api, "Work", &["acme"], false).await;
+    let covered = workspace(&api, "covered").await;
+    assert_eq!(covered["identity"]["basis"], "covers");
+    assert_eq!(covered["identity"]["identity"], "Work");
+    assert_eq!(covered["identity"]["warning"], Value::Null);
+    let read = api.get("/api/workspaces/covered").await.json();
+    assert_eq!(
+        read["identity"],
+        Value::Null,
+        "only creating answers with it"
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_default_switches_are_read_changed_inherited_and_overridden_per_workspace() {
+    let api = start().await;
+    let defaults = api.get("/api/identities/git-defaults").await.json();
+    assert_eq!(
+        defaults,
+        json!({"only_push_listed": true, "only_pull_listed": false})
+    );
+
+    workspace(&api, "before").await;
+    let changed = api
+        .send(
+            "PUT",
+            "/api/identities/git-defaults",
+            Some(&json!({"only_pull_listed": true})),
+        )
+        .await;
+    assert_eq!(changed.status, 200, "{}", changed.body);
+    assert_eq!(
+        changed.json(),
+        json!({"only_push_listed": true, "only_pull_listed": true})
+    );
+
+    // An existing workspace that set nothing follows; a new one starts on it.
+    workspace(&api, "after").await;
+    for name in ["before", "after"] {
+        let git = api.get(&format!("/api/workspaces/{name}/git")).await.json();
+        assert_eq!(git["only_pull_listed"], true, "{name}");
+        assert_eq!(git["only_push_listed"], true, "{name}");
+    }
+
+    // The workspace's own switch wins over later changes of the default.
+    let own = api
+        .send(
+            "PUT",
+            "/api/workspaces/after/git/switches",
+            Some(&json!({"only_pull_listed": false})),
+        )
+        .await;
+    assert_eq!(own.status, 200, "{}", own.body);
+    api.send(
+        "PUT",
+        "/api/identities/git-defaults",
+        Some(&json!({"only_push_listed": false, "only_pull_listed": true})),
+    )
+    .await;
+    let after = api.get("/api/workspaces/after/git").await.json();
+    assert_eq!(
+        (&after["only_push_listed"], &after["only_pull_listed"]),
+        (&json!(false), &json!(false)),
+        "push follows the default, pull is the workspace's own"
+    );
+    let before = api.get("/api/workspaces/before/git").await.json();
+    assert_eq!(before["only_pull_listed"], true);
+
+    // A body that is not the two booleans is refused.
+    let bad = api
+        .send(
+            "PUT",
+            "/api/identities/git-defaults",
+            Some(&json!({"only_push_listed": "yes"})),
+        )
+        .await;
+    assert_eq!(bad.status, 422, "{}", bad.body);
+    api.running.shutdown().await;
 }

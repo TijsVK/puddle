@@ -399,3 +399,119 @@ pub struct GitRepoToggles {
     /// A push to it may go out.
     pub push: bool,
 }
+
+/// The default of the two switches, for every workspace that has not set its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct GitDefaultsView {
+    /// Refuse a push to a repository not listed with Push on (built in: on).
+    pub only_push_listed: bool,
+    /// Refuse a fetch from a repository not listed with Pull on (built in: off).
+    pub only_pull_listed: bool,
+}
+
+impl From<store::GitDefaults> for GitDefaultsView {
+    fn from(d: store::GitDefaults) -> Self {
+        Self {
+            only_push_listed: d.only_push_listed,
+            only_pull_listed: d.only_pull_listed,
+        }
+    }
+}
+
+/// Why a new workspace got the identity it got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NewWorkspaceIdentityBasis {
+    /// An identity covers the repository.
+    Covers,
+    /// None does: it got the default identity, which has no credential for the repository.
+    Default,
+    /// None does and there is no default identity.
+    None,
+}
+
+/// What a new workspace's Git settings started with. Only the answer to creating a workspace
+/// carries it; the Git tab shows the same thing afterwards.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct NewWorkspaceIdentity {
+    /// The label of the identity it got; `null` for none.
+    #[schema(required = true)]
+    pub identity: Option<String>,
+    /// Why.
+    pub basis: NewWorkspaceIdentityBasis,
+    /// What to tell you when no identity covers the repository (which one it got and what that
+    /// means); `null` when one does.
+    #[schema(required = true)]
+    pub warning: Option<String>,
+}
+
+impl NewWorkspaceIdentity {
+    pub(crate) fn from_store(start: &store::GitStart, repo: &store::RepoRef) -> Self {
+        let place = format!("{}/{}", repo.host, repo.owner);
+        let (basis, warning) = match (start.basis, &start.identity) {
+            (store::StartBasis::Default, Some((_, label))) => (
+                NewWorkspaceIdentityBasis::Default,
+                Some(format!(
+                    "No identity covers {place}, so this workspace got your default identity, {label}. \
+                     {label} has no credential for {place}: commits use its author, but requests to \
+                     {place} go out without a credential until an identity covers it (Identities tab)."
+                )),
+            ),
+            (store::StartBasis::Covers, _) => (NewWorkspaceIdentityBasis::Covers, None),
+            _ => (
+                NewWorkspaceIdentityBasis::None,
+                Some(format!(
+                    "No identity covers {place} and you have no default identity, so this workspace \
+                     has no commit author and no credential. Add an identity on the Identities tab."
+                )),
+            ),
+        };
+        Self {
+            identity: start.identity.as_ref().map(|(_, label)| label.clone()),
+            basis,
+            warning,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo() -> store::RepoRef {
+        store::RepoRef::new("github.com", "acme", "shop").unwrap()
+    }
+
+    #[test]
+    fn only_a_repository_nobody_covers_has_a_warning_naming_the_identity_and_the_place() {
+        let start = |basis, label: Option<&str>| store::GitStart {
+            identity: label.map(|l| (store::IdentityId(1), l.to_owned())),
+            basis,
+        };
+        let covered = NewWorkspaceIdentity::from_store(
+            &start(store::StartBasis::Covers, Some("Work")),
+            &repo(),
+        );
+        assert_eq!(covered.warning, None);
+        assert_eq!(covered.identity.as_deref(), Some("Work"));
+
+        let default = NewWorkspaceIdentity::from_store(
+            &start(store::StartBasis::Default, Some("Personal")),
+            &repo(),
+        );
+        assert_eq!(default.basis, NewWorkspaceIdentityBasis::Default);
+        let text = default.warning.unwrap();
+        assert!(
+            text.contains("Personal") && text.contains("github.com/acme"),
+            "{text}"
+        );
+
+        let none =
+            NewWorkspaceIdentity::from_store(&start(store::StartBasis::NoIdentity, None), &repo());
+        assert_eq!(
+            (none.identity, none.basis),
+            (None, NewWorkspaceIdentityBasis::None)
+        );
+        assert!(none.warning.unwrap().contains("no default identity"));
+    }
+}

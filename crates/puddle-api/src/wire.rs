@@ -44,10 +44,11 @@ pub use environment::{
 };
 pub use first_run::{DevCertificate, FirstRun, FirstRunRequest};
 pub use identities::{
-    AttachIdentityRequest, CredentialCoverage, CredentialSource, GitRepoRequest, GitRepoToggles,
-    GitRepoView, GitSwitchesRequest, IdentityAuthor, IdentityCredential, IdentityDeleted,
-    IdentityList, IdentityOrderRequest, IdentityRequest, IdentitySigning, IdentityView,
-    WorkspaceGitView, WorkspaceIdentitiesRequest,
+    AttachIdentityRequest, CredentialCoverage, CredentialSource, GitDefaultsView, GitRepoRequest,
+    GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor, IdentityCredential,
+    IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest, IdentitySigning,
+    IdentityView, NewWorkspaceIdentity, NewWorkspaceIdentityBasis, WorkspaceGitView,
+    WorkspaceIdentitiesRequest,
 };
 pub use network_health::{
     DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,

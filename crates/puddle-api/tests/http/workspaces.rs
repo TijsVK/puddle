@@ -105,9 +105,16 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
             "disk_used_mib": 0,
             "direct_ssh": false,
             "settings_error": null,
-            "first_connect_notice_due": false
+            "first_connect_notice_due": false,
+            // No identity exists in this store, so the answer to creating says so.
+            "identity": {
+                "identity": null,
+                "basis": "none",
+                "warning": ws["identity"]["warning"]
+            }
         })
     );
+    assert!(ws["identity"]["warning"].is_string());
     api.workspaces.idle().await;
     stream.read_until(|b| b.contains("\"step\":\"done\"")).await;
     let steps: Vec<String> = stream
