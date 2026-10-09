@@ -621,7 +621,7 @@ impl RigBuilder {
             Termination::new(
                 TerminationSet::parse(self.bound.iter().copied()).unwrap(),
                 Arc::clone(&ca),
-                self.injector,
+                Arc::clone(&self.injector),
             )
             .with_stand_ins(self.stand_ins.0),
         );
