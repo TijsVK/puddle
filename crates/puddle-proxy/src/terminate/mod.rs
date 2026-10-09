@@ -54,6 +54,7 @@
 
 mod alt_svc;
 mod body;
+mod exchange;
 mod guest;
 mod h2;
 mod handshake;
@@ -64,6 +65,7 @@ mod response;
 mod session;
 mod set;
 mod stand_in;
+mod token_body;
 mod watch;
 mod ws;
 
@@ -73,6 +75,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use puddle_ca::WorkspaceCa;
 use puddle_types::WorkspaceName;
 
+pub use exchange::{AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY};
 pub use inject::{
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
     NoInjection, RequestView, SecretValue, Unauthorized,
@@ -80,6 +83,7 @@ pub use inject::{
 pub(crate) use session::{Context, run};
 pub use set::{PatternError, TerminationSet};
 pub use stand_in::{StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
+pub use token_body::{BodyFormat, TokenBody, TokenBodyError};
 
 /// Hosts puddle decrypts by default: GitHub and Azure DevOps, for git and Git LFS. Not
 /// `api.github.com` (the `gh` CLI and gists would become an exfiltration channel with a
@@ -95,6 +99,7 @@ pub struct Termination {
     ca: Arc<WorkspaceCa>,
     injector: Arc<dyn Injector>,
     stand_ins: Arc<StandIns>,
+    exchanges: Option<Arc<dyn ExchangeRewriter>>,
 }
 
 impl Termination {
@@ -111,6 +116,7 @@ impl Termination {
             ca,
             injector,
             stand_ins: Arc::new(StandIns::new()),
+            exchanges: None,
         }
     }
 
@@ -121,6 +127,14 @@ impl Termination {
     #[must_use]
     pub fn with_stand_ins(mut self, stand_ins: Arc<StandIns>) -> Self {
         self.stand_ins = stand_ins;
+        self
+    }
+
+    /// Reads the token exchanges `exchanges` asks for (see [`ExchangeRewriter`]), on both HTTP
+    /// versions. Its hosts must be among the hosts this termination decrypts.
+    #[must_use]
+    pub fn with_exchanges(mut self, exchanges: Arc<dyn ExchangeRewriter>) -> Self {
+        self.exchanges = Some(exchanges);
         self
     }
 
@@ -144,6 +158,12 @@ impl Termination {
     #[must_use]
     pub fn stand_ins(&self) -> &Arc<StandIns> {
         &self.stand_ins
+    }
+
+    /// The reader of the workspace's token exchanges, as [`Self::with_exchanges`] was given it.
+    #[must_use]
+    pub fn exchanges(&self) -> Option<&dyn ExchangeRewriter> {
+        self.exchanges.as_deref()
     }
 }
 

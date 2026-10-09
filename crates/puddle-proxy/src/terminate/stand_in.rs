@@ -41,6 +41,7 @@ use zeroize::Zeroizing;
 
 use super::inject::{InjectedHeader, Injection, SecretValue};
 use super::set::TerminationSet;
+use super::token_body::TokenBody;
 
 /// The shortest stand-in accepted. A short one would match inside ordinary header text and swap
 /// it.
@@ -422,6 +423,41 @@ impl StandIns {
             }
         }
         report
+    }
+}
+
+impl StandIns {
+    /// Swaps, in the token message `body`, the text of each of the top-level `fields` that is one
+    /// of this registry's stand-ins and is for `host`, for the real value. This is the one place a
+    /// body is swapped: only a named field and only an exact match, never a search of the body. A
+    /// stand-in in such a field that is not for `host` is left as it is and reported, as in a
+    /// header. `true` in the second place when anything changed.
+    pub(crate) fn swap_fields(
+        &self,
+        body: &mut TokenBody,
+        fields: &[String],
+        host: &Host,
+    ) -> (Swapped, bool) {
+        let mut report = Swapped::default();
+        let mut changed = false;
+        let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
+        for field in fields {
+            let Some(found) = body.text(field).and_then(|text| {
+                guard
+                    .iter()
+                    .find(|entry| entry.text == *text)
+                    .map(Arc::clone)
+            }) else {
+                continue;
+            };
+            if found.hosts.contains(host) {
+                changed |= body.set_text(field, found.real.expose());
+                Swapped::note(&mut report.swapped, found.id());
+            } else {
+                Swapped::note(&mut report.unbound, found.id());
+            }
+        }
+        (report, changed)
     }
 }
 
@@ -1189,5 +1225,79 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    fn token_body(content_type: &str, text: &str) -> TokenBody {
+        TokenBody::parse(Some(content_type), text.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn a_stand_in_in_a_named_body_field_is_swapped_toward_its_hosts_only() {
+        let registry = registry();
+        let fields = vec!["refresh_token".to_owned()];
+        let json = format!(r#"{{"refresh_token":"{GH}","other":"{GH}"}}"#);
+
+        let mut body = token_body("application/json", &json);
+        let (report, changed) = registry.swap_fields(&mut body, &fields, &host("github.com"));
+        assert!(changed);
+        assert_eq!(report.swapped, ["stand-in:secret:GH_TOKEN"]);
+        let sent: serde_json::Value = serde_json::from_slice(&body.render()).unwrap();
+        assert_eq!(sent["refresh_token"], REAL_GH);
+        assert_eq!(sent["other"], GH, "only the named field");
+
+        // Toward a host it is not for: left, and reported.
+        let mut body = token_body("application/json", &json);
+        let (report, changed) = registry.swap_fields(&mut body, &fields, &host("api.example.com"));
+        assert!(!changed);
+        assert_eq!(report.unbound, ["stand-in:secret:GH_TOKEN"]);
+        assert_eq!(report.swapped, Vec::<String>::new());
+        // Nothing changed, so the caller sends the body it read, not this rendering.
+        let unchanged: serde_json::Value = serde_json::from_slice(&body.render()).unwrap();
+        assert_eq!(unchanged["refresh_token"], GH);
+    }
+
+    #[test]
+    fn a_body_field_that_is_not_a_known_stand_in_is_left_alone_in_either_format() {
+        let registry = registry();
+        let fields = vec!["refresh_token".to_owned(), "other_field".to_owned()];
+        for (content_type, text) in [
+            (
+                "application/json",
+                r#"{"refresh_token":"ghp_not_a_stand_in"}"#.to_owned(),
+            ),
+            (
+                "application/json",
+                r#"{"refresh_token":null,"x":1}"#.to_owned(),
+            ),
+            (
+                "application/x-www-form-urlencoded",
+                "refresh_token=ghp_not_a_stand_in".to_owned(),
+            ),
+            (
+                "application/x-www-form-urlencoded",
+                format!("refresh_token={GH}&refresh_token={GH}"),
+            ),
+            (
+                "application/x-www-form-urlencoded",
+                format!("refresh_token_x={GH}"),
+            ),
+        ] {
+            let mut body = token_body(content_type, &text);
+            let (report, changed) = registry.swap_fields(&mut body, &fields, &host("github.com"));
+            assert!(!changed, "{text}");
+            assert_eq!(report, Swapped::default(), "{text}");
+        }
+        // A form value is decoded before it is compared, and written back encoded.
+        let encoded = GH.replace('-', "%2D");
+        let mut body = token_body(
+            "application/x-www-form-urlencoded",
+            &format!("a=1&refresh_token={encoded}"),
+        );
+        let (_, changed) = registry.swap_fields(&mut body, &fields, &host("github.com"));
+        assert!(changed);
+        assert_eq!(
+            *body.render(),
+            format!("a=1&refresh_token={REAL_GH}").as_bytes()
+        );
     }
 }

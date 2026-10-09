@@ -13,6 +13,7 @@ use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 use super::body::{Abort, BodyReader, ChannelBody, pump};
+use super::exchange::{AnswerBody, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body};
 use super::guest::{ALPN_HTTP11, Prefixed, Proto, read_hello, server_config};
 use super::inject::{
     Forwarding, InjectContext, Injection, RequestView, Unauthorized, body_too_large,
@@ -328,6 +329,46 @@ where
         if let Err(refusal) = self.ensure_upstream().await {
             return self.refuse(&refusal).await;
         }
+        let (
+            Forwarding {
+                injection,
+                unauthorized,
+            },
+            prefetched,
+        ) = match self.consult_injector(&parsed, &head).await {
+            Ok(decided) => decided,
+            Err(flow) => return flow,
+        };
+        let headers = match request::upstream_headers(&head, &self.cx.target, injection.as_ref()) {
+            Ok(headers) => headers,
+            Err(refusal) => return self.refuse(&refusal).await,
+        };
+        let headers = self.add_credentials(headers, injection.as_ref());
+        let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
+        let (headers, prefetched, mut exchange) = match self
+            .begin_exchange(&parsed, &view, headers, prefetched)
+            .await
+        {
+            Ok(begun) => begun,
+            Err(flow) => return flow,
+        };
+        self.exchange(
+            &parsed,
+            headers,
+            unauthorized.as_ref(),
+            prefetched,
+            exchange.as_mut(),
+        )
+        .await
+    }
+
+    /// Asks the injector about the request, after reading the body it wants to see (if any):
+    /// what it adds, or why the request is refused (`Err`: the guest has been told).
+    async fn consult_injector(
+        &mut self,
+        parsed: &Parsed,
+        head: &http::Head,
+    ) -> Result<(Forwarding, Option<Bytes>), Flow> {
         let context = InjectContext {
             workspace: &self.cx.workspace,
             host: &self.cx.target.host,
@@ -335,34 +376,89 @@ where
         let injector = self.cx.termination.injector();
         let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
         let prefetched = match injector.body_wanted(&context, &view) {
-            Some(limit) => match self.read_whole_body(&parsed, limit).await {
-                Ok(body) => Some(body),
-                Err(flow) => return flow,
-            },
+            Some(limit) => Some(self.read_whole_body(parsed, limit).await?),
             None => None,
         };
         let decision = match &prefetched {
             Some(body) => injector.decide(&context, &view.with_body(body)).await,
             None => injector.decide(&context, &view).await,
         };
-        let Forwarding {
-            injection,
-            unauthorized,
-        } = match decision.into_forwarding() {
-            Ok(forwarding) => forwarding,
+        match decision.into_forwarding() {
+            Ok(forwarding) => Ok((forwarding, prefetched)),
             Err(refusal) => {
                 tracing::info!(host = %self.cx.target.host, code = refusal.code(), "request refused by the credential rules");
                 self.outcome.refused.get_or_insert(refusal.code());
-                return self.refuse(&refusal.to_refusal()).await;
+                Err(self.refuse(&refusal.to_refusal()).await)
             }
+        }
+    }
+
+    /// Asks the workspace's exchange rewriter about the request. If it is a token exchange, gets
+    /// it ready: the answer will be read, so the upstream is asked for it unencoded; and the
+    /// body is read in full and has its stand-ins swapped for the real values when the exchange
+    /// asks for that.
+    async fn begin_exchange(
+        &mut self,
+        parsed: &Parsed,
+        view: &RequestView<'_>,
+        mut headers: ::http::HeaderMap,
+        prefetched: Option<Bytes>,
+    ) -> Result<(::http::HeaderMap, Option<Bytes>, Option<Exchange>), Flow> {
+        let host = &self.cx.target.host;
+        let began = self.cx.termination.exchanges().and_then(|rewriter| {
+            rewriter.begin(
+                host,
+                &parsed.method,
+                puddle_types::request_path(&parsed.target),
+            )
+        });
+        let Some(mut exchange) = began else {
+            return Ok((headers, prefetched, None));
         };
-        let headers = match request::upstream_headers(&head, &self.cx.target, injection.as_ref()) {
-            Ok(headers) => headers,
-            Err(refusal) => return self.refuse(&refusal).await,
+        if exchange.answer_mut().is_some() {
+            headers.remove(::http::header::ACCEPT_ENCODING);
+        }
+        if !exchange.wants_request_body() {
+            return Ok((headers, prefetched, Some(exchange)));
+        }
+        let body = match prefetched {
+            Some(body) => body,
+            None => self.read_whole_body(parsed, MAX_EXCHANGE_BODY).await?,
         };
-        let headers = self.add_credentials(headers, injection.as_ref());
-        self.exchange(&parsed, headers, unauthorized.as_ref(), prefetched)
-            .await
+        let (swapped_body, report) = swap_request_body(
+            self.cx.termination.stand_ins(),
+            &exchange,
+            view.header("content-type"),
+            &body,
+            host,
+        );
+        self.outcome.record_stand_ins(host, &report);
+        Ok((headers, Some(swapped_body.unwrap_or(body)), Some(exchange)))
+    }
+
+    /// Lets the exchange's rewriter read the answer, when it has one to read. `Err`: the answer
+    /// could not be read and the guest has been told.
+    async fn read_exchange_answer(
+        &mut self,
+        exchange: Option<&mut Exchange>,
+        response: ::http::Response<hyper::body::Incoming>,
+    ) -> Result<::http::Response<AnswerBody>, Flow> {
+        let Some(answer) = exchange.and_then(Exchange::answer_mut) else {
+            return Ok(response.map(AnswerBody::Streaming));
+        };
+        match read_answer(answer, response, self.cx.proxy.config.body_idle_timeout).await {
+            Ok(read) => Ok(read),
+            Err(err) => {
+                tracing::info!(host = %self.cx.target.host, error = %err, "the answer could not be read");
+                self.upstream = None;
+                Err(self
+                    .refuse(&Refusal::new(
+                        "502 Bad Gateway",
+                        format!("{} did not finish its answer", self.cx.target.host),
+                    ))
+                    .await)
+            }
+        }
     }
 
     /// Notes the injected credential for the audit, then swaps the workspace's stand-ins in
@@ -470,7 +566,7 @@ where
     /// Writes `response` to the guest while the guest's read side is polled (see [`keep_reading`]).
     async fn write_response(
         &mut self,
-        response: ::http::Response<hyper::body::Incoming>,
+        response: ::http::Response<AnswerBody>,
         parsed: &Parsed,
         config: ProxyConfig,
     ) -> io::Result<response::Written> {
@@ -534,6 +630,47 @@ where
         self.refuse(&refusal.to_refusal()).await
     }
 
+    /// The upstream's answer to a request that was sent, or, when there is none, the refusal the
+    /// guest gets (`Err`: it has been sent).
+    async fn upstream_answer(
+        &mut self,
+        sent: Option<Result<::http::Response<hyper::body::Incoming>, hyper::Error>>,
+        pumped: Option<io::Result<()>>,
+    ) -> Result<::http::Response<hyper::body::Incoming>, Flow> {
+        let refusal = match sent {
+            Some(Ok(response)) => return Ok(response),
+            Some(Err(err)) => {
+                if let Some(Err(why)) = pumped {
+                    tracing::info!(host = %self.cx.target.host, error = %why, "request body failed");
+                    Refusal::new("400 Bad Request", "the request body could not be read")
+                } else {
+                    tracing::info!(host = %self.cx.target.host, error = %err, "upstream request failed");
+                    self.upstream = None;
+                    Refusal::new(
+                        "502 Bad Gateway",
+                        format!(
+                            "the request to {} failed: {}",
+                            self.cx.target.host,
+                            short(&err)
+                        ),
+                    )
+                }
+            }
+            None => {
+                self.upstream = None;
+                Refusal::new(
+                    "504 Gateway Timeout",
+                    format!(
+                        "{} did not answer within {}s",
+                        self.cx.target.host,
+                        self.cx.proxy.config.upstream_head_timeout.as_secs()
+                    ),
+                )
+            }
+        };
+        Err(self.refuse(&refusal).await)
+    }
+
     /// Sends `parsed` with `headers` upstream and its response to the guest. A `401` from the
     /// server is replaced by `unauthorized`'s answer when there is one.
     async fn exchange(
@@ -542,6 +679,7 @@ where
         headers: ::http::HeaderMap,
         unauthorized: Option<&Unauthorized>,
         prefetched: Option<Bytes>,
+        exchange: Option<&mut Exchange>,
     ) -> Flow {
         let config = self.cx.proxy.config;
         let Some(upstream) = self.upstream.as_mut() else {
@@ -577,44 +715,9 @@ where
         )
         .await;
         let body_complete = matches!(pumped, Some(Ok(())));
-        let response = match sent {
-            Some(Ok(response)) => response,
-            Some(Err(err)) => {
-                if let Some(Err(why)) = pumped {
-                    tracing::info!(host = %self.cx.target.host, error = %why, "request body failed");
-                    return self
-                        .refuse(&Refusal::new(
-                            "400 Bad Request",
-                            "the request body could not be read",
-                        ))
-                        .await;
-                }
-                tracing::info!(host = %self.cx.target.host, error = %err, "upstream request failed");
-                self.upstream = None;
-                return self
-                    .refuse(&Refusal::new(
-                        "502 Bad Gateway",
-                        format!(
-                            "the request to {} failed: {}",
-                            self.cx.target.host,
-                            short(&err)
-                        ),
-                    ))
-                    .await;
-            }
-            None => {
-                self.upstream = None;
-                return self
-                    .refuse(&Refusal::new(
-                        "504 Gateway Timeout",
-                        format!(
-                            "{} did not answer within {}s",
-                            self.cx.target.host,
-                            config.upstream_head_timeout.as_secs()
-                        ),
-                    ))
-                    .await;
-            }
+        let response = match self.upstream_answer(sent, pumped).await {
+            Ok(response) => response,
+            Err(flow) => return flow,
         };
         if response.status() == ::http::StatusCode::UNAUTHORIZED
             && let Some(unauthorized) = unauthorized
@@ -625,6 +728,10 @@ where
         if parsed.upgrade && response.status() == ::http::StatusCode::SWITCHING_PROTOCOLS {
             return self.splice_websocket(&mut response).await;
         }
+        let response = match self.read_exchange_answer(exchange, response).await {
+            Ok(response) => response,
+            Err(flow) => return flow,
+        };
         let written = self.write_response(response, parsed, config).await;
         match written {
             Ok(response::Written::KeepOpen) if body_complete || !has_body => Flow::Continue,

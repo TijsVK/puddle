@@ -539,6 +539,8 @@ pub(crate) struct RigBuilder {
     pub(crate) upstream: Option<puddle_proxy::Upstream>,
     /// The stand-ins of the first workspace, `box`, and of the second, `other`.
     pub(crate) stand_ins: (Arc<StandIns>, Arc<StandIns>),
+    /// The token exchanges `box` reads.
+    pub(crate) exchanges: Option<Arc<dyn puddle_proxy::ExchangeRewriter>>,
 }
 
 impl RigBuilder {
@@ -552,7 +554,14 @@ impl RigBuilder {
             allow: vec!["bound.test"],
             upstream: None,
             stand_ins: (Arc::new(StandIns::new()), Arc::new(StandIns::new())),
+            exchanges: None,
         }
+    }
+
+    /// Lets `box` have its token exchanges read by `exchanges`.
+    pub(crate) fn exchanges(mut self, exchanges: Arc<dyn puddle_proxy::ExchangeRewriter>) -> Self {
+        self.exchanges = Some(exchanges);
+        self
     }
 
     /// Gives `box` this registry of stand-ins.
@@ -616,15 +625,16 @@ impl RigBuilder {
         }
         let ca = workspace_ca("box");
         let terminations = Arc::new(Terminations::new());
-        terminations.insert(
-            workspace("box"),
-            Termination::new(
-                TerminationSet::parse(self.bound.iter().copied()).unwrap(),
-                Arc::clone(&ca),
-                Arc::clone(&self.injector),
-            )
-            .with_stand_ins(self.stand_ins.0),
-        );
+        let mut termination = Termination::new(
+            TerminationSet::parse(self.bound.iter().copied()).unwrap(),
+            Arc::clone(&ca),
+            Arc::clone(&self.injector),
+        )
+        .with_stand_ins(self.stand_ins.0);
+        if let Some(exchanges) = self.exchanges {
+            termination = termination.with_exchanges(exchanges);
+        }
+        terminations.insert(workspace("box"), termination);
         // A second workspace with its own CA for the same names (HO-4).
         let other_ca = workspace_ca("other");
         terminations.insert(

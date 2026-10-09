@@ -77,9 +77,10 @@ pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
 pub use records::{RecordError, RecordResolver, Records, SystemRecords};
 pub use route::Route;
 pub use terminate::{
-    DEFAULT_TERMINATED_HOSTS, HeaderError, InjectContext, InjectDecision, InjectRefusal,
-    InjectedHeader, Injection, Injector, NoInjection, PatternError, RequestView, SecretValue,
-    StandIn, StandInError, StandInOrigin, StandIns, Termination, TerminationSet, TerminationSource,
-    Terminations, Unauthorized, secret_stand_in,
+    AnswerHead, AnswerRewriter, BodyFormat, DEFAULT_TERMINATED_HOSTS, Exchange, ExchangeRewriter,
+    HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
+    MAX_EXCHANGE_BODY, NoInjection, PatternError, RequestView, SecretValue, StandIn, StandInError,
+    StandInOrigin, StandIns, Termination, TerminationSet, TerminationSource, Terminations,
+    TokenBody, TokenBodyError, Unauthorized, secret_stand_in,
 };
 pub use upstream::Upstream;

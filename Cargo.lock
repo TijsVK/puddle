@@ -6155,6 +6155,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-logins"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "getrandom 0.4.3",
+ "proptest",
+ "puddle-proxy",
+ "puddle-secrets",
+ "puddle-types",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
 name = "puddle-netpolicy"
 version = "0.0.0"
 dependencies = [
@@ -6188,6 +6207,7 @@ dependencies = [
  "puddle-ca",
  "puddle-inject",
  "puddle-ipc",
+ "puddle-logins",
  "puddle-netpolicy",
  "puddle-proxy",
  "puddle-secrets",
@@ -6197,6 +6217,7 @@ dependencies = [
  "rcgen",
  "ring",
  "rustls",
+ "serde_json",
  "subtle",
  "tempfile",
  "thiserror 2.0.21",
@@ -6206,6 +6227,7 @@ dependencies = [
  "tonic-prost",
  "tracing",
  "tracing-subscriber",
+ "url",
  "zeroize",
 ]
 

@@ -31,6 +31,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
 use tokio::time::Sleep;
 
+use super::exchange::{AnswerBody, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body};
 use super::guest::{ALPN_H2, ALPN_HTTP11};
 use super::inject::{
     Forwarding, InjectContext, Injection, RequestView, Unauthorized, body_too_large,
@@ -475,12 +476,51 @@ async fn exchange(
         let guest_upgrade = hyper::upgrade::on(&mut request);
         return websocket(shared, guest_upgrade, &checked, route, headers, guard).await;
     }
+    let (mut exchange, prefetched) =
+        match begin_exchange(shared, &checked, &mut request, &mut headers, prefetched).await {
+            Ok(begun) => begun,
+            Err(refusal) => {
+                route.unused();
+                return Err(refusal);
+            }
+        };
     let head_only = checked.method == Method::HEAD;
     let activity = Arc::new(Activity::new());
     let sent = Arc::new(Sent::default());
     let (_, body) = request.into_parts();
+    let body = request_body(body, prefetched, injection.as_ref(), &activity, &sent);
+    let upstream_request =
+        build_request(cx, version, checked.method, &checked.path, headers, body)?;
+    let response = send(shared, &mut route, upstream_request, &sent).await?;
+    if let Some(refusal) = unauthorized_answer(shared, &response, unauthorized.as_ref()) {
+        return Err(refusal);
+    }
+    let response = read_exchange_answer(shared, exchange.as_mut(), response).await?;
+    let lease = match route {
+        Route::H1(lease) => Some(lease),
+        Route::H2(_) => None,
+    };
+    Ok(guest_response(
+        response, head_only, &activity, &sent, lease, guard,
+    ))
+}
+
+/// The body of the request sent upstream: the one that was read in full already, or the guest's
+/// own, streamed.
+fn request_body(
+    body: Incoming,
+    prefetched: Option<Bytes>,
+    injection: Option<&Injection>,
+    activity: &Arc<Activity>,
+    sent: &Arc<Sent>,
+) -> UpBody {
+    if let Some(whole) = prefetched {
+        sent.finish();
+        return Full::new(whole)
+            .map_err(|never| match never {})
+            .boxed_unsync();
+    }
     let injected = injection
-        .as_ref()
         .map(|injection| {
             injection
                 .headers()
@@ -489,28 +529,81 @@ async fn exchange(
                 .collect()
         })
         .unwrap_or_default();
-    let body: UpBody = match prefetched {
-        Some(whole) => {
-            sent.finish();
-            Full::new(whole)
-                .map_err(|never| match never {})
-                .boxed_unsync()
-        }
-        None => GuestBody::new(body, &activity, &sent, injected).boxed_unsync(),
+    GuestBody::new(body, activity, sent, injected).boxed_unsync()
+}
+
+/// Asks the workspace's exchange rewriter about the request and, if it is a token exchange, gets
+/// it ready as the HTTP/1.1 path does: the answer will be read, so the upstream is asked for it
+/// unencoded; and the body is read in full and has its stand-ins swapped for the real values when
+/// the exchange asks for that.
+async fn begin_exchange(
+    shared: &Shared,
+    checked: &Checked,
+    request: &mut Request<Incoming>,
+    headers: &mut HeaderMap,
+    prefetched: Option<Bytes>,
+) -> Result<(Option<Exchange>, Option<Bytes>), Refusal> {
+    let cx = &shared.cx;
+    let began = cx.termination.exchanges().and_then(|rewriter| {
+        rewriter.begin(
+            &cx.target.host,
+            checked.method.as_str(),
+            puddle_types::request_path(&checked.path),
+        )
+    });
+    let Some(exchange) = began else {
+        return Ok((None, prefetched));
     };
-    let upstream_request =
-        build_request(cx, version, checked.method, &checked.path, headers, body)?;
-    let response = send(shared, &mut route, upstream_request, &sent).await?;
-    if let Some(refusal) = unauthorized_answer(shared, &response, unauthorized.as_ref()) {
-        return Err(refusal);
+    let mut exchange = exchange;
+    if exchange.answer_mut().is_some() {
+        headers.remove(header::ACCEPT_ENCODING);
     }
-    let lease = match route {
-        Route::H1(lease) => Some(lease),
-        Route::H2(_) => None,
+    if !exchange.wants_request_body() {
+        return Ok((Some(exchange), prefetched));
+    }
+    let body = match prefetched {
+        Some(body) => body,
+        None => read_whole_body(shared, request.body_mut(), MAX_EXCHANGE_BODY).await?,
     };
-    Ok(guest_response(
-        response, head_only, &activity, &sent, lease, guard,
-    ))
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    let host = &cx.target.host;
+    let (swapped, report) = swap_request_body(
+        cx.termination.stand_ins(),
+        &exchange,
+        content_type,
+        &body,
+        host,
+    );
+    shared
+        .outcome
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .record_stand_ins(host, &report);
+    Ok((Some(exchange), Some(swapped.unwrap_or(body))))
+}
+
+/// Lets the exchange's rewriter read the answer, when it has one to read.
+async fn read_exchange_answer(
+    shared: &Shared,
+    exchange: Option<&mut Exchange>,
+    response: Response<Incoming>,
+) -> Result<Response<AnswerBody>, Refusal> {
+    let Some(answer) = exchange.and_then(Exchange::answer_mut) else {
+        return Ok(response.map(AnswerBody::Streaming));
+    };
+    let cx = &shared.cx;
+    read_answer(answer, response, cx.proxy.config.body_idle_timeout)
+        .await
+        .map_err(|err| {
+            tracing::info!(host = %cx.target.host, error = %err, "the answer could not be read");
+            Refusal::new(
+                "502 Bad Gateway",
+                format!("{} did not finish its answer", cx.target.host),
+            )
+        })
 }
 
 /// Asks the injector about the request, as the HTTP/1.1 path does: what it may add, or why the
@@ -792,7 +885,12 @@ async fn websocket(
         let sent = Arc::new(Sent::default());
         sent.finish();
         return Ok(guest_response(
-            response, false, &activity, &sent, lease, guard,
+            response.map(AnswerBody::Streaming),
+            false,
+            &activity,
+            &sent,
+            lease,
+            guard,
         ));
     }
     if let Some(key) = &key
@@ -911,7 +1009,7 @@ fn end_to_end_headers(headers: &HeaderMap) -> HeaderMap {
 /// The upstream's response, for the HTTP/2 guest: connection-specific headers removed, the body
 /// (and its trailers) streamed through.
 fn guest_response(
-    response: Response<Incoming>,
+    response: Response<AnswerBody>,
     head_only: bool,
     activity: &Arc<Activity>,
     sent: &Arc<Sent>,

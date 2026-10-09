@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-logins"
+description = "puddle's captured logins: the built-in profiles of Claude Code and GitHub, the token-endpoint rewriter that keeps the real token on the host and hands the workspace a stand-in with the token's shape, and where the real tokens are kept"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+bytes = { workspace = true }
+getrandom = { workspace = true }
+puddle-proxy = { workspace = true }
+puddle-secrets = { workspace = true }
+puddle-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tracing = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util", "time"] }
+
+[lints]
+workspace = true

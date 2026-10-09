@@ -14,8 +14,9 @@ use ::http::header::{self, HeaderMap, HeaderName};
 use ::http::{Response, StatusCode};
 use http_body::Body as _;
 use http_body_util::BodyExt as _;
-use hyper::body::Incoming;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
+
+use super::exchange::AnswerBody;
 
 /// Headers that describe the upstream connection, not the message.
 fn is_hop_by_hop(name: &HeaderName) -> bool {
@@ -62,7 +63,7 @@ pub(crate) enum Written {
 /// so the caller must drop the connection without a clean close.
 pub(crate) async fn write<W: AsyncWrite + Unpin>(
     writer: &mut W,
-    response: Response<Incoming>,
+    response: Response<AnswerBody>,
     method: &str,
     http11: bool,
     close_requested: bool,

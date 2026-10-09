@@ -30,11 +30,13 @@ puddle-types = { workspace = true }
 puddle-upstream = { workspace = true }
 ring = { workspace = true }
 rustls = { workspace = true }
+serde_json = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-rustls = { workspace = true }
 tracing = { workspace = true }
+url = { workspace = true }
 zeroize = { workspace = true }
 
 [features]
@@ -51,6 +53,7 @@ tonic = { workspace = true }
 tonic-prost = { workspace = true }
 proptest = { workspace = true }
 puddle-inject = { workspace = true, features = ["testing"] }
+puddle-logins = { workspace = true }
 puddle-proxy = { path = ".", features = ["testing"] }
 puddle-secrets = { workspace = true }
 puddle-store = { workspace = true }
