@@ -19,8 +19,10 @@ use crate::pattern::Pattern;
 
 /// The longest variable name.
 pub const MAX_NAME_LEN: usize = 64;
-/// The longest value of a plain variable, in bytes.
-pub const MAX_PLAIN_VALUE_BYTES: usize = 16 * 1024;
+/// The longest value of a plain variable, in bytes: what fits in the API's request body (64 KiB,
+/// with room for the JSON around it) and a PEM bundle or a JSON document, and far under the 128 KiB
+/// a Linux kernel accepts in one environment string.
+pub const MAX_PLAIN_VALUE_BYTES: usize = 48 * 1024;
 /// The longest value of a secret, in characters: a header value (servers refuse lines past about
 /// 8 KiB) and, once the credential store holds it in pieces, no platform's own limit.
 pub const MAX_SECRET_VALUE_CHARS: usize = 8 * 1024;
@@ -134,12 +136,12 @@ impl EnvName {
         }
         if name == "PATH" {
             return Err(invalid(
-                "PATH comes from the workspace's image; puddle does not replace it".to_owned(),
+                "PATH comes from the workspace's image and puddle does not replace it; add a folder to it from your shell's start-up file instead".to_owned(),
             ));
         }
         if PUDDLE_OWNED_NAMES.contains(&name) {
             return Err(invalid(format!(
-                "puddle sets {name} in every workspace so its tools use puddle's proxy and trust its certificate"
+                "puddle sets {name} in every workspace so its tools use puddle's proxy and trust its certificate, so it can't be changed here; give one tool its own setting on its command line instead"
             )));
         }
         Ok(Self(name.to_owned()))

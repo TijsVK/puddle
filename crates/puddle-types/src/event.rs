@@ -169,6 +169,16 @@ pub enum Event {
         /// The workspace.
         workspace: WorkspaceName,
     },
+    /// A change to a workspace's environment could not be applied to it while it runs, or what a
+    /// deleted workspace held could not be removed. `reason` names the variable and says what is
+    /// wrong and what to do; it never holds a value. A workspace that runs keeps the secrets it
+    /// had; the change applies at its next start, or when the next change succeeds.
+    WorkspaceEnvFailed {
+        /// The workspace.
+        workspace: WorkspaceName,
+        /// What went wrong, for the user.
+        reason: String,
+    },
     /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
     /// or the sign-in ran out). The user signs in from puddle; a request never opens a sign-in
     /// window. Global: every subscriber gets it. Names only, never a value.
@@ -326,7 +336,8 @@ impl Event {
             | Self::SuppressionChanged { workspace, .. }
             | Self::GitAccessDenied { workspace, .. }
             | Self::WorkspaceGitChanged { workspace }
-            | Self::WorkspaceEnvChanged { workspace } => Some(workspace),
+            | Self::WorkspaceEnvChanged { workspace }
+            | Self::WorkspaceEnvFailed { workspace, .. } => Some(workspace),
             Self::PendingOpened { request } => Some(&request.workspace),
             Self::RulesChanged {}
             | Self::IdentitiesChanged {}
@@ -589,18 +600,6 @@ mod tests {
                 Some(WorkspaceName::new("box").unwrap()),
             ),
             (
-                Event::GlobalEnvChanged {},
-                r#"{"type":"global_env_changed"}"#,
-                None,
-            ),
-            (
-                Event::WorkspaceEnvChanged {
-                    workspace: WorkspaceName::new("box").unwrap(),
-                },
-                r#"{"type":"workspace_env_changed","workspace":"box"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
-            ),
-            (
                 Event::AuditAppended { id: 99 },
                 r#"{"type":"audit_appended","id":99}"#,
                 None,
@@ -626,6 +625,26 @@ mod tests {
     #[test]
     fn credential_and_git_access_events_have_fixed_shapes() {
         for (event, json, workspace) in [
+            (
+                Event::GlobalEnvChanged {},
+                r#"{"type":"global_env_changed"}"#,
+                None,
+            ),
+            (
+                Event::WorkspaceEnvChanged {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                },
+                r#"{"type":"workspace_env_changed","workspace":"box"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
+            ),
+            (
+                Event::WorkspaceEnvFailed {
+                    workspace: WorkspaceName::new("box").unwrap(),
+                    reason: "cannot read the secret T".into(),
+                },
+                r#"{"type":"workspace_env_failed","workspace":"box","reason":"cannot read the secret T"}"#,
+                Some(WorkspaceName::new("box").unwrap()),
+            ),
             (
                 Event::CredentialSignInNeeded {
                     host: "github.com".into(),
@@ -715,6 +734,7 @@ mod tests {
                 "workspace_git_changed",
                 "global_env_changed",
                 "workspace_env_changed",
+                "workspace_env_failed",
                 "credential_sign_in_needed",
                 "git_access_denied",
                 "audit_appended",

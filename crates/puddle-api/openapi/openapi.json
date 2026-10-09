@@ -7917,6 +7917,31 @@
           },
           {
             "type": "object",
+            "description": "A change to a workspace's environment could not be applied to it while it runs, or what a\ndeleted workspace held could not be removed. `reason` names the variable and says what is\nwrong and what to do; it never holds a value. A workspace that runs keeps the secrets it\nhad; the change applies at its next start, or when the next change succeeds.",
+            "required": [
+              "workspace",
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "description": "What went wrong, for the user."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_env_failed"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from puddle; a request never opens a sign-in\nwindow. Global: every subscriber gets it. Names only, never a value.",
             "required": [
               "host",

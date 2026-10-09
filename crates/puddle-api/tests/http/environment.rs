@@ -502,7 +502,7 @@ async fn what_is_refused_says_why_and_never_quotes_a_secret() {
     }
     let nul = put(&api, "/api/env/T", &plain("a\u{0}b")).await;
     assert!(refused(&nul).contains("NUL"));
-    let too_big = put(&api, "/api/env/T", &plain(&"x".repeat(17 * 1024))).await;
+    let too_big = put(&api, "/api/env/T", &plain(&"x".repeat(49 * 1024))).await;
     assert!(refused(&too_big).contains("at most"));
     assert_eq!(
         names(&api.get("/api/env").await.json()).len(),
@@ -591,7 +591,7 @@ async fn a_scope_holds_at_most_256_variables() {
 }
 
 #[tokio::test]
-async fn a_secret_made_plain_while_the_credential_store_is_down_is_changed_and_only_its_old_value_is_left()
+async fn a_secret_made_plain_removes_its_value_first_and_is_refused_while_the_credential_store_is_down()
  {
     let api = start().await;
     put(
@@ -601,14 +601,17 @@ async fn a_secret_made_plain_while_the_credential_store_is_down_is_changed_and_o
     )
     .await;
     api.secrets.break_it();
-    let now_plain = put(&api, "/api/env/T", &plain("open")).await;
-    assert_eq!(now_plain.status, 200, "{}", now_plain.body);
-    assert_eq!(now_plain.json()["kind"], "plain");
-    // The old value could not be removed: it stays in the credential store with nothing naming it,
-    // and the variable no longer refers to it.
+    let refused = put(&api, "/api/env/T", &plain("open")).await;
+    assert_eq!(refused.status, 503, "{}", refused.body);
+    // Nothing changed: it is still a secret, and its value is still where it was.
+    let listed = api.get("/api/env").await.json();
+    assert_eq!(listed["variables"][0]["kind"], "secret");
     api.secrets.heal();
     assert_eq!(api.secrets.ids().len(), 1);
-    assert_eq!(names(&api.get("/api/env").await.json()), ["T"]);
+    // With the store back the change goes through and the value is gone.
+    let now_plain = put(&api, "/api/env/T", &plain("open")).await;
+    assert_eq!(now_plain.status, 200, "{}", now_plain.body);
+    assert_eq!(api.secrets.ids(), Vec::<String>::new());
 }
 
 #[tokio::test]

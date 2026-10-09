@@ -62,7 +62,7 @@ pub(crate) fn resolve(
                     Ok(None) => {
                         return Err(format!(
                             "the value of the secret {name} is not in this computer's credential store; \
-                             set it again on the workspace's Environment tab"
+                             set it again (the workspace's Environment tab, or Settings for a global secret)"
                         ));
                     }
                     Err(_) => {

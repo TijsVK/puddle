@@ -348,7 +348,7 @@ fn stand_in(
 pub(super) fn delete_workspace_rows(
     tx: &Transaction<'_>,
     workspace: &WorkspaceName,
-) -> Result<(Vec<StoredId>, bool), StoreError> {
+) -> Result<(Vec<(EnvName, StoredId)>, bool), StoreError> {
     let own = list(tx, &EnvScope::Workspace(workspace.clone()))?;
     let held = tx.execute(
         "DELETE FROM env_stand_ins WHERE workspace_id = ?1",
@@ -360,10 +360,7 @@ pub(super) fn delete_workspace_rows(
     )?;
     let secrets = own
         .iter()
-        .filter_map(|e| match &e.value {
-            EnvValue::Secret(secret) => Some(secret.id.clone()),
-            EnvValue::Plain(_) => None,
-        })
+        .filter_map(|e| Some((e.name.clone(), e.value.as_secret()?.id.clone())))
         .collect();
     Ok((secrets, !own.is_empty() || held > 0))
 }
@@ -778,11 +775,11 @@ mod tests {
         let deletion = store.delete_workspace(&shop).unwrap();
         assert_eq!(
             deletion
-                .secret_ids
+                .secrets
                 .iter()
-                .map(StoredId::as_str)
+                .map(|(name, id)| (name.as_str(), id.as_str()))
                 .collect::<Vec<_>>(),
-            ["env-w"],
+            [("W", "env-w")],
             "only the workspace's own secrets: the global one still serves the others"
         );
         assert_eq!(store.env_entries(&EnvScope::Workspace(shop)).unwrap(), []);

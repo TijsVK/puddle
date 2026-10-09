@@ -3180,6 +3180,14 @@ async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_vo
     assert_eq!(end["step"], "done", "{end}");
     assert_eq!(calls_of(&rig, "Create"), creates + 1);
     assert_eq!(calls_of(&rig, "Remove"), 1);
+    // Puddle says what it did: the sandbox was made again, the volume kept.
+    let said = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("variables changed") && d.contains("volume"))
+    });
+    assert!(said, "no notice that the sandbox was made again");
     assert_eq!(
         rig.guest
             .boot_envs

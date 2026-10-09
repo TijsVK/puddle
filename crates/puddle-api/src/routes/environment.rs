@@ -28,7 +28,7 @@ fn unavailable() -> ApiError {
     ApiError::new(
         StatusCode::SERVICE_UNAVAILABLE,
         ErrorCode::Unavailable,
-        "the operating system's credential store is not available; nothing was changed",
+        "the operating system's credential store is not available (unlock it or check that it is running); nothing was changed",
     )
 }
 
@@ -79,6 +79,13 @@ async fn set(
     blocking(move || match request {
         EnvSetRequest::Plain { value } => {
             let draft = EnvDraft::plain(&value)?;
+            // A secret that becomes a plain variable has no value to keep: it goes first, so a
+            // credential store that is not there refuses the change instead of leaving the value
+            // behind with nothing naming it.
+            let kept = store.env_entry(&scope, &name)?;
+            if let Some(secret) = kept.as_ref().and_then(|e| e.value.as_secret()) {
+                vault.delete(&secret.id).map_err(|_| unavailable())?;
+            }
             let change = store.set_env(&scope, &name, draft)?;
             drop_replaced(&vault, change.replaced.as_ref(), None);
             Ok(EnvVariable::from_store(change.entry, false))

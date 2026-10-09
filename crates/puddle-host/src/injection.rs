@@ -257,7 +257,8 @@ impl Injection {
     /// the next request, with no restart. The guest's own environment is read at its next start.
     ///
     /// A workspace that does not run reads its environment at its next start. A failure leaves
-    /// what the workspace had and is logged: the next change tries again.
+    /// what the workspace had, is logged and reaches the user as [`Event::WorkspaceEnvFailed`]: the
+    /// next change tries again.
     pub(crate) async fn environment_changed(&self, workspace: &WorkspaceName) {
         let lock = self.environment_lock(workspace);
         let _environment = lock.lock().await;
@@ -269,8 +270,17 @@ impl Injection {
             Err(reason) => Err(reason),
         };
         if let Err(reason) = applied {
-            tracing::warn!(workspace = %workspace, %reason, "the workspace's secrets are not updated");
+            self.failed(workspace, reason);
         }
+    }
+
+    /// Tells the user, and the log, that a change to `workspace`'s environment did not apply.
+    fn failed(&self, workspace: &WorkspaceName, reason: String) {
+        tracing::warn!(workspace = %workspace, %reason, "a change to the workspace's environment is not applied");
+        self.inputs.events.emit(Event::WorkspaceEnvFailed {
+            workspace: workspace.clone(),
+            reason,
+        });
     }
 
     /// Makes the registry of the running `workspace` hold `resolved`'s entries, then makes what it
@@ -281,17 +291,16 @@ impl Injection {
         workspace: &WorkspaceName,
         resolved: Resolved,
     ) -> Result<(), String> {
-        let Some(stand_ins) = self
+        let registry = self
             .running()
             .get(workspace)
-            .map(|r| Arc::clone(&r.stand_ins))
-        else {
-            return Ok(());
-        };
-        stand_ins
-            .replace_origin(StandInOrigin::Secret, resolved.entries)
-            .map_err(|e| format!("the secrets of {workspace} cannot be registered: {e}"))?;
-        self.resync(workspace).map(|_| ())
+            .map(|r| Arc::clone(&r.stand_ins));
+        registry.map_or(Ok(()), |stand_ins| {
+            stand_ins
+                .replace_origin(StandInOrigin::Secret, resolved.entries)
+                .map_err(|e| format!("the secrets of {workspace} cannot be registered: {e}"))?;
+            self.resync(workspace).map(|_| ())
+        })
     }
 
     /// Reads the running `workspace`'s settings again and changes what it decrypts to match, with
@@ -333,8 +342,9 @@ impl Injection {
     }
 
     /// Removes what a deleted `workspace` held: its own variables and stand-ins in the store and
-    /// its own secrets' values in the credential store. Failures are logged: the workspace is gone
-    /// either way, and a value that stays behind is unreachable (nothing names it any more).
+    /// its own secrets' values in the credential store. The workspace is gone either way, so a
+    /// failure is logged and shown ([`Event::WorkspaceEnvFailed`]) instead of stopping anything: a
+    /// value that stays behind is unreachable (nothing names it any more) but is still the user's.
     pub(crate) async fn forget(&self, workspace: &WorkspaceName) {
         let (store, vault, name) = (
             Arc::clone(&self.inputs.store),
@@ -345,18 +355,26 @@ impl Injection {
             let deletion = store
                 .delete_workspace(&name)
                 .map_err(|e| format!("cannot remove {name}'s rules and environment: {e}"))?;
-            for id in &deletion.secret_ids {
-                if vault.delete(id).is_err() {
-                    tracing::warn!(workspace = %name, secret = %id, "a deleted workspace's secret could not be removed from the credential store");
-                }
+            let left: Vec<String> = deletion
+                .secrets
+                .iter()
+                .filter(|(_, id)| vault.delete(id).is_err())
+                .map(|(var, _)| var.to_string())
+                .collect();
+            if left.is_empty() {
+                return Ok(());
             }
-            Ok::<(), String>(())
+            Err(format!(
+                "the stored value of {} could not be removed from the operating system's credential \
+                 store; remove it there (it is filed under puddle)",
+                left.join(", ")
+            ))
         })
         .await
         .map_err(|e| e.to_string())
         .and_then(|removed| removed);
         if let Err(reason) = outcome {
-            tracing::warn!(workspace = %workspace, %reason, "a deleted workspace's settings are not removed");
+            self.failed(workspace, reason);
         }
     }
 
@@ -415,14 +433,23 @@ mod tests {
     }
 
     fn inputs(store: &Arc<Store>) -> InjectorInputs {
+        inputs_with(store, Arc::new(Events::default()))
+    }
+
+    fn inputs_with(store: &Arc<Store>, events: Arc<Events>) -> InjectorInputs {
         InjectorInputs {
             store: Arc::clone(store),
             secrets: Arc::new(SecretCache::new(Sources::new(
                 puddle_secrets::ToolPaths::resolve(),
                 Arc::new(MemoryStore::new()),
             ))),
-            events: Arc::new(Events::default()),
+            events,
         }
+    }
+
+    /// What the user was told, in order.
+    fn told(events: &Events) -> Vec<Event> {
+        events.0.lock().unwrap().clone()
     }
 
     fn injection(store: &Arc<Store>) -> (Injection, Arc<Terminations>) {
@@ -433,15 +460,23 @@ mod tests {
     fn injection_with_vault(
         store: &Arc<Store>,
     ) -> (Injection, Arc<Terminations>, Arc<MemoryStore>) {
+        let (injection, terminations, vault, _) = injection_with_events(store);
+        (injection, terminations, vault)
+    }
+
+    fn injection_with_events(
+        store: &Arc<Store>,
+    ) -> (Injection, Arc<Terminations>, Arc<MemoryStore>, Arc<Events>) {
         let terminations = Arc::new(Terminations::new());
         let vault = Arc::new(MemoryStore::new());
+        let events = Arc::new(Events::default());
         let injection = Injection::new(
             Arc::clone(&terminations),
-            inputs(store),
+            inputs_with(store, Arc::clone(&events)),
             None,
             vault.clone(),
         );
-        (injection, terminations, vault)
+        (injection, terminations, vault, events)
     }
 
     const REAL: &str = "real-value-CANARY-4711";
@@ -692,7 +727,7 @@ mod tests {
     #[tokio::test]
     async fn a_workspace_that_does_not_run_is_left_alone_and_a_failed_read_keeps_what_it_had() {
         let store = store();
-        let (injection, terminations, vault) = injection_with_vault(&store);
+        let (injection, terminations, vault, events) = injection_with_events(&store);
         let (stopped, running) = (workspace("stopped"), workspace("running"));
         add_secret(&store, &vault, &stopped, "T", &["x.example.org"]);
         vault.break_it();
@@ -705,12 +740,23 @@ mod tests {
         add_secret(&store, &vault, &running, "T", &["x.example.org"]);
         injection.environment_changed(&running).await;
         assert!(decrypts(&terminations, &running, "x.example.org"));
-        // The credential store fails while a second secret is added: the first stays as it was.
+        // The credential store fails while a second secret is added: the first stays as it was,
+        // and the user is told which secret could not be read and why.
+        assert_eq!(told(&events), []);
         add_secret(&store, &vault, &running, "U", &["y.example.org"]);
         vault.break_it();
         injection.environment_changed(&running).await;
         assert_eq!(stand_ins(&terminations, &running), ["stand-in:secret:T"]);
         assert!(!decrypts(&terminations, &running, "y.example.org"));
+        let failures = told(&events);
+        assert!(
+            matches!(
+                failures.as_slice(),
+                [Event::WorkspaceEnvFailed { workspace, reason }]
+                    if workspace == &running && reason.contains("credential store") && !reason.contains(REAL)
+            ),
+            "{failures:?}"
+        );
         vault.heal();
         injection.environment_changed(&running).await;
         assert_eq!(
@@ -738,7 +784,7 @@ mod tests {
     #[tokio::test]
     async fn a_deleted_workspace_loses_its_variables_and_the_values_of_its_own_secrets() {
         let store = store();
-        let (injection, _, vault) = injection_with_vault(&store);
+        let (injection, _, vault, events) = injection_with_events(&store);
         let (gone, other) = (workspace("gone"), workspace("other"));
         add_secret(&store, &vault, &gone, "MINE", &["x.example.org"]);
         add_secret(&store, &vault, &other, "THEIRS", &["x.example.org"]);
@@ -764,9 +810,20 @@ mod tests {
         );
         assert_eq!(store.env_entries(&EnvScope::Global).unwrap().len(), 1);
 
-        // A credential store that fails leaves the value but never stops the deletion.
+        // A credential store that fails leaves the value but never stops the deletion, and the
+        // user is told which secret's value stayed behind.
+        assert_eq!(told(&events), []);
         vault.break_it();
         injection.forget(&workspace("other")).await;
+        let failures = told(&events);
+        assert!(
+            matches!(
+                failures.as_slice(),
+                [Event::WorkspaceEnvFailed { workspace, reason }]
+                    if workspace == &self::workspace("other") && reason.contains("THEIRS")
+            ),
+            "{failures:?}"
+        );
         assert_eq!(
             store
                 .env_entries(&EnvScope::Workspace(workspace("other")))
@@ -830,6 +887,10 @@ mod tests {
         assert!(err.contains("stuck") && err.contains("unlock"), "{err}");
         assert_eq!(vault.asked.lock().unwrap().len(), 1);
         assert_eq!(injection.running_workspaces(), [free]);
+        // The store is a plain one otherwise.
+        let id = StoredId::new("env-x").unwrap();
+        vault.set(&id, &Secret::new("v".to_owned())).unwrap();
+        vault.delete(&id).unwrap();
     }
 
     /// Two stand-ins of which one contains the other: the proxy cannot tell which to swap, so it

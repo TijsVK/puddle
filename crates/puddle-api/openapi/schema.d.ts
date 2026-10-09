@@ -1878,6 +1878,13 @@ export interface components {
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
+            /** @description What went wrong, for the user. */
+            reason: string;
+            /** @enum {string} */
+            type: "workspace_env_failed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
             /** @description The Git host the workspace was talking to. */
             host: string;
             /** @description The source, as one line of names (`gh account me on github.com`). */

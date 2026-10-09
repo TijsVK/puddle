@@ -1092,6 +1092,19 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .any(|s| s.name == name.as_str());
         let route_alive = inner.live.lock().await.contains_key(name);
         let restarted = exists && route_alive && self.restart_in_place(&record).await?;
+        if exists && route_alive && !restarted {
+            // The root disk goes with the old sandbox (home directory, installed packages); the
+            // volume with the work stays. Say so: this is Puddle's own doing.
+            self.progress(
+                name,
+                WorkspaceStep::Starting,
+                Some(
+                    "the workspace's variables changed, so its sandbox is made again; \
+                     the volume with your work is kept, what was installed outside it is not"
+                        .to_owned(),
+                ),
+            );
+        }
         if !restarted {
             if exists {
                 inner

@@ -123,9 +123,10 @@ pub struct WorkspaceDeletion {
     pub rules_deleted: u64,
     /// Its open pending rows, expired.
     pub pending_expired: u64,
-    /// The ids, in the operating system's credential store, of the secrets it had of its own (the
-    /// values are not in the database, so the caller removes them there).
-    pub secret_ids: Vec<puddle_secrets::StoredId>,
+    /// The secrets it had of its own, by name and by the id of the value in the operating
+    /// system's credential store (the values are not in the database, so the caller removes them
+    /// there).
+    pub secrets: Vec<(crate::EnvName, puddle_secrets::StoredId)>,
 }
 
 /// The least time between two [`Event::SuppressionChanged`] for a growing count.
@@ -775,7 +776,7 @@ impl Store {
                 });
             }
             // Its variables and stand-ins go with it; the global ones stay.
-            let (secret_ids, had_env) = environment::delete_workspace_rows(tx, workspace)?;
+            let (secrets, had_env) = environment::delete_workspace_rows(tx, workspace)?;
             if had_env {
                 fx.push(Event::WorkspaceEnvChanged {
                     workspace: workspace.clone(),
@@ -784,7 +785,7 @@ impl Store {
             Ok(WorkspaceDeletion {
                 rules_deleted: rules.len() as u64,
                 pending_expired: expired,
-                secret_ids,
+                secrets,
             })
         })?;
         let state = lock(&self.workspaces).remove(workspace);
