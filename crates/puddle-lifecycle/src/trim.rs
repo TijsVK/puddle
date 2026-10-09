@@ -57,6 +57,16 @@ pub enum TrimOutcome {
 }
 
 impl TrimOutcome {
+    /// Why the trim did not work, or `None` when it did or had nothing to do.
+    #[must_use]
+    pub fn problem(&self) -> Option<String> {
+        match self {
+            Self::Trimmed | Self::NotRunning => None,
+            Self::Failed { code, stderr } => Some(format!("fstrim exited {code}: {stderr}")),
+            Self::Error(why) => Some(why.clone()),
+        }
+    }
+
     pub(crate) fn from_output(out: &ExecOutput) -> Self {
         if out.status.success() {
             return Self::Trimmed;

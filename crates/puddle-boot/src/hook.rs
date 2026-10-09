@@ -61,7 +61,7 @@ pub enum BootError {
     #[error(transparent)]
     Compute(#[from] ComputeError),
     /// The hook failed; puddle stopped the sandbox (fail closed: no half-set-up VM runs).
-    #[error("workspace {sandbox:?} failed its boot hook and {}: {failure}", stop_text(.stop_error))]
+    #[error("workspace {sandbox:?} failed its boot hook and {}: {failure}", stop_text(.stop_error.as_deref()))]
     Hook {
         /// The sandbox.
         sandbox: String,
@@ -74,7 +74,7 @@ pub enum BootError {
 
 /// What [`BootError::Hook`] says became of the sandbox: stopped, or still up because the stop
 /// failed too.
-fn stop_text(stop_error: &Option<Box<ComputeError>>) -> String {
+fn stop_text(stop_error: Option<&ComputeError>) -> String {
     match stop_error {
         None => "was stopped".to_owned(),
         Some(e) => format!("could not be stopped either ({e}), so it may still be running"),

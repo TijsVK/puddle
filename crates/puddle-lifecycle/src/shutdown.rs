@@ -95,6 +95,16 @@ impl ShutdownReport {
             .all(|s| s.stop == StopOutcome::Stopped)
     }
 
+    /// Each sandbox whose disk was not trimmed before the stop, with the reason. The stop went
+    /// ahead; the disk file stays larger than its data until a later trim.
+    #[must_use]
+    pub fn untrimmed(&self) -> Vec<(&SandboxName, String)> {
+        self.sandboxes
+            .iter()
+            .filter_map(|s| Some((&s.sandbox, s.trim.problem()?)))
+            .collect()
+    }
+
     /// Each sandbox that was not stopped cleanly, with the reason.
     #[must_use]
     pub fn unstopped(&self) -> Vec<(&SandboxName, String)> {

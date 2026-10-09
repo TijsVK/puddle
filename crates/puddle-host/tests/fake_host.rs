@@ -20,7 +20,7 @@ use std::time::Duration;
 use puddle_api::{LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord};
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
-use puddle_compute::{ComputeError, ExecOutput, ExecRequest, ImageConfig, Runtime};
+use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
 use puddle_host::{
     GuestSettings, Host, HostConfig, HostError, HostOptions, HostPaths, PREPARE_STEPS, Platform,
     RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
@@ -2243,8 +2243,8 @@ async fn a_create_is_refused_when_the_runtime_cannot_say_whether_the_volume_exis
     let host = rig.start().await;
     let api = api(&host);
     rig.runtime.inject(
-        puddle_compute::fake::Op::Volume,
-        puddle_compute::fake::Fault::once(puddle_compute::ComputeError::Runtime {
+        Op::Volume,
+        Fault::once(puddle_compute::ComputeError::Runtime {
             op: "volume",
             message: "volume lookup broke".into(),
         }),
@@ -3602,8 +3602,8 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
 
 // ---- follow-up failures reach the user, not only the host's log -------------------------------
 
-fn disk_error(op: &'static str) -> ComputeError {
-    ComputeError::Runtime {
+fn disk_error(op: &'static str) -> puddle_compute::ComputeError {
+    puddle_compute::ComputeError::Runtime {
         op,
         message: "no space left on device".into(),
     }
@@ -3760,7 +3760,7 @@ async fn what_reconcile_kept_removed_or_could_not_do_at_start_is_listed_with_the
     // "stuck" cannot be removed: the record it has is locked.
     rig.runtime.inject(
         Op::Remove,
-        Fault::always(ComputeError::Runtime {
+        Fault::always(puddle_compute::ComputeError::Runtime {
             op: "remove",
             message: "the record is locked".into(),
         })

@@ -157,22 +157,77 @@ pub fn run(args: &ServeArgs) -> ExitCode {
             Err(e) => tracing::error!(error = %e, "cannot wait for a shutdown request; stopping"),
         }
         let down = host.shutdown().await;
+        for line in shutdown_lines(&down.sandboxes) {
+            eprintln!("{line}");
+        }
         if down.sandboxes.all_stopped() {
             ExitCode::SUCCESS
         } else {
-            eprintln!("puddle: not every sandbox stopped cleanly:");
-            for (sandbox, why) in down.sandboxes.unstopped() {
-                eprintln!("puddle:   {sandbox}: {why}");
-            }
-            eprintln!("puddle: the machines end with puddle; check the workspace volumes if a tool was writing");
             ExitCode::FAILURE
         }
     })
 }
 
+/// What puddle tells the user at exit about sandboxes that did not stop or trim cleanly:
+/// nothing when all did.
+fn shutdown_lines(report: &puddle_lifecycle::ShutdownReport) -> Vec<String> {
+    let mut lines: Vec<String> = report
+        .untrimmed()
+        .into_iter()
+        .map(|(sandbox, why)| {
+            format!(
+                "puddle: the disk of {sandbox} was not trimmed: {why}; Reclaim space trims it later"
+            )
+        })
+        .collect();
+    let unstopped = report.unstopped();
+    if !unstopped.is_empty() {
+        lines.push("puddle: not every sandbox stopped cleanly:".to_owned());
+        lines.extend(
+            unstopped
+                .into_iter()
+                .map(|(sandbox, why)| format!("puddle:   {sandbox}: {why}")),
+        );
+        lines.push(
+            "puddle: the machines end with puddle; check the workspace volumes if a tool was writing"
+                .to_owned(),
+        );
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_exit_names_each_sandbox_that_did_not_stop_or_trim_cleanly_and_why() {
+        use puddle_lifecycle::{ShutdownReport, StopOutcome, TrimOutcome, WorkspaceOutcome};
+        let outcome = |name: &str, trim, stop| WorkspaceOutcome {
+            sandbox: puddle_types::SandboxName::new(name).unwrap(),
+            trim,
+            stop,
+        };
+        let clean = ShutdownReport {
+            sandboxes: vec![outcome("fine", TrimOutcome::Trimmed, StopOutcome::Stopped)],
+        };
+        assert_eq!(shutdown_lines(&clean).len(), 0);
+        let report = ShutdownReport {
+            sandboxes: vec![
+                outcome("fine", TrimOutcome::Trimmed, StopOutcome::Stopped),
+                outcome(
+                    "slow",
+                    TrimOutcome::Error("no answer".to_owned()),
+                    StopOutcome::Forced,
+                ),
+            ],
+        };
+        let lines = shutdown_lines(&report);
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines[0].contains("disk of slow was not trimmed: no answer"));
+        assert!(lines[2].contains("slow: it did not shut down in time"));
+        assert!(lines[3].contains("check the workspace volumes"));
+    }
 
     fn serve(args: &[&str]) -> Result<ServeArgs, UsageError> {
         match parse(args.iter()) {
