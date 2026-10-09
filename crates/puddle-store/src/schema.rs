@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -314,6 +314,27 @@ CREATE TABLE env_stand_ins (
 ) STRICT;
 ";
 
+const V7: &str = r"
+-- The two switches become overrides: NULL follows the default for new workspaces (below). Rows
+-- written before this stay as explicit values.
+CREATE TABLE workspace_git_v7 (
+    workspace_id     TEXT PRIMARY KEY,
+    only_push_listed INTEGER CHECK (only_push_listed IN (0, 1)),
+    only_pull_listed INTEGER CHECK (only_pull_listed IN (0, 1))
+) STRICT;
+INSERT INTO workspace_git_v7 SELECT workspace_id, only_push_listed, only_pull_listed FROM workspace_git;
+DROP TABLE workspace_git;
+ALTER TABLE workspace_git_v7 RENAME TO workspace_git;
+
+-- The default of the two switches for every workspace that has not set its own: one row, absent
+-- until the user changes it (then push list on, pull list off).
+CREATE TABLE git_defaults (
+    id               INTEGER PRIMARY KEY CHECK (id = 1),
+    only_push_listed INTEGER NOT NULL CHECK (only_push_listed IN (0, 1)),
+    only_pull_listed INTEGER NOT NULL CHECK (only_pull_listed IN (0, 1))
+) STRICT;
+";
+
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.
 ///
 /// # Errors
@@ -587,14 +608,14 @@ mod tests {
             [],
         )
         .unwrap();
-        let switches: (i64, i64) = conn
+        let switches: (Option<i64>, Option<i64>) = conn
             .query_row(
                 "SELECT only_push_listed, only_pull_listed FROM workspace_git",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert_eq!(switches, (1, 0), "push list on, pull list off");
+        assert_eq!(switches, (None, None), "a new row follows the defaults");
         // One default at most, and a workspace's order has no gaps in its key.
         let add = "INSERT INTO identities (label, author_name, author_email, credentials, position, is_default, created_at, changed_at)
                    VALUES (?1, 'n', 'e@x', '[]', ?2, 1, 1, 1)";
@@ -661,6 +682,38 @@ mod tests {
         conn.execute("DELETE FROM env_vars WHERE id = 1", [])
             .unwrap();
         assert_eq!(count("SELECT count(*) FROM env_stand_ins"), 0);
+    }
+
+    /// A workspace that set its switches before the defaults existed keeps them as explicit
+    /// values, and the defaults table starts empty (so the built-in defaults apply).
+    #[test]
+    fn v7_keeps_switches_written_before_it_as_explicit_values() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_up_to(&mut conn, 6).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspace_git VALUES ('box', 0, 1);
+             INSERT INTO workspace_git VALUES ('other', 1, 0);",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 6);
+        let read = |ws: &str| -> (Option<i64>, Option<i64>) {
+            conn.query_row(
+                "SELECT only_push_listed, only_pull_listed FROM workspace_git WHERE workspace_id = ?1",
+                [ws],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(read("box"), (Some(0), Some(1)));
+        assert_eq!(read("other"), (Some(1), Some(0)));
+        let defaults: i64 = conn
+            .query_row("SELECT count(*) FROM git_defaults", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(defaults, 0);
+        // The defaults table holds one row at most.
+        let add = "INSERT INTO git_defaults VALUES (?1, 1, 0)";
+        conn.execute(add, [1]).unwrap();
+        assert!(conn.execute(add, [2]).is_err());
     }
 
     #[test]

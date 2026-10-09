@@ -11,7 +11,7 @@ use crate::identity::{
     Author, CredentialBinding, CredentialChoice, Identity, IdentityDraft, IdentityId, Signing,
     check_attachable, collision, resolve,
 };
-use crate::workspace_git::{RepoEntry, RepoRef, WorkspaceGit};
+use crate::workspace_git::{GitDefaults, GitStart, RepoEntry, RepoRef, StartBasis, WorkspaceGit};
 
 const COLUMNS: &str = "id, label, author_name, author_email, credentials, signing, is_default, \
                        created_at, changed_at";
@@ -166,6 +166,22 @@ fn label_free(
 fn credentials_json(credentials: &[CredentialBinding]) -> Result<String, StoreError> {
     serde_json::to_string(credentials)
         .map_err(|e| StoreError::IdentityInvalid(format!("credentials can't be stored: {e}")))
+}
+
+fn defaults_of(conn: &Connection) -> Result<GitDefaults, StoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT only_push_listed, only_pull_listed FROM git_defaults WHERE id = 1",
+            [],
+            |r| {
+                Ok(GitDefaults {
+                    only_push_listed: r.get(0)?,
+                    only_pull_listed: r.get(1)?,
+                })
+            },
+        )
+        .optional()?
+        .unwrap_or_default())
 }
 
 fn changed_for(fx: &mut Vec<Event>, workspaces: Vec<WorkspaceName>) {
@@ -368,14 +384,17 @@ impl Store {
     /// A database error, or a stored row that doesn't parse.
     pub fn workspace_git(&self, ws: &WorkspaceName) -> Result<WorkspaceGit, StoreError> {
         let conn = lock(&self.conn);
-        let (only_push_listed, only_pull_listed) = conn
+        let (own_push, own_pull) = conn
             .query_row(
                 "SELECT only_push_listed, only_pull_listed FROM workspace_git WHERE workspace_id = ?1",
                 [ws.as_str()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get::<_, Option<bool>>(0)?, r.get::<_, Option<bool>>(1)?)),
             )
             .optional()?
-            .unwrap_or((true, false));
+            .unwrap_or((None, None));
+        let defaults = defaults_of(&conn)?;
+        let only_push_listed = own_push.unwrap_or(defaults.only_push_listed);
+        let only_pull_listed = own_pull.unwrap_or(defaults.only_pull_listed);
         let mut stmt = conn.prepare(
             "SELECT id, host, owner, repo, pull, push, created_at FROM workspace_repos
              WHERE workspace_id = ?1 ORDER BY id",
@@ -420,7 +439,8 @@ impl Store {
 
     /// What a new workspace starts with: the identity that covers its repository (the first in
     /// your order when several cover it equally), else the default identity, and the repository
-    /// itself in the table with Pull and Push on.
+    /// itself in the table with Pull and Push on. The answer says which identity it got and why,
+    /// so the caller can warn when no identity covers the repository.
     ///
     /// # Errors
     /// A database error, or [`StoreError::RepoListed`] when the table already has the repository.
@@ -428,20 +448,62 @@ impl Store {
         &self,
         ws: &WorkspaceName,
         repo: &RepoRef,
-    ) -> Result<(), StoreError> {
+    ) -> Result<GitStart, StoreError> {
         let all = self.identities()?;
-        let chosen = match resolve(&all, repo.host.as_str(), repo.owner.as_str()) {
-            CredentialChoice::Covered { identity, .. } => Some(identity.id),
+        let (chosen, basis) = match resolve(&all, repo.host.as_str(), repo.owner.as_str()) {
+            CredentialChoice::Covered { identity, .. } => (Some(identity), StartBasis::Covers),
             CredentialChoice::Ambiguous(ids) => {
-                all.iter().map(|i| i.id).find(|id| ids.contains(id))
+                (all.iter().find(|i| ids.contains(&i.id)), StartBasis::Covers)
             }
-            CredentialChoice::Uncovered => all.iter().find(|i| i.is_default).map(|i| i.id),
+            CredentialChoice::Uncovered => match all.iter().find(|i| i.is_default) {
+                Some(default) => (Some(default), StartBasis::Default),
+                None => (None, StartBasis::NoIdentity),
+            },
         };
-        if let Some(id) = chosen {
-            self.attach_identity(ws, id, None)?;
+        let identity = chosen.map(|i| (i.id, i.label.clone()));
+        if let Some((id, _)) = &identity {
+            self.attach_identity(ws, *id, None)?;
         }
         self.add_repo(ws, repo, true, true)?;
-        Ok(())
+        Ok(GitStart { identity, basis })
+    }
+
+    /// The default of the two switches for workspaces that have not set their own.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn git_defaults(&self) -> Result<GitDefaults, StoreError> {
+        defaults_of(&lock(&self.conn))
+    }
+
+    /// Sets the default of either switch; `None` leaves it as it is. Every workspace that has
+    /// not set its own follows at once (an `identities_changed` event tells the screens).
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn set_git_defaults(
+        &self,
+        only_push_listed: Option<bool>,
+        only_pull_listed: Option<bool>,
+    ) -> Result<GitDefaults, StoreError> {
+        let now = self.git_defaults()?;
+        let next = GitDefaults {
+            only_push_listed: only_push_listed.unwrap_or(now.only_push_listed),
+            only_pull_listed: only_pull_listed.unwrap_or(now.only_pull_listed),
+        };
+        if next == now {
+            return Ok(now);
+        }
+        self.change(|tx, _now, fx| {
+            tx.execute(
+                "INSERT INTO git_defaults (id, only_push_listed, only_pull_listed) VALUES (1, ?1, ?2)
+                 ON CONFLICT (id) DO UPDATE SET only_push_listed = ?1, only_pull_listed = ?2",
+                params![next.only_push_listed, next.only_pull_listed],
+            )?;
+            changed_for(fx, Vec::new());
+            Ok(())
+        })?;
+        Ok(next)
     }
 
     /// Replaces the workspace's ordered identity list.
@@ -520,7 +582,8 @@ impl Store {
         self.set_workspace_identities(ws, &ids)
     }
 
-    /// Sets either "only listed" switch; `None` leaves it as it is.
+    /// Sets either "only listed" switch for this workspace; `None` leaves it as it is (a switch
+    /// the workspace never set follows the default).
     ///
     /// # Errors
     /// A database error.
@@ -530,18 +593,14 @@ impl Store {
         only_push_listed: Option<bool>,
         only_pull_listed: Option<bool>,
     ) -> Result<WorkspaceGit, StoreError> {
-        let now = self.workspace_git(ws)?;
         self.change(|tx, _now, fx| {
             tx.execute(
                 "INSERT INTO workspace_git (workspace_id, only_push_listed, only_pull_listed)
                  VALUES (?1, ?2, ?3)
                  ON CONFLICT (workspace_id) DO UPDATE
-                 SET only_push_listed = ?2, only_pull_listed = ?3",
-                params![
-                    ws.as_str(),
-                    only_push_listed.unwrap_or(now.only_push_listed),
-                    only_pull_listed.unwrap_or(now.only_pull_listed),
-                ],
+                 SET only_push_listed = COALESCE(?2, only_push_listed),
+                     only_pull_listed = COALESCE(?3, only_pull_listed)",
+                params![ws.as_str(), only_push_listed, only_pull_listed],
             )?;
             fx.push(Event::WorkspaceGitChanged {
                 workspace: ws.clone(),

@@ -125,6 +125,48 @@ pub struct RepoEntry {
     pub created_at: u64,
 }
 
+/// The default of the two switches, for every workspace that has not set its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GitDefaults {
+    /// Refuse a push to a repository not listed with Push on.
+    pub only_push_listed: bool,
+    /// Refuse a fetch from a repository not listed with Pull on.
+    pub only_pull_listed: bool,
+}
+
+impl Default for GitDefaults {
+    /// Push list on, pull list off: a fetch reaches every repository the token can read.
+    fn default() -> Self {
+        Self {
+            only_push_listed: true,
+            only_pull_listed: false,
+        }
+    }
+}
+
+/// Why a new workspace got the identity it got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StartBasis {
+    /// An identity covers the repository's owner (or its host).
+    Covers,
+    /// None does, so it got the default identity, which has no credential for the repository.
+    Default,
+    /// None does and there is no default identity: the workspace has no identity.
+    NoIdentity,
+}
+
+/// What [`crate::Store::start_workspace_git`] set up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GitStart {
+    /// The identity attached (id and label), if any.
+    pub identity: Option<(crate::IdentityId, String)>,
+    /// Why.
+    pub basis: StartBasis,
+}
+
 /// A workspace's Git settings as the store holds them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use puddle_secrets::{AccountName, HostName, SourceSpec};
 use puddle_store::{
-    Author, CollisionWhat, Coverage, CredentialBinding, CredentialChoice, IdentityDraft,
-    IdentityId, Limits, ManualClock, Owner, RepoRef, Store, StoreError,
+    Author, CollisionWhat, Coverage, CredentialBinding, CredentialChoice, GitDefaults,
+    IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoRef, StartBasis, Store, StoreError,
 };
 use puddle_types::{CollectingSink, Event, WorkspaceName};
 
@@ -312,9 +312,11 @@ fn a_new_workspace_gets_the_identity_that_covers_its_repository_and_the_reposito
     let _personal = make(&store, "Personal", &[], true);
     let work = make(&store, "Work", &["acme"], false);
 
-    store
+    let started = store
         .start_workspace_git(&ws("shop"), &repo("github.com", "acme", "shop"))
         .unwrap();
+    assert_eq!(started.basis, StartBasis::Covers);
+    assert_eq!(started.identity, Some((work, "Work".to_owned())));
     let git = store.workspace_git(&ws("shop")).unwrap();
     // The exact owner beats "the rest of github.com", which is the default.
     assert_eq!(
@@ -330,9 +332,13 @@ fn a_new_workspace_gets_the_identity_that_covers_its_repository_and_the_reposito
 #[test]
 fn a_repository_nobody_covers_gets_the_default_and_none_when_there_is_none() {
     let (_sink, store) = fixture();
-    store
+    let lonely = store
         .start_workspace_git(&ws("lonely"), &repo("github.com", "me", "x"))
         .unwrap();
+    assert_eq!(
+        (lonely.basis, lonely.identity),
+        (StartBasis::NoIdentity, None)
+    );
     let none = store.workspace_git(&ws("lonely")).unwrap();
     assert_eq!(none.identities.len(), 0);
     assert_eq!(none.repos.len(), 1);
@@ -343,9 +349,11 @@ fn a_repository_nobody_covers_gets_the_default_and_none_when_there_is_none() {
         .unwrap()
         .id;
     let _work = make(&store, "Work", &["acme"], false);
-    store
+    let elsewhere = store
         .start_workspace_git(&ws("elsewhere"), &repo("github.com", "me", "x"))
         .unwrap();
+    assert_eq!(elsewhere.basis, StartBasis::Default);
+    assert_eq!(elsewhere.identity, Some((default, "Default".to_owned())));
     let git = store.workspace_git(&ws("elsewhere")).unwrap();
     assert_eq!(
         git.identities.iter().map(|i| i.id).collect::<Vec<_>>(),
@@ -372,4 +380,61 @@ fn two_identities_that_cover_a_repository_equally_give_the_first_in_your_order()
         .collect();
     assert_eq!(ids, [a]);
     assert_ne!(a, b);
+}
+
+#[test]
+fn the_default_switches_are_inherited_until_a_workspace_sets_its_own() {
+    let (sink, store) = fixture();
+    assert_eq!(store.git_defaults().unwrap(), GitDefaults::default());
+    assert_eq!(
+        (
+            GitDefaults::default().only_push_listed,
+            GitDefaults::default().only_pull_listed
+        ),
+        (true, false)
+    );
+
+    // A workspace made before the change follows it, one that set a switch keeps that switch.
+    let (old, own) = (ws("old"), ws("own"));
+    store.set_git_switches(&own, Some(true), None).unwrap();
+    let _ = sink.take();
+    let defaults = store.set_git_defaults(Some(false), Some(true)).unwrap();
+    assert_eq!(
+        (defaults.only_push_listed, defaults.only_pull_listed),
+        (false, true)
+    );
+    assert!(sink.take().contains(&Event::IdentitiesChanged {}));
+    let before = store.workspace_git(&old).unwrap();
+    assert!(!before.only_push_listed && before.only_pull_listed);
+    let own_git = store.workspace_git(&own).unwrap();
+    // Push was set by the workspace; pull was never set, so it follows the default.
+    assert!(own_git.only_push_listed && own_git.only_pull_listed);
+
+    // A new workspace starts on the defaults, with its own repository listed Pull and Push.
+    store
+        .start_workspace_git(&ws("fresh"), &repo("github.com", "me", "fresh"))
+        .unwrap();
+    let fresh = store.workspace_git(&ws("fresh")).unwrap();
+    assert!(!fresh.only_push_listed && fresh.only_pull_listed);
+    assert_eq!((fresh.repos[0].pull, fresh.repos[0].push), (true, true));
+    // Pull is now enforced from the default: the listed repository passes, another does not.
+    assert!(fresh.allows_pull(&repo("github.com", "me", "fresh")));
+    assert!(!fresh.allows_pull(&repo("github.com", "me", "other")));
+    assert!(fresh.allows_push(&repo("github.com", "me", "other")));
+
+    // Overriding one switch on the workspace leaves the other following.
+    store
+        .set_git_switches(&ws("fresh"), Some(true), None)
+        .unwrap();
+    store.set_git_defaults(None, Some(false)).unwrap();
+    let fresh = store.workspace_git(&ws("fresh")).unwrap();
+    assert!(fresh.only_push_listed && !fresh.only_pull_listed);
+    // `None` for both changes nothing and says nothing.
+    let _ = sink.take();
+    store.set_git_defaults(None, None).unwrap();
+    assert!(sink.take().is_empty());
+    assert_eq!(
+        store.git_defaults().unwrap(),
+        store.set_git_defaults(Some(false), Some(false)).unwrap()
+    );
 }
