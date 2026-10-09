@@ -293,7 +293,7 @@ async fn the_refusal_gives_the_https_form_of_a_known_git_hosts_remote_and_no_oth
     }
     let answer = guest.announce("git.example.test:22").await;
     assert!(
-        answer.ends_with("puddle: SSH is not supported yet\n"),
+        answer.ends_with("puddle: SSH is not supported yet; no rule or setting allows it\n"),
         "{answer}"
     );
 }
@@ -353,7 +353,10 @@ async fn ssh_that_waits_for_the_200_is_ended_at_its_first_bytes_and_the_server_g
         .expect("the tunnel ends")
         .unwrap();
     let answer = String::from_utf8(answer).unwrap();
-    assert_eq!(answer, "puddle: SSH is not supported yet\r\n");
+    assert_eq!(
+        answer,
+        "puddle: SSH is not supported yet; no rule or setting allows it\r\n"
+    );
     assert!(
         !answer.starts_with("SSH-"),
         "a pre-banner line, not a banner"

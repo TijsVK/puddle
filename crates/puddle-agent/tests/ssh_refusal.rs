@@ -268,7 +268,7 @@ async fn ssh_to_any_other_host_and_port_gets_the_plain_message() {
         // The refusal comes first; ssh adds its own line about the connection closing.
         assert_eq!(
             stderr(&out).lines().next(),
-            Some("puddle: SSH is not supported yet"),
+            Some("puddle: SSH is not supported yet; no rule or setting allows it"),
             "{args:?}: {}",
             stderr(&out)
         );

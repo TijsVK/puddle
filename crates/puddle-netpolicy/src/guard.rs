@@ -231,7 +231,7 @@ pub fn git_https_remote(host: &Host) -> Option<&'static str> {
 fn ssh_unsupported_message(host: &Host) -> String {
     match git_https_remote(host) {
         Some(https) => format!("SSH is not supported yet, use HTTPS: the remote becomes {https}"),
-        None => "SSH is not supported yet".to_owned(),
+        None => "SSH is not supported yet; no rule or setting allows it".to_owned(),
     }
 }
 
@@ -437,7 +437,7 @@ mod tests {
         );
         assert_eq!(
             block_message(&host, &workspace(), &[BlockReason::SshUnsupported]),
-            "SSH is not supported yet"
+            "SSH is not supported yet; no rule or setting allows it"
         );
         assert!(
             block_message(&host, &workspace(), &[BlockReason::LocalAddress])
@@ -481,7 +481,7 @@ mod tests {
             assert_eq!(git_https_remote(&host), None, "{other}");
             assert_eq!(
                 block_message(&host, &workspace(), &[BlockReason::SshUnsupported]),
-                "SSH is not supported yet",
+                "SSH is not supported yet; no rule or setting allows it",
                 "{other}"
             );
         }

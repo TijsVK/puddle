@@ -94,9 +94,9 @@ States: `requested → allowed | denied | expired`. The three end states are fin
   setting is on (global default off, per-workspace override *(default)*). The IP check only looks
   up rules (`Policy::lookup`); it never writes a pending row for the address. puddle's own
   endpoints are blocked whatever rules or toggles say, and never become pending. So is SSH from a
-  workspace (reason `ssh_unsupported`, R-24): the proxy recognises it by the client's identification
-  line on any port and refuses it before any rule is asked, so no rule allows it and it never goes
-  pending.
+  workspace, which is not supported yet (reason `ssh_unsupported`, R-24): the proxy recognises it by
+  the client's identification line on any port and refuses it before any rule is asked, so no rule
+  allows it and it never goes pending.
   *Changed 2026-10-06: the exact-IP case was added, following the principle that a local destination
   needs an exact name or IP entry; before, only an exact name rule or an approval counted.*
 - **R-27 An exact IP deny wins for a resolved address** (the proxy applies this to every address an

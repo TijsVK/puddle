@@ -111,7 +111,10 @@ async fn hostile_hg15_ssh_to_a_bound_host_on_port_22_is_refused_and_the_injector
         .unwrap();
     let mut answer = Vec::new();
     tunnel.read_to_end(&mut answer).await.unwrap();
-    assert_eq!(answer, b"puddle: SSH is not supported yet\r\n");
+    assert_eq!(
+        answer,
+        b"puddle: SSH is not supported yet; no rule or setting allows it\r\n"
+    );
     assert_eq!(injector.calls(), 0);
     assert!(server.recorded().is_empty());
     assert!(!captured_logs().contains(CANARY));
