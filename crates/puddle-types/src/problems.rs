@@ -81,7 +81,11 @@ impl Problems {
         tracing::warn!(key = %problem.key, title = %problem.title, detail = %problem.detail, "problem raised");
         let changed = {
             let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
-            open.insert(problem.key.clone(), problem.clone()).as_ref() != Some(&problem)
+            let changed = open.get(&problem.key) != Some(&problem);
+            if changed {
+                open.insert(problem.key.clone(), problem);
+            }
+            changed
         };
         if changed {
             self.events.emit(Event::ProblemsChanged {});
@@ -148,7 +152,7 @@ mod tests {
         assert_eq!(sink.take(), [Event::ProblemsChanged {}]);
         problems.clear("sweep");
         problems.clear("sweep");
-        assert!(problems.list().is_empty());
+        assert_eq!(problems.list().len(), 0);
         assert_eq!(sink.take(), [Event::ProblemsChanged {}]);
     }
 

@@ -386,6 +386,61 @@ impl Store {
             .map(Hit::decision)
     }
 
+    /// Takes a token for a new row, or counts the request as suppressed. Returns whether the row
+    /// is admitted and the suppression count that is due in the audit; `taken` says what to put
+    /// back if that write fails.
+    fn admit_or_suppress(
+        &self,
+        request: &EgressRequest,
+        below_cap: bool,
+        now: u64,
+        fx: &mut Vec<Event>,
+        taken: &mut Option<Taken>,
+    ) -> (bool, Option<u64>) {
+        let mut workspaces = lock(&self.workspaces);
+        let state = workspaces
+            .entry(request.workspace.clone())
+            .or_insert_with(|| WorkspaceState::new(&self.limits, now));
+        let before = Taken {
+            count: 0,
+            last_record_at: state.last_record_at,
+            was_suppressing: state.suppressing,
+        };
+        if below_cap && state.bucket.try_take(now) {
+            if state.suppressing {
+                fx.push(Event::SuppressionChanged {
+                    workspace: request.workspace.clone(),
+                    active: false,
+                    count: state.episode,
+                });
+            }
+            let ended = state.end_suppression();
+            *taken = Some(Taken {
+                count: ended.unwrap_or(0),
+                ..before
+            });
+            (true, ended)
+        } else {
+            let every = self.limits.suppressed_record_every_ms;
+            let recorded = state.suppress(now, every);
+            *taken = Some(Taken {
+                count: recorded.unwrap_or(0),
+                ..before
+            });
+            if state.episode == 1
+                || now.saturating_sub(state.last_event_at) >= SUPPRESSION_EVENT_EVERY_MS
+            {
+                state.last_event_at = now;
+                fx.push(Event::SuppressionChanged {
+                    workspace: request.workspace.clone(),
+                    active: true,
+                    count: state.episode,
+                });
+            }
+            (false, recorded)
+        }
+    }
+
     fn record_pending(
         &self,
         tx: &Transaction<'_>,
@@ -424,50 +479,7 @@ impl Store {
             |row| row.get(0),
         )?;
         let below_cap = u64::try_from(open).unwrap_or(u64::MAX) < self.limits.max_open_rows;
-        let (admitted, to_record) = {
-            let mut workspaces = lock(&self.workspaces);
-            let state = workspaces
-                .entry(request.workspace.clone())
-                .or_insert_with(|| WorkspaceState::new(&self.limits, now));
-            let before = Taken {
-                count: 0,
-                last_record_at: state.last_record_at,
-                was_suppressing: state.suppressing,
-            };
-            if below_cap && state.bucket.try_take(now) {
-                if state.suppressing {
-                    fx.push(Event::SuppressionChanged {
-                        workspace: request.workspace.clone(),
-                        active: false,
-                        count: state.episode,
-                    });
-                }
-                let ended = state.end_suppression();
-                *taken = Some(Taken {
-                    count: ended.unwrap_or(0),
-                    ..before
-                });
-                (true, ended)
-            } else {
-                let every = self.limits.suppressed_record_every_ms;
-                let recorded = state.suppress(now, every);
-                *taken = Some(Taken {
-                    count: recorded.unwrap_or(0),
-                    ..before
-                });
-                if state.episode == 1
-                    || now.saturating_sub(state.last_event_at) >= SUPPRESSION_EVENT_EVERY_MS
-                {
-                    state.last_event_at = now;
-                    fx.push(Event::SuppressionChanged {
-                        workspace: request.workspace.clone(),
-                        active: true,
-                        count: state.episode,
-                    });
-                }
-                (false, recorded)
-            }
-        };
+        let (admitted, to_record) = self.admit_or_suppress(request, below_cap, now, fx, taken);
         if let Some(count) = to_record {
             append(
                 tx,

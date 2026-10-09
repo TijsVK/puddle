@@ -182,6 +182,20 @@ async fn a_failed_trim_or_stop_does_not_hold_up_the_others() {
         StopOutcome::Failed(runtime_error("stop"))
     );
     assert_eq!(by_name("fine").stop, StopOutcome::Stopped);
+    // The trims that did not work are listed with why, for the exit to say.
+    let untrimmed: Vec<_> = report
+        .untrimmed()
+        .into_iter()
+        .map(|(sandbox, why)| (sandbox.to_string(), why))
+        .collect();
+    assert_eq!(untrimmed.len(), 2, "{untrimmed:?}");
+    assert_eq!(untrimmed[0].0, "badexec");
+    assert!(untrimmed[0].1.contains("injected"), "{untrimmed:?}");
+    assert_eq!(untrimmed[1].0, "notrim");
+    assert!(
+        untrimmed[1].1.contains("fstrim exited 127"),
+        "{untrimmed:?}"
+    );
     assert!(!report.all_stopped());
     assert_eq!(status_of(&rt, "fine").await, Some(WorkspaceStatus::Stopped));
     assert_eq!(
