@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, CredentialService, DoctorService, EventHub, FakeCredentials,
-    FakeLauncher, FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, RunningApi,
-    Services, SettingsRepo,
+    FakeLauncher, FakeRepos, FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService,
+    RepoService, RunningApi, Services, SettingsRepo,
 };
 use puddle_secrets::MemoryStore;
 use puddle_store::{Limits, ManualClock, Store};
@@ -39,6 +39,8 @@ pub(crate) struct Api {
     pub(crate) credentials: Arc<FakeCredentials>,
     /// Where the API keeps the values of environment secrets.
     pub(crate) secrets: Arc<MemoryStore>,
+    /// The repository lists the API runs on (not wired when the test started without them).
+    pub(crate) repos: Arc<FakeRepos>,
 }
 
 pub(crate) async fn start() -> Api {
@@ -46,27 +48,40 @@ pub(crate) async fn start() -> Api {
 }
 
 pub(crate) async fn start_with(config: ApiConfig) -> Api {
-    start_inner(config, true, None, None, None).await
+    start_inner(config, true, None, None, None, true).await
 }
 
 /// An API serving this network-health report.
 pub(crate) async fn start_with_network(network: Arc<dyn NetworkHealthService>) -> Api {
-    start_inner(ApiConfig::default(), true, Some(network), None, None).await
+    start_inner(ApiConfig::default(), true, Some(network), None, None, true).await
 }
 
 /// An API running the system check through `doctor`.
 pub(crate) async fn start_with_doctor(doctor: Arc<dyn DoctorService>) -> Api {
-    start_inner(ApiConfig::default(), true, None, None, Some(doctor)).await
+    start_inner(ApiConfig::default(), true, None, None, Some(doctor), true).await
 }
 
 /// An API whose services have no workspaces implementation (what `Services::new` gives).
 pub(crate) async fn start_without_workspaces() -> Api {
-    start_inner(ApiConfig::default(), false, None, None, None).await
+    start_inner(ApiConfig::default(), false, None, None, None, true).await
 }
 
 /// An API whose credentials service is `credentials` (`Api::credentials` is then an unused fake).
 pub(crate) async fn start_with_credentials(credentials: Arc<dyn CredentialService>) -> Api {
-    start_inner(ApiConfig::default(), true, None, Some(credentials), None).await
+    start_inner(
+        ApiConfig::default(),
+        true,
+        None,
+        Some(credentials),
+        None,
+        true,
+    )
+    .await
+}
+
+/// An API whose services have no repository lists (what `Services::new` gives).
+pub(crate) async fn start_without_repos() -> Api {
+    start_inner(ApiConfig::default(), true, None, None, None, false).await
 }
 
 async fn start_inner(
@@ -75,6 +90,7 @@ async fn start_inner(
     network: Option<Arc<dyn NetworkHealthService>>,
     own_credentials: Option<Arc<dyn CredentialService>>,
     doctor: Option<Arc<dyn DoctorService>>,
+    with_repos: bool,
 ) -> Api {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
@@ -117,6 +133,12 @@ async fn start_inner(
         Some(doctor) => services.with_doctor(doctor),
         None => services,
     };
+    let repos = Arc::new(FakeRepos::new());
+    let services = if with_repos {
+        services.with_repos(repos.clone() as Arc<dyn RepoService>)
+    } else {
+        services
+    };
     let server = ApiServer::bind(config, token.clone(), services)
         .await
         .unwrap();
@@ -134,6 +156,7 @@ async fn start_inner(
         launcher,
         credentials,
         secrets,
+        repos,
     }
 }
 

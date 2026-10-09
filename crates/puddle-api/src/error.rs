@@ -12,6 +12,7 @@ use utoipa::ToSchema;
 use crate::credentials::CredentialsError;
 use crate::doctor::DoctorError;
 use crate::network_health::NetworkHealthError;
+use crate::repos::ReposError;
 use crate::settings::SettingsRepoError;
 use crate::workspaces::WorkspaceError;
 
@@ -220,6 +221,16 @@ impl From<CredentialsError> for ApiError {
             }
             CredentialsError::Invalid(m) => Self::invalid(m),
             CredentialsError::Internal(m) => Self::internal(&m),
+        }
+    }
+}
+
+impl From<ReposError> for ApiError {
+    fn from(err: ReposError) -> Self {
+        match err {
+            ReposError::Unavailable(m) => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
+            }
         }
     }
 }

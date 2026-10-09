@@ -101,6 +101,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/credentials/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Who a credential's account is, to prefill an identity: the commit author (GitHub's name and
+         *     private no-reply address) and the organisations to offer as coverage. A host that cannot say
+         *     answers `200` with `problem`; Azure DevOps lets only a Microsoft Entra sign-in read a profile,
+         *     so it answers with the credential's own organisation and a note. Never opens a sign-in.
+         */
+        post: operations["credential_profile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/credentials/sign-in": {
         parameters: {
             query?: never;
@@ -461,6 +483,50 @@ export interface paths {
          *     body says otherwise) and closes the other open requests it now decides.
          */
         post: operations["deny"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The repositories the identities' credentials reach, one entry each, by name, with how current
+         *     each credential's list is. One list for the Identities tab (`identity`) and the create form
+         *     (`query`, no `identity`): it is read from the cache, and read from the Git host when missing
+         *     or older than ten minutes, never more than once at a time per credential. A list that cannot
+         *     be read says why in `sources`, and the last good one stays on show as `stale`.
+         */
+        get: operations["list_repos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reads the lists again now (a "Refresh"): every identity's, or one's. A list read a few
+         *     seconds ago is not read again, and a host that said to wait is left alone until it allows; the
+         *     answer says how current each list is, and why one is not.
+         */
+        post: operations["refresh_repos"];
         delete?: never;
         options?: never;
         head?: never;
@@ -933,6 +999,31 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Who a credential's account is, to prefill an identity. */
+        AccountProfile: {
+            /** @description The account name on the host; `null` when it could not be read. */
+            account: string | null;
+            /**
+             * @description The address commits use (GitHub's private no-reply address); `null` when the host cannot
+             *     say.
+             */
+            email: string | null;
+            /** @description The display name, for the commit author's name; `null` when it could not be read. */
+            name: string | null;
+            /** @description What is missing or limited. */
+            notes: components["schemas"]["RepoNote"][];
+            /**
+             * @description The organisations the account belongs to (GitHub), or the one the credential names (Azure
+             *     DevOps): suggestions for what the credential covers.
+             */
+            organisations: string[];
+            problem: components["schemas"]["RepoProblem"] | null;
+        };
+        /** @description A credential whose account to describe. */
+        AccountProfileRequest: {
+            /** @description Where its value comes from. */
+            source: components["schemas"]["CredentialSource"];
+        };
         /**
          * @description Who made a change.
          * @enum {string}
@@ -2454,6 +2545,157 @@ export interface components {
             /** @description Commits on no remote branch (`<hash> <subject>`). */
             unpushed: components["schemas"]["FindingList"];
         };
+        /**
+         * @description How current one credential's list is.
+         * @enum {string}
+         */
+        RepoListState: "ok" | "stale" | "failed" | "unavailable";
+        /**
+         * @description The repositories of the identities, one entry each, by name, and how current each credential's
+         *     list is.
+         */
+        RepoListing: {
+            /**
+             * Format: int32
+             * @description The page size that was applied.
+             */
+            limit: number;
+            /**
+             * Format: int32
+             * @description Where the page starts.
+             */
+            offset: number;
+            /** @description The matching repositories, a page of them. */
+            repos: components["schemas"]["RepoView"][];
+            /**
+             * @description One entry per credential (per organisation on Azure DevOps) of the identities asked for,
+             *     in the identities' order. Read these before trusting an empty `repos`.
+             */
+            sources: components["schemas"]["RepoSource"][];
+            /**
+             * Format: int32
+             * @description How many repositories match, before the page is cut.
+             */
+            total: number;
+        };
+        /** @description A fact about a list or a profile, in words. */
+        RepoNote: {
+            /** @description The class of the note. */
+            code: components["schemas"]["RepoNoteCode"];
+            /** @description The note for the user. */
+            message: string;
+        };
+        /**
+         * @description What a list or a profile leaves out.
+         * @enum {string}
+         */
+        RepoNoteCode: "sso_partial" | "organisations_may_be_hidden" | "fine_grained_token" | "truncated" | "author_unavailable" | "organisations_unavailable";
+        /** @description A reason in words, with what to do about it. */
+        RepoProblem: {
+            /** @description The class of the problem. */
+            code: components["schemas"]["RepoProblemCode"];
+            /** @description What happened and the way out. Never a secret. */
+            message: string;
+            /** @description Whether signing in again is the way out. */
+            needs_sign_in: boolean;
+        };
+        /**
+         * @description Why a list or a profile could not be read.
+         * @enum {string}
+         */
+        RepoProblemCode: "not_signed_in" | "source_unavailable" | "token_rejected" | "forbidden" | "not_found" | "rate_limited" | "unreachable" | "bad_answer" | "unsupported" | "organisation_needed" | "wrong_target";
+        /** @description Which lists to read again. */
+        RepoRefreshRequest: {
+            /**
+             * Format: int64
+             * @description Only this identity's credentials; leave out (or `null`) for every identity's.
+             */
+            identity_id?: number | null;
+        };
+        /**
+         * @description What the account that lists a repository can do in it, as the host says. A fine-grained token
+         *     can hold less than the account's role.
+         * @enum {string}
+         */
+        RepoRole: "admin" | "maintain" | "write" | "triage" | "read" | "unknown";
+        /**
+         * @description One credential's list (for an Azure DevOps credential, one organisation's) and how current it
+         *     is. An empty list with no problem means the account reaches no repository.
+         */
+        RepoSource: {
+            /**
+             * Format: int32
+             * @description The credential's place in that identity's list (from 0).
+             */
+            credential: number;
+            /** @description The credential's host. */
+            host: string;
+            /**
+             * Format: int64
+             * @description The identity that holds the credential.
+             */
+            identity_id: number;
+            /** @description What the list leaves out. */
+            notes: components["schemas"]["RepoNote"][];
+            /** @description The Azure DevOps organisation this list is for; `null` elsewhere. */
+            organisation: string | null;
+            problem: components["schemas"]["RepoProblem"] | null;
+            /**
+             * Format: int64
+             * @description Epoch ms the list was read; `null` when it never was.
+             */
+            refreshed_at: number | null;
+            /**
+             * Format: int32
+             * @description How many repositories the list holds.
+             */
+            repo_count: number;
+            /**
+             * Format: int64
+             * @description Epoch ms the host lets puddle ask again, when it said to wait.
+             */
+            retry_at: number | null;
+            /** @description How current the list is. */
+            state: components["schemas"]["RepoListState"];
+        };
+        /** @description How current each list is after a refresh. Read the repositories with `GET /api/repos`. */
+        RepoSources: {
+            /** @description One entry per credential (per organisation on Azure DevOps) asked for. */
+            sources: components["schemas"]["RepoSource"][];
+        };
+        /** @description A repository an identity can reach. */
+        RepoView: {
+            /** @description Whether it is archived (read-only). */
+            archived: boolean;
+            /** @description Whether it is a fork. */
+            fork: boolean;
+            /** @description `owner/name`, or `organisation/project/name` on Azure DevOps: what a search matches. */
+            full_name: string;
+            /** @description The Git host (`github.com`, `dev.azure.com`). */
+            host: string;
+            /**
+             * @description The identities whose credentials list it; the first listed it first. Offer these to
+             *     "create a workspace for this".
+             */
+            identities: number[];
+            /** @description The repository's own name. */
+            name: string;
+            /** @description The user or organisation that owns it; the organisation on Azure DevOps. */
+            owner: string;
+            /** @description The Azure DevOps project; `null` elsewhere. */
+            project: string | null;
+            /** @description What the account can do in it. */
+            role: components["schemas"]["RepoRole"];
+            /** @description The HTTPS address to clone, with no user name: what the create form takes. */
+            url: string;
+            /** @description Who can see it. */
+            visibility: components["schemas"]["RepoVisibility"];
+        };
+        /**
+         * @description Who can see a repository.
+         * @enum {string}
+         */
+        RepoVisibility: "public" | "private" | "internal" | "unknown";
         /** @description An effective on/off value and where it came from. */
         ResolvedBool: {
             /** @description Where it came from. */
@@ -3397,6 +3639,84 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not available in this build */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    credential_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description the profile, or why it could not be read */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountProfile"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a value refused */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5127,6 +5447,176 @@ export interface operations {
             };
             /** @description puddle failed; see its log */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_repos: {
+        parameters: {
+            query?: {
+                /** @description only the repositories this identity's credentials reach, and read only its lists */
+                identity?: number;
+                /** @description words that must all appear in the full name, whatever the case */
+                query?: string;
+                /** @description repositories per page (default 100) */
+                limit?: number;
+                /** @description repositories to skip */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the repositories and how current each list is */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoListing"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such identity */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the limit or the text out of range */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not available in this build */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    refresh_repos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoRefreshRequest"];
+            };
+        };
+        responses: {
+            /** @description how current each list is now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoSources"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such identity */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not available in this build */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

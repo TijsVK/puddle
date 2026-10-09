@@ -5878,6 +5878,7 @@ dependencies = [
  "puddle-doctor",
  "puddle-fs",
  "puddle-netpolicy",
+ "puddle-repos",
  "puddle-secrets",
  "puddle-settings",
  "puddle-store",

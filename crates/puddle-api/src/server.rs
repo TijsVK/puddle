@@ -29,6 +29,7 @@ use crate::doctor::{DoctorService, NoDoctor};
 use crate::error::ApiError;
 use crate::events::EventHub;
 use crate::network_health::{NetworkHealthService, NoNetworkHealth};
+use crate::repos::{NoRepos, RepoService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
 use crate::token::{ApiToken, ConnectionInfo};
@@ -126,6 +127,10 @@ pub struct Services {
     /// refused (503) instead of kept somewhere it would be lost; set the real one with
     /// [`Services::with_secret_store`].
     pub secrets: Arc<dyn SecretStore>,
+    /// The repositories the identities' credentials reach, and who a credential's account is.
+    /// [`Services::new`] starts with [`NoRepos`], which answers 503; set the real one with
+    /// [`Services::with_repos`].
+    pub repos: Arc<dyn RepoService>,
     /// The system check. [`Services::new`] starts with [`NoDoctor`], which answers 503; set the
     /// real one with [`Services::with_doctor`].
     pub doctor: Arc<dyn DoctorService>,
@@ -154,6 +159,7 @@ impl Services {
             network_health: Arc::new(NoNetworkHealth),
             credentials: Arc::new(NoCredentials),
             secrets: Arc::new(NoSecretStore),
+            repos: Arc::new(NoRepos),
             doctor: Arc::new(NoDoctor),
             endpoints: PuddleEndpoints::new(),
         }
@@ -177,6 +183,10 @@ impl Services {
     #[must_use]
     pub fn with_secret_store(mut self, secrets: Arc<dyn SecretStore>) -> Self {
         self.secrets = secrets;
+    /// These services with this repository lists implementation.
+    #[must_use]
+    pub fn with_repos(mut self, repos: Arc<dyn RepoService>) -> Self {
+        self.repos = repos;
         self
     }
 
@@ -260,6 +270,7 @@ impl ApiServer {
             network_health: services.network_health,
             credentials: services.credentials,
             secrets: services.secrets,
+            repos: services.repos,
             doctor: services.doctor,
             shutdown,
         };

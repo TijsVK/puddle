@@ -14,6 +14,7 @@ use crate::credentials::CredentialService;
 use crate::doctor::DoctorService;
 use crate::events::EventHub;
 use crate::network_health::NetworkHealthService;
+use crate::repos::RepoService;
 use crate::settings::SettingsRepo;
 use crate::workspaces::WorkspaceService;
 
@@ -27,6 +28,7 @@ mod identities;
 mod meta;
 mod network_health;
 mod pending;
+mod repos;
 mod rule_sets;
 mod rules;
 pub(crate) mod settings;
@@ -46,6 +48,7 @@ pub(crate) struct AppState {
     pub(crate) credentials: Arc<dyn CredentialService>,
     /// Where the values of environment secrets are kept.
     pub(crate) secrets: Arc<dyn SecretStore>,
+    pub(crate) repos: Arc<dyn RepoService>,
     pub(crate) doctor: Arc<dyn DoctorService>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
@@ -123,6 +126,9 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             environment::put_workspace_env,
             environment::delete_workspace_env
         ))
+        .routes(routes!(repos::credential_profile))
+        .routes(routes!(repos::list_repos))
+        .routes(routes!(repos::refresh_repos))
         .routes(routes!(identities::get_workspace_git))
         .routes(routes!(
             identities::set_workspace_identities,

@@ -541,6 +541,97 @@
         }
       }
     },
+    "/api/credentials/profile": {
+      "post": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Who a credential's account is, to prefill an identity: the commit author (GitHub's name and\nprivate no-reply address) and the organisations to offer as coverage. A host that cannot say\nanswers `200` with `problem`; Azure DevOps lets only a Microsoft Entra sign-in read a profile,\nso it answers with the credential's own organisation and a note. Never opens a sign-in.",
+        "operationId": "credential_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the profile, or why it could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountProfile"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a value refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/credentials/sign-in": {
       "post": {
         "tags": [
@@ -2540,6 +2631,232 @@
           },
           "500": {
             "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/repos": {
+      "get": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "The repositories the identities' credentials reach, one entry each, by name, with how current\neach credential's list is. One list for the Identities tab (`identity`) and the create form\n(`query`, no `identity`): it is read from the cache, and read from the Git host when missing\nor older than ten minutes, never more than once at a time per credential. A list that cannot\nbe read says why in `sources`, and the last good one stays on show as `stale`.",
+        "operationId": "list_repos",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "query",
+            "description": "only the repositories this identity's credentials reach, and read only its lists",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "description": "words that must all appear in the full name, whatever the case",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "repositories per page (default 100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 500,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "repositories to skip",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the repositories and how current each list is",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoListing"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the limit or the text out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/repos/refresh": {
+      "post": {
+        "tags": [
+          "identities"
+        ],
+        "summary": "Reads the lists again now (a \"Refresh\"): every identity's, or one's. A list read a few\nseconds ago is not read again, and a host that said to wait is left alone until it allows; the\nanswer says how current each list is, and why one is not.",
+        "operationId": "refresh_repos",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepoRefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "how current each list is now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSources"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "not available in this build",
             "content": {
               "application/json": {
                 "schema": {
@@ -5640,6 +5957,80 @@
   },
   "components": {
     "schemas": {
+      "AccountProfile": {
+        "type": "object",
+        "description": "Who a credential's account is, to prefill an identity.",
+        "required": [
+          "account",
+          "name",
+          "email",
+          "organisations",
+          "notes",
+          "problem"
+        ],
+        "properties": {
+          "account": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The account name on the host; `null` when it could not be read."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address commits use (GitHub's private no-reply address); `null` when the host cannot\nsay."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The display name, for the commit author's name; `null` when it could not be read."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoNote"
+            },
+            "description": "What is missing or limited."
+          },
+          "organisations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The organisations the account belongs to (GitHub), or the one the credential names (Azure\nDevOps): suggestions for what the credential covers."
+          },
+          "problem": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RepoProblem",
+                "description": "Why the profile could not be read; `null` when it could (possibly with notes)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AccountProfileRequest": {
+        "type": "object",
+        "description": "A credential whose account to describe.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/CredentialSource",
+            "description": "Where its value comes from."
+          }
+        },
+        "additionalProperties": false
+      },
       "Actor": {
         "type": "string",
         "description": "Who made a change.",
@@ -9258,6 +9649,340 @@
             "description": "Commits on no remote branch (`<hash> <subject>`)."
           }
         }
+      },
+      "RepoListState": {
+        "type": "string",
+        "description": "How current one credential's list is.",
+        "enum": [
+          "ok",
+          "stale",
+          "failed",
+          "unavailable"
+        ]
+      },
+      "RepoListing": {
+        "type": "object",
+        "description": "The repositories of the identities, one entry each, by name, and how current each credential's\nlist is.",
+        "required": [
+          "sources",
+          "repos",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The page size that was applied.",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Where the page starts.",
+            "minimum": 0
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoView"
+            },
+            "description": "The matching repositories, a page of them."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoSource"
+            },
+            "description": "One entry per credential (per organisation on Azure DevOps) of the identities asked for,\nin the identities' order. Read these before trusting an empty `repos`."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many repositories match, before the page is cut.",
+            "minimum": 0
+          }
+        }
+      },
+      "RepoNote": {
+        "type": "object",
+        "description": "A fact about a list or a profile, in words.",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/RepoNoteCode",
+            "description": "The class of the note."
+          },
+          "message": {
+            "type": "string",
+            "description": "The note for the user."
+          }
+        }
+      },
+      "RepoNoteCode": {
+        "type": "string",
+        "description": "What a list or a profile leaves out.",
+        "enum": [
+          "sso_partial",
+          "organisations_may_be_hidden",
+          "fine_grained_token",
+          "truncated",
+          "author_unavailable",
+          "organisations_unavailable"
+        ]
+      },
+      "RepoProblem": {
+        "type": "object",
+        "description": "A reason in words, with what to do about it.",
+        "required": [
+          "code",
+          "message",
+          "needs_sign_in"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/RepoProblemCode",
+            "description": "The class of the problem."
+          },
+          "message": {
+            "type": "string",
+            "description": "What happened and the way out. Never a secret."
+          },
+          "needs_sign_in": {
+            "type": "boolean",
+            "description": "Whether signing in again is the way out."
+          }
+        }
+      },
+      "RepoProblemCode": {
+        "type": "string",
+        "description": "Why a list or a profile could not be read.",
+        "enum": [
+          "not_signed_in",
+          "source_unavailable",
+          "token_rejected",
+          "forbidden",
+          "not_found",
+          "rate_limited",
+          "unreachable",
+          "bad_answer",
+          "unsupported",
+          "organisation_needed",
+          "wrong_target"
+        ]
+      },
+      "RepoRefreshRequest": {
+        "type": "object",
+        "description": "Which lists to read again.",
+        "properties": {
+          "identity_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Only this identity's credentials; leave out (or `null`) for every identity's."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RepoRole": {
+        "type": "string",
+        "description": "What the account that lists a repository can do in it, as the host says. A fine-grained token\ncan hold less than the account's role.",
+        "enum": [
+          "admin",
+          "maintain",
+          "write",
+          "triage",
+          "read",
+          "unknown"
+        ]
+      },
+      "RepoSource": {
+        "type": "object",
+        "description": "One credential's list (for an Azure DevOps credential, one organisation's) and how current it\nis. An empty list with no problem means the account reaches no repository.",
+        "required": [
+          "identity_id",
+          "credential",
+          "host",
+          "organisation",
+          "state",
+          "refreshed_at",
+          "retry_at",
+          "problem",
+          "notes",
+          "repo_count"
+        ],
+        "properties": {
+          "credential": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The credential's place in that identity's list (from 0).",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string",
+            "description": "The credential's host."
+          },
+          "identity_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The identity that holds the credential."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoNote"
+            },
+            "description": "What the list leaves out."
+          },
+          "organisation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Azure DevOps organisation this list is for; `null` elsewhere."
+          },
+          "problem": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RepoProblem",
+                "description": "Why the newest read is missing or failed; `null` when it worked."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "refreshed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms the list was read; `null` when it never was.",
+            "minimum": 0
+          },
+          "repo_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many repositories the list holds.",
+            "minimum": 0
+          },
+          "retry_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch ms the host lets puddle ask again, when it said to wait.",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/RepoListState",
+            "description": "How current the list is."
+          }
+        }
+      },
+      "RepoSources": {
+        "type": "object",
+        "description": "How current each list is after a refresh. Read the repositories with `GET /api/repos`.",
+        "required": [
+          "sources"
+        ],
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoSource"
+            },
+            "description": "One entry per credential (per organisation on Azure DevOps) asked for."
+          }
+        }
+      },
+      "RepoView": {
+        "type": "object",
+        "description": "A repository an identity can reach.",
+        "required": [
+          "host",
+          "owner",
+          "project",
+          "name",
+          "full_name",
+          "url",
+          "visibility",
+          "role",
+          "archived",
+          "fork",
+          "identities"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean",
+            "description": "Whether it is archived (read-only)."
+          },
+          "fork": {
+            "type": "boolean",
+            "description": "Whether it is a fork."
+          },
+          "full_name": {
+            "type": "string",
+            "description": "`owner/name`, or `organisation/project/name` on Azure DevOps: what a search matches."
+          },
+          "host": {
+            "type": "string",
+            "description": "The Git host (`github.com`, `dev.azure.com`)."
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "The identities whose credentials list it; the first listed it first. Offer these to\n\"create a workspace for this\"."
+          },
+          "name": {
+            "type": "string",
+            "description": "The repository's own name."
+          },
+          "owner": {
+            "type": "string",
+            "description": "The user or organisation that owns it; the organisation on Azure DevOps."
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Azure DevOps project; `null` elsewhere."
+          },
+          "role": {
+            "$ref": "#/components/schemas/RepoRole",
+            "description": "What the account can do in it."
+          },
+          "url": {
+            "type": "string",
+            "description": "The HTTPS address to clone, with no user name: what the create form takes."
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/RepoVisibility",
+            "description": "Who can see it."
+          }
+        }
+      },
+      "RepoVisibility": {
+        "type": "string",
+        "description": "Who can see a repository.",
+        "enum": [
+          "public",
+          "private",
+          "internal",
+          "unknown"
+        ]
       },
       "ResolvedBool": {
         "type": "object",

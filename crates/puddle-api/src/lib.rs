@@ -53,6 +53,7 @@ mod extract;
 mod fake_workspaces;
 mod network_health;
 mod openapi;
+mod repos;
 mod routes;
 mod server;
 mod settings;
@@ -75,6 +76,7 @@ pub use network_health::{
     NoNetworkHealth, forward_network_changes,
 };
 pub use openapi::{API_VERSION, openapi, openapi_json};
+pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
 pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};

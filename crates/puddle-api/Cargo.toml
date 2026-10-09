@@ -26,6 +26,7 @@ puddle-certs = { workspace = true }
 puddle-doctor = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-netpolicy = { workspace = true }
+puddle-repos = { workspace = true }
 puddle-secrets = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-store = { workspace = true }

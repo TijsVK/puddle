@@ -29,6 +29,7 @@ mod environment;
 mod first_run;
 mod identities;
 mod network_health;
+mod repos;
 mod rule_sets;
 mod workspaces;
 
@@ -52,6 +53,11 @@ pub use network_health::{
     DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,
     ProxyReport, PullProxyReport, RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt,
     SignInReport, SignInResult, SkippedRoot, SyncedRoot,
+};
+pub use repos::{
+    AccountProfile, AccountProfileRequest, RepoListState, RepoListing, RepoNote, RepoNoteCode,
+    RepoProblem, RepoProblemCode, RepoRefreshRequest, RepoRole, RepoSource, RepoSources, RepoView,
+    RepoVisibility,
 };
 pub use rule_sets::{
     NewRuleSetRequest, RuleSetEntry, RuleSetKind, RuleSetList, RuleSetOverride,
