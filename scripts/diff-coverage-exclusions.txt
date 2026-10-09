@@ -93,3 +93,5 @@ crates/puddle-inject/src/injector.rs | _ => refuse(502, "credential_unavailable"
 crates/puddle-proxy/src/terminate/session.rs | return Err(Flow::Abort); | the guest's write side failing between its request head and the `100 Continue` it is sent; an in-memory stream does not fail there, and the same line of `exchange` is the same case
 crates/puddle-proxy/src/terminate/session.rs | tracing::debug!(error = %err, "guest went away before its body"); | as above: the write of `100 Continue` to a guest that has already gone
 crates/puddle-proxy/src/terminate/session.rs | Err(refusal) => return self.refuse(&refusal).await, | `upstream_headers` fails only for a header the strict head parser already refused; the line moved with the extraction of the injector step and was never reached by a test
+crates/puddle-logins/src/logins.rs | workspace = %self.inner.workspace, | an argument of a `tracing` event: it runs only when a subscriber enables the event, and the tests run without one; the event's own line is covered
+crates/puddle-logins/src/logins.rs | role = field.role.key(), | as above

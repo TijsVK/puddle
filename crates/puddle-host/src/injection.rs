@@ -1161,11 +1161,15 @@ mod tests {
     /// What the proxy does with a Claude Code token answer, through the termination the host made.
     async fn claude_answer(terminations: &Terminations, ws: &WorkspaceName) -> Option<Vec<u8>> {
         let termination = terminations.termination(ws).unwrap();
-        let mut exchange = termination.exchanges().unwrap().begin(
-            &Host::parse_normalised("platform.claude.com").unwrap(),
-            "POST",
-            "/v1/oauth/token",
-        )?;
+        let mut exchange = termination
+            .exchanges()
+            .unwrap()
+            .begin(
+                &Host::parse_normalised("platform.claude.com").unwrap(),
+                "POST",
+                "/v1/oauth/token",
+            )
+            .unwrap();
         let answer = exchange.answer_mut().unwrap();
         let body = serde_json::json!({
             "access_token": format!("sk-ant-oat01-CANARY-access-{}", "a".repeat(60)),
