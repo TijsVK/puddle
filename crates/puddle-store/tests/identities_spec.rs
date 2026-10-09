@@ -432,7 +432,7 @@ fn the_default_switches_are_inherited_until_a_workspace_sets_its_own() {
     // `None` for both changes nothing and says nothing.
     let _ = sink.take();
     store.set_git_defaults(None, None).unwrap();
-    assert!(sink.take().is_empty());
+    assert!(sink.take().is_empty(), "an unchanged default says nothing");
     assert_eq!(
         store.git_defaults().unwrap(),
         store.set_git_defaults(Some(false), Some(false)).unwrap()
