@@ -18,6 +18,7 @@ gh api --paginate "repos/$repo/actions/caches?per_page=100" --jq '.actions_cache
                    then .key | sub("-[0-9a-f]{8}-[0-9a-f]{8}$"; "")
                  elif (.key | startswith("msb-linux-")) then "msb-linux"
                  elif (.key | startswith("node-cache-")) then "node-cache"
+                 elif (.key | startswith("playwright-")) then "playwright"
                  else null end;
       def trunk: .ref == "refs/heads/develop" or .ref == "refs/heads/main";
       ( [ .[] | select(trunk and (group != null)) | . + {g: group} ]

@@ -232,3 +232,19 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: cargo build --workspace --release --locked
+
+  # One stable result for the four jobs above (the name a check can require); the release build
+  # is skipped on a dispatch from a task branch.
+  windows:
+    name: windows-msvc (build, clippy, tests)
+    needs: [clippy, tests, ui, release]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: every job passed (or was skipped on purpose)
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' >/dev/null
