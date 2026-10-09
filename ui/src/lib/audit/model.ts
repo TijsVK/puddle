@@ -190,6 +190,8 @@ const FAILED_REQUEST: Record<string, string> = {
   protocol: "it did not answer like a Git host",
   bad_token: "the token cannot be sent",
   host_refused: "the Git host refused it (check the sign-in)",
+  rate_limited: "the Git host's request limit is used up (try again later)",
+  host_error: "the Git host answered with an error",
 };
 const FAILED_PREFIX = "puddle_request_failed:";
 

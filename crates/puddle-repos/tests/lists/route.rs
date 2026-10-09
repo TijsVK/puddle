@@ -608,6 +608,26 @@ async fn a_listing_request_that_failed_says_why_in_the_audit() {
 
     let reason = |written: &Written| written.events()[0].reason;
     assert_eq!(reason(&refused), PuddleRequestFailed("host_refused"));
+    for (status, code) in [
+        (429, "rate_limited"),
+        (404, "host_error"),
+        (503, "host_error"),
+    ] {
+        let server = Server::start(
+            &pki,
+            Mode::Answer(Arc::new(move |_| Reply {
+                status,
+                headers: Vec::new(),
+                raw_headers: Vec::new(),
+                body: Vec::new(),
+            })),
+        )
+        .await;
+        let (api, written) = logged(direct_chain(), &pki);
+        let host = format!("localhost:{}", server.addr.port());
+        api.get(request(&host, "/user")).await.unwrap();
+        assert_eq!(reason(&written), PuddleRequestFailed(code), "{status}");
+    }
     assert_eq!(reason(&tls), PuddleRequestFailed("tls"));
     assert_eq!(reason(&gone), PuddleRequestFailed("unreachable"));
     assert_eq!(
@@ -649,4 +669,14 @@ async fn the_other_ways_a_listing_request_fails_have_their_own_audit_codes() {
             PuddleRequestFailed("bad_token"),
         ]
     );
+}
+
+#[tokio::test]
+async fn a_host_name_the_log_cannot_hold_is_not_recorded_and_the_listing_still_says_why_it_failed()
+{
+    let pki = Pki::new("localhost");
+    let (api, written) = logged(direct_chain(), &pki);
+    let err = api.get(request("not a host", "/user")).await.unwrap_err();
+    assert!(matches!(err, TransportError::Unreachable(_)), "{err:?}");
+    assert_eq!(written.events().len(), 0);
 }
