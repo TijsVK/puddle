@@ -180,6 +180,19 @@ const REASONS: Record<string, string> = {
   puddle_request: "puddle's own request",
 };
 
+/** Why one of puddle's own requests (listing repositories) did not work: the code after
+ * `puddle_request_failed:`. */
+const FAILED_REQUEST: Record<string, string> = {
+  unreachable: "the host could not be reached",
+  tls: "its certificate was not trusted",
+  timeout: "it did not answer in time",
+  too_large: "the answer was too large",
+  protocol: "it did not answer like a Git host",
+  bad_token: "the token cannot be sent",
+  host_refused: "the Git host refused it (check the sign-in)",
+};
+const FAILED_PREFIX = "puddle_request_failed:";
+
 /** Reasons that say something happened to an allowed connection, shown beside the rule. */
 const NOTES: Record<string, string> = {
   guest_tls_rejected:
@@ -258,7 +271,13 @@ function connectionDetail(
   if (record.method !== null) {
     parts.push(`${record.method} ${record.path ?? ""}`.trim());
   }
-  const reason = REASONS[record.reason] ?? record.reason;
+  const failed = record.reason.startsWith(FAILED_PREFIX)
+    ? record.reason.slice(FAILED_PREFIX.length)
+    : null;
+  const reason =
+    failed === null
+      ? (REASONS[record.reason] ?? record.reason)
+      : `puddle's own request failed: ${FAILED_REQUEST[failed] ?? failed}`;
   const note = NOTES[record.reason];
   const set = setLabel(record.rule_set);
   if (set !== null) parts.push(set);
@@ -279,6 +298,15 @@ function connectionDetail(
   return parts.join(" · ");
 }
 
+function connectionOutcome(
+  record: Extract<AuditRecord, { type: "connection" }>,
+): RowView["outcome"] {
+  if (record.reason.startsWith(FAILED_PREFIX)) {
+    return { label: "Failed", tone: "warn" };
+  }
+  return record.decision === null ? null : (DECISIONS[record.decision] ?? null);
+}
+
 /** How a record reads as a row. */
 export function describe(record: AuditRecord): RowView {
   const type = typeLabel(record.type);
@@ -289,10 +317,7 @@ export function describe(record: AuditRecord): RowView {
         workspace: record.workspace_id,
         type,
         destination: endpoint(record.host, record.port),
-        outcome:
-          record.decision === null
-            ? null
-            : (DECISIONS[record.decision] ?? null),
+        outcome: connectionOutcome(record),
         detail: connectionDetail(record),
       };
     case "pending_created":

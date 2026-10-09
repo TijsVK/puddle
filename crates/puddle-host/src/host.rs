@@ -31,7 +31,7 @@ use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{ChunkedStore, KeyringStore, SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
 use puddle_store::{DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
-use puddle_types::{EventSink, WorkspaceName, WorkspaceStatus};
+use puddle_types::{ConnectionLog, EventSink, Problem, Problems, WorkspaceName, WorkspaceStatus};
 use puddle_upstream::{AuthList, BasicAuth, Chain, Discovery, TlsClient, Watching, system_auth};
 use puddle_workspace::Workspaces;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
@@ -335,6 +335,7 @@ pub struct Host<R: Runtime + Clone> {
     info: puddle_api::ConnectionInfo,
     url: Url,
     events: Arc<EventHub>,
+    problems: Arc<Problems>,
     store: Arc<Store>,
     endpoints: PuddleEndpoints,
     workspaces: HostWorkspaces<R>,
@@ -411,6 +412,7 @@ impl<R: Runtime + Clone> Host<R> {
 
         // Store, settings and the event hub.
         let events = Arc::new(EventHub::default());
+        let problems = Arc::new(Problems::new(events.clone() as Arc<dyn EventSink>));
         let clock = Arc::new(SystemClock);
         let State {
             store,
@@ -466,6 +468,9 @@ impl<R: Runtime + Clone> Host<R> {
 
         // Clean up after an earlier run, then rebuild what only lives in memory.
         let (report, status) = reconcile_with(&runtime, &config, &stored).await?;
+        for problem in reconcile_problems(&report) {
+            problems.raise(problem);
+        }
         steps.push(Step::Reconciled);
         let workspaces = adopt_holders(&runtime, &config, &stored).await?;
         steps.push(Step::WorkspacesAdopted);
@@ -475,7 +480,8 @@ impl<R: Runtime + Clone> Host<R> {
         // Image pulls leave through the company proxy chain, like the sandboxes' traffic.
         network_health.set_pull_proxy(true, true);
         steps.push(Step::PullProxyServing);
-        let sweeper = Sweeper::spawn(store.clone(), DEFAULT_SWEEP_PERIOD);
+        let sweeper =
+            Sweeper::spawn_reporting(store.clone(), DEFAULT_SWEEP_PERIOD, problems.clone());
         let watching = discovery.watch();
         let network_events = AbortOnDrop::forwarding(&discovery, &events);
         steps.push(Step::BackgroundStarted);
@@ -493,6 +499,7 @@ impl<R: Runtime + Clone> Host<R> {
                 launcher: options.launcher,
                 book,
                 injection: injecting.injection.clone(),
+                problems: problems.clone(),
             },
             stored,
             &status,
@@ -501,11 +508,12 @@ impl<R: Runtime + Clone> Host<R> {
         steps.push(Step::WorkspacesReady);
 
         let services = Services::new(store.clone(), settings, events.clone(), clock.clone())
+            .with_problems(problems.clone())
             .with_workspaces(Arc::new(service.clone()))
             .with_network_health(network_health)
             .with_secret_store(vault.clone())
             .with_credentials(Arc::new(HostCredentials::new(ToolPaths::resolve(), vault)))
-            .with_repos(injecting.repos(&egress.chain, &clock))
+            .with_repos(injecting.repos(&egress.chain, &clock, store.clone()))
             .with_doctor(system_doctor(&config.layout, &config.expected_runtime))
             .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
@@ -516,6 +524,7 @@ impl<R: Runtime + Clone> Host<R> {
             info: served.info,
             url: served.url,
             events,
+            problems,
             store,
             endpoints,
             workspaces: service,
@@ -559,6 +568,12 @@ impl<R: Runtime + Clone> Host<R> {
     #[must_use]
     pub fn events(&self) -> &Arc<EventHub> {
         &self.events
+    }
+
+    /// The background problems the API lists at `GET /api/problems`.
+    #[must_use]
+    pub fn problems(&self) -> &Arc<Problems> {
+        &self.problems
     }
 
     /// The database.
@@ -716,9 +731,16 @@ impl Injecting {
 
     /// The repository lists: read from the Git hosts' APIs over the company-proxy route with the
     /// secrets the proxy's injection uses.
-    fn repos(&self, chain: &Arc<Chain>, clock: &Arc<SystemClock>) -> Arc<Repos> {
+    fn repos(
+        &self,
+        chain: &Arc<Chain>,
+        clock: &Arc<SystemClock>,
+        log: Arc<dyn ConnectionLog>,
+    ) -> Arc<Repos> {
         Arc::new(Repos::new(
-            Arc::new(HostApi::new(chain.clone(), self.tls.clone())),
+            // Listing repositories is puddle's own traffic: audited with origin `puddle`, like an
+            // image pull.
+            Arc::new(HostApi::new(chain.clone(), self.tls.clone()).with_connection_log(log)),
             self.secrets.clone(),
             clock.clone(),
         ))
@@ -953,6 +975,69 @@ async fn reconcile_with<R: Runtime>(
         }
     }
     Ok((report, status))
+}
+
+/// What start-up reconcile found or could not do, as problems for the user: each one names the
+/// things and what happened to them. None when it found nothing to say.
+fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    if !report.unknown_volumes.is_empty() {
+        let names: Vec<_> = report
+            .unknown_volumes
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        problems.push(Problem::new(
+            "reconcile-unknown-volumes",
+            format!(
+                "puddle found {} workspace disk{} that no workspace in its list claims",
+                names.len(),
+                if names.len() == 1 { "" } else { "s" }
+            ),
+            format!(
+                "{}. puddle kept them and changed nothing. If the workspace list is missing or \
+                 out of date, restore it and restart puddle; if they belong to workspaces you \
+                 deleted, remove the volumes yourself once you are sure.",
+                names.join(", ")
+            ),
+        ));
+    }
+    if !report.removed.is_empty() {
+        let names: Vec<_> = report.removed.iter().map(ToString::to_string).collect();
+        problems.push(Problem::new(
+            "reconcile-removed-sandboxes",
+            format!(
+                "puddle removed {} sandbox{} that no workspace in its list claims",
+                names.len(),
+                if names.len() == 1 { "" } else { "es" }
+            ),
+            format!(
+                "{}. Only their own root disks were discarded; workspace volumes are untouched. \
+                 A workspace you start again gets a fresh sandbox on its volume.",
+                names.join(", ")
+            ),
+        ));
+    }
+    if !report.failures.is_empty() {
+        let what: Vec<_> = report
+            .failures
+            .iter()
+            .map(|f| format!("{} ({}): {}", f.item, f.action, f.error))
+            .collect();
+        problems.push(Problem::new(
+            "reconcile-failures",
+            format!(
+                "puddle could not clean up {} thing{} an earlier run left",
+                what.len(),
+                if what.len() == 1 { "" } else { "s" }
+            ),
+            format!(
+                "{}. They stay as they are and puddle tries again at its next start.",
+                what.join("; ")
+            ),
+        ));
+    }
+    problems
 }
 
 #[cfg(test)]

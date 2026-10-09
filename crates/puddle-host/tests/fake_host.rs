@@ -19,8 +19,8 @@ use std::time::Duration;
 
 use puddle_api::{LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord};
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
-use puddle_compute::fake::{ExecContext, FakeRuntime};
-use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
+use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
+use puddle_compute::{ComputeError, ExecOutput, ExecRequest, ImageConfig, Runtime};
 use puddle_host::{
     GuestSettings, Host, HostConfig, HostError, HostOptions, HostPaths, PREPARE_STEPS, Platform,
     RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
@@ -147,6 +147,10 @@ struct Guest {
     dirty: AtomicBool,
     fail_clone: AtomicBool,
     fail_boot: AtomicBool,
+    /// What the lock-clearing script answers, as exit code and stdout, instead of "nothing to do".
+    locks_answer: Mutex<Option<(i32, &'static str)>>,
+    /// The disk trim fails, in a running workspace's stop.
+    fail_trim: AtomicBool,
     /// Runs once, inside the next run of the boot hook: a change made while the guest boots.
     during_boot: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// When set, the clone turns this path into a folder, so the next save of the workspace
@@ -194,7 +198,13 @@ impl Guest {
                 ExecOutput::new(0, "puddle-boot: ready\n", "")
             }
             "boot" => ExecOutput::new(0, "puddle-boot: ready\n", ""),
-            "locks" => ExecOutput::new(0, "D\n", ""),
+            "locks" => match *self.locks_answer.lock().unwrap() {
+                Some((code, out)) => ExecOutput::new(code, out, ""),
+                None => ExecOutput::new(0, "D\n", ""),
+            },
+            "trim" if self.fail_trim.load(Ordering::SeqCst) => {
+                ExecOutput::new(1, "", "fstrim: the discard operation is not supported")
+            }
             "check" if self.dirty.load(Ordering::SeqCst) => {
                 ExecOutput::new(0, "R\tapi\nU\t?? notes.txt\nD\n", "")
             }
@@ -3587,5 +3597,262 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
     let env = rig.guest.boot_envs.lock().unwrap().last().cloned().unwrap();
     assert!(env.get("OWN_TOKEN").is_none() && env.get("EDITOR").is_none());
     assert!(env.get("GLOBAL_TOKEN").is_some());
+    host.shutdown().await;
+}
+
+// ---- follow-up failures reach the user, not only the host's log -------------------------------
+
+fn disk_error(op: &'static str) -> ComputeError {
+    ComputeError::Runtime {
+        op,
+        message: "no space left on device".into(),
+    }
+}
+
+/// The problems `GET /api/problems` lists, as (key, workspace, title, detail).
+async fn problems_of(api: &Api) -> Vec<(String, Option<String>, String, String)> {
+    let reply = api.get("/api/problems").await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    reply.json()["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["key"].as_str().unwrap().to_owned(),
+                p["workspace"].as_str().map(str::to_owned),
+                p["title"].as_str().unwrap().to_owned(),
+                p["detail"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_clone_that_cannot_be_cleaned_up_names_what_is_left_in_the_failure() {
+    let rig = Rig::new();
+    rig.guest.fail_clone.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    rig.runtime
+        .inject(Op::RemoveVolume, Fault::always(disk_error("remove volume")));
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let detail = end["detail"].as_str().unwrap();
+    assert!(
+        detail.contains("repository not found"),
+        "the cause: {detail}"
+    );
+    assert!(detail.contains("could not clean up"), "{detail}");
+    assert!(
+        detail.contains("the new volume ws-"),
+        "what is left: {detail}"
+    );
+    assert!(detail.contains("no space left"), "why: {detail}");
+    assert!(detail.contains("next start"), "the way out: {detail}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_boot_that_cannot_be_cleaned_up_names_what_is_left_in_the_failure() {
+    let rig = Rig::new();
+    rig.guest.fail_boot.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    rig.runtime
+        .inject(Op::RemoveVolume, Fault::always(disk_error("remove volume")));
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let detail = end["detail"].as_str().unwrap();
+    assert!(detail.contains("boot hook"), "the cause: {detail}");
+    assert!(detail.contains("could not clean up"), "{detail}");
+    assert!(detail.contains("no space left"), "why: {detail}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stale_git_locks_that_could_not_be_cleared_are_a_problem_until_a_boot_clears_them() {
+    let rig = Rig::new();
+    *rig.guest.locks_answer.lock().unwrap() = Some((3, "E\t.\tcannot enter /workspaces/acme\n"));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let problems = problems_of(&api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let (key, workspace, title, detail) = &problems[0];
+    assert_eq!(key, "git-locks:acme");
+    assert_eq!(workspace.as_deref(), Some("acme"));
+    assert!(title.contains("stale git lock"), "{title}");
+    assert!(detail.contains("cannot enter"), "the reason: {detail}");
+    assert!(detail.contains("deleted by hand"), "the way out: {detail}");
+
+    *rig.guest.locks_answer.lock().unwrap() = None;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(problems_of(&api).await, []);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_trim_that_failed_at_stop_and_a_stop_that_had_to_be_forced_are_problems_the_next_run_ends()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    rig.guest.fail_trim.store(true, Ordering::SeqCst);
+    rig.runtime
+        .force_next_stop(&SandboxName::new("acme").unwrap());
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let problems = problems_of(&api).await;
+    let keys: Vec<_> = problems.iter().map(|p| p.0.as_str()).collect();
+    assert_eq!(keys, ["forced-stop:acme", "trim:acme"], "{problems:?}");
+    assert!(problems[0].3.contains("not written"), "{problems:?}");
+    assert!(
+        problems[1].3.contains("not supported"),
+        "the reason: {problems:?}"
+    );
+    assert!(
+        problems[1].3.contains("Reclaim space"),
+        "the way out: {problems:?}"
+    );
+
+    // Starting it again ends the forced stop; a stop whose trim works ends the other.
+    rig.guest.fail_trim.store(false, Ordering::SeqCst);
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let keys: Vec<_> = problems_of(&api).await.into_iter().map(|p| p.0).collect();
+    assert_eq!(keys, ["trim:acme"]);
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(problems_of(&api).await, []);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn what_reconcile_kept_removed_or_could_not_do_at_start_is_listed_with_the_way_out() {
+    let rig = Rig::new();
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("lost").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    for ghost in ["ghost", "stuck"] {
+        rig.runtime
+            .create(puddle_compute::SandboxSpec::new(
+                SandboxName::new(ghost).unwrap(),
+                ImageRef::new(FakeRuntime::DEBIAN).unwrap(),
+            ))
+            .await
+            .unwrap();
+    }
+    // "stuck" cannot be removed: the record it has is locked.
+    rig.runtime.inject(
+        Op::Remove,
+        Fault::always(ComputeError::Runtime {
+            op: "remove",
+            message: "the record is locked".into(),
+        })
+        .only_for("stuck"),
+    );
+
+    let host = rig.start().await;
+    let problems = problems_of(&api(&host)).await;
+    let keys: Vec<_> = problems.iter().map(|p| p.0.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "reconcile-failures",
+            "reconcile-removed-sandboxes",
+            "reconcile-unknown-volumes"
+        ],
+        "{problems:?}"
+    );
+    assert!(problems[0].3.contains("stuck"), "{problems:?}");
+    assert!(problems[0].3.contains("record is locked"), "{problems:?}");
+    assert!(problems[1].3.contains("ghost"), "{problems:?}");
+    assert!(problems[1].3.contains("untouched"), "{problems:?}");
+    assert!(problems[2].3.contains("ws-lost"), "{problems:?}");
+    assert!(problems[2].3.contains("kept them"), "{problems:?}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn listing_the_repositories_of_an_identity_is_in_the_activity_log_as_puddles_own_request() {
+    use puddle_upstream::{Behaviour, FakeProxy, Hop};
+    let rig = Rig::new();
+    // The company proxy refuses every connection, so no request leaves the test.
+    let proxy = FakeProxy::start(Behaviour::Refuse(502)).await;
+    let os = FakeOs::new(ProxyConfig {
+        pac_url: Some("http://pac.corp/p.pac".into()),
+        ..ProxyConfig::default()
+    });
+    let hops = vec![Hop::Proxy(proxy.proxy_addr())];
+    os.set_pac(move |_| Ok(hops.clone()));
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let mut options = HostOptions::default();
+    options.secret_store = Some(rig.secrets.clone());
+    options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
+    let host = Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
+        .await
+        .unwrap();
+    let api = api(&host);
+    let stored = api
+        .post(
+            "/api/credentials/stored",
+            &json!({"host": "github.com", "token": "ghp_CANARY_listing_token"}).to_string(),
+        )
+        .await;
+    assert_eq!(stored.status, 201, "{}", stored.body);
+    let source = stored.json()["source"].clone();
+    let made = api
+        .post(
+            "/api/identities",
+            &json!({
+                "label": "Ada",
+                "author": {"name": "Ada", "email": "ada@example.org"},
+                "credentials": [{
+                    "host": "github.com",
+                    "source": source,
+                    "covers": {"owners": [], "rest_of_host": true}
+                }]
+            })
+            .to_string(),
+        )
+        .await;
+    assert_eq!(made.status, 201, "{}", made.body);
+
+    let listing = api.get("/api/repos").await.json();
+    assert_eq!(listing["sources"][0]["state"], "failed", "{listing}");
+    assert_eq!(listing["sources"][0]["problem"]["code"], "unreachable");
+
+    let records: Vec<serde_json::Value> = host
+        .store()
+        .audit_lines(0, 1000)
+        .unwrap()
+        .into_iter()
+        .filter_map(|(_, line)| serde_json::from_str(&line).ok())
+        .filter(|v: &serde_json::Value| v["type"] == "connection" && v["host"] == "api.github.com")
+        .collect();
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0]["origin"], "puddle", "{records:?}");
+    assert!(records[0]["workspace"].is_null(), "{records:?}");
+    assert_eq!(records[0]["port"], 443, "{records:?}");
+    assert_eq!(
+        records[0]["reason"], "puddle_request_failed:unreachable",
+        "{records:?}"
+    );
+    assert!(!records[0].to_string().contains("CANARY"), "{records:?}");
     host.shutdown().await;
 }

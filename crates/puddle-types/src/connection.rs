@@ -66,7 +66,7 @@ impl fmt::Display for ConnectionOrigin {
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`,
 /// `local_address`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`,
-/// `suppressed` or, for a request the credential rules refused on a decrypted connection, the
+/// `suppressed`, `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
 /// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -93,6 +93,10 @@ pub enum ConnectionReason {
     /// to a request whose credential puddle chose was answered with puddle's own refusal. The
     /// text is the refusal's machine-readable code.
     Refused(&'static str),
+    /// puddle's own request (a repository listing) that could not be completed: the code says
+    /// why (`unreachable`, `tls`, `timeout`, `too_large`, `protocol`, `bad_token`, or
+    /// `host_refused` when the Git host answered with an error status).
+    PuddleRequestFailed(&'static str),
 }
 
 impl fmt::Display for ConnectionReason {
@@ -107,6 +111,7 @@ impl fmt::Display for ConnectionReason {
             Self::GuestTlsRejected => f.write_str("guest_tls_rejected"),
             Self::Suppressed => f.write_str("suppressed"),
             Self::Refused(code) => f.write_str(code),
+            Self::PuddleRequestFailed(code) => write!(f, "puddle_request_failed:{code}"),
         }
     }
 }

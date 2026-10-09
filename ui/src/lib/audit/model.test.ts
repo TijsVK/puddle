@@ -238,6 +238,31 @@ describe("a record as a row", () => {
       "because puddle's own request · 0 B up, 2.0 KB down",
     );
   });
+  it("shows a listing request of puddle's that failed as failed, with why", () => {
+    const view = row(
+      connection(1, {
+        workspace_id: null,
+        origin: "puddle",
+        host: "api.github.com",
+        port: 443,
+        reason: "puddle_request_failed:unreachable",
+        rule_id: null,
+      }).record,
+    );
+    expect(view.outcome).toEqual({ label: "Failed", tone: "warn" });
+    expect(view.detail).toBe(
+      "because puddle's own request failed: the host could not be reached",
+    );
+    const unknown = row(
+      connection(2, {
+        workspace_id: null,
+        origin: "puddle",
+        reason: "puddle_request_failed:new_code",
+        rule_id: null,
+      }).record,
+    );
+    expect(unknown.detail).toContain("failed: new_code");
+  });
   it("leaves the outcome and the address out when the record has none", () => {
     const view = row(
       connection(1, { decision: null, host: null, port: null }).record,
