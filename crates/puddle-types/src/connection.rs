@@ -95,7 +95,8 @@ pub enum ConnectionReason {
     Refused(&'static str),
     /// puddle's own request (a repository listing) that could not be completed: the code says
     /// why (`unreachable`, `tls`, `timeout`, `too_large`, `protocol`, `bad_token`, or
-    /// `host_refused` when the Git host answered with an error status).
+    /// `host_refused` for a 401 or 403, `rate_limited` for a 429, `host_error` for any other error
+    /// status).
     PuddleRequestFailed(&'static str),
 }
 

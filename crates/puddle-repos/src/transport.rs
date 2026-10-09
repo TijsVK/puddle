@@ -113,12 +113,20 @@ impl HostApi {
     fn record(&self, host: &str, path: &str, result: &Result<ApiReply, TransportError>) {
         let (name, port) = split_port(host);
         let Ok(name) = Host::parse_normalised(name) else {
+            tracing::warn!(
+                host,
+                "a repository listing request is not in the activity log: the host name is not valid"
+            );
             return;
         };
         let (reason, down) = match result {
             Ok(reply) if reply.status < 400 => (ConnectionReason::PuddleRequest, reply.body.len()),
             Ok(reply) => (
-                ConnectionReason::PuddleRequestFailed("host_refused"),
+                ConnectionReason::PuddleRequestFailed(match reply.status {
+                    401 | 403 => "host_refused",
+                    429 => "rate_limited",
+                    _ => "host_error",
+                }),
                 reply.body.len(),
             ),
             Err(err) => (ConnectionReason::PuddleRequestFailed(failure_code(err)), 0),
