@@ -97,9 +97,9 @@ if [ -n "$hits" ] && [ -f "$allow" ]; then
         path=${line%%:*}
         skip=
         while IFS="$(printf '\t')" read -r apath asub; do
-            case "$apath" in '' | '#'*) continue ;; esac
+            if [ -z "$apath" ] || [ "${apath#'#'}" != "$apath" ]; then continue; fi
             if [ "$apath" = "$path" ]; then
-                case "$line" in *"$asub"*) skip=1 ;; esac
+                if [ -z "$asub" ] || [ "${line#*"$asub"}" != "$line" ]; then skip=1; fi
             fi
         done <"$allow"
         [ -n "$skip" ] || printf '%s\n' "$line"
