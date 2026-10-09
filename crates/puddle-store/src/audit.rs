@@ -1214,6 +1214,28 @@ mod tests {
     }
 
     #[test]
+    fn a_summary_whose_write_failed_is_handed_out_again_merged_with_the_next_one() {
+        let mut w = ConnectionWindow::default();
+        assert_eq!(w.admit(5_000, 1), (true, None));
+        assert_eq!(w.admit(5_100, 1), (false, None));
+        // The second ended, its summary was taken and its write failed twice.
+        assert_eq!(w.roll(6_000), Some((5_000, 1)));
+        w.owe(5_000, 1);
+        w.owe(4_000, 2);
+        assert_eq!(
+            w.roll(6_100),
+            Some((4_000, 3)),
+            "owed counts add up, oldest second"
+        );
+        assert_eq!(w.roll(6_200), None, "handed out once");
+        // Owed while the next second also had excess: both come out as one summary.
+        assert_eq!(w.admit(6_300, 1), (true, None));
+        assert_eq!(w.admit(6_400, 1), (false, None));
+        w.owe(5_000, 4);
+        assert_eq!(w.roll(7_000), Some((5_000, 5)));
+    }
+
+    #[test]
     fn actor_strings() {
         assert_eq!(actor_str(Actor::Ui), "ui");
     }

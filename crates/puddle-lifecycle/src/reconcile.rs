@@ -233,11 +233,8 @@ async fn reconcile_sandbox<R: Runtime>(
                     action: "stop",
                     error: format!("no answer within {:?}", config.stop_timeout),
                 }),
-                other => report.failures.push(Failure {
-                    item: name.to_string(),
-                    action: "stop",
-                    error: other.problem().unwrap_or_default(),
-                }),
+                // Made only by `Lifecycle::shutdown`, never by `trim_and_stop`.
+                StopOutcome::Panicked => {}
             },
             // The VM went down between list and get: nothing left to stop.
             Err(ComputeError::InvalidState { .. }) => down = true,

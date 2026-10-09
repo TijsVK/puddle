@@ -52,13 +52,17 @@ impl Sweeper {
         let task = tokio::spawn(async move {
             loop {
                 let pass = Arc::clone(&store);
-                match tokio::task::spawn_blocking(move || pass.sweep()).await {
-                    Ok(Ok(report)) => {
+                // A pass that failed and a pass that panicked are the same to the user.
+                let pass = tokio::task::spawn_blocking(move || pass.sweep())
+                    .await
+                    .map_err(|err| err.to_string())
+                    .and_then(|swept| swept.map_err(|err| err.to_string()));
+                match pass {
+                    Ok(report) => {
                         tracing::debug!(?report, "sweep done");
                         problems.clear(SWEEP_PROBLEM);
                     }
-                    Ok(Err(err)) => problems.raise(sweep_problem(&err.to_string())),
-                    Err(err) => problems.raise(sweep_problem(&err.to_string())),
+                    Err(reason) => problems.raise(sweep_problem(&reason)),
                 }
                 tokio::select! {
                     () = tokio::time::sleep(period) => {}
@@ -105,11 +109,11 @@ mod tests {
     async fn until(what: &str, mut done: impl FnMut() -> bool) {
         for _ in 0..500 {
             if done() {
-                return;
+                break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        panic!("timed out waiting for {what}");
+        assert!(done(), "timed out waiting for {what}");
     }
 
     #[tokio::test]

@@ -1250,3 +1250,46 @@ async fn a_failed_maintenance_job_and_a_leftover_sandbox_are_both_in_the_error()
     w.reclaim_space(&rt, &id).await.unwrap();
     assert_eq!(names(&rt).await, NONE);
 }
+
+#[tokio::test]
+async fn locks_the_script_could_not_remove_are_in_the_report_and_do_not_fail_the_boot() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    stub_clear_locks(
+        &rt,
+        0,
+        "L\tapi/.git/HEAD.lock\nE\tapi/.git/index.lock\tPermission denied\nD\n",
+    );
+    let report = w.clear_stale_locks(&sb, &id).await.unwrap();
+    assert_eq!(report.errors, ["api/.git/index.lock: Permission denied"]);
+}
+
+#[tokio::test]
+async fn a_maintenance_sandbox_that_cannot_be_removed_after_a_job_that_worked_is_the_error() {
+    let rt = FakeRuntime::new();
+    stub_fstrim(&rt, 0);
+    let w = Workspaces::default();
+    let id = ws("acme");
+    rt.create_volume(VolumeSpec {
+        name: id.volume_name(),
+        size: DiskSize::gib(1),
+    })
+    .await
+    .unwrap();
+    rt.inject(
+        Op::Remove,
+        Fault::once(ComputeError::Runtime {
+            op: "remove",
+            message: "the record is locked".into(),
+        }),
+    );
+    let err = w.reclaim_space(&rt, &id).await.unwrap_err();
+    assert!(!matches!(err, WorkspaceError::Leftover { .. }), "{err}");
+    assert!(
+        err.to_string().contains("remove the maintenance sandbox"),
+        "{err}"
+    );
+    assert!(err.to_string().contains("record is locked"), "{err}");
+}

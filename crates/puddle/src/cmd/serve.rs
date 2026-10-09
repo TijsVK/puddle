@@ -156,16 +156,24 @@ pub fn run(args: &ServeArgs) -> ExitCode {
             Ok(cause) => tracing::info!(cause = cause.as_str(), "shutting down"),
             Err(e) => tracing::error!(error = %e, "cannot wait for a shutdown request; stopping"),
         }
-        let down = host.shutdown().await;
-        for line in shutdown_lines(&down.sandboxes) {
-            eprintln!("{line}");
-        }
-        if down.sandboxes.all_stopped() {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        }
+        exit_after(&host.shutdown().await.sandboxes)
     })
+}
+
+/// Prints what is wrong with the sandboxes at exit, and picks the exit code.
+#[expect(
+    clippy::print_stderr,
+    reason = "the daemon's last words go to the console"
+)]
+fn exit_after(report: &puddle_lifecycle::ShutdownReport) -> ExitCode {
+    for line in shutdown_lines(report) {
+        eprintln!("{line}");
+    }
+    if report.all_stopped() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// What puddle tells the user at exit about sandboxes that did not stop or trim cleanly:
@@ -212,6 +220,10 @@ mod tests {
             sandboxes: vec![outcome("fine", TrimOutcome::Trimmed, StopOutcome::Stopped)],
         };
         assert_eq!(shutdown_lines(&clean).len(), 0);
+        assert_eq!(
+            format!("{:?}", exit_after(&clean)),
+            format!("{:?}", ExitCode::SUCCESS)
+        );
         let report = ShutdownReport {
             sandboxes: vec![
                 outcome("fine", TrimOutcome::Trimmed, StopOutcome::Stopped),
@@ -227,6 +239,10 @@ mod tests {
         assert!(lines[0].contains("disk of slow was not trimmed: no answer"));
         assert!(lines[2].contains("slow: it did not shut down in time"));
         assert!(lines[3].contains("check the workspace volumes"));
+        assert_eq!(
+            format!("{:?}", exit_after(&report)),
+            format!("{:?}", ExitCode::FAILURE)
+        );
     }
 
     fn serve(args: &[&str]) -> Result<ServeArgs, UsageError> {
