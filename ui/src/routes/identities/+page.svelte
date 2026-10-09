@@ -40,6 +40,14 @@
     else await showError(result.message);
   }
 
+  async function setDefault(
+    key: "only_push_listed" | "only_pull_listed",
+    on: boolean,
+  ) {
+    const result = await store.setGitDefaults({ [key]: on });
+    if (!result.ok) await showError(result.message);
+  }
+
   async function move(identity: Identity, by: -1 | 1) {
     const result = await store.reorder(moved(ids, identity.id, by));
     if (!result.ok) await showError(result.message);
@@ -132,6 +140,59 @@
     </button>
   </div>
 </div>
+
+{#if store.gitDefaults}
+  {@const defaults = store.gitDefaults}
+  <section class="defaults" aria-labelledby="git-defaults-heading">
+    <h2 id="git-defaults-heading">Default for new workspaces</h2>
+    <p class="muted">
+      Each workspace starts with these two switches and can change them on its
+      own Git tab. A workspace that never changed a switch follows this default.
+    </p>
+    <div class="switches">
+      <div class="switch">
+        <label>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={defaults.only_push_listed}
+            onchange={(e) => {
+              const next = e.currentTarget.checked;
+              e.currentTarget.checked = defaults.only_push_listed;
+              void setDefault("only_push_listed", next);
+            }}
+          />
+          Only push to listed repos
+        </label>
+        <p class="muted">
+          {defaults.only_push_listed
+            ? "A push is allowed only to a repository whose Push box is ticked."
+            : "Off: a push may go to any repository the credential can write to."}
+        </p>
+      </div>
+      <div class="switch">
+        <label>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={defaults.only_pull_listed}
+            onchange={(e) => {
+              const next = e.currentTarget.checked;
+              e.currentTarget.checked = defaults.only_pull_listed;
+              void setDefault("only_pull_listed", next);
+            }}
+          />
+          Only pull from listed repos
+        </label>
+        <p class="muted">
+          {defaults.only_pull_listed
+            ? "A fetch is allowed only from a repository whose Pull box is ticked."
+            : "Off: a fetch may go to any repository the credential can read."}
+        </p>
+      </div>
+    </div>
+  </section>
+{/if}
 
 {#if store.status === "loading"}
   <p class="muted">Loading identities&hellip;</p>
@@ -266,6 +327,23 @@
   }
   .author {
     color: var(--color-text);
+  }
+  .defaults {
+    margin-bottom: var(--space-4);
+  }
+  .defaults h2 {
+    font-size: var(--text-md, 1rem);
+  }
+  .switches {
+    display: grid;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+  }
+  .switch label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: 600;
   }
   .acts {
     display: flex;

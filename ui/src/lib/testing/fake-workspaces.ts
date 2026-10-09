@@ -24,6 +24,7 @@ export function workspace(
     direct_ssh: false,
     settings_error: null,
     first_connect_notice_due: false,
+    identity: null,
     ...over,
   };
 }

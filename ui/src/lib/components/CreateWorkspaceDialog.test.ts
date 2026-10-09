@@ -28,7 +28,13 @@ vi.mock("#lib/stores/repos.svelte.ts", async (original) => {
   };
 });
 
-afterEach(cleanup);
+
+vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
+
+afterEach(() => {
+  cleanup();
+  for (const t of [...toasts.items]) toasts.dismiss(t.id);
+});
 
 function mount(
   result: ActionResult<Workspace> | (() => Promise<ActionResult<Workspace>>) = {
@@ -193,6 +199,43 @@ describe("CreateWorkspaceDialog", () => {
     await type("Name", "half-done");
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+  it("warns with the identity it got when none covers the repository, and offers the Git tab", async () => {
+    const { goto } = await import("$app/navigation");
+    const warning =
+      "No identity covers github.com/acme, so this workspace got your default identity, Personal.";
+    mount({
+      ok: true,
+      value: workspace("made", {
+        busy: "creating",
+        status: "created",
+        identity: { identity: "Personal", basis: "default", warning },
+      }),
+    });
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(toasts.items).toHaveLength(1));
+    const toast = toasts.items[0]!;
+    expect(toast.message).toBe(warning);
+    expect(toast.tone).toBe("error");
+    expect(toast.action?.label).toBe("Open Git tab");
+    await toast.action?.run();
+    expect(goto).toHaveBeenCalledWith("/workspaces/made/git");
+  });
+
+  it("says nothing extra when an identity covers the repository or the answer has no identity", async () => {
+    const covered = mount({
+      ok: true,
+      value: workspace("made", {
+        identity: { identity: "Work", basis: "covers", warning: null },
+      }),
+    });
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(covered.onCreated).toHaveBeenCalled());
+    expect(toasts.items).toHaveLength(0);
   });
 });
 

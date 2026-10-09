@@ -5,6 +5,7 @@
 import type { components } from "#lib/api/schema.d.ts";
 
 export type Identity = components["schemas"]["IdentityView"];
+export type GitDefaults = components["schemas"]["GitDefaultsView"];
 export type Credential = components["schemas"]["IdentityCredential"];
 export type Source = components["schemas"]["CredentialSource"];
 export type Coverage = components["schemas"]["CredentialCoverage"];

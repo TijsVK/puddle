@@ -60,6 +60,8 @@ beforeEach(() => {
     "web-shop": { ids: [1], repos: [], push: true, pull: false },
     docs: { ids: [1], repos: [], push: true, pull: false },
   };
+  api.gitDefaults = { only_push_listed: true, only_pull_listed: false };
+  store.gitDefaults = null;
   api.calls = [];
   api.bodies = [];
   api.down = false;
@@ -80,6 +82,55 @@ const rows = () =>
 const row = (label: string) =>
   rows().find((r) => within(r).queryByRole("heading", { name: label }))!;
 const lastToast = () => toasts.items.at(-1)?.message;
+
+describe("the default for new workspaces", () => {
+  const push = () =>
+    screen.getByRole("switch", { name: "Only push to listed repos" });
+  const pull = () =>
+    screen.getByRole("switch", { name: "Only pull from listed repos" });
+
+  it("shows the two switches as they are, even with no identity", async () => {
+    api.identities = [];
+    render(Page);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Default for new workspaces",
+      }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(push()).toBeChecked());
+    expect(pull()).not.toBeChecked();
+    expect(
+      screen.getByText(/Off: a fetch may go to any repository/),
+    ).toBeTruthy();
+  });
+
+  it("changes one switch through the service and keeps the other", async () => {
+    render(Page);
+    await waitFor(() => expect(pull()).toBeInTheDocument());
+    await fireEvent.click(pull());
+    await waitFor(() => expect(pull()).toBeChecked());
+    expect(push()).toBeChecked();
+    expect(api.bodies.at(-1)).toEqual({ only_pull_listed: true });
+    expect(
+      screen.getByText(/only from a repository whose Pull box is ticked/),
+    ).toBeTruthy();
+    await fireEvent.click(push());
+    await waitFor(() => expect(push()).not.toBeChecked());
+    expect(api.gitDefaults).toEqual({
+      only_push_listed: false,
+      only_pull_listed: true,
+    });
+  });
+
+  it("puts a refused change back and says so", async () => {
+    render(Page);
+    await waitFor(() => expect(push()).toBeInTheDocument());
+    api.refuse = { status: 422, message: "nope" };
+    await fireEvent.click(push());
+    await waitFor(() => expect(lastToast()).toBe("Nope."));
+    expect(push()).toBeChecked();
+  });
+});
 
 describe("the identities list", () => {
   it("shows each identity with its author, credentials, default badge and use", async () => {

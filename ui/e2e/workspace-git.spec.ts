@@ -259,6 +259,128 @@ test("a new workspace starts with the identity that covers its repository and it
   ).toBeChecked();
 });
 
+test("creating from the form for a repository nobody covers warns with the default identity, and the Git tab lists it", async ({
+  page,
+  backend,
+}) => {
+  await backend.control.reset("git-identities");
+  await backend.signIn(page);
+  await page.goto("/workspaces");
+  await page.getByRole("button", { name: "New workspace" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "New workspace" });
+  await dialog
+    .getByLabel("Git repository (HTTPS)")
+    .fill("https://gitlab.example.com/team/tooling.git");
+  await dialog.getByRole("button", { name: "Create workspace" }).click();
+  await expect(dialog).toHaveCount(0);
+  // Work is the default; it covers github.com/acme only, so the warning names it and the place.
+  const toast = page.getByRole("region", { name: "Notifications" });
+  await expect(toast).toContainText(
+    "No identity covers gitlab.example.com/team, so this workspace got your default identity, Work.",
+  );
+  await expect(toast).toContainText(
+    "requests to gitlab.example.com/team go out without a credential",
+  );
+  await toast.getByRole("button", { name: "Open Git tab" }).click();
+  await expect(page).toHaveURL(/\/workspaces\/tooling\/git$/);
+  await expect(
+    page.getByRole("list", { name: "Identities of tooling, in order" }),
+  ).toContainText("Work");
+  for (const access of ["Pull", "Push"]) {
+    await expect(
+      table(page, "tooling").getByRole("checkbox", {
+        name: `${access} gitlab.example.com/team/tooling`,
+      }),
+    ).toBeChecked();
+  }
+});
+
+test("creating for a repository an identity covers says nothing and attaches that identity, not the default", async ({
+  page,
+  backend,
+}) => {
+  await backend.control.reset("git-identities");
+  await backend.signIn(page);
+  await page.goto("/workspaces");
+  await page.getByRole("button", { name: "New workspace" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "New workspace" });
+  // Personal covers the rest of github.com; Work (the default) covers only acme.
+  await dialog
+    .getByLabel("Git repository (HTTPS)")
+    .fill("https://github.com/someone-else/notes.git");
+  await dialog.getByRole("button", { name: "Create workspace" }).click();
+  await expect(dialog).toHaveCount(0);
+  // The workspace is listed, and no warning came with it.
+  await expect(page.getByRole("button", { name: "Start notes" })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Notifications" }),
+  ).not.toContainText("No identity covers");
+  await expect(page.getByRole("button", { name: "Open Git tab" })).toHaveCount(
+    0,
+  );
+  await page.goto("/workspaces/notes/git");
+  const ids = page.getByRole("list", { name: "Identities of notes, in order" });
+  await expect(ids).toContainText("Personal");
+  await expect(ids).not.toContainText("Work");
+});
+
+test("the default for the two switches is inherited by new workspaces and overridden per workspace", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await backend.control.reset("git-identities");
+  await backend.signIn(page);
+  await page.goto("/identities");
+  const pull = page.getByRole("switch", {
+    name: "Only pull from listed repos",
+  });
+  const push = page.getByRole("switch", { name: "Only push to listed repos" });
+  await expect(push).toBeChecked();
+  await expect(pull).not.toBeChecked();
+  await pull.click();
+  await expect(pull).toBeChecked();
+  await push.click();
+  await expect(push).not.toBeChecked();
+
+  // A workspace made now starts on the new defaults.
+  const made = await request.post("/api/workspaces", {
+    headers: auth(backend),
+    data: {
+      name: "inherits",
+      repo_url: "https://github.com/acme/inherits.git",
+    },
+  });
+  expect(made.status()).toBe(202);
+  await page.goto("/workspaces/inherits/git");
+  await expect(
+    page.getByRole("switch", { name: "Only pull from listed repos" }),
+  ).toBeChecked();
+  await expect(
+    page.getByRole("switch", { name: "Only push to listed repos" }),
+  ).not.toBeChecked();
+
+  // It overrides one switch; a later change of the default moves only the other.
+  await page
+    .getByRole("switch", { name: "Only pull from listed repos" })
+    .click();
+  await expect(
+    page.getByRole("switch", { name: "Only pull from listed repos" }),
+  ).not.toBeChecked();
+  await page.goto("/identities");
+  await page
+    .getByRole("switch", { name: "Only pull from listed repos" })
+    .click();
+  await page.getByRole("switch", { name: "Only push to listed repos" }).click();
+  await page.goto("/workspaces/inherits/git");
+  await expect(
+    page.getByRole("switch", { name: "Only pull from listed repos" }),
+  ).not.toBeChecked();
+  await expect(
+    page.getByRole("switch", { name: "Only push to listed repos" }),
+  ).toBeChecked();
+});
+
 test("a refused push or fetch becomes a notice with one button that lists the repository", async ({
   page,
   backend,

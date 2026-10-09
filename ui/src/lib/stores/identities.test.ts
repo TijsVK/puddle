@@ -200,6 +200,49 @@ describe("changing identities", () => {
   });
 });
 
+describe("the default of the two switches", () => {
+  it("reads it with the identities and keeps what it has when a later read fails", async () => {
+    const store = make();
+    expect(store.gitDefaults).toBeNull();
+    api.gitDefaults = { only_push_listed: false, only_pull_listed: true };
+    await store.refresh();
+    expect(store.gitDefaults).toEqual({
+      only_push_listed: false,
+      only_pull_listed: true,
+    });
+    api.down = true;
+    await store.refresh();
+    expect(store.gitDefaults?.only_pull_listed).toBe(true);
+  });
+
+  it("changes one switch and leaves the other", async () => {
+    const store = make();
+    await store.refresh();
+    expect(await store.setGitDefaults({ only_pull_listed: true })).toEqual({
+      ok: true,
+    });
+    expect(store.gitDefaults).toEqual({
+      only_push_listed: true,
+      only_pull_listed: true,
+    });
+    expect(api.bodies.at(-1)).toEqual({ only_pull_listed: true });
+  });
+
+  it("says why a change was refused, and when the service is down", async () => {
+    const store = make();
+    await store.refresh();
+    api.refuse = { status: 422, message: "not a switch" };
+    expect(await store.setGitDefaults({ only_push_listed: false })).toEqual({
+      ok: false,
+      message: "Not a switch.",
+    });
+    api.down = true;
+    const down = await store.setGitDefaults({ only_push_listed: false });
+    expect(down.ok).toBe(false);
+    expect(store.gitDefaults?.only_push_listed).toBe(true);
+  });
+});
+
 describe("credentials", () => {
   it("looks for accounts already signed in", async () => {
     api.found = {

@@ -74,6 +74,8 @@ interface Init {
 export class FakeIdentities {
   identities: Identity[] = [];
   git: Record<string, Git> = {};
+  /** The default of the two switches for new workspaces. */
+  gitDefaults = { only_push_listed: true, only_pull_listed: false };
   found: FoundAccounts = { accounts: [], problems: [] };
   /** Lines (`describeSource`) of the credentials that cannot be read. */
   unreadable = new Set<string>();
@@ -167,6 +169,8 @@ export class FakeIdentities {
     if (path === "/api/identities")
       return this.reply(200, { identities: this.identities });
     if (path === "/api/credentials/found") return this.reply(200, this.found);
+    if (path === "/api/identities/git-defaults")
+      return this.reply(200, this.gitDefaults);
     if (path === "/api/workspaces/{id}/git") {
       return this.reply(200, this.#view(String(init.params?.path["id"])));
     }
@@ -274,6 +278,15 @@ export class FakeIdentities {
     const body = init.body ?? {};
     const id = Number(init.params?.path["id"]);
     switch (path) {
+      case "/api/identities/git-defaults": {
+        const next = { ...this.gitDefaults };
+        if (typeof body["only_push_listed"] === "boolean")
+          next.only_push_listed = body["only_push_listed"];
+        if (typeof body["only_pull_listed"] === "boolean")
+          next.only_pull_listed = body["only_pull_listed"];
+        this.gitDefaults = next;
+        return this.reply(200, this.gitDefaults);
+      }
       case "/api/identities/order": {
         const ids = body["ids"] as number[];
         this.identities = ids.map((i) =>

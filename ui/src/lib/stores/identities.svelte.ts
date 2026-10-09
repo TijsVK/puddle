@@ -14,6 +14,7 @@ import {
   type Check,
   type Credential,
   type FoundAccounts,
+  type GitDefaults,
   type Identity,
   type IdentityRequest,
   type Source,
@@ -57,6 +58,8 @@ export class IdentitiesStore {
   /** The accounts found signed in on this computer; `null` until asked. */
   found = $state.raw<FoundAccounts | null>(null);
   foundStatus = $state<Status>("loading");
+  /** The default of the two "only listed" switches for new workspaces; `null` until read. */
+  gitDefaults = $state.raw<GitDefaults | null>(null);
 
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
@@ -71,7 +74,7 @@ export class IdentitiesStore {
     this.#pollMs = deps.pollMs ?? 60_000;
   }
 
-  /** Reads the identities; never throws. */
+  /** Reads the identities and the switch defaults; never throws. */
   async refresh(): Promise<void> {
     try {
       const { data } = await this.#api.GET("/api/identities");
@@ -83,6 +86,35 @@ export class IdentitiesStore {
       }
     } catch {
       if (this.status === "loading") this.status = "failed";
+    }
+    try {
+      const { data } = await this.#api.GET("/api/identities/git-defaults");
+      if (data) this.gitDefaults = data;
+    } catch {
+      // The defaults stay as last read; the identities' own status carries the failure.
+    }
+  }
+
+  /** Sets the default of either switch for new workspaces (and every workspace that never set its own). */
+  async setGitDefaults(change: {
+    only_push_listed?: boolean;
+    only_pull_listed?: boolean;
+  }): Promise<Result> {
+    try {
+      const { data, error } = await this.#api.PUT(
+        "/api/identities/git-defaults",
+        { body: change },
+      );
+      if (!data) {
+        return {
+          ok: false,
+          message: this.#refused(error, "puddle couldn't change the default"),
+        };
+      }
+      this.gitDefaults = data;
+      return { ok: true };
+    } catch {
+      return { ok: false, message: DOWN };
     }
   }
 

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import FormDialog from "./FormDialog.svelte";
   import RepoPicker from "./RepoPicker.svelte";
   import { useIdentities } from "#lib/identities/attach.ts";
@@ -173,6 +174,20 @@
       const forAddress = offered.length > 0;
       open = false;
       reset();
+      const warning = result.value.identity?.warning;
+      if (warning) {
+        // Nothing covers the repository: say which identity the workspace got and what that
+        // means, and offer the tab where it is changed. The toast stays long enough to read.
+        const id = result.value.id;
+        toasts.push(warning, {
+          tone: "error",
+          ms: 20_000,
+          action: {
+            label: "Open Git tab",
+            run: () => goto(`/workspaces/${encodeURIComponent(id)}/git`),
+          },
+        });
+      }
       onCreated?.(result.value);
       if (forAddress) void giveIdentities(result.value.id, identitiesWanted);
       return;
