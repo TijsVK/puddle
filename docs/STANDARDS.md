@@ -321,18 +321,19 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 
 | Workflow | Trigger | Runner | Gates |
 |---|---|---|---|
-| `ci.yml` | push to `develop`/`main`, every PR, manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` in one job (the `pre-push` set plus `ui-e2e`); every gate runs even if an earlier one fails |
-| `windows.yml` | nightly 02:30 UTC (skipped if it already has a green run on that commit), PRs to `main`, manual | `windows-2025` | clippy, nextest, doc tests, release build (MSVC; not on a manual run from a task branch). The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
-| `vm-linux.yml` | manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if it already has a green run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K; no KVM ⇒ warning, infrastructure skip |
-| `vm-windows.yml` | manual on any branch, nightly 03:15 UTC on `develop` (skipped if it already has a green run on that commit) | `windows-2025` (WHP) | VM tests, tier W; no WHP ⇒ warning, infrastructure skip |
+| `ci.yml` | push to `develop`/`main`, every PR, manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` (the `pre-push` set plus `ui-e2e`) in two parallel jobs (Rust and repository gates; UI gates) plus `linux (all gates)`, the one result that needs both; every gate runs even if an earlier one fails |
+| `windows.yml` | nightly 02:30 UTC (skipped if it already has a green run on that commit), PRs to `main`, manual | `windows-2025` | four parallel jobs (clippy; nextest, doc tests, secret scan; UI gates, e2e on Edge and the desktop shell smoke test; release build, MSVC, not on a manual run from a task branch) plus `windows-msvc (build, clippy, tests)`, the one result that needs them all. The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
+| `vm-linux.yml` | manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if it already has a green run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 3 hash partitions on 3 runners; `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip |
+| `vm-windows.yml` | manual on any branch, nightly 03:15 UTC on `develop` (skipped if it already has a green run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 5 hash partitions on 5 runners; `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip |
 | `cache-gc.yml` | nightly 03:45 UTC, manual | `ubuntu-24.04` | deletes superseded rust-cache entries and stale branch caches (`ci/cache-gc.sh`) |
 | Dependabot | weekly, grouped | — | opens PRs to `develop` |
 
 The repo is public, so standard hosted runners are free with no minute quota. They are still
 shared (20 concurrent jobs), and the Actions cache is capped at 10 GB for the whole repo: only
 `develop` saves the Rust cache (`save-if`), one entry per workflow, so task branches restore it and
-the cargo-xwin cache isn't evicted. The nightly workflows gate themselves inside their job
-(`ci/should-run.sh`), not in a separate job that is billed a full minute. Keep Windows on
+the cargo-xwin cache isn't evicted. Each job of the nightly workflows gates itself
+(`ci/should-run.sh`), not in a separate job that is billed a full minute. A run starts up to about 19 jobs at once
+(`windows`, `vm-windows`, `vm-linux` and `ci` dispatched together), just under the shared limit. Keep Windows on
 nightly/PR-to-main.
 Actions are pinned to commit SHAs and must be GitHub-owned or on the repo's allow-list (selected
 actions, SHA pinning required; an unpinned `uses:` ends as a `startup_failure` with no jobs).

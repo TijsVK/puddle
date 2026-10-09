@@ -5,8 +5,8 @@
 # (`gh workflow run vm-windows.yml --ref <branch>`) and nightly on develop unless it already has a green run on that
 # commit. VM tests are never retried; a runner without a usable hypervisor
 # is reported as an infrastructure skip, not a test result.
-# The test binaries are built once (`cargo nextest archive`) and the tests run in four partitions
-# on four runners at once; `vm-windows (WHP, msb microVMs)` is the one result of all of them.
+# The test binaries are built once (`cargo nextest archive`) and the tests run in five partitions
+# on five runners at once; `vm-windows (WHP, msb microVMs)` is the one result of all of them.
 name: vm-windows
 
 on:
@@ -89,16 +89,16 @@ jobs:
           compression-level: 0 # the archive is already compressed
 
   tests:
-    name: vm-windows tests (partition ${{ matrix.partition }} of 4)
+    name: vm-windows tests (partition ${{ matrix.partition }} of 5)
     needs: build
     if: needs.build.outputs.run == 'true'
     runs-on: windows-2025
-    # ~67 VM tests in all, each partition a quarter of them; every test has its own 12-minute cap.
+    # ~67 VM tests in all, each partition a fifth of them; every test has its own 12-minute cap.
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4]
+        partition: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: WHP preflight (infrastructure)
@@ -135,7 +135,7 @@ jobs:
         with:
           name: vm-windows-build
           path: ${{ runner.temp }}/bundle
-      - name: VM tests (tier W, partition ${{ matrix.partition }} of 4)
+      - name: VM tests (tier W, partition ${{ matrix.partition }} of 5)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         run: |
@@ -149,7 +149,7 @@ jobs:
             cargo-nextest nextest run --profile vm \
             --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/vm-tests.tar.zst" \
             --extract-to "$(cygpath -m "$RUNNER_TEMP")/vmx" --workspace-remap . \
-            --partition hash:${{ matrix.partition }}/4 \
+            --partition hash:${{ matrix.partition }}/5 \
             -E 'not test(/(^|::)vm_machine_/)'
       - name: upload test results and msb logs
         if: ${{ !cancelled() && steps.whp.outputs.ok == 'true' }}
