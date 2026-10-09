@@ -2772,6 +2772,67 @@
         }
       }
     },
+    "/api/problems": {
+      "get": {
+        "tags": [
+          "service"
+        ],
+        "summary": "What puddle did on its own that failed and has not been put right: a sweep that could not\nwrite, a clean-up that left something behind, a step at start-up that did not finish. Each\nentry names what went wrong and what to do; one ends by itself when its cause does. A client\nrefetches on the `problems_changed` event.",
+        "operationId": "list_problems",
+        "responses": {
+          "200": {
+            "description": "the problems that stand now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/repos": {
       "get": {
         "tags": [
@@ -8603,6 +8664,21 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The list of background problems changed (something puddle does on its own failed, or the\ncause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber\ngets it.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "problems_changed"
+                ]
+              }
+            }
           }
         ],
         "description": "Something the user should hear about. Serialised as one internally tagged enum\n(`{\"type\":\"oom_kill\",...}`, ADR 0002).\n\nMost events are about one workspace and carry a `workspace` field; global ones (crash report\nwaiting, consent needed, network change, ...) carry none, and [`Event::workspace`] returns\n`None` for them."
@@ -9678,6 +9754,57 @@
           "workspace": {
             "$ref": "#/components/schemas/WorkspaceName",
             "description": "The workspace that asked."
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "description": "One background problem, as `GET /api/problems` lists it.",
+        "required": [
+          "key",
+          "workspace",
+          "title",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "What puddle did about it and what the user can do. It can quote tool output: escape it\nwhen rendering."
+          },
+          "key": {
+            "type": "string",
+            "description": "Names the problem; raising it again replaces the old one, and it ends with\n[`Problems::clear`]."
+          },
+          "title": {
+            "type": "string",
+            "description": "What went wrong, in one line. It can quote tool output: escape it when rendering."
+          },
+          "workspace": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace it is about, or `null` when it is about puddle."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ProblemList": {
+        "type": "object",
+        "description": "The background problems that stand.",
+        "required": [
+          "problems"
+        ],
+        "properties": {
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "description": "Ordered by key."
           }
         }
       },

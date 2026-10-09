@@ -18,6 +18,7 @@ use hyper_util::service::TowerToHyperService;
 use puddle_netpolicy::{EndpointKind, PuddleEndpoints, Registration};
 use puddle_secrets::SecretStore;
 use puddle_store::{Clock, Store};
+use puddle_types::Problems;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, watch};
 use tokio::task::{JoinHandle, JoinSet};
@@ -110,6 +111,10 @@ pub struct Services {
     /// including the store (`Store::with_events`), which emits the pending, rule and audit
     /// events.
     pub events: Arc<EventHub>,
+    /// The background problems `GET /api/problems` lists. [`Services::new`] starts with a list
+    /// of its own that announces changes on `events`; give the one the host raises into with
+    /// [`Services::with_problems`].
+    pub problems: Arc<Problems>,
     /// The clock consents are stamped with.
     pub clock: Arc<dyn Clock>,
     /// The workspaces resource. [`Services::new`] starts with [`NoWorkspaces`], which answers
@@ -153,6 +158,7 @@ impl Services {
         Self {
             store,
             settings,
+            problems: Arc::new(Problems::new(events.clone())),
             events,
             clock,
             workspaces: Arc::new(NoWorkspaces),
@@ -163,6 +169,13 @@ impl Services {
             doctor: Arc::new(NoDoctor),
             endpoints: PuddleEndpoints::new(),
         }
+    }
+
+    /// These services listing the problems raised into `problems`.
+    #[must_use]
+    pub fn with_problems(mut self, problems: Arc<Problems>) -> Self {
+        self.problems = problems;
+        self
     }
 
     /// These services with this network-health report.
@@ -268,6 +281,7 @@ impl ApiServer {
             settings: services.settings,
             settings_lock: Arc::new(Mutex::new(())),
             events: services.events,
+            problems: services.problems,
             clock: services.clock,
             workspaces: services.workspaces,
             network_health: services.network_health,

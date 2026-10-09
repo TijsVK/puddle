@@ -8,6 +8,7 @@
 //! | [`GuestPath`], [`GuestFile`], [`GuestEnv`] | what providers put into a guest; the boot hook applies them |
 //! | [`ApplyKind`], [`MergeSpec`], [`unmerge`] | merged files: puddle owns only some keys of a user's file; the engine `puddle-agent` runs in the guest |
 //! | [`MemoryMib`] | guest memory size: 256 MiB to 1 TiB, default 8 GiB (the setting is in `puddle-settings`) |
+//! | [`Problem`], [`Problems`] | what puddle did on its own that failed, listed until its cause goes away |
 //! | [`WorkspaceStatus`], [`Event`], [`EventSink`] | workspace states and the user-facing event stream (incl. [`Event::OomKill`]) |
 //! | [`Host`], [`DomainName`] | a normalised egress destination (the proxy normalises, everyone else validates) |
 //! | [`EgressRequest`], [`Decision`], [`Policy`] | what the proxy asks the rules engine and what it gets back |
@@ -29,6 +30,7 @@ mod memory;
 mod merge;
 mod name;
 mod policy;
+mod problems;
 
 pub use connection::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionReason,
@@ -55,6 +57,7 @@ pub use policy::{
     BlockReason, Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy,
     PolicyError, ProtocolHint, RuleId, RuleSetId, SuffixAllows,
 };
+pub use problems::{Problem, Problems};
 
 /// puddle's version, from the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

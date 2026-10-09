@@ -209,6 +209,26 @@ impl WorkspaceState {
     }
 }
 
+#[cfg(test)]
+impl Store {
+    /// Makes every audit write of `kind` fail, as a full disk would, until
+    /// [`Store::audit_writes_work_again`].
+    pub(crate) fn fail_audit_writes(&self, kind: &str) {
+        lock(&self.conn)
+            .execute_batch(&format!(
+                "CREATE TRIGGER audit_write_fails BEFORE INSERT ON audit WHEN NEW.type = '{kind}'
+                 BEGIN SELECT RAISE(ABORT, 'disk full'); END"
+            ))
+            .unwrap();
+    }
+
+    pub(crate) fn audit_writes_work_again(&self) {
+        lock(&self.conn)
+            .execute_batch("DROP TRIGGER audit_write_fails")
+            .unwrap();
+    }
+}
+
 /// A count [`Store::flush_limits`] took out of memory for one audit record.
 enum Flushed {
     Suppressed(WorkspaceName, Taken),
@@ -1789,22 +1809,6 @@ mod tests {
         assert_eq!(state.end_suppression(), Some(1));
     }
 
-    /// Makes every audit write of `kind` fail, as a full disk would, until the trigger is dropped.
-    fn fail_audit_writes(store: &Store, kind: &str) {
-        lock(&store.conn)
-            .execute_batch(&format!(
-                "CREATE TRIGGER audit_write_fails BEFORE INSERT ON audit WHEN NEW.type = '{kind}'
-                 BEGIN SELECT RAISE(ABORT, 'disk full'); END"
-            ))
-            .unwrap();
-    }
-
-    fn audit_writes_work_again(store: &Store) {
-        lock(&store.conn)
-            .execute_batch("DROP TRIGGER audit_write_fails")
-            .unwrap();
-    }
-
     /// The counts the audit holds, summed: what the user can read in the activity log.
     fn recorded_count(store: &Store, kind: &str, field: &str) -> u64 {
         store
@@ -1853,12 +1857,12 @@ mod tests {
         let (_, store) = one_row_a_burst();
         let decide = |host: &str| store.decide(&request("a", host), SuffixAllows::Count);
         decide("one.example").unwrap();
-        fail_audit_writes(&store, "pending_suppressed");
+        store.fail_audit_writes("pending_suppressed");
         assert!(matches!(
             decide("two.example"),
             Err(StoreError::Database(_))
         ));
-        audit_writes_work_again(&store);
+        store.audit_writes_work_again();
         assert_eq!(
             decide("three.example").unwrap(),
             Decision::Pending(PendingOutcome::Suppressed)
@@ -1875,14 +1879,14 @@ mod tests {
         decide("two.example").unwrap();
         decide("three.example").unwrap();
         assert_eq!(recorded_count(&store, "pending_suppressed", "count"), 1);
-        fail_audit_writes(&store, "pending_suppressed");
+        store.fail_audit_writes("pending_suppressed");
         clock.advance(1000);
         assert!(decide("four.example").is_err());
         assert!(
             store.suppression(&WorkspaceName::new("a").unwrap()).active,
             "the episode did not end"
         );
-        audit_writes_work_again(&store);
+        store.audit_writes_work_again();
         clock.advance(1000);
         decide("five.example").unwrap();
         assert!(!store.suppression(&WorkspaceName::new("a").unwrap()).active);
@@ -1906,10 +1910,10 @@ mod tests {
         for _ in 0..205 {
             store.record_connection(&event).unwrap();
         }
-        fail_audit_writes(&store, "pending_suppressed");
+        store.fail_audit_writes("pending_suppressed");
         clock.advance(61_000);
         assert!(store.sweep().is_err());
-        audit_writes_work_again(&store);
+        store.audit_writes_work_again();
         store.sweep().unwrap();
         assert_eq!(recorded_count(&store, "pending_suppressed", "count"), 3);
         assert_eq!(
@@ -1930,10 +1934,10 @@ mod tests {
         for _ in 0..205 {
             store.record_connection(&event).unwrap();
         }
-        fail_audit_writes(&store, "connection");
+        store.fail_audit_writes("connection");
         clock.advance(1000);
         assert!(store.record_connection(&event).is_err());
-        audit_writes_work_again(&store);
+        store.audit_writes_work_again();
         store.record_connection(&event).unwrap();
         assert_eq!(summarised_connections(&store), 5);
     }

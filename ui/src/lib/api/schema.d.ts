@@ -510,6 +510,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What puddle did on its own that failed and has not been put right: a sweep that could not
+         *     write, a clean-up that left something behind, a step at start-up that did not finish. Each
+         *     entry names what went wrong and what to do; one ends by itself when its cause does. A client
+         *     refetches on the `problems_changed` event.
+         */
+        get: operations["list_problems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/repos": {
         parameters: {
             query?: never;
@@ -2043,6 +2065,9 @@ export interface components {
             epoch: number;
             /** @enum {string} */
             type: "network_changed";
+        } | {
+            /** @enum {string} */
+            type: "problems_changed";
         };
         /** @description A bounded list of lines from the unsaved-work check. */
         FindingList: {
@@ -2528,6 +2553,27 @@ export interface components {
             registrable_domain: string;
             /** @description The workspace that asked. */
             workspace: components["schemas"]["WorkspaceName"];
+        };
+        /** @description One background problem, as `GET /api/problems` lists it. */
+        Problem: {
+            /**
+             * @description What puddle did about it and what the user can do. It can quote tool output: escape it
+             *     when rendering.
+             */
+            detail: string;
+            /**
+             * @description Names the problem; raising it again replaces the old one, and it ends with
+             *     [`Problems::clear`].
+             */
+            key: string;
+            /** @description What went wrong, in one line. It can quote tool output: escape it when rendering. */
+            title: string;
+            workspace: components["schemas"]["WorkspaceName"] | null;
+        };
+        /** @description The background problems that stand. */
+        ProblemList: {
+            /** @description Ordered by key. */
+            problems: components["schemas"]["Problem"][];
         };
         /**
          * @description What puddle found out about the proxy setup.
@@ -5625,6 +5671,62 @@ export interface operations {
             };
             /** @description invalid suffix or expiry */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_problems: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the problems that stand now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
                 headers: {
                     [name: string]: unknown;
                 };
