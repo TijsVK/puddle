@@ -149,7 +149,7 @@ jobs:
             cargo-nextest nextest run --profile vm \
             --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/vm-tests.tar.zst" \
             --extract-to "$(cygpath -m "$RUNNER_TEMP")/vmx" --workspace-remap . \
-            --partition count:${{ matrix.partition }}/4 \
+            --partition hash:${{ matrix.partition }}/4 \
             -E 'not test(/(^|::)vm_machine_/)'
       - name: upload test results and msb logs
         if: ${{ !cancelled() && steps.whp.outputs.ok == 'true' }}

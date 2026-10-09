@@ -176,7 +176,7 @@ jobs:
             PUDDLE_VM_PREFIX="$1" cargo-nextest nextest run --profile vm \
               --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst" \
               --extract-to "$RUNNER_TEMP/vmx" --extract-overwrite --workspace-remap . \
-              --partition count:${{ matrix.partition }}/3 \
+              --partition hash:${{ matrix.partition }}/3 \
               -E 'not test(/(^|::)vm_machine_/)'
           }
           if [ "$RUNS" = "1" ]; then
