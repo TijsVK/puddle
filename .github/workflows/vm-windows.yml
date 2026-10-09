@@ -141,9 +141,11 @@ jobs:
         run: |
           export PUDDLE_AGENT_BIN
           PUDDLE_AGENT_BIN=$(cygpath -w "$RUNNER_TEMP/bundle/puddle-agent")
+          # cargo-nextest is called directly: through `cargo` it would make rustup install the
+          # pinned toolchain here, which an archive run never needs.
           # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, not here.
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            cargo nextest run --profile vm --locked \
+            cargo-nextest nextest run --profile vm \
             --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/vm-tests.tar.zst" \
             --extract-to "$(cygpath -m "$RUNNER_TEMP")/vmx" --workspace-remap . \
             --partition count:${{ matrix.partition }}/4 \
