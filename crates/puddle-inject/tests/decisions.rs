@@ -787,3 +787,61 @@ async fn the_secrets_cache_is_a_credential_source_that_reads_once_and_forgets_on
     let _ = injector.decide(&context, &view).await;
     assert_eq!(reads.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn a_workspace_that_never_set_a_switch_is_held_to_the_global_default_live() {
+    let w = World::new();
+    let _work = w.identity("Work", "github.com", &["acme"], false, "unused");
+    let injector = GitInjector::new(
+        w.workspace.clone(),
+        Arc::new(StoreSettings::new(
+            Arc::clone(&w.store),
+            w.workspace.clone(),
+        )),
+        Arc::new(SecretCache::new(OneToken(Arc::new(AtomicUsize::new(0))))),
+        w.events.clone(),
+    );
+    let host = Host::parse_normalised("github.com").unwrap();
+    let context = InjectContext {
+        workspace: &w.workspace,
+        host: &host,
+    };
+    let lines = vec!["host: github.com".to_owned()];
+    let push = RequestView::new("POST", "/acme/web.git/git-receive-pack", &lines);
+    let fetch = RequestView::new("GET", "/acme/web.git/info/refs", &lines);
+
+    // The built-in default: the push list on (an unlisted push is refused), the pull list off.
+    assert_eq!(
+        refusal(&injector.decide(&context, &push).await).1,
+        "push_denied"
+    );
+    assert!(!matches!(
+        injector.decide(&context, &fetch).await,
+        InjectDecision::Refuse { .. }
+    ));
+
+    // The user turns the default's pull list on: the very next fetch is refused, no restart.
+    w.store.set_git_defaults(None, Some(true)).unwrap();
+    assert_eq!(
+        refusal(&injector.decide(&context, &fetch).await).1,
+        "pull_denied"
+    );
+    // And the push list off: an unlisted push now passes.
+    w.store.set_git_defaults(Some(false), None).unwrap();
+    assert!(
+        matches!(
+            injector.decide(&context, &push).await,
+            InjectDecision::PassThrough | InjectDecision::Inject { .. }
+        ),
+        "push list off by default"
+    );
+    // A switch the workspace sets itself wins over later changes of the default.
+    w.store
+        .set_git_switches(&w.workspace, Some(true), None)
+        .unwrap();
+    w.store.set_git_defaults(Some(false), Some(false)).unwrap();
+    assert_eq!(
+        refusal(&injector.decide(&context, &push).await).1,
+        "push_denied"
+    );
+}
