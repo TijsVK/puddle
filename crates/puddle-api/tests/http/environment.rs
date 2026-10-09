@@ -541,6 +541,21 @@ async fn what_is_refused_says_why_and_never_quotes_a_secret() {
         422
     );
     assert_eq!(put(&api, "/api/env/A", &json!(["x"])).await.status, 422);
+    // A malformed body that carries a secret does not quote it back.
+    for body in [
+        json!({"kind": "secret", "value": CANARY, "hosts": ["a.example.com"], "extra": 1}),
+        json!({"kind": "secret", "value": CANARY}),
+        json!({"kind": "secret", "value": CANARY, "hosts": "a.example.com"}),
+        json!({"kind": "secret", "value": CANARY, "hosts": [CANARY]}),
+    ] {
+        let reply = put(&api, "/api/env/A", &body).await;
+        assert_eq!(reply.status, 422, "{}", reply.body);
+        assert!(
+            !reply.body.contains("CANARY") || body["hosts"] == json!([CANARY]),
+            "{}",
+            reply.body
+        );
+    }
 }
 
 #[tokio::test]
