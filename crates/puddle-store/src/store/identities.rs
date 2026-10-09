@@ -486,24 +486,23 @@ impl Store {
         only_push_listed: Option<bool>,
         only_pull_listed: Option<bool>,
     ) -> Result<GitDefaults, StoreError> {
-        let now = self.git_defaults()?;
-        let next = GitDefaults {
-            only_push_listed: only_push_listed.unwrap_or(now.only_push_listed),
-            only_pull_listed: only_pull_listed.unwrap_or(now.only_pull_listed),
-        };
-        if next == now {
-            return Ok(now);
-        }
+        // Read and written in one transaction, so two changes of different switches both stick.
         self.change(|tx, _now, fx| {
-            tx.execute(
-                "INSERT INTO git_defaults (id, only_push_listed, only_pull_listed) VALUES (1, ?1, ?2)
-                 ON CONFLICT (id) DO UPDATE SET only_push_listed = ?1, only_pull_listed = ?2",
-                params![next.only_push_listed, next.only_pull_listed],
-            )?;
-            changed_for(fx, Vec::new());
-            Ok(())
-        })?;
-        Ok(next)
+            let now = defaults_of(tx)?;
+            let next = GitDefaults {
+                only_push_listed: only_push_listed.unwrap_or(now.only_push_listed),
+                only_pull_listed: only_pull_listed.unwrap_or(now.only_pull_listed),
+            };
+            if next != now {
+                tx.execute(
+                    "INSERT INTO git_defaults (id, only_push_listed, only_pull_listed) VALUES (1, ?1, ?2)
+                     ON CONFLICT (id) DO UPDATE SET only_push_listed = ?1, only_pull_listed = ?2",
+                    params![next.only_push_listed, next.only_pull_listed],
+                )?;
+                changed_for(fx, Vec::new());
+            }
+            Ok(next)
+        })
     }
 
     /// Replaces the workspace's ordered identity list.

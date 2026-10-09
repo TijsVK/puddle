@@ -218,7 +218,7 @@ describe("CreateWorkspaceDialog", () => {
     await vi.waitFor(() => expect(toasts.items).toHaveLength(1));
     const toast = toasts.items[0]!;
     expect(toast.message).toBe(warning);
-    expect(toast.tone).toBe("error");
+    expect(toast.tone).toBe("info");
     expect(toast.action?.label).toBe("Open Git tab");
     await toast.action?.run();
     expect(goto).toHaveBeenCalledWith("/workspaces/made/git");

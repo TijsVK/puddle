@@ -180,7 +180,6 @@
         // means, and offer the tab where it is changed. The toast stays long enough to read.
         const id = result.value.id;
         toasts.push(warning, {
-          tone: "error",
           ms: 20_000,
           action: {
             label: "Open Git tab",
