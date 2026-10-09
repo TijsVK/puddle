@@ -656,19 +656,18 @@ mod tests {
         let r = ssh_request(&d);
         fs::create_dir_all(r.file.parent().unwrap()).unwrap();
         fs::write(&r.file, b"Host a\0").unwrap();
-        let Outcome::Left(why) = run(&r, ssh_include().as_slice()).unwrap() else {
-            panic!("expected a notice")
-        };
-        assert!(why.contains("NUL"), "{why}");
+        let why = run(&r, ssh_include().as_slice()).unwrap().to_string();
+        assert!(why.starts_with("left: ") && why.contains("NUL"), "{why}");
         assert_eq!(fs::read(&r.file).unwrap(), b"Host a\0");
         // Not writable (a directory stands where the file is): a notice, not an error.
         let d = Dir::new("ssh-directory");
         let r = ssh_request(&d);
         fs::create_dir_all(&r.file).unwrap();
-        let Outcome::Left(why) = run(&r, ssh_include().as_slice()).unwrap() else {
-            panic!("expected a notice")
-        };
-        assert!(why.contains("not a regular file"), "{why}");
+        let why = run(&r, ssh_include().as_slice()).unwrap().to_string();
+        assert!(
+            why.starts_with("left: ") && why.contains("not a regular file"),
+            "{why}"
+        );
         // The same failure for a file puddle needs, such as the Docker config, stays an error.
         let r = req(&d, Action::Apply { mode: 0o640 });
         fs::create_dir_all(&r.file).unwrap();

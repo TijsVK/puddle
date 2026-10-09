@@ -296,20 +296,14 @@ where
     O: AsyncWrite + Unpin,
     E: AsyncWrite + Unpin,
 {
-    let mut failure = None;
+    let mut failure = String::new();
     for ip in addresses {
         match TcpStream::connect(SocketAddr::new(*ip, port)).await {
             Ok(conn) => return carry_until_the_server_closes(conn, stdin, stdout).await,
-            Err(err) => failure = Some((*ip, err)),
+            Err(err) => failure = format!("puddle-agent connect: {ip} port {port}: {err}\n"),
         }
     }
-    if let Some((ip, err)) = failure {
-        say(
-            stderr,
-            &format!("puddle-agent connect: {ip} port {port}: {err}\n"),
-        )
-        .await;
-    }
+    say(stderr, &failure).await;
     Exit::Failed
 }
 
@@ -331,13 +325,16 @@ where
         to_server.shutdown().await
     };
     tokio::pin!(down, up);
-    let ended = tokio::select! {
-        down = &mut down => down,
-        up = &mut up => match up {
-            Ok(()) => down.await,
-            Err(err) => Err(err),
-        },
-    };
+    let ended: io::Result<()> = async {
+        tokio::select! {
+            down = &mut down => down,
+            up = &mut up => {
+                up?;
+                down.await
+            }
+        }
+    }
+    .await;
     match ended {
         Ok(()) => Exit::Done,
         Err(err) => {

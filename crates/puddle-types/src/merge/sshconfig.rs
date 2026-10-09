@@ -180,11 +180,10 @@ mod tests {
             "Host a\n    Include /etc/ssh/ssh_config.d/*.conf\n",
             "Host *\n  # Include /etc/ssh/ssh_config.d/*.conf\n  Port=22\n",
             "Include /etc/ssh/other.d/*.conf\n",
+            "Port 22\nHost x\n  Include /etc/ssh/ssh_config.d/*.conf\n",
         ] {
-            let Merged::Write(out) = applied(file) else {
-                panic!("{file:?}")
-            };
-            assert_eq!(String::from_utf8(out).unwrap(), format!("{}{file}", line()));
+            let expected = Merged::Write(format!("{}{file}", line()).into_bytes());
+            assert_eq!(applied(file), expected, "{file:?}");
         }
     }
 

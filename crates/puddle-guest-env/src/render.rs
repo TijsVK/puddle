@@ -538,17 +538,13 @@ Match host \"*,!localhost,!::1\"
     fn the_system_ssh_config_gets_only_the_include_line_through_a_merge() {
         let c = default_config();
         let f = file_at(&c, SSH_CONFIG_SYSTEM);
-        let puddle_types::ApplyKind::Merge(spec) = f.apply() else {
-            panic!("the image's ssh_config is merged, never replaced")
-        };
-        assert_eq!(spec.format(), MergeFormat::SshConfig);
-        assert_eq!(spec.entries().len(), 1);
-        assert_eq!(spec.entries()[0].value(), "/etc/ssh/ssh_config.d/*.conf");
-        assert!(
-            text(f).ends_with("Include /etc/ssh/ssh_config.d/*.conf\n"),
-            "{}",
-            text(f)
-        );
+        let spec = MergeSpec::new(
+            MergeFormat::SshConfig,
+            vec![MergeEntry::ssh_include("/etc/ssh/ssh_config.d/*.conf")],
+        )
+        .unwrap();
+        assert_eq!(*f.apply(), puddle_types::ApplyKind::Merge(spec));
+        assert!(text(f).ends_with("Include /etc/ssh/ssh_config.d/*.conf\n"));
         // The pattern is the folder the drop-in is written into.
         assert!(SSH_CONFIG_GUEST.starts_with("/etc/ssh/ssh_config.d/"));
     }

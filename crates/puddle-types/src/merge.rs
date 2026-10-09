@@ -282,7 +282,7 @@ impl MergeSpec {
         existing: Option<&[u8]>,
         previous: &[Vec<String>],
     ) -> Result<Merged, MergeRefusal> {
-        if self.format == MergeFormat::SshConfig {
+        let Some(dialect) = dialect(self.format) else {
             return sshconfig::apply(existing, &self.entries).map(|out| {
                 if existing == Some(out.as_bytes()) {
                     Merged::Unchanged
@@ -290,7 +290,7 @@ impl MergeSpec {
                     Merged::Write(out.into_bytes())
                 }
             });
-        }
+        };
         let owned = self.keys();
         let dropped: Vec<&[String]> = previous
             .iter()
@@ -298,7 +298,6 @@ impl MergeSpec {
             .map(Vec::as_slice)
             .collect();
         let original = text(existing)?;
-        let dialect = dialect(self.format);
         json::apply(dialect, original.as_deref(), &dropped, &self.entries).map(|out| match out {
             Some(t) if original.as_deref() != Some(t.as_str()) => Merged::Write(t.into_bytes()),
             _ => Merged::Unchanged,
@@ -316,9 +315,9 @@ pub fn unmerge(
     existing: &[u8],
     keys: &[Vec<String>],
 ) -> Result<Unmerged, MergeRefusal> {
-    if format == MergeFormat::SshConfig {
+    let Some(dialect) = dialect(format) else {
         return sshconfig::unmerge(existing);
-    }
+    };
     let Some(original) = text(Some(existing))? else {
         return Ok(Unmerged {
             merged: Merged::Unchanged,
@@ -326,7 +325,7 @@ pub fn unmerge(
         });
     };
     let keys: Vec<&[String]> = keys.iter().map(Vec::as_slice).collect();
-    let (out, empty) = json::unmerge(dialect(format), &original, &keys)?;
+    let (out, empty) = json::unmerge(dialect, &original, &keys)?;
     let merged = if out == original {
         Merged::Unchanged
     } else {
@@ -335,12 +334,12 @@ pub fn unmerge(
     Ok(Unmerged { merged, empty })
 }
 
-/// The engine's dialect for a format.
-fn dialect(format: MergeFormat) -> json::Dialect {
+/// The JSON engine's dialect for a format; `None` for a format with an engine of its own.
+fn dialect(format: MergeFormat) -> Option<json::Dialect> {
     match format {
-        MergeFormat::Json => json::Dialect::Strict,
-        MergeFormat::Jsonc => json::Dialect::Comments,
-        MergeFormat::SshConfig => unreachable!("ssh_config has its own engine"),
+        MergeFormat::Json => Some(json::Dialect::Strict),
+        MergeFormat::Jsonc => Some(json::Dialect::Comments),
+        MergeFormat::SshConfig => None,
     }
 }
 
