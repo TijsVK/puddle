@@ -32,31 +32,25 @@ fn shells() -> Vec<&'static str> {
         .collect()
 }
 
-/// Git for the fixture repositories. Auto maintenance is off: newer git starts
-/// `git maintenance run --auto` detached after a commit, and it holds
-/// `.git/objects/maintenance.lock` for a moment after the commit has returned, so the fixture's
-/// lock files would change under the test (seen with git 2.55).
+/// Git for the fixture repositories, with background maintenance off: newer git starts a
+/// detached `git maintenance run --auto` after a commit (and an auto gc can do the same), which
+/// creates and deletes `.git/objects/maintenance.lock` after the commit has returned, so a test
+/// that lists the locks could catch it between the two (seen with git 2.55).
 fn git(dir: &Path, args: &[&str]) -> std::process::Output {
     command("git")
         .args(args)
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "maintenance.auto")
-        .env("GIT_CONFIG_VALUE_0", "false")
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@example.org")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@example.org")
-        // `git commit` otherwise starts a detached `git maintenance run --auto`, which creates and
-        // deletes `objects/maintenance.lock` on its own schedule; a test that lists the locks
-        // can catch it between the two.
         .env("GIT_CONFIG_COUNT", "2")
         .env("GIT_CONFIG_KEY_0", "maintenance.auto")
         .env("GIT_CONFIG_VALUE_0", "false")
         .env("GIT_CONFIG_KEY_1", "gc.auto")
         .env("GIT_CONFIG_VALUE_1", "0")
+        .env("GIT_AUTHOR_NAME", "T")
+        .env("GIT_AUTHOR_EMAIL", "t@example.org")
+        .env("GIT_COMMITTER_NAME", "T")
+        .env("GIT_COMMITTER_EMAIL", "t@example.org")
         .output()
         .unwrap()
 }
