@@ -241,10 +241,14 @@ mod tests {
                 }
             });
             // Stop the churn before judging, so a failure ends the test instead of hanging it.
+            // Only `NotFound` is judged: Windows answers "access denied" for a file in the middle of
+            // being deleted, which is a different error.
             let deadline = Instant::now() + Duration::from_millis(500);
             let mut first_error = None;
             while first_error.is_none() && Instant::now() < deadline {
-                first_error = tighten_file(&path).err();
+                first_error = tighten_file(&path)
+                    .err()
+                    .filter(|err| err.kind() == io::ErrorKind::NotFound);
             }
             stop.store(true, Ordering::Relaxed);
             assert!(first_error.is_none(), "{first_error:?}");
