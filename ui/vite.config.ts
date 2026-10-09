@@ -17,6 +17,10 @@ export default defineConfig({
   server: { proxy: devProxy() },
   test: {
     environment: "jsdom",
+    // Every test file still gets its own jsdom and module graph, but inside one VM context per file
+    // in a long-lived worker thread, so the worker, jsdom and the Node modules load once, not per file.
+    // vitest.setup.ts adds the Node globals a bare jsdom context lacks.
+    pool: "vmThreads",
     include: ["src/**/*.test.ts", "tools/**/*.test.ts", "scripts/**/*.test.ts"],
     setupFiles: ["./vitest.setup.ts"],
     coverage: {
