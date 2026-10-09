@@ -64,7 +64,7 @@ Known-bad commit for -Bisect. Default HEAD.
 Internal: set by -Bisect for each step.
 
 .EXAMPLE
-powershell -ExecutionPolicy Bypass -File ci\windows-e2e.ps1 -RuntimeDir C:\puddle\msb-0.7.7-puddle.14
+powershell -ExecutionPolicy Bypass -File ci\windows-e2e.ps1 -RuntimeDir C:\puddle\msb-0.7.7-puddle.15
 
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File ci\windows-e2e.ps1 -WhatIf
