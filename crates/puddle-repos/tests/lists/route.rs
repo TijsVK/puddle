@@ -393,6 +393,31 @@ async fn a_certificate_nobody_trusts_is_a_tls_failure_naming_the_reason() {
 }
 
 #[tokio::test]
+async fn a_server_that_does_not_speak_tls_is_a_failed_handshake_not_a_trust_problem() {
+    let pki = Pki::new("localhost");
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut tcp, _)) = listener.accept().await {
+            let _ = tcp
+                .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\nplain http\r\n")
+                .await;
+            let _ = tcp.shutdown().await;
+        }
+    });
+
+    let err = api(direct_chain(), &pki)
+        .get(request(&format!("localhost:{port}"), "/user"))
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&err, TransportError::Unreachable(why) if why.starts_with("the TLS handshake failed")),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
 async fn an_address_instead_of_a_name_is_refused_before_anything_is_sent() {
     let pki = Pki::new("localhost");
     let server = Server::start(&pki, Mode::Answer(Arc::new(|_| Reply::ok("[]")))).await;

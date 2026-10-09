@@ -187,7 +187,10 @@ fn kind_of(host: &str, source: &SourceSpec) -> Result<Kind, Problem> {
 fn unsupported(host: &str) -> Problem {
     Problem::new(
         ProblemKind::Unsupported,
-        format!("puddle lists repositories on GitHub and Azure DevOps; {host} is neither"),
+        format!(
+            "puddle lists repositories on GitHub and Azure DevOps; {host} is neither: enter the \
+             address of its repository in the create form"
+        ),
     )
 }
 
@@ -247,7 +250,8 @@ fn plan(identities: &[Identity], only: Option<IdentityId>) -> Vec<(Meta, Plan)> 
                     Plan::Cannot(Problem::new(
                         ProblemKind::WrongTarget,
                         format!(
-                            "this credential is for {}, not {host}; puddle does not send it there",
+                            "this credential is for {}, not {host}; puddle does not send it there: edit \
+                             the credential so its source and its host agree",
                             scope.host
                         ),
                     )),
@@ -674,6 +678,13 @@ fn snapshot(meta: Meta, resolved: &Resolved, now: u64) -> SourceList {
             list.retry_at = entry.blocked_until.filter(|until| *until > now);
             list.problem.clone_from(&entry.problem);
             list.notes.clone_from(&entry.notes);
+            if list.retry_at.is_some() && list.problem.is_none() {
+                // A good list that cannot be refreshed yet: say why a refresh will wait.
+                list.notes.push(Note::new(
+                    NoteKind::HostLimitReached,
+                    "the host's request limit for this hour is used up, so a refresh waits until it resets",
+                ));
+            }
             list.repos = Arc::clone(&entry.repos);
         }
     }

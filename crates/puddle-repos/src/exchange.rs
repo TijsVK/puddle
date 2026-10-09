@@ -106,7 +106,10 @@ fn transport_problem(host: &str, err: &TransportError) -> Problem {
     match err {
         TransportError::Tls(why) => Problem::new(
             ProblemKind::Unreachable,
-            format!("the connection to {host} is not trusted: {why}"),
+            format!(
+                "the connection to {host} is not trusted: {why}; if the company network re-signs \
+                 HTTPS, its root certificate must be trusted by this computer"
+            ),
         ),
         TransportError::TooLarge => Problem::bad_answer(err),
         TransportError::BadToken => Problem::new(ProblemKind::SourceUnavailable, err.to_string()),
@@ -249,7 +252,7 @@ mod tests {
             (
                 TransportError::Tls("unknown issuer".to_owned()),
                 ProblemKind::Unreachable,
-                "the connection to api.github.com is not trusted: unknown issuer",
+                "the connection to api.github.com is not trusted: unknown issuer; if the company network re-signs HTTPS, its root certificate must be trusted by this computer",
             ),
             (
                 TransportError::Timeout(30),

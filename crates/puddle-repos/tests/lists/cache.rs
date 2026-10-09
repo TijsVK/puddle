@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use puddle_repos::{
-    Api, ApiReply, ApiRequest, Config, Freshness, ListState, ProblemKind, Read, Repos,
+    Api, ApiReply, ApiRequest, Config, Freshness, ListState, NoteKind, ProblemKind, Read, Repos,
     TransportError,
 };
 use puddle_secrets::{Credential, Fetch, Fetched, Secret, SecretCache, SourceError, SourceSpec};
@@ -259,6 +259,15 @@ async fn a_success_that_used_the_last_request_of_the_hour_blocks_until_the_reset
     let first = rig.lists(&ids, Freshness::Cached).await;
     assert_eq!(first[0].state, ListState::Ok);
     assert_eq!(first[0].retry_at, Some(T0 + 600_000));
+    // A refresh will wait, and the list says why.
+    let kinds: Vec<_> = first[0].notes.iter().map(|n| n.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            NoteKind::OrganisationsMayBeHidden,
+            NoteKind::HostLimitReached
+        ]
+    );
 
     rig.clock.advance(MINUTE);
     rig.lists(&ids, Freshness::Reload).await;

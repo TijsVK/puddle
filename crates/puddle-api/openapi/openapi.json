@@ -9732,7 +9732,8 @@
           "fine_grained_token",
           "truncated",
           "author_unavailable",
-          "organisations_unavailable"
+          "organisations_unavailable",
+          "host_limit_reached"
         ]
       },
       "RepoProblem": {

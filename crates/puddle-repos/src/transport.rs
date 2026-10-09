@@ -73,7 +73,8 @@ impl HostApi {
                 TlsConnectError::InvalidName(name) => {
                     TransportError::Unreachable(format!("{name:?} is not a valid server name"))
                 }
-                other => TransportError::Tls(other.to_string()),
+                TlsConnectError::Certificate(why) => TransportError::Tls(why),
+                other => TransportError::Unreachable(format!("the TLS handshake failed: {other}")),
             })?;
         send(stream, &request, authorization).await
     }

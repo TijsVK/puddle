@@ -103,7 +103,10 @@ pub(crate) async fn list(
     if list.value.len() > MAX_REPOS {
         notes.push(Note::new(
             NoteKind::Truncated,
-            format!("puddle reads the first {MAX_REPOS} repositories; there are more"),
+            format!(
+                "puddle reads the first {MAX_REPOS} repositories and there are more: enter the \
+                 address of one that is missing"
+            ),
         ));
     }
     let repos = list

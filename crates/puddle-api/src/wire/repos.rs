@@ -122,6 +122,8 @@ pub enum RepoNoteCode {
     AuthorUnavailable,
     /// The account's organisations could not be listed.
     OrganisationsUnavailable,
+    /// The host's request limit for this hour is used up: a refresh waits until `retry_at`.
+    HostLimitReached,
 }
 
 impl From<NoteKind> for RepoNoteCode {
@@ -133,6 +135,7 @@ impl From<NoteKind> for RepoNoteCode {
             NoteKind::Truncated => Self::Truncated,
             NoteKind::AuthorUnavailable => Self::AuthorUnavailable,
             NoteKind::OrganisationsUnavailable => Self::OrganisationsUnavailable,
+            NoteKind::HostLimitReached => Self::HostLimitReached,
         }
     }
 }
@@ -459,6 +462,7 @@ mod tests {
                 NoteKind::OrganisationsUnavailable,
                 "organisations_unavailable",
             ),
+            (NoteKind::HostLimitReached, "host_limit_reached"),
         ];
         for (kind, wire) in notes {
             assert_eq!(name(&RepoNoteCode::from(kind)), wire);

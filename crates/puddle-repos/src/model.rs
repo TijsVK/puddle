@@ -169,6 +169,8 @@ pub enum NoteKind {
     AuthorUnavailable,
     /// The account's organisations could not be listed.
     OrganisationsUnavailable,
+    /// The host's request limit for this hour is used up: a refresh waits until it resets.
+    HostLimitReached,
 }
 
 /// A fact about a list or a profile, in words.

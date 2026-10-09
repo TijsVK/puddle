@@ -2589,7 +2589,7 @@ export interface components {
          * @description What a list or a profile leaves out.
          * @enum {string}
          */
-        RepoNoteCode: "sso_partial" | "organisations_may_be_hidden" | "fine_grained_token" | "truncated" | "author_unavailable" | "organisations_unavailable";
+        RepoNoteCode: "sso_partial" | "organisations_may_be_hidden" | "fine_grained_token" | "truncated" | "author_unavailable" | "organisations_unavailable" | "host_limit_reached";
         /** @description A reason in words, with what to do about it. */
         RepoProblem: {
             /** @description The class of the problem. */

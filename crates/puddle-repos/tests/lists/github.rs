@@ -424,6 +424,6 @@ async fn a_host_that_cannot_be_reached_says_which_and_why() {
     assert_eq!(problem.kind, ProblemKind::Unreachable);
     assert_eq!(
         problem.message,
-        "the connection to api.github.com is not trusted: invalid peer certificate: UnknownIssuer"
+        "the connection to api.github.com is not trusted: invalid peer certificate: UnknownIssuer; if the company network re-signs HTTPS, its root certificate must be trusted by this computer"
     );
 }

@@ -212,7 +212,8 @@ pub(crate) async fn list(
             notes.push(Note::new(
                 NoteKind::Truncated,
                 format!(
-                    "puddle reads the first {} repositories; there are more",
+                    "puddle reads the first {} repositories and there are more: enter the address of \
+                     one that is missing",
                     MAX_PAGES * 100
                 ),
             ));
