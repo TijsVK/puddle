@@ -321,6 +321,21 @@ the owner, then tagged `vX.Y.Z` on `main`.
 | `pre-push` | every gate of `all` except `ui-e2e` | pre-push hook |
 | `all` (the default) | every gate, `ui-e2e` included | `ci.yml` (on every push and PR), by hand |
 
+**Concurrent gates.** Within a set, `fast` runs first, one gate at a time, and a failure stops the run.
+The rest runs as up to three streams at once (`scripts/gate-sched.sh`): the Rust gates (`git-env`, `clippy`,
+`clippy-windows`, `openapi`, `doc`, `coverage`), the UI chain (`ui`, `ui-licences`, `ui-audit`, `ui-e2e`) and the
+read-only scans (`secrets`, `deny`, `notices`). `coverage` waits for `ui`, which builds the UI it tests against.
+A gate's output is kept and printed whole under its `==> <gate>` line when it finishes, followed by
+`-- <gate>: ok, N s`; a failed gate stops its own stream only, the other streams finish, and the run exits with the
+status of the first failed gate in set order, whose log is the last thing printed. `PUDDLE_CHECK_SERIAL=1`
+runs the gates one by one, printing live (a set that fits one stream does that anyway). The streams share one
+Cargo target directory, so two Cargo builds queue on its lock: the gain is the UI chain and the scans running beside
+the Rust gates, not parallel compilation. `notices` is skipped when Cargo.lock, every Cargo.toml, `about.toml`,
+`ui/package-lock.json`, the xtask sources and the cargo-about version are byte for byte those of the last passing
+run (stamp in the target directory; `CHECK_NO_SKIP=1` runs it anyway). A test target must not be named like a
+dependency (`scripts/target-names-test.sh`): `cargo llvm-cov` clears old build output by target name, so a test
+called `http` made every coverage run rebuild the `http` crate and everything that depends on it.
+
 `ui-e2e` is the slowest gate (two browsers against the built UI) and the one that flakes most on a loaded
 machine, so a push does not wait for it: the pre-push hook runs `pre-push`, and `ci.yml` runs `ui-e2e` on the
 push. A red `ui-e2e` on `develop` is fixed forward, like any red CI. No coverage number depends on it: the Rust

@@ -10,6 +10,13 @@
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one (pre-push hook; CI still runs ui-e2e after the push)
 #   `scripts/check.sh --list <set>` prints a set's gates, one per line, without running anything.
+# Several gates run at the same time (scripts/gate-sched.sh): after the `fast` gates, which run first and
+# stop the run on a failure, the compile-and-test gates, the UI chain (ui ui-licences ui-audit ui-e2e) and
+# secrets/deny/notices are three streams; coverage waits for `ui`. Each gate's output is printed whole under
+# its `==> <gate>` line when it finishes; a failure in any stream fails the run (first failure in run order,
+# its exit status). PUDDLE_CHECK_SERIAL=1 runs them one by one, as before. A gate set that fits one stream
+# runs inline and prints live. The `notices` gate is skipped when its inputs are byte for byte those of a
+# passing run (CHECK_NO_SKIP=1 runs it anyway).
 # The ui gates need Node 24 (the UI's package-lock.json pins every npm package). ui-e2e also needs
 # the Playwright browsers: `cd ui && npx playwright install --with-deps chromium webkit`.
 # Set CARGO to run every Cargo command through a wrapper, e.g. CARGO=mbx for the shared build
@@ -29,6 +36,9 @@ cargo="${CARGO:-cargo}"
 unset CARGO
 
 cd "$(dirname "$0")/.."
+
+# The directory of a concurrent run's per-gate logs (scripts/gate-sched.sh); unset when gates run inline.
+run_tmp=
 
 # The desktop shell (puddle-app) links the system WebKitGTK on Linux. Where its dev package is
 # missing and this is not CI, the Linux gates skip that one crate and say so (clippy-windows still
@@ -78,10 +88,33 @@ ui_install() {
     ui_installed=1
 }
 
-# The production build, which also lists the packages in the bundle for ui-licences.
+# The production build, which also lists the packages in the bundle for ui-licences. Built once per
+# run: `ui`, `ui-licences` and `ui-e2e` read the same build of the same tree, and a second build
+# would empty ui/build under a gate that is reading it. (Gates run in their own subshells when they
+# run concurrently, so the "built" mark is a file there.)
+ui_built=
 ui_build() {
     ui_install
-    (cd ui && npm run build)
+    if [ -z "$ui_built" ] && [ ! -e "${run_tmp:-/nonexistent}/ui-built" ]; then
+        (cd ui && npm run build)
+        ui_built=1
+        [ -z "${run_tmp:-}" ] || : >"$run_tmp/ui-built"
+    fi
+}
+
+# A hash of everything the notices verdict depends on (see the gate). Tracked and untracked files
+# alike, by content: a touched file with the same bytes keeps the stamp valid.
+notices_inputs_hash() {
+    sha=sha256sum
+    command -v sha256sum >/dev/null 2>&1 || sha="shasum -a 256"
+    # shellcheck disable=SC2086 # $sha is a command and its flag
+    {
+        cargo-about --version 2>&1 || echo "cargo-about: not installed"
+        git ls-files -z --cached --others --exclude-standard -- \
+            Cargo.lock about.toml about.hbs ui/package-lock.json rust-toolchain.toml \
+            ':(glob)**/Cargo.toml' ':(glob).cargo/**' 'crates/xtask' |
+            LC_ALL=C sort -z | xargs -0 $sha 2>&1
+    } | $sha | cut -d' ' -f1
 }
 
 run_gate() {
@@ -98,8 +131,14 @@ run_gate() {
         }
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
-    hooks) scripts/pre-push-test.sh && scripts/check-sets-test.sh && ci/fetch-msb-test.sh ;;
-    git-env) scripts/git-env-test.sh ;;
+    hooks)
+        scripts/pre-push-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
+            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && ci/fetch-msb-test.sh
+        ;;
+    git-env)
+        # Through the coverage gate's build (same arguments), so it compiles no test binary of its own.
+        GIT_ENV_CARGO="$cargo" GIT_ENV_EXCLUDE="$skip_app" scripts/git-env-test.sh
+        ;;
     platform-literals)
         # The per-OS runtime file names live in puddle-runtime's table (platform.rs) and nowhere
         # else in the Rust code: a string literal naming msb or its firmware is a hard-coded OS.
@@ -147,7 +186,24 @@ run_gate() {
     deny) "$cargo" deny --locked check ;;
     notices)
         # Every shipped dependency has a licence entry in the third-party notices (cargo-about).
-        "$cargo" run --quiet --locked -p xtask -- notices --check
+        # The verdict is a function of the dependency manifests and lock, the cargo-about config, the
+        # xtask that judges them and the cargo-about version, so a run that passed on the same bytes
+        # is not repeated. Stamp: a hash in the target dir, written only by a pass.
+        stamp="${CARGO_TARGET_DIR:-target}/check-stamps/notices"
+        key=$(notices_inputs_hash)
+        if [ -z "${CHECK_NO_SKIP:-}" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$key" ]; then
+            echo "notices: skipped, its inputs are byte for byte those of the last passing run ($key); CHECK_NO_SKIP=1 runs it anyway"
+            return 0
+        fi
+        # --offline: crawl only the local registry sources, no network; the report is the same bytes
+        # as the online one. A cold registry cache (CI without a cache hit) lacks sources, so then
+        # the online run decides.
+        "$cargo" run --quiet --locked -p xtask -- notices --check --offline || {
+            echo "notices: the offline run did not pass; running it online" >&2
+            "$cargo" run --quiet --locked -p xtask -- notices --check
+        }
+        mkdir -p "$(dirname "$stamp")"
+        printf '%s' "$key" >"$stamp"
         ;;
     openapi)
         # The committed API contract (openapi.json, schema.d.ts) matches the routes (ADR 0004).
@@ -275,6 +331,21 @@ if [ "${1:-}" = --list ]; then
 fi
 
 [ "$#" -gt 0 ] || set -- all
+requested=
 for arg in "$@"; do
-    for g in $(gates_of "$arg"); do run_gate "$g"; done
+    requested="$requested $(gates_of "$arg" | tr '\n' ' ')"
 done
+
+# The gates that need the UI's npm packages (the UI itself, and coverage for its ratchet script):
+# installed once, before the concurrent streams start, so no two of them run `npm ci` at once.
+before_concurrent() {
+    for g; do
+        case $g in ui | ui-licences | ui-audit | ui-e2e | coverage | coverage-ratchet) ui_install && return 0 ;; esac
+    done
+}
+
+# shellcheck source=scripts/gate-sched.sh
+. scripts/gate-sched.sh
+serial_gates=$fast_gates
+# shellcheck disable=SC2086 # the gate names are words by design
+run_gates $requested
