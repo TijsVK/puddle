@@ -289,7 +289,7 @@ async fn a_secret_keeps_its_value_when_only_its_hosts_change_and_a_new_one_needs
     assert_eq!(moved.json()["hosts"], json!(["b.example.com"]));
     assert_eq!(
         api.secrets.ids(),
-        [id.clone()],
+        std::slice::from_ref(&id),
         "the same entry, not a second"
     );
     let held = api
@@ -306,7 +306,7 @@ async fn a_secret_keeps_its_value_when_only_its_hosts_change_and_a_new_one_needs
         &secret(Some("rotated-value"), &["b.example.com"]),
     )
     .await;
-    assert_eq!(api.secrets.ids(), [id.clone()]);
+    assert_eq!(api.secrets.ids(), std::slice::from_ref(&id));
     let held = api
         .secrets
         .get(&StoredId::new(&id).unwrap())
@@ -384,7 +384,7 @@ async fn a_credential_store_that_fails_changes_nothing_and_says_so() {
 
     api.secrets.heal();
     assert_eq!(api.send("DELETE", "/api/env/KEPT", None).await.status, 204);
-    assert!(api.secrets.ids().is_empty());
+    assert_eq!(api.secrets.ids(), Vec::<String>::new());
 }
 
 #[tokio::test]
@@ -418,6 +418,10 @@ async fn without_a_credential_store_a_secret_is_refused_and_plain_variables_stil
     running.shutdown().await;
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table of refusals, read top to bottom"
+)]
 #[tokio::test]
 async fn what_is_refused_says_why_and_never_quotes_a_secret() {
     let api = start().await;

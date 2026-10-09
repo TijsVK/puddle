@@ -221,3 +221,47 @@ pub(crate) fn ended(workspace: &'static str) -> impl Fn(&Value) -> bool {
             && matches!(e["step"].as_str(), Some("done" | "failed"))
     }
 }
+
+/// Everything the process logs from here on, at every level, so a test can prove a value never
+/// reached a log line. One subscriber per process: a test that needs it calls this before the
+/// code under test runs, and the self-check fails loudly when another subscriber got there first.
+pub(crate) fn capture_logs() -> std::sync::Arc<std::sync::Mutex<Vec<u8>>> {
+    use std::io::Write;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    static LOGS: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
+    let logs = LOGS.get_or_init(|| {
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&logs);
+        let installed = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .try_init()
+            .is_ok();
+        assert!(
+            installed,
+            "another log subscriber is installed in this process"
+        );
+        logs
+    });
+    tracing::info!("log capture is on");
+    assert!(
+        String::from_utf8_lossy(&logs.lock().unwrap()).contains("log capture is on"),
+        "the capture does not see this test's logs"
+    );
+    Arc::clone(logs)
+}

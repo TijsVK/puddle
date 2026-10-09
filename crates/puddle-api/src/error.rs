@@ -148,8 +148,8 @@ impl From<StoreError> for ApiError {
         match err {
             StoreError::UnknownPending(_)
             | StoreError::UnknownRule(_)
-            | StoreError::UnknownRuleSet(_) => Self::not_found(err.to_string()),
-            StoreError::UnknownIdentity(_)
+            | StoreError::UnknownRuleSet(_)
+            | StoreError::UnknownIdentity(_)
             | StoreError::UnknownRepo(_)
             | StoreError::UnknownEnv { .. } => Self::not_found(err.to_string()),
             StoreError::IdentityCollision(_) => Self::new(

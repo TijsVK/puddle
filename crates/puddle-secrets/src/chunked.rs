@@ -87,7 +87,11 @@ fn pieces_of(value: &str) -> Vec<&str> {
 fn generation() -> Result<String, StoreError> {
     let mut bytes = [0_u8; 4];
     getrandom::fill(&mut bytes).map_err(|_| StoreError)?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    Ok(bytes.iter().fold(String::new(), |mut hex, b| {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{b:02x}");
+        hex
+    }))
 }
 
 impl<S: SecretStore> ChunkedStore<S> {
@@ -317,7 +321,7 @@ mod tests {
         // Short to long, then delete.
         store.set(&id("env-1"), &Secret::new(long)).unwrap();
         store.delete(&id("env-1")).unwrap();
-        assert!(held(&store).is_empty());
+        assert_eq!(held(&store), Vec::<String>::new());
         store.delete(&id("env-1")).unwrap();
         // Another entry is not touched.
         store
@@ -395,7 +399,7 @@ mod tests {
         let store = store();
         let huge = "x".repeat(CHUNK_UNITS * MAX_PIECES + 1);
         assert!(store.set(&id("env-1"), &Secret::new(huge)).is_err());
-        assert!(held(&store).is_empty());
+        assert_eq!(held(&store), Vec::<String>::new());
         let most = "x".repeat(CHUNK_UNITS * MAX_PIECES);
         store.set(&id("env-1"), &Secret::new(most.clone())).unwrap();
         assert_eq!(get(&store, "env-1").as_deref(), Some(most.as_str()));

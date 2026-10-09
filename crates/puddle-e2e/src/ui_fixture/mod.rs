@@ -143,6 +143,9 @@ struct State {
     workspaces: FakeWorkspaces,
     network: Arc<FakeNetworkHealth>,
     credentials: Arc<FakeCredentials>,
+    /// Where the values of environment secrets are kept: in memory, so the screens can set one and
+    /// the tests can see that it never comes back.
+    secrets: Arc<puddle_secrets::MemoryStore>,
     doctor: Arc<FakeDoctor>,
     api: Option<RunningApi>,
 }
@@ -207,6 +210,7 @@ impl Fixture {
             workspaces,
             network,
             credentials,
+            secrets: Arc::new(puddle_secrets::MemoryStore::new()),
             doctor,
             api: None,
         };
@@ -229,6 +233,7 @@ impl Fixture {
             .with_workspaces(Arc::new(state.workspaces.clone()))
             .with_network_health(state.network.clone() as Arc<dyn NetworkHealthService>)
             .with_credentials(state.credentials.clone() as Arc<dyn CredentialService>)
+            .with_secret_store(state.secrets.clone())
             .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>);
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),

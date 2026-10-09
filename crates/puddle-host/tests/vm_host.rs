@@ -26,7 +26,7 @@ use puddle_host::{
     RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, prepare,
 };
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
-use puddle_secrets::{AccountName, HostName, SourceSpec};
+use puddle_secrets::{AccountName, HostName, MemoryStore, SourceSpec};
 use puddle_store::{
     Actor, Author, Coverage, CredentialBinding, Effect, IdentityDraft, NewRule, Pattern, Scope,
 };
@@ -90,6 +90,8 @@ struct VmHost {
     host: Host<MsbRuntime>,
     runtime: MsbRuntime,
     settings: Settings,
+    /// Where the host keeps the values of secrets: never the machine's own credential store.
+    secrets: std::sync::Arc<MemoryStore>,
 }
 
 /// Starts a host over its own store and workspace folder, named by `tag` (a few characters), so
@@ -125,6 +127,9 @@ async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {
         opened: std::sync::Mutex::new(None),
     };
     let prepared = prepare(config, &HarnessPlatform).unwrap();
+    let secrets = std::sync::Arc::new(MemoryStore::new());
+    let mut options = options;
+    options.secret_store = Some(secrets.clone());
     let host = Host::start(prepared, &factory, options)
         .await
         .expect("the host starts");
@@ -134,6 +139,7 @@ async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {
         host,
         runtime,
         settings,
+        secrets,
     }
 }
 
@@ -143,6 +149,7 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
         host,
         runtime,
         settings,
+        ..
     } = start_vm_host("life").await;
 
     // The workspace's sandbox may reach the repository host, and nothing else.
@@ -317,6 +324,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         host,
         runtime,
         settings,
+        ..
     } = start_vm_host_with("ca", options_without_injection()).await;
     let name = format!("{}-ca", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
@@ -521,6 +529,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
         host,
         runtime,
         settings,
+        ..
     } = start_vm_host("quic").await;
     let name = format!("{}-quic", settings.prefix.as_str());
     let sandbox = WorkspaceName::new(&name).unwrap();
@@ -641,6 +650,298 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
         .and_then(|n| n.parse().ok())
         .expect("the timing line");
     assert!(millis < 1000, "the QUIC attempt took {millis} ms: {direct}");
+
+    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// The values the real secrets hold in the credential store. Written in the guest scripts as two
+/// quoted halves, so the script's own text is not what a search for the value finds.
+const SECRET_A: &str = "puddle-vm-real-a-7f3c9d21e0b44a58";
+const SECRET_B: &str = "puddle-vm-real-b-51c0aa9e3d7742f1";
+const SECRET_C: &str = "puddle-vm-real-c-0be4d86a92c7135e";
+
+/// `"first""second"`: the shell joins them, the script text never holds the value.
+fn split(value: &str) -> String {
+    let (head, tail) = value.split_at(value.len() / 2);
+    format!("\"{head}\"\"{tail}\"")
+}
+
+/// The stand-in the store keeps for the secret `var` of the workspace.
+fn stand_in_of(host: &Host<MsbRuntime>, workspace: &WorkspaceName, var: &str) -> String {
+    let found = host
+        .store()
+        .env_for_start(workspace, &mut |_| Err("already made".into()))
+        .unwrap()
+        .into_iter()
+        .find(|v| v.name.as_str() == var)
+        .and_then(|v| match v.value {
+            puddle_store::StartValue::Secret { stand_in, .. } => Some(stand_in),
+            puddle_store::StartValue::Plain(_) => None,
+        });
+    assert!(found.is_some(), "no secret {var}");
+    found.unwrap()
+}
+
+/// Waits for a connection record of `workspace` to `host` that `wanted` accepts (a record is
+/// written when the connection ends, a moment after the tool is done) and returns it.
+async fn record_where(
+    api: &Api,
+    workspace: &str,
+    host: &str,
+    wanted: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let mut seen = Vec::new();
+    for _ in 0..60 {
+        seen = connections(api, workspace, host).await;
+        if let Some(found) = seen.iter().find(|r| wanted(r)) {
+            return found.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    unreachable!("no matching connection record for {host}: {seen:#?}")
+}
+
+/// The connection records of `workspace` to `host`, newest first.
+async fn connections(api: &Api, workspace: &str, host: &str) -> Vec<serde_json::Value> {
+    let page = api
+        .get(&format!(
+            "/api/audit?workspace={workspace}&type=connection&host_contains={host}&limit=50"
+        ))
+        .await
+        .json();
+    page.get("entries")
+        .and_then(serde_json::Value::as_array)
+        .unwrap()
+        .iter()
+        .filter_map(|e| e.get("record").cloned())
+        .filter(|r| r.get("host").is_some_and(|h| h == host))
+        .collect()
+}
+
+/// A workspace's secrets: the guest holds a stand-in under the secret's name and never the real
+/// value (not in its environment, not in a file anywhere, not in a process's environment); the
+/// proxy swaps the real value in toward the secret's own hosts only; a stand-in toward another
+/// decrypted host is flagged; and a secret added to the running workspace makes its host
+/// decrypted from the next connection with no restart.
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own_hosts() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        secrets,
+    } = start_vm_host().await;
+    let name = format!("{}-env", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    for site in ["github.com", "example.com", "example.org", "example.net"] {
+        host.store()
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(sandbox.clone()),
+                pattern: Pattern::parse(site).unwrap(),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
+    let api = Api::new(host.url(), host.token());
+    let put = |path: &str, body: serde_json::Value| {
+        let (api, path) = (&api, path.to_owned());
+        async move {
+            let reply = api.put(&path, &body.to_string()).await;
+            assert_eq!(reply.status, 200, "{path}: {}", reply.body);
+        }
+    };
+    put(
+        "/api/env/PROBE_PLAIN",
+        json!({"kind": "plain", "value": "plain value 'quoted' $HOME"}),
+    )
+    .await;
+    put(
+        "/api/env/PROBE_A",
+        json!({"kind": "secret", "value": SECRET_A, "hosts": ["example.com"]}),
+    )
+    .await;
+    put(
+        "/api/env/PROBE_B",
+        json!({"kind": "secret", "value": SECRET_B, "hosts": ["example.org"]}),
+    )
+    .await;
+    assert_eq!(secrets.ids().len(), 2);
+
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // The guest has the plain variable as it was written and a stand-in under each secret's name,
+    // for a process started directly and for a login shell.
+    let stand_a = stand_in_of(&host, &sandbox, "PROBE_A");
+    let stand_b = stand_in_of(&host, &sandbox, "PROBE_B");
+    assert!(stand_a.starts_with("puddle-secret-PROBE_A-"), "{stand_a}");
+    assert_eq!(
+        guest(&runtime, &sandbox, "printenv PROBE_PLAIN")
+            .await
+            .trim(),
+        "plain value 'quoted' $HOME"
+    );
+    assert_eq!(
+        guest(&runtime, &sandbox, "printenv PROBE_A").await.trim(),
+        stand_a
+    );
+    assert_eq!(
+        guest(&runtime, &sandbox, "printenv PROBE_B").await.trim(),
+        stand_b
+    );
+    assert_eq!(
+        guest(&runtime, &sandbox, "sh -lc 'printenv PROBE_A'")
+            .await
+            .trim(),
+        stand_a
+    );
+
+    // The real values are nowhere in the guest: no file on the disk, no running process's
+    // environment.
+    let (a, b) = (split(SECRET_A), split(SECRET_B));
+    let search = guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "files=$(grep -rla -e {a} -e {b} / --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev 2>/dev/null); \
+             live=$(cat /proc/[0-9]*/environ 2>/dev/null | tr '\\0' '\\n' | grep -c -e {a} -e {b}); \
+             echo \"files=[$files] processes=[$live]\""
+        ),
+    )
+    .await;
+    assert_eq!(search.trim(), "files=[] processes=[0]", "{search}");
+
+    // Only the hosts the secrets name are decrypted; the rest keep their real certificate.
+    let ca_name = format!("puddle CA for {name}");
+    for site in ["example.com", "example.org"] {
+        let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
+        assert!(issuer.contains(&ca_name), "{site}: {issuer}");
+    }
+    let net = guest(&runtime, &sandbox, &issuer_script("example.net")).await;
+    assert!(!net.contains("puddle"), "{net}");
+
+    // A request toward a secret's own host with its stand-in: the proxy swaps the real value in
+    // (the record says a credential was added, by name), and the guest still sees only the stand-in.
+    let curl = |site: &str, header: &str, value: &str| {
+        format!(
+            "curl -s -o /dev/null -w '%{{http_code}}' --max-time 60 -H \"{header}: {value}\" https://{site}/"
+        )
+    };
+    let code = guest(
+        &runtime,
+        &sandbox,
+        &curl("example.com", "Authorization", "Bearer $PROBE_A"),
+    )
+    .await;
+    assert!(
+        code.trim().starts_with('2') || code.trim().starts_with('4'),
+        "{code}"
+    );
+    let swapped = record_where(&api, &name, "example.com", |r| r["injected"] == true).await;
+    assert_eq!(swapped["binding_id"], "stand-in:secret:PROBE_A");
+    assert_eq!(swapped["placeholder_unbound"], false);
+
+    // The same stand-in toward another decrypted host goes out unchanged and is flagged.
+    guest(
+        &runtime,
+        &sandbox,
+        &curl("example.org", "X-Probe", "$PROBE_A"),
+    )
+    .await;
+    let flagged = record_where(&api, &name, "example.org", |r| {
+        r["placeholder_unbound"] == true
+    })
+    .await;
+    assert_eq!(flagged["injected"], false);
+
+    // A secret added to the running workspace: its host is decrypted from the next connection,
+    // with the same CA and no restart.
+    let ca_before = host
+        .workspaces()
+        .termination(&sandbox)
+        .unwrap()
+        .ca()
+        .certificate()
+        .clone();
+    put(
+        "/api/env/PROBE_C",
+        json!({"kind": "secret", "value": SECRET_C, "hosts": ["example.net"]}),
+    )
+    .await;
+    let mut decrypted = false;
+    for _ in 0..100 {
+        let now = host.workspaces().termination(&sandbox).unwrap();
+        if now
+            .set()
+            .contains(&puddle_types::Host::parse_normalised("example.net").unwrap())
+        {
+            decrypted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(decrypted, "example.net never joined the decrypt set");
+    assert_eq!(
+        host.workspaces()
+            .termination(&sandbox)
+            .unwrap()
+            .ca()
+            .certificate(),
+        &ca_before
+    );
+    let net = guest(&runtime, &sandbox, &issuer_script("example.net")).await;
+    assert!(net.contains(&ca_name), "{net}");
+    // Its stand-in is not in the running guest's environment (that is read at the next start),
+    // but the proxy already knows it: a request that carries it is swapped.
+    let stand_c = stand_in_of(&host, &sandbox, "PROBE_C");
+    guest(
+        &runtime,
+        &sandbox,
+        &curl("example.net", "X-Probe", &stand_c),
+    )
+    .await;
+    let swapped = record_where(&api, &name, "example.net", |r| r["injected"] == true).await;
+    assert_eq!(swapped["binding_id"], "stand-in:secret:PROBE_C");
+
+    // Removing it takes the host out again, and its value out of the credential store.
+    assert_eq!(api.delete("/api/env/PROBE_C", None).await.status, 204);
+    let mut spliced = false;
+    for _ in 0..100 {
+        let now = host.workspaces().termination(&sandbox).unwrap();
+        if !now
+            .set()
+            .contains(&puddle_types::Host::parse_normalised("example.net").unwrap())
+        {
+            spliced = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(spliced, "example.net stayed in the decrypt set");
+    assert_eq!(secrets.ids().len(), 2);
+    let net = guest(&runtime, &sandbox, &issuer_script("example.net")).await;
+    assert!(!net.contains("puddle"), "{net}");
 
     let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
     assert_eq!(stop.status, 202, "{}", stop.body);

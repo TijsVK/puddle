@@ -507,6 +507,8 @@ mod tests {
     const API: &str = "puddle-secret-API_KEY-ffeeddccbbaa99887766554433221100";
     const REAL_GH: &str = "ghp_realRealReal1111";
     const REAL_API: &str = "sk-real-2222";
+    const LOGIN: &str = "login-token-abcdefghijklmnop";
+    const NEW: &str = "puddle-secret-NEW-0000000000000000000000000000000a";
 
     fn host(name: &str) -> Host {
         Host::parse_normalised(name).unwrap()
@@ -604,7 +606,6 @@ mod tests {
     #[test]
     fn replacing_an_origin_changes_its_entries_in_one_step_and_leaves_the_others() {
         let registry = registry();
-        const LOGIN: &str = "login-token-abcdefghijklmnop";
         registry
             .insert(login("claude", LOGIN, "real-login"))
             .unwrap();
@@ -617,7 +618,6 @@ mod tests {
             ]
         );
         // GH_TOKEN stays with a new real value and hosts, API_KEY goes, NEW comes.
-        const NEW: &str = "puddle-secret-NEW-0000000000000000000000000000000a";
         registry
             .replace_origin(
                 StandInOrigin::Secret,

@@ -201,12 +201,13 @@ impl Store {
         self.change(|tx, now, fx| {
             let before = list(tx, scope)?;
             let replaced = before.iter().find(|e| &e.name == name).cloned();
-            let (kind, value, secret_id, hosts) = match &draft {
-                EnvDraft::Plain(value) => ("plain", Some(value.as_str()), None, None),
+            let (kind, value, secret_id, hosts) = match draft {
+                EnvDraft::Plain(value) => ("plain", Some(value), None, None),
                 EnvDraft::Secret { id, hosts } => {
-                    ("secret", None, Some(id.as_str()), Some(hosts_json(hosts)?))
+                    ("secret", None, Some(id), Some(hosts_json(&hosts)?))
                 }
             };
+            let (value, secret_id) = (value.as_deref(), secret_id.as_ref().map(StoredId::as_str));
             let others: Vec<EnvEntry> = before
                 .iter()
                 .filter(|e| &e.name != name)
@@ -401,8 +402,8 @@ mod tests {
         .unwrap()
     }
 
-    fn mint(name: &EnvName) -> Result<String, String> {
-        Ok(format!("stand-in-for-{name}-{:04}", rand_counter()))
+    fn mint(name: &EnvName) -> String {
+        format!("stand-in-for-{name}-{:04}", rand_counter())
     }
 
     fn rand_counter() -> u32 {
@@ -413,7 +414,7 @@ mod tests {
 
     fn start(store: &Store, workspace: &str) -> Vec<StartVar> {
         store
-            .env_for_start(&ws(workspace), &mut |n| mint(n))
+            .env_for_start(&ws(workspace), &mut |n| Ok(mint(n)))
             .unwrap()
     }
 
@@ -585,7 +586,7 @@ mod tests {
 
         // Removing the secret and making it again is a new secret with a new stand-in.
         store.delete_env(&EnvScope::Global, &name("TOKEN")).unwrap();
-        assert!(start(&store, "a").is_empty());
+        assert_eq!(start(&store, "a"), []);
         store
             .set_env(
                 &EnvScope::Global,
@@ -784,12 +785,7 @@ mod tests {
             ["env-w"],
             "only the workspace's own secrets: the global one still serves the others"
         );
-        assert!(
-            store
-                .env_entries(&EnvScope::Workspace(shop))
-                .unwrap()
-                .is_empty()
-        );
+        assert_eq!(store.env_entries(&EnvScope::Workspace(shop)).unwrap(), []);
         assert_eq!(store.env_entries(&EnvScope::Global).unwrap().len(), 1);
         assert_eq!(
             store
@@ -863,6 +859,6 @@ mod tests {
         assert_eq!(listed[0].name.as_str(), "HTTPS_PROXY");
         let proxy = EnvName::existing("HTTPS_PROXY").unwrap();
         store.delete_env(&scope, &proxy).unwrap();
-        assert!(store.env_entries(&scope).unwrap().is_empty());
+        assert_eq!(store.env_entries(&scope).unwrap(), []);
     }
 }

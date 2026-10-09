@@ -561,7 +561,7 @@ mod tests {
         assert!(check_secret_value("pass word with spaces and ünïcode").is_ok());
         assert!(check_secret_value(&"x".repeat(MAX_SECRET_VALUE_CHARS)).is_ok());
         for bad in [
-            "".to_owned(),
+            String::new(),
             "x".repeat(MAX_SECRET_VALUE_CHARS + 1),
             "SECRET\nline2".to_owned(),
             "SECRET\tTAB".to_owned(),

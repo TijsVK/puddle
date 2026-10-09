@@ -315,15 +315,12 @@ impl Injection {
             Ok::<(), String>(())
         })
         .await;
-        match done {
-            Ok(Ok(())) => {}
-            Ok(Err(reason)) => {
-                tracing::warn!(workspace = %workspace, %reason, "a deleted workspace's settings are not removed")
-            }
-            Err(err) => {
-                tracing::warn!(workspace = %workspace, %err, "a deleted workspace's settings are not removed")
-            }
-        }
+        let reason = match done {
+            Ok(Ok(())) => return,
+            Ok(Err(reason)) => reason,
+            Err(err) => err.to_string(),
+        };
+        tracing::warn!(workspace = %workspace, %reason, "a deleted workspace's settings are not removed");
     }
 
     /// The workspaces that have a CA now.
@@ -585,7 +582,7 @@ mod tests {
         let ws = workspace("alpha");
         let first = injection.begin(&ws).await.unwrap();
         let before = terminations.termination(&ws).unwrap();
-        assert!(stand_ins(&terminations, &ws).is_empty());
+        assert_eq!(stand_ins(&terminations, &ws), Vec::<String>::new());
         assert!(!decrypts(&terminations, &ws, "api.example.org"));
 
         add_secret(&store, &vault, &ws, "API_KEY", &["api.example.org"]);
@@ -600,7 +597,7 @@ mod tests {
         assert!(Arc::ptr_eq(before.stand_ins(), after.stand_ins()));
         assert_eq!(first.certificate, *after.ca().certificate());
         // Nothing was started again: the start made one CA.
-        assert_eq!(injection.running_workspaces(), [ws.clone()]);
+        assert_eq!(injection.running_workspaces(), std::slice::from_ref(&ws));
 
         // A change of the hosts moves the decrypted host; removing the secret drops it.
         add_secret(&store, &vault, &ws, "API_KEY", &["other.example.org"]);
@@ -614,7 +611,7 @@ mod tests {
             )
             .unwrap();
         injection.environment_changed(&ws).await;
-        assert!(stand_ins(&terminations, &ws).is_empty());
+        assert_eq!(stand_ins(&terminations, &ws), Vec::<String>::new());
         assert!(!decrypts(&terminations, &ws, "other.example.org"));
     }
 
@@ -720,12 +717,7 @@ mod tests {
 
         injection.forget(&gone).await;
         assert_eq!(vault.ids(), ["env-GLOBAL", "env-THEIRS"]);
-        assert!(
-            store
-                .env_entries(&EnvScope::Workspace(gone))
-                .unwrap()
-                .is_empty()
-        );
+        assert_eq!(store.env_entries(&EnvScope::Workspace(gone)).unwrap(), []);
         assert_eq!(
             store
                 .env_entries(&EnvScope::Workspace(other))
@@ -738,11 +730,11 @@ mod tests {
         // A credential store that fails leaves the value but never stops the deletion.
         vault.break_it();
         injection.forget(&workspace("other")).await;
-        assert!(
+        assert_eq!(
             store
                 .env_entries(&EnvScope::Workspace(workspace("other")))
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            []
         );
     }
 

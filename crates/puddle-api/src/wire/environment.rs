@@ -203,12 +203,12 @@ mod tests {
         assert!(shown.contains("<redacted>"), "{shown}");
 
         for wrong in [
-            r#"12345678"#,
-            r#"1.5"#,
-            r#"true"#,
+            "12345678",
+            "1.5",
+            "true",
             r#"["CANARY-9"]"#,
             r#"{"v":"CANARY-9"}"#,
-            r#"-12345678"#,
+            "-12345678",
         ] {
             let body = format!(r#"{{"kind":"secret","value":{wrong},"hosts":["a.example.com"]}}"#);
             let value: serde_json::Value = serde_json::from_str(&body).unwrap();
