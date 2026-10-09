@@ -222,7 +222,7 @@ async fn reconcile_sandbox<R: Runtime>(
         // Draining and Paused are treated the same: stop is the only way back to a known state.
         match runtime.get(&name).await {
             Ok(handle) => match trim_and_stop(&handle, &[], config).await.1 {
-                StopOutcome::Stopped => {
+                StopOutcome::Stopped | StopOutcome::Forced => {
                     tracing::info!(sandbox = %name, %status, "reconcile: orphaned VM stopped");
                     report.stopped.push(name.clone());
                     down = true;
@@ -232,6 +232,11 @@ async fn reconcile_sandbox<R: Runtime>(
                     item: name.to_string(),
                     action: "stop",
                     error: format!("no answer within {:?}", config.stop_timeout),
+                }),
+                other => report.failures.push(Failure {
+                    item: name.to_string(),
+                    action: "stop",
+                    error: other.problem().unwrap_or_default(),
                 }),
             },
             // The VM went down between list and get: nothing left to stop.

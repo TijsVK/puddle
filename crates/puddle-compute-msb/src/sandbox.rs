@@ -2,6 +2,7 @@
 //! [`MsbSandbox`]: one sandbox handle, bound to one boot.
 
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use microsandbox::sandbox::SandboxHandle;
@@ -32,6 +33,8 @@ pub struct MsbSandbox {
     name: SandboxName,
     sdk: SdkSandbox,
     boot: Option<i32>,
+    /// Set when a stop ended the VM by force.
+    forced: AtomicBool,
 }
 
 impl std::fmt::Debug for MsbSandbox {
@@ -72,6 +75,7 @@ impl MsbSandbox {
             name,
             sdk,
             boot,
+            forced: AtomicBool::new(false),
         }
     }
 
@@ -104,6 +108,10 @@ impl MsbSandbox {
 // Every method boxes its future: the SDK's futures are large, and callers nest them (the
 // contract suite overflowed a test thread's stack with them inline).
 impl Sandbox for MsbSandbox {
+    fn stopped_by_force(&self) -> bool {
+        self.forced.load(Ordering::Relaxed)
+    }
+
     fn name(&self) -> &SandboxName {
         &self.name
     }
@@ -156,7 +164,10 @@ impl Sandbox for MsbSandbox {
                     self.runtime
                         .sdk(self.sdk.kill())
                         .await
-                        .map_err(|e| map("kill", self.name.as_str(), e))
+                        .map_err(|e| map("kill", self.name.as_str(), e))?;
+                    // Down, but not shut down: the caller can ask and tell the user.
+                    self.forced.store(true, Ordering::Relaxed);
+                    Ok(())
                 }
                 Err(e) => Err(map("stop", self.name.as_str(), e)),
             }

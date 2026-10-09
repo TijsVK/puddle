@@ -192,6 +192,63 @@ async fn a_failed_trim_or_stop_does_not_hold_up_the_others() {
 }
 
 #[tokio::test]
+async fn a_stop_task_that_panics_is_reported_under_its_name_and_the_report_says_not_stopped() {
+    let rt = FakeRuntime::new();
+    let lc = Lifecycle::new(rt.clone(), ShutdownConfig::default());
+    for n in ["fine", "panics"] {
+        lc.manage(rt.create(spec(n)).await.unwrap(), Vec::new())
+            .unwrap();
+    }
+    let _trims = fstrim_ok(&rt);
+    rt.on_exec(|ctx: &mut ExecContext<'_>, _req: &ExecRequest| {
+        assert_ne!(ctx.sandbox().as_str(), "panics", "the runtime panicked");
+        None
+    });
+
+    let report = lc.shutdown().await;
+
+    assert!(!report.all_stopped(), "{report:?}");
+    assert_eq!(report.sandboxes.len(), 2, "{report:?}");
+    let panicked = report
+        .sandboxes
+        .iter()
+        .find(|s| s.sandbox.as_str() == "panics")
+        .unwrap();
+    assert_eq!(panicked.stop, StopOutcome::Panicked);
+    assert_eq!(
+        report.unstopped(),
+        [(
+            &name("panics"),
+            "the task that stops it panicked".to_owned()
+        )]
+    );
+}
+
+#[tokio::test]
+async fn a_stop_that_ended_the_vm_by_force_is_not_a_clean_stop() {
+    let rt = FakeRuntime::new();
+    let lc = Lifecycle::new(rt.clone(), ShutdownConfig::default());
+    for n in ["fine", "stuck"] {
+        lc.manage(rt.create(spec(n)).await.unwrap(), Vec::new())
+            .unwrap();
+    }
+    let _trims = fstrim_ok(&rt);
+    rt.force_next_stop(&name("stuck"));
+
+    let report = lc.shutdown().await;
+
+    assert!(!report.all_stopped(), "{report:?}");
+    assert_eq!(
+        status_of(&rt, "stuck").await,
+        Some(WorkspaceStatus::Stopped)
+    );
+    let unstopped = report.unstopped();
+    assert_eq!(unstopped.len(), 1, "{unstopped:?}");
+    assert_eq!(unstopped[0].0, &name("stuck"));
+    assert!(unstopped[0].1.contains("ended by force"), "{unstopped:?}");
+}
+
+#[tokio::test]
 async fn a_crashed_sandbox_is_not_trimmed() {
     let rt = FakeRuntime::new();
     let lc = Lifecycle::new(rt.clone(), ShutdownConfig::default());

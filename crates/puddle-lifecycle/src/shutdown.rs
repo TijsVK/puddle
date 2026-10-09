@@ -48,11 +48,35 @@ pub struct WorkspaceOutcome {
 pub enum StopOutcome {
     /// The runtime stopped it (or it was already down).
     Stopped,
+    /// It did not shut down in time and the runtime ended it by force: it is down, but what the
+    /// guest had not yet written to disk may be lost.
+    Forced,
     /// The runtime refused or failed.
     Failed(ComputeError),
     /// No answer within [`ShutdownConfig::stop_timeout`]. Dropping the owning handle afterwards
     /// still ends the VM.
     TimedOut,
+    /// The task that stops it panicked, so it is not known whether the stop was clean. The
+    /// task's handle was dropped, which ends the VM without a stop.
+    Panicked,
+}
+
+impl StopOutcome {
+    /// Why the stop did not work, or `None` when it did.
+    #[must_use]
+    pub fn problem(&self) -> Option<String> {
+        match self {
+            Self::Stopped => None,
+            Self::Forced => Some(
+                "it did not shut down in time and was ended by force; files it had not written \
+                 yet may be missing"
+                    .to_owned(),
+            ),
+            Self::Failed(e) => Some(e.to_string()),
+            Self::TimedOut => Some("no answer to the stop".to_owned()),
+            Self::Panicked => Some("the task that stops it panicked".to_owned()),
+        }
+    }
 }
 
 /// What [`Lifecycle::shutdown`] did, one entry per sandbox in name order.
@@ -63,12 +87,21 @@ pub struct ShutdownReport {
 }
 
 impl ShutdownReport {
-    /// Whether every sandbox stopped.
+    /// Whether every sandbox stopped cleanly (none was ended by force, failed or timed out).
     #[must_use]
     pub fn all_stopped(&self) -> bool {
         self.sandboxes
             .iter()
             .all(|s| s.stop == StopOutcome::Stopped)
+    }
+
+    /// Each sandbox that was not stopped cleanly, with the reason.
+    #[must_use]
+    pub fn unstopped(&self) -> Vec<(&SandboxName, String)> {
+        self.sandboxes
+            .iter()
+            .filter_map(|s| Some((&s.sandbox, s.stop.problem()?)))
+            .collect()
     }
 }
 
@@ -173,24 +206,36 @@ impl<R: Runtime> Lifecycle<R> {
         };
         tracing::info!(count = sandboxes.len(), "shutdown: stopping every sandbox");
         let mut tasks = JoinSet::new();
+        let mut names = BTreeMap::new();
         for (name, managed) in sandboxes {
             let config = self.config.clone();
-            tasks.spawn(async move {
+            let task_name = name.clone();
+            let task = tasks.spawn(async move {
                 let (trim, stop) = trim_and_stop(&managed.handle, &managed.trim, &config).await;
                 WorkspaceOutcome {
-                    sandbox: name,
+                    sandbox: task_name,
                     trim,
                     stop,
                 }
             });
+            names.insert(task.id(), name);
         }
         let mut report = ShutdownReport::default();
-        while let Some(joined) = tasks.join_next().await {
+        while let Some(joined) = tasks.join_next_with_id().await {
             match joined {
-                Ok(outcome) => report.sandboxes.push(outcome),
-                // A panicking stop dropped its handle, which ends the VM; there is no name to
-                // report it under, so it is logged.
-                Err(e) => tracing::error!(error = %e, "shutdown: a stop task failed"),
+                Ok((_, outcome)) => report.sandboxes.push(outcome),
+                // A panicking stop dropped its handle, which ends the VM. It is reported under
+                // its name as not stopped, so the exit says so.
+                Err(e) => {
+                    tracing::error!(error = %e, "shutdown: a stop task failed");
+                    if let Some(sandbox) = names.remove(&e.id()) {
+                        report.sandboxes.push(WorkspaceOutcome {
+                            sandbox,
+                            trim: TrimOutcome::Error("the stop task panicked".to_owned()),
+                            stop: StopOutcome::Panicked,
+                        });
+                    }
+                }
             }
         }
         report.sandboxes.sort_by(|a, b| a.sandbox.cmp(&b.sandbox));
@@ -226,16 +271,20 @@ pub(crate) async fn trim_and_stop<S: Sandbox>(
         _ => tracing::warn!(sandbox = %name, ?trim, "trim before stop failed; stopping anyway"),
     }
     let stop = match tokio::time::timeout(config.stop_timeout, sandbox.stop()).await {
+        Ok(Ok(())) if sandbox.stopped_by_force() => StopOutcome::Forced,
         Ok(Ok(())) => StopOutcome::Stopped,
         Ok(Err(e)) => StopOutcome::Failed(e),
         Err(_) => StopOutcome::TimedOut,
     };
     match &stop {
         StopOutcome::Stopped => tracing::info!(sandbox = %name, "sandbox stopped"),
+        StopOutcome::Forced => tracing::error!(sandbox = %name, "sandbox ended by force"),
         StopOutcome::Failed(e) => tracing::error!(sandbox = %name, error = %e, "stop failed"),
         StopOutcome::TimedOut => {
             tracing::error!(sandbox = %name, timeout = ?config.stop_timeout, "stop timed out");
         }
+        // Only `Lifecycle::shutdown` makes this one, when the task that ran this function died.
+        StopOutcome::Panicked => {}
     }
     (trim, stop)
 }

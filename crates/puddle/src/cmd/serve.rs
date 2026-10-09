@@ -160,7 +160,11 @@ pub fn run(args: &ServeArgs) -> ExitCode {
         if down.sandboxes.all_stopped() {
             ExitCode::SUCCESS
         } else {
-            eprintln!("puddle: not every sandbox stopped cleanly; see the log");
+            eprintln!("puddle: not every sandbox stopped cleanly:");
+            for (sandbox, why) in down.sandboxes.unstopped() {
+                eprintln!("puddle:   {sandbox}: {why}");
+            }
+            eprintln!("puddle: the machines end with puddle; check the workspace volumes if a tool was writing");
             ExitCode::FAILURE
         }
     })
