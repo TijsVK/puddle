@@ -182,6 +182,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/env": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The global variables and secrets, by name. A secret shows its hosts and never its value. */
+        get: operations["list_global"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/env/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sets a global variable or secret: every workspace gets it at its next start, unless it has its
+         *     own of the same name. A secret's hosts and value apply at once in running workspaces.
+         */
+        put: operations["put_global"];
+        post?: never;
+        /** Removes a global variable or secret, and a secret's value from the credential store. */
+        delete: operations["delete_global"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events": {
         parameters: {
             query?: never;
@@ -660,6 +698,51 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/env": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What a workspace sees: its own variables and the global ones, by name. A global variable that
+         *     the workspace's own of the same name hides follows it with `overridden` set.
+         */
+        get: operations["list_workspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/env/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sets a variable or secret for one workspace; it wins over a global one of the same name. The
+         *     workspace's environment is read when it starts, so a plain variable reaches a running workspace
+         *     at its next start; a secret's hosts and value apply from the next connection.
+         */
+        put: operations["put_workspace"];
+        post?: never;
+        /**
+         * Removes a variable or secret from one workspace, and a secret's value from the credential
+         *     store. A global variable of the same name applies again.
+         */
+        delete: operations["delete_workspace"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1615,6 +1698,69 @@ export interface components {
             special: components["schemas"]["ResolvedBool"];
         };
         /**
+         * @description What a variable is.
+         * @enum {string}
+         */
+        EnvKind: "plain" | "secret";
+        /** @description The global variables, by name. */
+        EnvList: {
+            /** @description The variables. */
+            variables: components["schemas"]["EnvVariable"][];
+        };
+        /**
+         * @description Where a variable applies.
+         * @enum {string}
+         */
+        EnvScope: "global" | "workspace";
+        /** @description What to set a variable to. */
+        EnvSetRequest: {
+            /** @enum {string} */
+            kind: "plain";
+            /** @description The value. */
+            value: string;
+        } | {
+            /**
+             * @description The hosts the real value may be sent to, at least one: names, or `*.` and a name for
+             *     every name below it. A pattern over a domain anyone can register a name under
+             *     (`*.github.io`) is refused.
+             */
+            hosts: string[];
+            /** @enum {string} */
+            kind: "secret";
+            /**
+             * Format: password
+             * @description The value: written once, kept in the operating system's credential store, never shown
+             *     again.
+             */
+            value?: string | null;
+        };
+        /** @description One variable. A secret's value is never part of it. */
+        EnvVariable: {
+            /**
+             * Format: int64
+             * @description When it last changed, epoch ms.
+             */
+            changed_at: number;
+            /**
+             * @description The hosts a secret's real value may be sent to (names, or `*.` and a name for every name
+             *     below it); empty for a plain variable.
+             */
+            hosts: string[];
+            /** @description What it is. */
+            kind: components["schemas"]["EnvKind"];
+            /** @description The variable's name. */
+            name: string;
+            /**
+             * @description A global variable that the workspace's own variable of the same name hides. Only ever
+             *     `true` in a workspace's list.
+             */
+            overridden: boolean;
+            /** @description Where it applies. */
+            scope: components["schemas"]["EnvScope"];
+            /** @description A plain variable's value; `null` for a secret. */
+            value: string | null;
+        };
+        /**
          * @description What went wrong, as a stable code a client can switch on.
          * @enum {string}
          */
@@ -1721,6 +1867,14 @@ export interface components {
         } | {
             /** @enum {string} */
             type: "workspace_git_changed";
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
+            /** @enum {string} */
+            type: "global_env_changed";
+        } | {
+            /** @enum {string} */
+            type: "workspace_env_changed";
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
@@ -2789,6 +2943,18 @@ export interface components {
             /** @description The workspace's state. */
             status: components["schemas"]["WorkspaceStatus"];
         };
+        /**
+         * @description What a workspace sees: its own variables and the global ones, by name. A global variable that
+         *     the workspace's own of the same name hides is listed after it with `overridden` set. The
+         *     workspace's environment is read when it starts: a change reaches a running workspace's own
+         *     environment at its next start; a secret's hosts and value apply at once.
+         */
+        WorkspaceEnv: {
+            /** @description Its variables. */
+            variables: components["schemas"]["EnvVariable"][];
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceName"];
+        };
         /** @description A workspace's Git settings. */
         WorkspaceGitView: {
             /** @description Its identities in order (the order breaks author ties; coverage picks the credential). */
@@ -3549,6 +3715,218 @@ export interface operations {
                 };
             };
             /** @description the system check is not available in this build */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_global: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the global variables */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_global: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the variable's name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvSetRequest"];
+            };
+        };
+        responses: {
+            /** @description the variable now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvVariable"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a name, value or host that is refused, and why */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the credential store is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_global: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the variable's name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such variable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the credential store is not available; nothing was removed */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6140,6 +6518,243 @@ export interface operations {
             };
             /** @description puddle failed; see its log */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the workspace's variables */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceEnv"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the variable's name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvSetRequest"];
+            };
+        };
+        responses: {
+            /** @description the variable now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvVariable"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a name, value or host that is refused, and why */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the credential store is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the variable's name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace, or no such variable of its own */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the credential store is not available; nothing was removed */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

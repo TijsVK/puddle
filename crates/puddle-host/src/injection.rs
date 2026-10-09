@@ -1,25 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The host's side of credential injection: one CA for each running sandbox, the registry that
-//! tells the proxy which hosts each workspace decrypts, the injector of each start and the cache of
-//! secrets behind it.
+//! tells the proxy which hosts each workspace decrypts, the injector of each start, the cache of
+//! secrets behind it, and the stand-ins of the workspace's environment secrets.
 //!
 //! A sandbox's CA is made when the sandbox starts and dropped when it stops: it lives in this
 //! process's memory only, and its certificate goes into the guest's trust at boot. The CA has no
 //! name constraint, so the hosts a workspace decrypts are only what its [`Termination`] says, and
-//! that is recomputed from the workspace's identities whenever they change: a credential for a
-//! host the workspace has not used yet applies to the next connection, with no restart.
+//! that is recomputed whenever the workspace's identities or secrets change: a credential or a
+//! secret for a host the workspace has not used yet applies to the next connection, with no
+//! restart.
+//!
+//! The registry of a workspace's stand-ins is built from the store when it starts and kept for as
+//! long as it runs; a change to its environment brings the registry and the decrypted hosts up to
+//! date, while the guest's own environment is read at its next start.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_ca::{CaBuilder, CaCertificate, WorkspaceCa};
 use puddle_inject::{CredentialSource, GitInjector, StoreSettings};
-use puddle_proxy::{Injector, Termination, TerminationSource, Terminations};
-use puddle_secrets::{Fetch, SecretCache, Sources};
+use puddle_proxy::{
+    Injector, StandInOrigin, StandIns, Termination, TerminationSet, TerminationSource, Terminations,
+};
+use puddle_secrets::{Fetch, SecretCache, SecretStore, Sources};
 use puddle_store::{Store, WorkspaceGit};
-use puddle_types::{Event, EventSink, WorkspaceName};
+use puddle_types::{Event, EventSink, GuestEnv, WorkspaceName};
 use tokio::task::JoinHandle;
 
+use crate::environment::{Resolved, resolve};
 use crate::git_hosts::decrypt_set;
 
 /// What an injector is built from.
@@ -66,13 +74,25 @@ pub(crate) struct Began {
     pub(crate) certificate: CaCertificate,
     /// The workspace's Git settings as they were when its CA was made.
     pub(crate) git: WorkspaceGit,
+    /// The variables the guest starts with: the workspace's own and the global ones, each secret
+    /// as its stand-in.
+    pub(crate) env: GuestEnv,
 }
 
-/// What a running sandbox holds in memory: its CA and the injector made for this start.
+/// What a running sandbox holds in memory: its CA, the injector made for this start and the
+/// registry of its stand-ins.
 #[derive(Clone)]
 struct Running {
     ca: Arc<WorkspaceCa>,
     injector: Arc<dyn Injector>,
+    stand_ins: Arc<StandIns>,
+}
+
+/// What the workspace decrypts: its identities' credential hosts and the hosts of its secrets.
+fn decrypted(git: &WorkspaceGit, stand_ins: &StandIns) -> TerminationSet {
+    let mut set = decrypt_set(git);
+    set.extend(&stand_ins.hosts());
+    set
 }
 
 pub(crate) struct Injection {
@@ -80,10 +100,16 @@ pub(crate) struct Injection {
     inputs: InjectorInputs,
     /// Without one, each workspace gets [`git_injector`].
     factory: Option<InjectorFactory>,
+    /// Where the real values of environment secrets are kept.
+    vault: Arc<dyn SecretStore>,
     running: Mutex<BTreeMap<WorkspaceName, Running>>,
     /// Held while a workspace's settings are read and what it decrypts is changed to match, so
     /// the last change to run is the last one to read: a slow reader never puts back an old set.
     syncing: Mutex<()>,
+    /// Held while a workspace's environment is read (the credential store can take a while) and
+    /// applied or registered, so a start and a change to the environment never cross: whichever
+    /// comes second reads what the first left.
+    environment: tokio::sync::Mutex<()>,
 }
 
 impl Injection {
@@ -91,14 +117,29 @@ impl Injection {
         terminations: Arc<Terminations>,
         inputs: InjectorInputs,
         factory: Option<InjectorFactory>,
+        vault: Arc<dyn SecretStore>,
     ) -> Self {
         Self {
             terminations,
             inputs,
             factory,
+            vault,
             running: Mutex::new(BTreeMap::new()),
             syncing: Mutex::new(()),
+            environment: tokio::sync::Mutex::new(()),
         }
+    }
+
+    /// Reads `workspace`'s environment off the async threads.
+    async fn environment_of(&self, workspace: &WorkspaceName) -> Result<Resolved, String> {
+        let (store, vault, name) = (
+            Arc::clone(&self.inputs.store),
+            Arc::clone(&self.vault),
+            workspace.clone(),
+        );
+        tokio::task::spawn_blocking(move || resolve(&store, vault.as_ref(), &name))
+            .await
+            .map_err(|e| format!("cannot read {workspace}'s environment: {e}"))?
     }
 
     fn running(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceName, Running>> {
@@ -113,9 +154,21 @@ impl Injection {
             .map_err(|e| format!("cannot read {workspace}'s Git settings: {e}"))
     }
 
-    /// Makes `workspace`'s CA for this start and registers what it decrypts. A CA from an earlier
-    /// start is replaced.
-    pub(crate) fn begin(&self, workspace: &WorkspaceName) -> Result<Began, String> {
+    /// Makes `workspace`'s CA for this start, reads its environment and registers what it
+    /// decrypts. A CA from an earlier start is replaced.
+    ///
+    /// # Errors
+    /// A message for the user: the settings or the environment cannot be read (a secret's value
+    /// is missing from the credential store, say), or the CA cannot be made.
+    pub(crate) async fn begin(&self, workspace: &WorkspaceName) -> Result<Began, String> {
+        // Held until the workspace is registered: a change to its environment in the meantime
+        // waits for that and then finds it running.
+        let _environment = self.environment.lock().await;
+        let resolved = self.environment_of(workspace).await?;
+        self.register(workspace, resolved)
+    }
+
+    fn register(&self, workspace: &WorkspaceName, resolved: Resolved) -> Result<Began, String> {
         let _one_at_a_time = self.syncing.lock().unwrap_or_else(PoisonError::into_inner);
         let git = self.git(workspace)?;
         // The common name shows in the guest's trust store and in a tool's error message.
@@ -133,16 +186,74 @@ impl Injection {
             || git_injector(&self.inputs, workspace),
             |make| make(&self.inputs, workspace),
         );
+        let Resolved { guest, entries } = resolved;
+        let stand_ins = Arc::new(StandIns::new());
+        stand_ins
+            .replace_origin(StandInOrigin::Secret, entries)
+            .map_err(|e| format!("the secrets of {workspace} cannot be registered: {e}"))?;
         // The registry and the list of running CAs change together, under the list's lock, so a
         // `resync` or an `end` never sees one without the other.
         let mut running = self.running();
         self.terminations.insert(
             workspace.clone(),
-            Termination::new(decrypt_set(&git), Arc::clone(&ca), Arc::clone(&injector)),
+            Termination::new(
+                decrypted(&git, &stand_ins),
+                Arc::clone(&ca),
+                Arc::clone(&injector),
+            )
+            .with_stand_ins(Arc::clone(&stand_ins)),
         );
-        running.insert(workspace.clone(), Running { ca, injector });
+        running.insert(
+            workspace.clone(),
+            Running {
+                ca,
+                injector,
+                stand_ins,
+            },
+        );
         drop(running);
-        Ok(Began { certificate, git })
+        Ok(Began {
+            certificate,
+            git,
+            env: guest,
+        })
+    }
+
+    /// Brings the running `workspace`'s secrets up to date with the store: a new secret's stand-in
+    /// is registered and its hosts join what the workspace decrypts, a changed value or host list
+    /// replaces the old, a removed secret's stand-in stops being swapped. All of it applies from
+    /// the next request, with no restart. The guest's own environment is read at its next start.
+    ///
+    /// A workspace that does not run reads its environment at its next start. A failure leaves
+    /// what the workspace had and is logged: the next change tries again.
+    pub(crate) async fn environment_changed(&self, workspace: &WorkspaceName) {
+        let _environment = self.environment.lock().await;
+        if !self.running().contains_key(workspace) {
+            return;
+        }
+        let resolved = match self.environment_of(workspace).await {
+            Ok(resolved) => resolved,
+            Err(reason) => {
+                tracing::warn!(workspace = %workspace, %reason, "the workspace's secrets are not updated");
+                return;
+            }
+        };
+        let Some(stand_ins) = self
+            .running()
+            .get(workspace)
+            .map(|r| Arc::clone(&r.stand_ins))
+        else {
+            // It stopped while its secrets were read; its next start reads them itself.
+            return;
+        };
+        if let Err(err) = stand_ins.replace_origin(StandInOrigin::Secret, resolved.entries) {
+            tracing::warn!(workspace = %workspace, %err, "the workspace's secrets are not updated");
+            return;
+        }
+        // The decrypted hosts follow the registry.
+        if let Err(reason) = self.resync(workspace) {
+            tracing::warn!(workspace = %workspace, %reason, "what the workspace decrypts is not updated");
+        }
     }
 
     /// Reads the running `workspace`'s settings again and changes what it decrypts to match, with
@@ -154,12 +265,17 @@ impl Injection {
         // Held until the registry is changed: an `end` in between would otherwise leave a CA
         // registered for a sandbox that is gone.
         let running = self.running();
-        let Some(Running { ca, injector }) = running.get(workspace).cloned() else {
+        let Some(Running {
+            ca,
+            injector,
+            stand_ins,
+        }) = running.get(workspace).cloned()
+        else {
             return Ok(None);
         };
         self.terminations.insert(
             workspace.clone(),
-            Termination::new(decrypt_set(&git), ca, injector),
+            Termination::new(decrypted(&git, &stand_ins), ca, injector).with_stand_ins(stand_ins),
         );
         drop(running);
         Ok(Some(git))
@@ -176,6 +292,38 @@ impl Injection {
     /// What `workspace` decrypts and the CA that certifies it, while it runs.
     pub(crate) fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<Termination>> {
         self.terminations.termination(workspace)
+    }
+
+    /// Removes what a deleted `workspace` held: its own variables and stand-ins in the store and
+    /// its own secrets' values in the credential store. Failures are logged: the workspace is gone
+    /// either way, and a value that stays behind is unreachable (nothing names it any more).
+    pub(crate) async fn forget(&self, workspace: &WorkspaceName) {
+        let (store, vault, name) = (
+            Arc::clone(&self.inputs.store),
+            Arc::clone(&self.vault),
+            workspace.clone(),
+        );
+        let done = tokio::task::spawn_blocking(move || {
+            let deletion = store
+                .delete_workspace(&name)
+                .map_err(|e| format!("cannot remove {name}'s rules and environment: {e}"))?;
+            for id in &deletion.secret_ids {
+                if vault.delete(id).is_err() {
+                    tracing::warn!(workspace = %name, secret = %id, "a deleted workspace's secret could not be removed from the credential store");
+                }
+            }
+            Ok::<(), String>(())
+        })
+        .await;
+        match done {
+            Ok(Ok(())) => {}
+            Ok(Err(reason)) => {
+                tracing::warn!(workspace = %workspace, %reason, "a deleted workspace's settings are not removed")
+            }
+            Err(err) => {
+                tracing::warn!(workspace = %workspace, %err, "a deleted workspace's settings are not removed")
+            }
+        }
     }
 
     /// The workspaces that have a CA now.
@@ -212,9 +360,12 @@ mod tests {
     use std::time::Duration;
 
     use puddle_proxy::{InjectContext, InjectDecision, NoInjection, RequestView};
-    use puddle_secrets::{AccountName, Fetched, HostName, SourceError, SourceSpec};
+    use puddle_secrets::{
+        AccountName, Fetched, HostName, MemoryStore, Secret, SourceError, SourceSpec, StoredId,
+    };
     use puddle_store::{
-        Author, Clock, Coverage, CredentialBinding, IdentityDraft, Limits, ManualClock, Owner,
+        Author, Clock, Coverage, CredentialBinding, EnvDraft, EnvName, EnvScope, IdentityDraft,
+        Limits, ManualClock, Owner, SecretHost,
     };
     use puddle_types::Host;
 
@@ -234,16 +385,55 @@ mod tests {
             store: Arc::clone(store),
             secrets: Arc::new(SecretCache::new(Sources::new(
                 puddle_secrets::ToolPaths::resolve(),
-                Arc::new(puddle_secrets::MemoryStore::new()),
+                Arc::new(MemoryStore::new()),
             ))),
             events: Arc::new(Events::default()),
         }
     }
 
     fn injection(store: &Arc<Store>) -> (Injection, Arc<Terminations>) {
-        let terminations = Arc::new(Terminations::new());
-        let injection = Injection::new(Arc::clone(&terminations), inputs(store), None);
+        let (injection, terminations, _) = injection_with_vault(store);
         (injection, terminations)
+    }
+
+    fn injection_with_vault(
+        store: &Arc<Store>,
+    ) -> (Injection, Arc<Terminations>, Arc<MemoryStore>) {
+        let terminations = Arc::new(Terminations::new());
+        let vault = Arc::new(MemoryStore::new());
+        let injection = Injection::new(
+            Arc::clone(&terminations),
+            inputs(store),
+            None,
+            vault.clone(),
+        );
+        (injection, terminations, vault)
+    }
+
+    const REAL: &str = "real-value-CANARY-4711";
+
+    /// A secret for `hosts` in the workspace's own scope, its value in `vault`.
+    fn add_secret(
+        store: &Store,
+        vault: &MemoryStore,
+        ws: &WorkspaceName,
+        var: &str,
+        hosts: &[&str],
+    ) {
+        let id = StoredId::new(format!("env-{var}")).unwrap();
+        vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
+        let hosts = hosts.iter().map(|h| SecretHost::new(h).unwrap()).collect();
+        store
+            .set_env(
+                &EnvScope::Workspace(ws.clone()),
+                &EnvName::new(var).unwrap(),
+                EnvDraft::secret(id, hosts).unwrap(),
+            )
+            .unwrap();
+    }
+
+    fn stand_ins(terminations: &Terminations, ws: &WorkspaceName) -> Vec<String> {
+        terminations.termination(ws).unwrap().stand_ins().ids()
     }
 
     fn attach(store: &Store, ws: &WorkspaceName, label: &str, host: &str) {
@@ -273,15 +463,15 @@ mod tests {
             .is_some_and(|t| t.set().contains(&Host::parse_normalised(host).unwrap()))
     }
 
-    #[test]
-    fn a_sandbox_gets_its_own_ca_and_decrypts_what_its_identities_name() {
+    #[tokio::test]
+    async fn a_sandbox_gets_its_own_ca_and_decrypts_what_its_identities_name() {
         let store = store();
         let (injection, terminations) = injection(&store);
         let (a, b) = (workspace("alpha"), workspace("beta"));
         attach(&store, &a, "ada", "github.com");
 
-        let began_a = injection.begin(&a).unwrap();
-        let began_b = injection.begin(&b).unwrap();
+        let began_a = injection.begin(&a).await.unwrap();
+        let began_b = injection.begin(&b).await.unwrap();
         assert_ne!(began_a.certificate, began_b.certificate);
         assert!(decrypts(&terminations, &a, "github.com"));
         assert!(!decrypts(&terminations, &a, "gitlab.com"));
@@ -291,12 +481,12 @@ mod tests {
         assert_eq!(began_a.git.identities.len(), 1);
     }
 
-    #[test]
-    fn refresh_applies_a_new_host_to_the_running_workspace_with_the_same_ca() {
+    #[tokio::test]
+    async fn refresh_applies_a_new_host_to_the_running_workspace_with_the_same_ca() {
         let store = store();
         let (injection, terminations) = injection(&store);
         let ws = workspace("alpha");
-        injection.begin(&ws).unwrap();
+        injection.begin(&ws).await.unwrap();
         let ca_before = terminations
             .termination(&ws)
             .unwrap()
@@ -318,13 +508,13 @@ mod tests {
         assert_eq!(ca_before, ca_after);
     }
 
-    #[test]
-    fn a_stopped_sandbox_has_no_ca_and_decrypts_nothing() {
+    #[tokio::test]
+    async fn a_stopped_sandbox_has_no_ca_and_decrypts_nothing() {
         let store = store();
         let (injection, terminations) = injection(&store);
         let ws = workspace("alpha");
         attach(&store, &ws, "ada", "github.com");
-        injection.begin(&ws).unwrap();
+        injection.begin(&ws).await.unwrap();
         injection.end(&ws);
         assert!(terminations.termination(&ws).is_none());
         assert_eq!(injection.running_workspaces(), []);
@@ -334,13 +524,13 @@ mod tests {
         injection.end(&ws);
     }
 
-    #[test]
-    fn a_new_start_replaces_the_ca_of_the_earlier_one() {
+    #[tokio::test]
+    async fn a_new_start_replaces_the_ca_of_the_earlier_one() {
         let store = store();
         let (injection, terminations) = injection(&store);
         let ws = workspace("alpha");
-        let first = injection.begin(&ws).unwrap().certificate;
-        let second = injection.begin(&ws).unwrap().certificate;
+        let first = injection.begin(&ws).await.unwrap().certificate;
+        let second = injection.begin(&ws).await.unwrap().certificate;
         assert_ne!(first, second);
         assert_eq!(
             terminations.termination(&ws).unwrap().ca().certificate(),
@@ -348,12 +538,212 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_long_workspace_name_still_gives_a_valid_ca_name() {
+    #[tokio::test]
+    async fn a_long_workspace_name_still_gives_a_valid_ca_name() {
         let store = store();
         let (injection, _) = injection(&store);
         let ws = workspace(&"a".repeat(63));
-        assert!(injection.begin(&ws).is_ok());
+        assert!(injection.begin(&ws).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_start_registers_the_stand_ins_of_its_secrets_and_decrypts_their_hosts() {
+        let store = store();
+        let (injection, terminations, vault) = injection_with_vault(&store);
+        let ws = workspace("alpha");
+        add_secret(
+            &store,
+            &vault,
+            &ws,
+            "NPM_TOKEN",
+            &["registry.npmjs.org", "*.example.com"],
+        );
+        store
+            .set_env(
+                &EnvScope::Workspace(ws.clone()),
+                &EnvName::new("EDITOR").unwrap(),
+                EnvDraft::plain("vim").unwrap(),
+            )
+            .unwrap();
+
+        let began = injection.begin(&ws).await.unwrap();
+        assert_eq!(began.env.get("EDITOR"), Some("vim"));
+        let stand_in = began.env.get("NPM_TOKEN").unwrap();
+        assert!(stand_in.starts_with("puddle-secret-NPM_TOKEN-"));
+        assert!(began.env.iter().all(|(_, v)| !v.contains("CANARY")));
+        assert_eq!(stand_ins(&terminations, &ws), ["stand-in:secret:NPM_TOKEN"]);
+        assert!(decrypts(&terminations, &ws, "registry.npmjs.org"));
+        assert!(decrypts(&terminations, &ws, "api.example.com"));
+        assert!(!decrypts(&terminations, &ws, "github.com"));
+    }
+
+    #[tokio::test]
+    async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connection_with_no_restart()
+     {
+        let store = store();
+        let (injection, terminations, vault) = injection_with_vault(&store);
+        let ws = workspace("alpha");
+        let first = injection.begin(&ws).await.unwrap();
+        let before = terminations.termination(&ws).unwrap();
+        assert!(stand_ins(&terminations, &ws).is_empty());
+        assert!(!decrypts(&terminations, &ws, "api.example.org"));
+
+        add_secret(&store, &vault, &ws, "API_KEY", &["api.example.org"]);
+        injection.environment_changed(&ws).await;
+
+        assert!(decrypts(&terminations, &ws, "api.example.org"));
+        assert_eq!(stand_ins(&terminations, &ws), ["stand-in:secret:API_KEY"]);
+        let after = terminations.termination(&ws).unwrap();
+        // The same CA (the guest's trust is unchanged), the same registry (open connections see
+        // the new stand-in too), a new set for the next connection.
+        assert_eq!(before.ca().certificate(), after.ca().certificate());
+        assert!(Arc::ptr_eq(before.stand_ins(), after.stand_ins()));
+        assert_eq!(first.certificate, *after.ca().certificate());
+        // Nothing was started again: the start made one CA.
+        assert_eq!(injection.running_workspaces(), [ws.clone()]);
+
+        // A change of the hosts moves the decrypted host; removing the secret drops it.
+        add_secret(&store, &vault, &ws, "API_KEY", &["other.example.org"]);
+        injection.environment_changed(&ws).await;
+        assert!(decrypts(&terminations, &ws, "other.example.org"));
+        assert!(!decrypts(&terminations, &ws, "api.example.org"));
+        store
+            .delete_env(
+                &EnvScope::Workspace(ws.clone()),
+                &EnvName::new("API_KEY").unwrap(),
+            )
+            .unwrap();
+        injection.environment_changed(&ws).await;
+        assert!(stand_ins(&terminations, &ws).is_empty());
+        assert!(!decrypts(&terminations, &ws, "other.example.org"));
+    }
+
+    #[tokio::test]
+    async fn a_global_secret_changes_what_every_running_workspace_decrypts_and_a_git_change_keeps_it()
+     {
+        let store = store();
+        let (injection, terminations, vault) = injection_with_vault(&store);
+        let (a, b) = (workspace("alpha"), workspace("beta"));
+        injection.begin(&a).await.unwrap();
+        injection.begin(&b).await.unwrap();
+        let id = StoredId::new("env-G").unwrap();
+        vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
+        store
+            .set_env(
+                &EnvScope::Global,
+                &EnvName::new("G").unwrap(),
+                EnvDraft::secret(id, vec![SecretHost::new("g.example.org").unwrap()]).unwrap(),
+            )
+            .unwrap();
+        for ws in [&a, &b] {
+            injection.environment_changed(ws).await;
+            assert!(decrypts(&terminations, ws, "g.example.org"), "{ws}");
+        }
+        // Another workspace's own stand-in differs: each holds its own.
+        let held = |ws: &WorkspaceName| {
+            store
+                .env_for_start(ws, &mut |_| Err("already made".into()))
+                .unwrap()
+        };
+        assert_ne!(held(&a), held(&b));
+
+        // An identity attached later keeps the secret's host in the set.
+        attach(&store, &a, "ada", "gitlab.com");
+        injection.resync(&a).unwrap();
+        assert!(decrypts(&terminations, &a, "gitlab.com"));
+        assert!(decrypts(&terminations, &a, "g.example.org"));
+        assert_eq!(stand_ins(&terminations, &a), ["stand-in:secret:G"]);
+    }
+
+    #[tokio::test]
+    async fn a_workspace_that_does_not_run_is_left_alone_and_a_failed_read_keeps_what_it_had() {
+        let store = store();
+        let (injection, terminations, vault) = injection_with_vault(&store);
+        let (stopped, running) = (workspace("stopped"), workspace("running"));
+        add_secret(&store, &vault, &stopped, "T", &["x.example.org"]);
+        vault.break_it();
+        // Not running: nothing is read, nothing registered.
+        injection.environment_changed(&stopped).await;
+        assert!(terminations.termination(&stopped).is_none());
+
+        vault.heal();
+        injection.begin(&running).await.unwrap();
+        add_secret(&store, &vault, &running, "T", &["x.example.org"]);
+        injection.environment_changed(&running).await;
+        assert!(decrypts(&terminations, &running, "x.example.org"));
+        // The credential store fails while a second secret is added: the first stays as it was.
+        add_secret(&store, &vault, &running, "U", &["y.example.org"]);
+        vault.break_it();
+        injection.environment_changed(&running).await;
+        assert_eq!(stand_ins(&terminations, &running), ["stand-in:secret:T"]);
+        assert!(!decrypts(&terminations, &running, "y.example.org"));
+        vault.heal();
+        injection.environment_changed(&running).await;
+        assert_eq!(
+            stand_ins(&terminations, &running),
+            ["stand-in:secret:T", "stand-in:secret:U"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_start_whose_secret_cannot_be_read_fails_with_the_reason_and_registers_nothing() {
+        let store = store();
+        let (injection, terminations, vault) = injection_with_vault(&store);
+        let ws = workspace("alpha");
+        add_secret(&store, &vault, &ws, "T", &["x.example.org"]);
+        vault.break_it();
+        let err = injection.begin(&ws).await.err().unwrap();
+        assert!(
+            err.contains('T') && err.contains("credential store"),
+            "{err}"
+        );
+        assert!(terminations.termination(&ws).is_none());
+        assert_eq!(injection.running_workspaces(), []);
+    }
+
+    #[tokio::test]
+    async fn a_deleted_workspace_loses_its_variables_and_the_values_of_its_own_secrets() {
+        let store = store();
+        let (injection, _, vault) = injection_with_vault(&store);
+        let (gone, other) = (workspace("gone"), workspace("other"));
+        add_secret(&store, &vault, &gone, "MINE", &["x.example.org"]);
+        add_secret(&store, &vault, &other, "THEIRS", &["x.example.org"]);
+        let id = StoredId::new("env-GLOBAL").unwrap();
+        vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
+        store
+            .set_env(
+                &EnvScope::Global,
+                &EnvName::new("GLOBAL").unwrap(),
+                EnvDraft::secret(id, vec![SecretHost::new("g.example.org").unwrap()]).unwrap(),
+            )
+            .unwrap();
+
+        injection.forget(&gone).await;
+        assert_eq!(vault.ids(), ["env-GLOBAL", "env-THEIRS"]);
+        assert!(
+            store
+                .env_entries(&EnvScope::Workspace(gone))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .env_entries(&EnvScope::Workspace(other))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(store.env_entries(&EnvScope::Global).unwrap().len(), 1);
+
+        // A credential store that fails leaves the value but never stops the deletion.
+        vault.break_it();
+        injection.forget(&workspace("other")).await;
+        assert!(
+            store
+                .env_entries(&EnvScope::Workspace(workspace("other")))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// A source that always needs the user to sign in.
@@ -498,7 +888,7 @@ mod tests {
         let store = store();
         let (injection, terminations) = injection(&store);
         let ws = workspace("alpha");
-        injection.begin(&ws).unwrap();
+        injection.begin(&ws).await.unwrap();
         let termination = terminations.termination(&ws).unwrap();
         assert!(format!("{termination:?}").contains("GitInjector"));
         // A push to a repository that is not on the workspace's list is refused, so the injector
@@ -521,8 +911,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn each_start_gets_an_injector_made_for_its_workspace_and_it_stays_across_changes() {
+    #[tokio::test]
+    async fn each_start_gets_an_injector_made_for_its_workspace_and_it_stays_across_changes() {
         let store = store();
         let made = Arc::new(Mutex::new(Vec::new()));
         let record = Arc::clone(&made);
@@ -531,10 +921,15 @@ mod tests {
             Arc::new(NoInjection)
         });
         let terminations = Arc::new(Terminations::new());
-        let injection = Injection::new(Arc::clone(&terminations), inputs(&store), Some(factory));
+        let injection = Injection::new(
+            Arc::clone(&terminations),
+            inputs(&store),
+            Some(factory),
+            Arc::new(MemoryStore::new()),
+        );
         let (a, b) = (workspace("alpha"), workspace("beta"));
-        injection.begin(&a).unwrap();
-        injection.begin(&b).unwrap();
+        injection.begin(&a).await.unwrap();
+        injection.begin(&b).await.unwrap();
         assert_eq!(*made.lock().unwrap(), [a.clone(), b]);
         // A change to a running workspace keeps its injector (it may hold state of its own).
         let before = format!("{:?}", terminations.termination(&a).unwrap());
@@ -544,7 +939,7 @@ mod tests {
         assert!(format!("{:?}", terminations.termination(&a).unwrap()).contains("NoInjection"));
         assert!(before.contains("NoInjection"));
         // A restart makes a new one.
-        injection.begin(&a).unwrap();
+        injection.begin(&a).await.unwrap();
         assert_eq!(made.lock().unwrap().len(), 3);
     }
 }

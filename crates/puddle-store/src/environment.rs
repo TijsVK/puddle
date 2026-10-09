@@ -61,7 +61,6 @@ pub const PUDDLE_OWNED_NAMES: [&str; 18] = [
 
 /// Where an entry applies.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum EnvScope {
     /// Every workspace; a workspace's own entry of the same name wins.
     Global,
@@ -146,10 +145,13 @@ impl EnvName {
         Ok(Self(name.to_owned()))
     }
 
-    /// A name read back from the database: only the shape is checked. A release that later owns
-    /// a name an earlier one let through must not make that variable unlistable or unremovable;
-    /// at start puddle's own value wins over a stored one of the same name.
-    pub(crate) fn from_stored(name: &str) -> Result<Self, StoreError> {
+    /// A name that is already stored, to find or remove it: only the shape is checked. A release
+    /// that later owns a name an earlier one let through must not make that variable unlistable
+    /// or unremovable; at start puddle's own value wins over a stored one of the same name.
+    ///
+    /// # Errors
+    /// [`StoreError::EnvInvalid`] when it is not shaped like a variable name.
+    pub fn existing(name: &str) -> Result<Self, StoreError> {
         let mut chars = name.chars();
         let shaped = !name.is_empty()
             && name.len() <= MAX_NAME_LEN
@@ -230,6 +232,20 @@ impl SecretHost {
         }
     }
 
+    /// Checks every host of a secret's list: at least one, at most 32, no repeats, sorted.
+    ///
+    /// # Errors
+    /// [`StoreError::EnvInvalid`] for the first host that is refused, or for a list that is empty or
+    /// too long.
+    pub fn list<S: AsRef<str>>(hosts: &[S]) -> Result<Vec<Self>, StoreError> {
+        checked_hosts(
+            hosts
+                .iter()
+                .map(|h| Self::new(h.as_ref()))
+                .collect::<Result<_, _>>()?,
+        )
+    }
+
     /// The host as stored: `name` or `*.name`.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -254,6 +270,30 @@ impl From<SecretHost> for String {
     fn from(host: SecretHost) -> Self {
         host.0
     }
+}
+
+/// Checks the value of a secret before it goes to the credential store: from 1 to
+/// [`MAX_SECRET_VALUE_CHARS`] characters with no control character, because the proxy puts the
+/// value into a request header, and anything a header cannot carry would only fail later in a
+/// tool. The message never quotes the value.
+///
+/// # Errors
+/// [`StoreError::EnvInvalid`]; the text says why.
+pub fn check_secret_value(value: &str) -> Result<(), StoreError> {
+    if value.is_empty() {
+        return Err(invalid("a secret's value can't be empty"));
+    }
+    if value.chars().count() > MAX_SECRET_VALUE_CHARS {
+        return Err(invalid(format!(
+            "a secret's value is at most {MAX_SECRET_VALUE_CHARS} characters"
+        )));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(invalid(
+            "a secret's value can't contain a line break or another control character: it is sent in a request header",
+        ));
+    }
+    Ok(())
 }
 
 /// The hosts of a secret: at least one, no repeats, sorted.
@@ -284,7 +324,6 @@ pub struct EnvSecret {
 
 /// A variable's value as stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum EnvValue {
     /// The workspace gets this value.
     Plain(String),
@@ -294,7 +333,6 @@ pub enum EnvValue {
 
 /// What to store under a name.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum EnvDraft {
     /// A plain variable.
     Plain(String),
@@ -386,7 +424,6 @@ pub struct StartVar {
 
 /// What a workspace gets for a name.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum StartValue {
     /// This text.
     Plain(String),
@@ -516,6 +553,26 @@ mod tests {
         assert!(EnvDraft::plain("a\0b").is_err());
         assert!(EnvDraft::plain(&"x".repeat(MAX_PLAIN_VALUE_BYTES)).is_ok());
         assert!(EnvDraft::plain(&"x".repeat(MAX_PLAIN_VALUE_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn a_secret_value_is_header_text_of_a_sensible_length_and_the_message_never_quotes_it() {
+        assert!(check_secret_value("ghp_abcDEF123").is_ok());
+        assert!(check_secret_value("pass word with spaces and ünïcode").is_ok());
+        assert!(check_secret_value(&"x".repeat(MAX_SECRET_VALUE_CHARS)).is_ok());
+        for bad in [
+            "".to_owned(),
+            "x".repeat(MAX_SECRET_VALUE_CHARS + 1),
+            "SECRET\nline2".to_owned(),
+            "SECRET\tTAB".to_owned(),
+            "SECRET\u{7f}DEL".to_owned(),
+            "SECRET\u{85}NEL".to_owned(),
+            "SECRET\0NUL".to_owned(),
+        ] {
+            let err = check_secret_value(&bad).unwrap_err().to_string();
+            assert!(!err.contains("SECRET"), "{err}");
+            assert!(!bad.is_empty() || err.contains("empty"), "{err}");
+        }
     }
 
     #[test]

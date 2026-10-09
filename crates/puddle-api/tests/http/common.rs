@@ -12,6 +12,7 @@ use puddle_api::{
     FakeLauncher, FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, RunningApi,
     Services, SettingsRepo,
 };
+use puddle_secrets::MemoryStore;
 use puddle_store::{Limits, ManualClock, Store};
 use puddle_types::{EgressRequest, Host, PendingId, SuffixAllows, WorkspaceName};
 use serde_json::Value;
@@ -36,6 +37,8 @@ pub(crate) struct Api {
     pub(crate) launcher: Arc<FakeLauncher>,
     /// The credentials service the API runs on, unless the test brought its own.
     pub(crate) credentials: Arc<FakeCredentials>,
+    /// Where the API keeps the values of environment secrets.
+    pub(crate) secrets: Arc<MemoryStore>,
 }
 
 pub(crate) async fn start() -> Api {
@@ -104,6 +107,8 @@ async fn start_inner(
         Some(network) => services.with_network_health(network),
         None => services,
     };
+    let secrets = Arc::new(MemoryStore::new());
+    let services = services.with_secret_store(secrets.clone());
     let credentials = Arc::new(FakeCredentials::new());
     let services = services.with_credentials(
         own_credentials.unwrap_or_else(|| credentials.clone() as Arc<dyn CredentialService>),
@@ -128,6 +133,7 @@ async fn start_inner(
         workspaces,
         launcher,
         credentials,
+        secrets,
     }
 }
 

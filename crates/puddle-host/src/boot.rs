@@ -35,12 +35,17 @@ pub(crate) struct BootKit {
 }
 
 /// What differs from one sandbox to the next, besides the image: the CA the sandbox's guest
-/// trusts, and who commits.
+/// trusts, who commits, and the user's own variables.
 pub(crate) struct GuestInputs<'a> {
     /// This start's CA certificate (public), added to the guest's trust bundle.
     pub(crate) ca: &'a CaCertificate,
     /// The commit authors: the fallback and the rules by remote.
     pub(crate) authors: &'a Authors,
+    /// The user's variables for this workspace, a secret as its stand-in. They sit under puddle's
+    /// own (the proxy and trust variables win), except that a `JAVA_TOOL_OPTIONS`, `MAVEN_ARGS`,
+    /// `GRADLE_USER_HOME` or `DOCKER_CONFIG` of the user's is kept and puddle's setting is added to
+    /// it, as it is to the image's.
+    pub(crate) env: &'a GuestEnv,
 }
 
 impl BootKit {
@@ -96,10 +101,16 @@ impl BootKit {
         image: &ImageConfig,
         guest: &GuestInputs<'_>,
     ) -> Result<(BootPlan, GuestEnv), String> {
+        // The user's variables count as the image's here, so the few that puddle adds to (not
+        // replaces) keep the user's value and the files that follow `GRADLE_USER_HOME` and
+        // `DOCKER_CONFIG` land where the user pointed them.
+        let mut image_env = image.env.clone();
+        image_env.extend(guest.env.iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
         let proxy =
-            guest_proxy_config(&ProxySettings::default(), &image.env).map_err(|e| e.to_string())?;
+            guest_proxy_config(&ProxySettings::default(), &image_env).map_err(|e| e.to_string())?;
         let trust = GuestTrust::new(&self.roots, &TrustBundle::new().with(guest.ca.clone()));
-        let mut env = proxy.env;
+        let mut env = guest.env.clone();
+        env.extend(&proxy.env);
         env.extend(&trust.env());
         let mut builder = BootPlan::builder(image)
             .env(&env)

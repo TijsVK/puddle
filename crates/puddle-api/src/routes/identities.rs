@@ -42,7 +42,7 @@ fn git_view(
 }
 
 /// The workspace a path names, as the name the store keys it by; 404 for none.
-async fn workspace(state: &AppState, raw: &str) -> Result<WorkspaceName, ApiError> {
+pub(super) async fn workspace(state: &AppState, raw: &str) -> Result<WorkspaceName, ApiError> {
     let id =
         WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
     Ok(state.workspaces.get(&id).await?.name)

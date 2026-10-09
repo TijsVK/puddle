@@ -16,6 +16,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::server::graceful::GracefulShutdown;
 use hyper_util::service::TowerToHyperService;
 use puddle_netpolicy::{EndpointKind, PuddleEndpoints, Registration};
+use puddle_secrets::SecretStore;
 use puddle_store::{Clock, Store};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, watch};
@@ -23,7 +24,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use tower_http::timeout::TimeoutLayer;
 
 use crate::auth::{Guard, guard};
-use crate::credentials::{CredentialService, NoCredentials};
+use crate::credentials::{CredentialService, NoCredentials, NoSecretStore};
 use crate::doctor::{DoctorService, NoDoctor};
 use crate::error::ApiError;
 use crate::events::EventHub;
@@ -120,6 +121,11 @@ pub struct Services {
     /// tokens, sign-ins. [`Services::new`] starts with [`NoCredentials`], which answers 503; set
     /// the real one with [`Services::with_credentials`].
     pub credentials: Arc<dyn CredentialService>,
+    /// Where the values of environment secrets are kept, the operating system's credential store
+    /// on a real host. [`Services::new`] starts with one that is never available, so a secret is
+    /// refused (503) instead of kept somewhere it would be lost; set the real one with
+    /// [`Services::with_secret_store`].
+    pub secrets: Arc<dyn SecretStore>,
     /// The system check. [`Services::new`] starts with [`NoDoctor`], which answers 503; set the
     /// real one with [`Services::with_doctor`].
     pub doctor: Arc<dyn DoctorService>,
@@ -147,6 +153,7 @@ impl Services {
             workspaces: Arc::new(NoWorkspaces),
             network_health: Arc::new(NoNetworkHealth),
             credentials: Arc::new(NoCredentials),
+            secrets: Arc::new(NoSecretStore),
             doctor: Arc::new(NoDoctor),
             endpoints: PuddleEndpoints::new(),
         }
@@ -163,6 +170,13 @@ impl Services {
     #[must_use]
     pub fn with_credentials(mut self, credentials: Arc<dyn CredentialService>) -> Self {
         self.credentials = credentials;
+        self
+    }
+
+    /// These services keeping the values of environment secrets in `secrets`.
+    #[must_use]
+    pub fn with_secret_store(mut self, secrets: Arc<dyn SecretStore>) -> Self {
+        self.secrets = secrets;
         self
     }
 
@@ -245,6 +259,7 @@ impl ApiServer {
             workspaces: services.workspaces,
             network_health: services.network_health,
             credentials: services.credentials,
+            secrets: services.secrets,
             doctor: services.doctor,
             shutdown,
         };

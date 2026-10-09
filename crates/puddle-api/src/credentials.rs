@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
 use puddle_secrets::{
-    Discovery, Fetch, KeyringStore, SecretStore, SignInError, SignInStart, SignIns, SourceError,
-    SourceSpec, Sources, StoredId, TokenScope, ToolPaths, discover, pasted_token,
+    ChunkedStore, Discovery, Fetch, KeyringStore, SecretStore, SignInError, SignInStart, SignIns,
+    SourceError, SourceSpec, Sources, StoredId, TokenScope, ToolPaths, discover, pasted_token,
 };
 
 /// Why a call could not be answered.
@@ -93,6 +93,32 @@ impl CredentialService for NoCredentials {
     }
 }
 
+/// The secret store when none is wired in: every call fails, so a secret is refused (503) instead
+/// of being kept somewhere it would be lost.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoSecretStore;
+
+impl SecretStore for NoSecretStore {
+    fn get(
+        &self,
+        _: &StoredId,
+    ) -> Result<Option<puddle_secrets::Secret>, puddle_secrets::StoreError> {
+        Err(puddle_secrets::StoreError)
+    }
+
+    fn set(
+        &self,
+        _: &StoredId,
+        _: &puddle_secrets::Secret,
+    ) -> Result<(), puddle_secrets::StoreError> {
+        Err(puddle_secrets::StoreError)
+    }
+
+    fn delete(&self, _: &StoredId) -> Result<(), puddle_secrets::StoreError> {
+        Err(puddle_secrets::StoreError)
+    }
+}
+
 fn sign_in_error(err: SignInError) -> CredentialsError {
     let said = err.to_string();
     match err {
@@ -153,7 +179,10 @@ impl HostCredentials {
     /// operating system's credential store.
     #[must_use]
     pub fn on_this_computer() -> Self {
-        Self::new(ToolPaths::resolve(), Arc::new(KeyringStore))
+        Self::new(
+            ToolPaths::resolve(),
+            Arc::new(ChunkedStore::new(KeyringStore)),
+        )
     }
 
     /// The same with these sign-ins (to change how long one stays open).

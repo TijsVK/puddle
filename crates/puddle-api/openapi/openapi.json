@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.7.0"
+    "version": "0.8.0"
   },
   "paths": {
     "/api/audit": {
@@ -889,6 +889,252 @@
           },
           "503": {
             "description": "the system check is not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/env": {
+      "get": {
+        "tags": [
+          "environment"
+        ],
+        "summary": "The global variables and secrets, by name. A secret shows its hosts and never its value.",
+        "operationId": "list_global",
+        "responses": {
+          "200": {
+            "description": "the global variables",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/env/{name}": {
+      "put": {
+        "tags": [
+          "environment"
+        ],
+        "summary": "Sets a global variable or secret: every workspace gets it at its next start, unless it has its\nown of the same name. A secret's hosts and value apply at once in running workspaces.",
+        "operationId": "put_global",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "the variable's name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvSetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the variable now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvVariable"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a name, value or host that is refused, and why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the credential store is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "environment"
+        ],
+        "summary": "Removes a global variable or secret, and a secret's value from the credential store.",
+        "operationId": "delete_global",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "the variable's name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "removed"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such variable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the credential store is not available; nothing was removed",
             "content": {
               "application/json": {
                 "schema": {
@@ -3963,6 +4209,301 @@
         }
       }
     },
+    "/api/workspaces/{id}/env": {
+      "get": {
+        "tags": [
+          "environment"
+        ],
+        "summary": "What a workspace sees: its own variables and the global ones, by name. A global variable that\nthe workspace's own of the same name hides follows it with `overridden` set.",
+        "operationId": "list_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the workspace's variables",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceEnv"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/env/{name}": {
+      "put": {
+        "tags": [
+          "environment"
+        ],
+        "summary": "Sets a variable or secret for one workspace; it wins over a global one of the same name. The\nworkspace's environment is read when it starts, so a plain variable reaches a running workspace\nat its next start; a secret's hosts and value apply from the next connection.",
+        "operationId": "put_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "the variable's name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvSetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the variable now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvVariable"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a name, value or host that is refused, and why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the credential store is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "environment"
+        ],
+        "summary": "Removes a variable or secret from one workspace, and a secret's value from the credential\nstore. A global variable of the same name applies again.",
+        "operationId": "delete_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "the variable's name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "removed"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace, or no such variable of its own",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the credential store is not available; nothing was removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/git": {
       "get": {
         "tags": [
@@ -6906,6 +7447,146 @@
           }
         }
       },
+      "EnvKind": {
+        "type": "string",
+        "description": "What a variable is.",
+        "enum": [
+          "plain",
+          "secret"
+        ]
+      },
+      "EnvList": {
+        "type": "object",
+        "description": "The global variables, by name.",
+        "required": [
+          "variables"
+        ],
+        "properties": {
+          "variables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvVariable"
+            },
+            "description": "The variables."
+          }
+        }
+      },
+      "EnvScope": {
+        "type": "string",
+        "description": "Where a variable applies.",
+        "enum": [
+          "global",
+          "workspace"
+        ]
+      },
+      "EnvSetRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A plain variable.",
+            "required": [
+              "value",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "plain"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "description": "The value."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A secret. A new one needs its `value`; one that is already a secret keeps its value when\n`value` is left out, so its hosts can change without typing it again.",
+            "required": [
+              "hosts",
+              "kind"
+            ],
+            "properties": {
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The hosts the real value may be sent to, at least one: names, or `*.` and a name for\nevery name below it. A pattern over a domain anyone can register a name under\n(`*.github.io`) is refused."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "secret"
+                ]
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "password",
+                "description": "The value: written once, kept in the operating system's credential store, never shown\nagain.",
+                "writeOnly": true
+              }
+            }
+          }
+        ],
+        "description": "What to set a variable to."
+      },
+      "EnvVariable": {
+        "type": "object",
+        "description": "One variable. A secret's value is never part of it.",
+        "required": [
+          "name",
+          "scope",
+          "kind",
+          "value",
+          "hosts",
+          "overridden",
+          "changed_at"
+        ],
+        "properties": {
+          "changed_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it last changed, epoch ms.",
+            "minimum": 0
+          },
+          "hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The hosts a secret's real value may be sent to (names, or `*.` and a name for every name\nbelow it); empty for a plain variable."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EnvKind",
+            "description": "What it is."
+          },
+          "name": {
+            "type": "string",
+            "description": "The variable's name."
+          },
+          "overridden": {
+            "type": "boolean",
+            "description": "A global variable that the workspace's own variable of the same name hides. Only ever\n`true` in a workspace's list."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/EnvScope",
+            "description": "Where it applies."
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A plain variable's value; `null` for a secret."
+          }
+        }
+      },
       "ErrorCode": {
         "type": "string",
         "description": "What went wrong, as a stable code a client can switch on.",
@@ -7191,6 +7872,41 @@
                 "type": "string",
                 "enum": [
                   "workspace_git_changed"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The global environment (variables and secrets every workspace gets) changed. Carries no\ndata: refetch `GET /api/env`, and a workspace's page refetches its own list too.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "global_env_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A workspace's own environment changed. Refetch `GET /api/workspaces/{id}/env`. Never carries\na value.",
+            "required": [
+              "workspace",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_env_changed"
                 ]
               },
               "workspace": {
@@ -9723,6 +10439,27 @@
           }
         }
       },
+      "WorkspaceEnv": {
+        "type": "object",
+        "description": "What a workspace sees: its own variables and the global ones, by name. A global variable that\nthe workspace's own of the same name hides is listed after it with `overridden` set. The\nworkspace's environment is read when it starts: a change reaches a running workspace's own\nenvironment at its next start; a secret's hosts and value apply at once.",
+        "required": [
+          "workspace",
+          "variables"
+        ],
+        "properties": {
+          "variables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvVariable"
+            },
+            "description": "Its variables."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceName",
+            "description": "The workspace."
+          }
+        }
+      },
       "WorkspaceGitView": {
         "type": "object",
         "description": "A workspace's Git settings.",
@@ -9948,6 +10685,10 @@
     {
       "name": "workspaces",
       "description": "Workspaces: repository checkouts with their own disk and sandbox"
+    },
+    {
+      "name": "environment",
+      "description": "Environment variables and secrets, global and per workspace; a secret's value is write-only"
     }
   ]
 }

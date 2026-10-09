@@ -54,6 +54,11 @@ impl MemoryStore {
         *self.broken.lock().unwrap_or_else(PoisonError::into_inner) = true;
     }
 
+    /// Makes the calls work again after [`Self::break_it`].
+    pub fn heal(&self) {
+        *self.broken.lock().unwrap_or_else(PoisonError::into_inner) = false;
+    }
+
     /// The ids held, sorted: for tests that look for what a caller left behind.
     #[must_use]
     pub fn ids(&self) -> Vec<String> {

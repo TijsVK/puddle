@@ -14,6 +14,7 @@ mod common;
 mod credentials;
 mod doctor;
 mod endpoints;
+mod environment;
 pub(crate) mod events;
 mod first_run;
 mod guard;

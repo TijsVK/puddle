@@ -64,6 +64,7 @@ mod workspaces;
 
 pub use credentials::{
     Check, CredentialService, CredentialsError, FakeCredentials, HostCredentials, NoCredentials,
+    NoSecretStore,
 };
 pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, RunChecks};
 pub use error::{ApiErrorBody, ErrorCode};

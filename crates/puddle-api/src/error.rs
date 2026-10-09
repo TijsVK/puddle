@@ -149,9 +149,9 @@ impl From<StoreError> for ApiError {
             StoreError::UnknownPending(_)
             | StoreError::UnknownRule(_)
             | StoreError::UnknownRuleSet(_) => Self::not_found(err.to_string()),
-            StoreError::UnknownIdentity(_) | StoreError::UnknownRepo(_) => {
-                Self::not_found(err.to_string())
-            }
+            StoreError::UnknownIdentity(_)
+            | StoreError::UnknownRepo(_)
+            | StoreError::UnknownEnv { .. } => Self::not_found(err.to_string()),
             StoreError::IdentityCollision(_) => Self::new(
                 StatusCode::CONFLICT,
                 ErrorCode::IdentityCollision,
@@ -168,7 +168,8 @@ impl From<StoreError> for ApiError {
             | StoreError::ExpiryNotInFuture
             | StoreError::NotSwitchable
             | StoreError::RuleSetName(_)
-            | StoreError::IdentityInvalid(_) => Self::invalid(err.to_string()),
+            | StoreError::IdentityInvalid(_)
+            | StoreError::EnvInvalid(_) => Self::invalid(err.to_string()),
             _ => Self::internal(&err),
         }
     }
@@ -299,6 +300,17 @@ mod tests {
                 StatusCode::NOT_FOUND,
             ),
             (StoreError::UnknownRepo(1), StatusCode::NOT_FOUND),
+            (
+                StoreError::UnknownEnv {
+                    scope: "the global environment".into(),
+                    name: "A".into(),
+                },
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                StoreError::EnvInvalid("x".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
             (
                 StoreError::IdentityInvalid("x".into()),
                 StatusCode::UNPROCESSABLE_ENTITY,

@@ -58,7 +58,7 @@ fn entry_of(raw: Raw) -> Result<EnvEntry, StoreError> {
             EnvScope::Workspace(WorkspaceName::new(name).map_err(|e| corrupt(e.to_string()))?)
         }
     };
-    let name = EnvName::from_stored(&raw.name).map_err(|e| corrupt(e.to_string()))?;
+    let name = EnvName::existing(&raw.name).map_err(|e| corrupt(e.to_string()))?;
     let value = match (raw.kind.as_str(), raw.value, raw.secret_id, raw.hosts) {
         ("plain", Some(value), None, None) => EnvValue::Plain(value),
         ("secret", None, Some(id), Some(hosts)) => {
@@ -861,7 +861,7 @@ mod tests {
             .unwrap();
         let listed = store.env_entries(&scope).unwrap();
         assert_eq!(listed[0].name.as_str(), "HTTPS_PROXY");
-        let proxy = EnvName::from_stored("HTTPS_PROXY").unwrap();
+        let proxy = EnvName::existing("HTTPS_PROXY").unwrap();
         store.delete_env(&scope, &proxy).unwrap();
         assert!(store.env_entries(&scope).unwrap().is_empty());
     }

@@ -25,6 +25,7 @@ use crate::error::ApiError;
 
 mod credentials;
 mod doctor;
+mod environment;
 mod first_run;
 mod identities;
 mod network_health;
@@ -37,6 +38,9 @@ pub use credentials::{
     SignInStarted, StoreTokenRequest, StoredToken,
 };
 pub use doctor::{DoctorCheck, DoctorReport, DoctorStatus};
+pub use environment::{
+    EnvKind, EnvList, EnvScope, EnvSetRequest, EnvVariable, SecretText, WorkspaceEnv,
+};
 pub use first_run::{DevCertificate, FirstRun, FirstRunRequest};
 pub use identities::{
     AttachIdentityRequest, CredentialCoverage, CredentialSource, GitRepoRequest, GitRepoToggles,

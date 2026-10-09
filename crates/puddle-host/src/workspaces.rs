@@ -51,7 +51,7 @@ use crate::files::{Stored, WorkspaceBook};
 use crate::git_hosts::{Authors, authors};
 use crate::injection::Injection;
 
-impl<R: Runtime + Clone> crate::changes::GitChanges for HostWorkspaces<R> {
+impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     fn decrypt_changed(&self, workspace: &WorkspaceName) -> Option<puddle_store::WorkspaceGit> {
         Self::decrypt_changed(self, workspace)
     }
@@ -62,6 +62,16 @@ impl<R: Runtime + Clone> crate::changes::GitChanges for HostWorkspaces<R> {
 
     async fn all_git_changed(&self) {
         Self::all_git_changed(self).await;
+    }
+
+    async fn environment_changed(&self, workspace: WorkspaceName) {
+        self.inner.injection.environment_changed(&workspace).await;
+    }
+
+    async fn all_environments_changed(&self) {
+        for name in self.inner.injection.running_workspaces() {
+            self.inner.injection.environment_changed(&name).await;
+        }
     }
 }
 
@@ -121,6 +131,9 @@ struct GuestState {
     ca: CaCertificate,
     /// The commit authors the guest holds now.
     authors: Authors,
+    /// The user's variables the guest was started with, a secret as its stand-in. A change to
+    /// them reaches the guest at its next start, so a re-planned boot keeps these.
+    env: GuestEnv,
 }
 
 /// What a sandbox owns while this process serves it.
@@ -133,6 +146,10 @@ struct Live<R: Runtime> {
     ssh: Option<SshEndpoint>,
     /// What the running guest was given at boot; `None` while it does not run.
     guest: Option<GuestState>,
+    /// The user's variables baked into the sandbox's own spec when it was made. A sandbox keeps
+    /// the environment it was made with (a restart cannot change it), so a start with other
+    /// variables makes a new sandbox on the same volume instead of restarting this one.
+    spec_env: GuestEnv,
     /// Held while the running guest's author files are rewritten, so two changes never run the
     /// boot hook at once.
     rewrite: Arc<tokio::sync::Mutex<()>>,
@@ -637,7 +654,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         };
         // The CA comes after the route: a start that fails here has nothing else to take back.
-        let (plan, env, guest) = match self.plan_guest(name, config) {
+        let (plan, env, guest) = match self.plan_guest(name, config).await {
             Ok(ready) => ready,
             Err(reason) => {
                 route.shutdown().await;
@@ -662,6 +679,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                         gate,
                         gated: Some(Arc::new(gated)),
                         ssh: None,
+                        spec_env: guest.env.clone(),
                         guest: Some(guest),
                         rewrite: Arc::default(),
                     },
@@ -677,26 +695,28 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// Makes this start's CA for `name`, registers what it decrypts and plans the guest's boot
-    /// with the CA in its trust and the authors of the workspace's identities. A start that fails
-    /// after this must call `Injection::end`.
-    fn plan_guest(
+    /// Makes this start's CA for `name`, registers what it decrypts and its secrets' stand-ins and
+    /// plans the guest's boot with the CA in its trust, the authors of the workspace's identities
+    /// and its environment. A start that fails after this must call `Injection::end`.
+    async fn plan_guest(
         &self,
         name: &WorkspaceName,
         image: ImageConfig,
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
         let inner = &self.inner;
-        let began = inner.injection.begin(name)?;
+        let began = inner.injection.begin(name).await?;
         let state = GuestState {
             image,
             ca: began.certificate,
             authors: authors(&began.git),
+            env: began.env,
         };
         match inner.kit.plan(
             &state.image,
             &GuestInputs {
                 ca: &state.ca,
                 authors: &state.authors,
+                env: &state.env,
             },
         ) {
             Ok((plan, env)) => Ok((plan, env, state)),
@@ -790,6 +810,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let inputs = GuestInputs {
             ca: &guest.ca,
             authors,
+            env: &guest.env,
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
         kit.hook()
@@ -1064,9 +1085,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .iter()
             .any(|s| s.name == name.as_str());
         let route_alive = inner.live.lock().await.contains_key(name);
-        if exists && route_alive {
-            self.restart_in_place(&record).await?;
-        } else {
+        let restarted = exists && route_alive && self.restart_in_place(&record).await?;
+        if !restarted {
             if exists {
                 inner
                     .runtime
@@ -1088,12 +1108,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
-    async fn restart_in_place(&self, record: &WorkspaceRecord) -> Result<(), String> {
+    /// Starts the stopped sandbox again. `Ok(false)` when it did not: the workspace's variables
+    /// changed since the sandbox was made and a sandbox keeps the environment it was made with, so
+    /// the caller makes a new one on the same volume (the volume holds the work, not the sandbox).
+    async fn restart_in_place(&self, record: &WorkspaceRecord) -> Result<bool, String> {
         let inner = &self.inner;
         let name = &record.name;
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
         let config = self.image_config(&image).await?;
-        let (plan, _, guest) = self.plan_guest(name, config)?;
+        let (plan, _, guest) = self.plan_guest(name, config).await?;
+        let made_with = inner
+            .live
+            .lock()
+            .await
+            .get(name)
+            .map(|live| live.spec_env.clone());
+        if made_with.is_some_and(|env| env != guest.env) {
+            inner.injection.end(name);
+            return Ok(false);
+        }
         let started = self.start_planned(record, &plan).await;
         match started {
             Ok(gated) => {
@@ -1101,7 +1134,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     live.gated = Some(Arc::new(gated));
                     live.guest = Some(guest);
                 }
-                Ok(())
+                Ok(true)
             }
             Err(reason) => {
                 inner.injection.end(name);
@@ -1172,6 +1205,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .map_err(|e| e.to_string())?;
         self.quiesce(&record.name, true).await;
+        // What the workspace held in puddle's settings goes with it: its rules, its identities,
+        // its environment and the values of its own secrets.
+        inner.injection.forget(&record.name).await;
         Ok(())
     }
 }

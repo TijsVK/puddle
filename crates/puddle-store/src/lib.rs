@@ -32,6 +32,7 @@ pub use environment::{
     EnvChange, EnvDraft, EnvEntry, EnvName, EnvRow, EnvScope, EnvSecret, EnvValue,
     MAX_ENTRIES_PER_SCOPE, MAX_NAME_LEN, MAX_PLAIN_VALUE_BYTES, MAX_SCOPE_BYTES, MAX_SECRET_HOSTS,
     MAX_SECRET_VALUE_CHARS, PUDDLE_OWNED_NAMES, SecretHost, StartValue, StartVar,
+    check_secret_value,
 };
 pub use error::StoreError;
 pub use identity::{

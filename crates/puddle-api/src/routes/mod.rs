@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use puddle_secrets::SecretStore;
 use puddle_store::{Clock, Store};
 use tokio::sync::{Mutex, watch};
 use utoipa_axum::router::OpenApiRouter;
@@ -19,6 +20,7 @@ use crate::workspaces::WorkspaceService;
 mod audit;
 mod credentials;
 mod doctor;
+mod environment;
 mod events;
 mod first_run;
 mod identities;
@@ -42,6 +44,8 @@ pub(crate) struct AppState {
     pub(crate) workspaces: Arc<dyn WorkspaceService>,
     pub(crate) network_health: Arc<dyn NetworkHealthService>,
     pub(crate) credentials: Arc<dyn CredentialService>,
+    /// Where the values of environment secrets are kept.
+    pub(crate) secrets: Arc<dyn SecretStore>,
     pub(crate) doctor: Arc<dyn DoctorService>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
@@ -109,6 +113,13 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(credentials::store_token))
         .routes(routes!(credentials::forget_token))
         .routes(routes!(credentials::sign_in))
+        .routes(routes!(environment::list_global))
+        .routes(routes!(environment::put_global, environment::delete_global))
+        .routes(routes!(environment::list_workspace))
+        .routes(routes!(
+            environment::put_workspace,
+            environment::delete_workspace
+        ))
         .routes(routes!(identities::get_workspace_git))
         .routes(routes!(
             identities::set_workspace_identities,

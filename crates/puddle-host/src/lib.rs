@@ -29,6 +29,7 @@ mod changes;
 mod config;
 mod data_folder;
 mod doctor;
+mod environment;
 mod error;
 mod files;
 mod git_hosts;
