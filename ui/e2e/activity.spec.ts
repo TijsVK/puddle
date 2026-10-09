@@ -632,6 +632,11 @@ test.describe("keyboard only", () => {
     await openActivity(page, backend, "?type=connection");
     await page.getByLabel("Host contains").focus();
     await page.keyboard.type("ads.example");
+    // The list is read again 250 ms after a key, and every read starts the view over. On a slow
+    // machine a prefix is read too ("ad" already matches this one row), so wait for the whole
+    // word: the address carries it once it is read, and the count is busy until the answer.
+    await expect(page).toHaveURL(/[?&]host=ads\.example(&|$)/);
+    await expect(page.locator("p.count")).toHaveAttribute("aria-busy", "false");
     await expect(rows(page)).toHaveCount(1);
     const toggle = rows(page).first().getByRole("button");
     await toggle.focus();
@@ -659,10 +664,42 @@ test.describe("keyboard only", () => {
       .toBeGreaterThan(100);
     await region(page).focus();
     await expect(region(page)).toBeFocused();
+    // Both held once and the area still did not scroll on a loaded host: keep what the key did,
+    // so a miss says whether the key arrived, whether the area scrolled, or whether it was drawn
+    // anew (a new area starts at the top).
+    const area = await region(page).elementHandle();
+    await area.evaluate((el) => {
+      const seen = { keys: [] as string[], scrolls: 0 };
+      Object.assign(el, { seen });
+      window.addEventListener("keydown", (event) => {
+        const on = event.target === el ? "the area" : String(event.target);
+        seen.keys.push(
+          `${event.key} on ${on}${event.defaultPrevented ? ", prevented" : ""}`,
+        );
+      });
+      el.addEventListener("scroll", () => {
+        seen.scrolls += 1;
+      });
+    });
     await page.keyboard.press("PageDown");
-    await expect
-      .poll(() => region(page).evaluate((el) => el.scrollTop))
-      .toBeGreaterThan(100);
+    try {
+      await expect
+        .poll(() => region(page).evaluate((el) => el.scrollTop))
+        .toBeGreaterThan(100);
+    } catch (error) {
+      const seen = await area.evaluate((el) => ({
+        ...(el as unknown as { seen: object }).seen,
+        connected: el.isConnected,
+        focused: document.activeElement === el,
+        top: el.scrollTop,
+      }));
+      throw new Error(
+        `Page Down did not scroll the area: ${JSON.stringify(seen)}`,
+        {
+          cause: error,
+        },
+      );
+    }
   });
 });
 
