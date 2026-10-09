@@ -549,8 +549,10 @@ test.describe("keyboard only", () => {
 });
 
 test.describe("accessibility", () => {
+  // A scan costs 3 to 4 s in WebKit on a loaded host, and the six of the whole walk in one test
+  // went past its 30 s limit: a few stops per test, so none is near it.
   for (const scheme of ["light", "dark"] as const) {
-    test(`axe finds nothing in ${scheme}: the list, the dialogs, the empty state`, async ({
+    test(`axe finds nothing in ${scheme}: the list and the add dialog with errors`, async ({
       page,
       backend,
     }) => {
@@ -564,8 +566,16 @@ test.describe("accessibility", () => {
       await add.getByRole("button", { name: "Add rule" }).click();
       await expect(add.getByRole("alert")).toHaveCount(2);
       expect(await axeViolations(page), "add with errors").toEqual([]);
-      await add.getByRole("button", { name: "Cancel" }).click();
+      expect(await csp()).toEqual([]);
+    });
 
+    test(`axe finds nothing in ${scheme}: the expiry and delete dialogs and the toast`, async ({
+      page,
+      backend,
+    }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      const csp = await watchCsp(page);
+      await openRules(page, backend);
       await rowFor(page, "api.example.com")
         .getByRole("button", { name: /^Change expiry/ })
         .click();
@@ -582,13 +592,23 @@ test.describe("accessibility", () => {
       await expect(page.getByRole("status")).toContainText("Deleted");
       expect(await axeViolations(page), "toast").toEqual([]);
       expect(await csp()).toEqual([]);
+    });
 
+    test(`axe finds nothing in ${scheme}: the empty state`, async ({
+      page,
+      backend,
+    }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      const csp = await watchCsp(page);
       await backend.control.reset("empty");
-      await page.reload();
+      await backend.installClock(page);
+      await backend.signIn(page);
+      await page.goto("/rules");
       await expect(
         page.getByRole("heading", { name: "No rules yet" }),
       ).toBeVisible();
       expect(await axeViolations(page), "empty").toEqual([]);
+      expect(await csp()).toEqual([]);
     });
   }
 
