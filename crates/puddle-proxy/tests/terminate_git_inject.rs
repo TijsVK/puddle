@@ -10,7 +10,7 @@ mod git_support;
 mod terminate_support;
 
 use bytes::Bytes;
-use git_support::{GitRig, H2GitRig, Host, PERSONAL, WORK, denied, token_basic};
+use git_support::{GitRig, H2GitRig, Host, PERSONAL, REAL_SECRET, WORK, denied, token_basic};
 use puddle_secrets::SourceError;
 use puddle_types::{ConnectionDecision, ConnectionReason, Event, GitAccess};
 use terminate_support::h2_rig::full;
@@ -18,7 +18,8 @@ use terminate_support::h2_rig::full;
 const FETCH: &str = "/acme/web.git/info/refs?service=git-upload-pack";
 const PUSH_ADVERT: &str = "/acme/web.git/info/refs?service=git-receive-pack";
 const OWN: &str = "Bearer mine";
-const STAND_IN: &str =
+/// Shaped like a stand-in (`puddle-secret-FOO-...`), but no entry of the workspace stands for it.
+const UNKNOWN_STAND_IN: &str =
     "Basic cHVkZGxlLXNlY3JldC1GT08tMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw";
 
 async fn get(
@@ -43,14 +44,17 @@ async fn on_a_git_path_the_three_cases_of_the_authorization_header() {
     let mut guest = t.rig.guest().await;
     // No header: the covering identity's credential, and the record says so.
     assert_eq!(get(&mut guest, FETCH, None).await.status, 200);
-    // The workspace's own header, and a stand-in the workspace holds: exactly as sent.
+    // The workspace's own header, and a value no stand-in entry covers: exactly as sent.
     assert_eq!(get(&mut guest, FETCH, Some(OWN)).await.status, 200);
-    assert_eq!(get(&mut guest, FETCH, Some(STAND_IN)).await.status, 200);
+    assert_eq!(
+        get(&mut guest, FETCH, Some(UNKNOWN_STAND_IN)).await.status,
+        200
+    );
     let seen = t.server.recorded();
     assert_eq!(seen.len(), 3);
     assert_eq!(seen[0].headers_named("authorization"), [token_basic(WORK)]);
     assert_eq!(seen[1].headers_named("authorization"), [OWN]);
-    assert_eq!(seen[2].headers_named("authorization"), [STAND_IN]);
+    assert_eq!(seen[2].headers_named("authorization"), [UNKNOWN_STAND_IN]);
     let events = t.rig.events(3).await;
     let injected: Vec<_> = events.iter().map(|e| e.injected).collect();
     assert_eq!(injected, [true, false, false]);
@@ -68,7 +72,7 @@ async fn on_a_git_path_the_three_cases_of_the_authorization_header() {
 async fn on_a_bound_path_that_is_not_git_nothing_is_added_and_the_header_passes_unchanged() {
     let t = GitRig::new().await;
     let mut guest = t.rig.guest().await;
-    for authorization in [None, Some(OWN), Some(STAND_IN)] {
+    for authorization in [None, Some(OWN), Some(UNKNOWN_STAND_IN)] {
         assert_eq!(
             get(&mut guest, "/acme/web/archive/main.zip", authorization)
                 .await
@@ -79,10 +83,72 @@ async fn on_a_bound_path_that_is_not_git_nothing_is_added_and_the_header_passes_
     let seen = t.server.recorded();
     assert_eq!(seen[0].header("authorization"), None);
     assert_eq!(seen[1].headers_named("authorization"), [OWN]);
-    assert_eq!(seen[2].headers_named("authorization"), [STAND_IN]);
+    assert_eq!(seen[2].headers_named("authorization"), [UNKNOWN_STAND_IN]);
     let events = t.rig.events(3).await;
     assert!(events.iter().all(|e| !e.injected && e.binding_id.is_none()));
     assert_eq!(t.world.credentials.reads(), 0);
+}
+
+/// What the server must see for each header the workspace sends with its stand-in.
+fn real_for(stand_in: &str) -> [(String, String); 2] {
+    [
+        (
+            format!("Bearer {stand_in}"),
+            format!("Bearer {REAL_SECRET}"),
+        ),
+        (token_basic(stand_in), token_basic(REAL_SECRET)),
+    ]
+}
+
+#[tokio::test]
+async fn a_stand_in_is_swapped_on_a_git_path_and_on_a_bound_path_that_is_not_git() {
+    let t = GitRig::new().await;
+    let mut guest = t.rig.guest().await;
+    let pairs = real_for(&t.stand_in);
+    let mut expected = Vec::new();
+    for path in [FETCH, "/acme/web/archive/main.zip"] {
+        for (sent, real) in &pairs {
+            assert_eq!(get(&mut guest, path, Some(sent)).await.status, 200);
+            expected.push(real.clone());
+        }
+    }
+    let seen = t.server.recorded();
+    assert_eq!(seen.len(), 4);
+    for (request, real) in seen.iter().zip(&expected) {
+        assert_eq!(request.headers_named("authorization"), [real.as_str()]);
+    }
+    // The workspace's own header was swapped; the identity's credential was not added beside it.
+    assert_eq!(t.world.credentials.reads(), 0);
+    let events = t.rig.events(4).await;
+    for event in &events {
+        assert!(event.injected);
+        assert_eq!(
+            event.binding_id.as_deref(),
+            Some("stand-in:secret:GH_TOKEN")
+        );
+    }
+    let audit = format!("{events:?}");
+    assert!(!audit.contains(REAL_SECRET) && !audit.contains(&t.stand_in));
+    assert_eq!(t.raised(), []);
+}
+
+#[tokio::test]
+async fn a_stand_in_does_not_open_a_push_the_list_refuses() {
+    let t = GitRig::new().await;
+    let mut guest = t.rig.guest().await;
+    let sent = format!("Bearer {}", t.stand_in);
+    let refused = get(
+        &mut guest,
+        "/acme/other.git/info/refs?service=git-receive-pack",
+        Some(&sent),
+    )
+    .await;
+    assert_eq!(refused.status, 403);
+    assert_eq!(
+        t.server.recorded().len(),
+        0,
+        "the real server was not asked"
+    );
 }
 
 #[tokio::test]
@@ -443,11 +509,16 @@ async fn over_http2_the_three_cases_the_lists_and_the_401s() {
     // No header, the workspace's own header, a stand-in: the credential, then exactly as sent.
     assert_eq!(h2_get(&mut client, FETCH, None).await.status, 200);
     assert_eq!(h2_get(&mut client, FETCH, Some(OWN)).await.status, 200);
-    assert_eq!(h2_get(&mut client, FETCH, Some(STAND_IN)).await.status, 200);
+    assert_eq!(
+        h2_get(&mut client, FETCH, Some(UNKNOWN_STAND_IN))
+            .await
+            .status,
+        200
+    );
     let seen = t.server.recorded();
     assert_eq!(seen[0].headers_named("authorization"), [token_basic(WORK)]);
     assert_eq!(seen[1].headers_named("authorization"), [OWN]);
-    assert_eq!(seen[2].headers_named("authorization"), [STAND_IN]);
+    assert_eq!(seen[2].headers_named("authorization"), [UNKNOWN_STAND_IN]);
     // Not a git path: nothing added.
     assert_eq!(
         h2_get(&mut client, "/acme/web/archive/main.zip", None)
@@ -489,6 +560,35 @@ async fn over_http2_the_three_cases_the_lists_and_the_401s() {
         seen.last().unwrap().headers_named("authorization"),
         [token_basic(PERSONAL)]
     );
+}
+
+#[tokio::test]
+async fn over_http2_a_stand_in_is_swapped_on_a_git_path_and_on_a_bound_path_that_is_not_git() {
+    let t = H2GitRig::new(Host::default()).await;
+    let mut guest = t.rig.guest().await;
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let pairs = real_for(&t.stand_in);
+    let mut expected = Vec::new();
+    for path in [FETCH, "/acme/web/archive/main.zip"] {
+        for (sent, real) in &pairs {
+            assert_eq!(h2_get(&mut client, path, Some(sent)).await.status, 200);
+            expected.push(real.clone());
+        }
+    }
+    let seen = t.server.recorded();
+    assert_eq!(seen.len(), 4);
+    for (request, real) in seen.iter().zip(&expected) {
+        assert_eq!(request.headers_named("authorization"), [real.as_str()]);
+    }
+    assert_eq!(t.world.credentials.reads(), 0);
+    client.close().await;
+    let events = t.rig.events(1).await;
+    assert!(events[0].injected);
+    assert_eq!(
+        events[0].binding_id.as_deref(),
+        Some("stand-in:secret:GH_TOKEN")
+    );
+    assert!(!format!("{events:?}").contains(REAL_SECRET));
 }
 
 #[tokio::test]

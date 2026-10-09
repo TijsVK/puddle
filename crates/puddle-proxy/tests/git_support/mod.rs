@@ -10,6 +10,9 @@
 use std::sync::Arc;
 
 use puddle_inject::testing::World;
+use puddle_proxy::{
+    SecretValue, StandIn, StandInOrigin, StandIns, TerminationSet, secret_stand_in,
+};
 use puddle_types::{Event, GitAccess};
 
 use crate::terminate_support::h2_rig::{H2Server, Script};
@@ -41,6 +44,29 @@ pub(crate) fn advert(service: &str) -> String {
         )),
         pkt(&format!("{SHA} refs/tags/v1\n")),
     )
+}
+
+/// What a stand-in the workspace holds stands for: only the real server may ever see it.
+pub(crate) const REAL_SECRET: &str = "ghp_LIVE8f3b2a91c4d7e60";
+
+/// A registry holding one secret, `GH_TOKEN`, for `bound.test`, and the stand-in the workspace
+/// holds for it.
+fn stand_ins() -> (Arc<StandIns>, String) {
+    let registry = Arc::new(StandIns::new());
+    let stand_in = secret_stand_in("GH_TOKEN").unwrap();
+    registry
+        .insert(
+            StandIn::new(
+                StandInOrigin::Secret,
+                "GH_TOKEN",
+                &stand_in,
+                SecretValue::new(REAL_SECRET),
+                TerminationSet::parse(["bound.test"]).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    (registry, stand_in)
 }
 
 /// The `Authorization` of `Basic x-access-token:<token>`.
@@ -119,6 +145,8 @@ pub(crate) struct GitRig {
     pub(crate) world: World,
     pub(crate) server: FakeServer,
     pub(crate) rig: Rig,
+    /// The stand-in of `GH_TOKEN`, which the workspace holds and the proxy swaps for `REAL_SECRET`.
+    pub(crate) stand_in: String,
 }
 
 impl GitRig {
@@ -141,11 +169,18 @@ impl GitRig {
             }),
         )
         .await;
+        let (registry, stand_in) = stand_ins();
         let rig = RigBuilder::new(&pki)
             .name("bound.test", server.addr)
             .injector(world.injector.clone())
+            .stand_ins(&registry)
             .build();
-        Self { world, server, rig }
+        Self {
+            world,
+            server,
+            rig,
+            stand_in,
+        }
     }
 
     pub(crate) fn world() -> World {
@@ -167,6 +202,8 @@ pub(crate) struct H2GitRig {
     pub(crate) world: World,
     pub(crate) server: H2Server,
     pub(crate) rig: Rig,
+    /// The stand-in of `GH_TOKEN`, which the workspace holds and the proxy swaps for `REAL_SECRET`.
+    pub(crate) stand_in: String,
 }
 
 impl H2GitRig {
@@ -191,11 +228,18 @@ impl H2GitRig {
             }
         });
         let server = H2Server::recording(&pki, "bound.test", script).await;
+        let (registry, stand_in) = stand_ins();
         let rig = RigBuilder::new(&pki)
             .name("bound.test", server.addr)
             .injector(world.injector.clone())
+            .stand_ins(&registry)
             .build();
-        Self { world, server, rig }
+        Self {
+            world,
+            server,
+            rig,
+            stand_in,
+        }
     }
 }
 
