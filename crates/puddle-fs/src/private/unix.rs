@@ -51,16 +51,13 @@ pub(super) fn tighten_dir(dir: &Path) -> io::Result<Option<Exposed>> {
 }
 
 pub(super) fn tighten_file(path: &Path) -> io::Result<Option<Exposed>> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_file() => {}
-        Ok(_) => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "not a regular file",
-            ));
-        }
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err),
+    // A missing file is `NotFound` here and at every later step; the caller reads it as "nothing
+    // to tighten".
+    if !fs::symlink_metadata(path)?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
     }
     let file = File::open(path)?;
     match check(&file) {

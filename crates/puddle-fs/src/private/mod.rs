@@ -106,13 +106,18 @@ pub fn tighten_dir(dir: &Path) -> io::Result<Option<Exposed>> {
 }
 
 /// Makes the existing file `path` owner-only, like [`tighten_dir`]. A missing file is not an
-/// error and returns `None`; a file that isn't a regular file (a symlink, a folder) is refused.
+/// error and returns `None`, and neither is one that disappears while it is being looked at (a
+/// database's `-wal` file goes when its last connection closes); a file that isn't a regular
+/// file (a symlink, a folder) is refused.
 ///
 /// # Errors
 ///
 /// Any file-system error, or `InvalidInput` if `path` is not a regular file.
 pub fn tighten_file(path: &Path) -> io::Result<Option<Exposed>> {
-    platform::tighten_file(path)
+    match platform::tighten_file(path) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        other => other,
+    }
 }
 
 /// Writes `body` to `path` owner-only and atomically: a temporary owner-only file in the same
@@ -216,6 +221,34 @@ mod tests {
         assert_eq!(tighten_dir(&sub).unwrap(), None);
         assert!(sub.is_dir());
         assert_eq!(tighten_file(&sub.join("absent")).unwrap(), None);
+    }
+
+    #[test]
+    fn a_file_that_goes_away_while_it_is_tightened_is_skipped() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::{Duration, Instant};
+
+        // SQLite deletes its `-wal` file when its last connection closes, which can happen between
+        // the moment the file is seen and the moment it is opened.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("puddle.db-wal");
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    drop(create_file(&path));
+                    let _ = fs::remove_file(&path);
+                }
+            });
+            // Stop the churn before judging, so a failure ends the test instead of hanging it.
+            let deadline = Instant::now() + Duration::from_millis(500);
+            let mut first_error = None;
+            while first_error.is_none() && Instant::now() < deadline {
+                first_error = tighten_file(&path).err();
+            }
+            stop.store(true, Ordering::Relaxed);
+            assert!(first_error.is_none(), "{first_error:?}");
+        });
     }
 
     #[test]
