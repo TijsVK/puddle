@@ -120,7 +120,10 @@ same() { command -v cmp >/dev/null 2>&1 && cmp -s "$1" "$2"; }
 # Records what the merge tool did with <path>: one word, or "left: <reason>".
 merge_result() { # merge_result <path> <tool output>
     case $2 in
-    changed | removed) printf '%s\n' "$1" >>"$RUN/changed" ;;
+    changed | removed)
+        printf '%s\n' "$1" >>"$RUN/changed"
+        say "$1: puddle's own lines were $2 (everything else in the file is as it was)"
+        ;;
     unchanged) ;;
     left:*) say "$1 left as it is: ${2#left: }" ;;
     *) die "unexpected answer from the merge tool for $1: $2" ;;

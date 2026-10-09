@@ -545,6 +545,14 @@ fn merged_files_go_through_the_merge_tool_and_lose_only_puddles_keys_when_droppe
         let file = merged(DOCKER);
         let out = fr.run(&plan_with(vec![file.clone()]));
         assert!(out.status.success(), "{}", show(&out));
+        // The log says which file got puddle's lines.
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(&format!(
+                "{DOCKER}: puddle's own lines were changed (everything else in the file is as it was)"
+            )),
+            "{}",
+            show(&out)
+        );
         assert_eq!(
             merge_calls(&fr),
             [format!("merge-file apply {DOCKER} 0600")]

@@ -13,12 +13,21 @@
 //! Anything that is not SSH is carried as it is: the command is a plain `CONNECT` helper for a
 //! client that is not.
 //!
+//! What is inside the workspace is not outbound and is not sent to the proxy: the command
+//! looks the destination up itself and, when every address it names is loopback or inside a
+//! `--local-net` (the container bridge), dials that address directly and carries the connection.
+//! It is decided by the address, never by the name: a DNS name that starts with `127.` resolves
+//! to whatever its zone says and goes to the proxy unless that is local. The address that was
+//! checked is the one dialled.
+//!
 //! `<name>` (the host name as typed, before `HostName`) is accepted and unused until SSH is.
 //! `ssh` ignores the exit status of its `ProxyCommand`: only what the command printed matters.
 
 use std::fmt::Write as _;
+use std::future::Future;
 use std::io;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::pin::Pin;
 use std::time::Duration;
 
 use puddle_agent_proto::ssh::{BANNER_MIN, PROTOCOL_HEADER, SSH, is_banner};
@@ -32,7 +41,8 @@ use tokio::time::Instant;
 use crate::config::Config;
 
 /// Usage text.
-pub const USAGE: &str = "usage: puddle-agent connect <host> <port> [<name>]";
+pub const USAGE: &str =
+    "usage: puddle-agent connect [--local-net <address>/<bits>]... <host> <port> [<name>]";
 
 /// Longest response head read from the proxy.
 const MAX_HEAD: u64 = 16 * 1024;
@@ -45,17 +55,61 @@ const MAX_BODY: usize = 4 * 1024;
 pub struct Request {
     host: String,
     port: u16,
+    local: Vec<LocalNet>,
+}
+
+/// An IPv4 network whose addresses are inside the workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LocalNet {
+    base: u32,
+    mask: u32,
+}
+
+impl LocalNet {
+    fn parse(text: &str) -> Option<Self> {
+        let (address, bits) = text.split_once('/')?;
+        let bits = bits.parse::<u32>().ok().filter(|b| (1..=32).contains(b))?;
+        let mask = u32::MAX << (32 - bits);
+        Some(Self {
+            base: u32::from(address.parse::<Ipv4Addr>().ok()?) & mask,
+            mask,
+        })
+    }
+
+    fn contains(self, ip: Ipv4Addr) -> bool {
+        u32::from(ip) & self.mask == self.base
+    }
 }
 
 impl Request {
-    /// Reads `<host> <port> [<name>]`.
+    /// Whether `ip` is inside the workspace: loopback (0.0.0.0 and :: reach it too) or inside a
+    /// `--local-net`.
+    fn is_local(&self, ip: IpAddr) -> bool {
+        match ip.to_canonical() {
+            IpAddr::V4(v4) => {
+                v4.is_loopback() || v4.is_unspecified() || self.local.iter().any(|n| n.contains(v4))
+            }
+            IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+        }
+    }
+}
+
+impl Request {
+    /// Reads `[--local-net <address>/<bits>]... <host> <port> [<name>]`.
     ///
     /// # Errors
     ///
     /// The usage text, or what is wrong with the host or port.
     pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, String> {
-        let (host, port) = match args {
-            [host, port] | [host, port, _] => (host.as_ref(), port.as_ref()),
+        let mut args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
+        let mut local = Vec::new();
+        while let ["--local-net", net, ..] = args.as_slice() {
+            local
+                .push(LocalNet::parse(net).ok_or_else(|| format!("bad network {net:?}\n{USAGE}"))?);
+            args.drain(..2);
+        }
+        let (host, port) = match args.as_slice() {
+            [host, port] | [host, port, _] => (*host, *port),
             _ => return Err(USAGE.to_owned()),
         };
         let port = port
@@ -80,6 +134,7 @@ impl Request {
         Ok(Self {
             host: host.to_owned(),
             port,
+            local,
         })
     }
 
@@ -93,8 +148,27 @@ impl Request {
     }
 }
 
+/// How a destination name becomes addresses: `None` when it can't be looked up in time.
+pub type Lookup =
+    fn(String, u16, Duration) -> Pin<Box<dyn Future<Output = Option<Vec<IpAddr>>> + Send>>;
+
+/// The system resolver, giving up after `limit`.
+pub fn system_lookup(
+    host: String,
+    port: u16,
+    limit: Duration,
+) -> Pin<Box<dyn Future<Output = Option<Vec<IpAddr>>> + Send>> {
+    Box::pin(async move {
+        let found = tokio::time::timeout(limit, tokio::net::lookup_host((host.as_str(), port)))
+            .await
+            .ok()?
+            .ok()?;
+        Some(found.map(|a| a.ip()).collect())
+    })
+}
+
 /// Where the proxy is and how long each step may take.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Settings {
     /// The agent's proxy listener.
     pub proxy: SocketAddr,
@@ -102,6 +176,11 @@ pub struct Settings {
     pub first_bytes: Duration,
     /// How long the proxy may take to answer (it connects to the destination first).
     pub answer: Duration,
+    /// How long to wait for the destination's name to resolve; a name that doesn't in time is
+    /// not local.
+    pub lookup_limit: Duration,
+    /// Resolves destination names.
+    pub lookup: Lookup,
 }
 
 impl Settings {
@@ -116,6 +195,8 @@ impl Settings {
             proxy,
             first_bytes: Duration::from_secs(2),
             answer: Duration::from_secs(60),
+            lookup_limit: Duration::from_secs(2),
+            lookup: system_lookup,
         }
     }
 }
@@ -154,8 +235,11 @@ where
     O: AsyncWrite + Unpin,
     E: AsyncWrite + Unpin,
 {
-    let first = peek(&mut stdin, settings.first_bytes).await;
     let mut stdout = stdout;
+    if let Some(addresses) = inside_the_workspace(settings, request).await {
+        return direct(&addresses, request.port, stdin, &mut stdout, stderr).await;
+    }
+    let first = peek(&mut stdin, settings.first_bytes).await;
     match open(settings, request, &first).await {
         Ok(Opened::Tunnel { mut conn, rest }) => {
             let mut both = join(stdin, &mut stdout);
@@ -183,6 +267,81 @@ where
                 &format!("puddle-agent connect: {authority} through {proxy}: {err}\n"),
             )
             .await;
+            Exit::Failed
+        }
+    }
+}
+
+/// The destination's addresses when every one of them is inside the workspace, else `None`.
+async fn inside_the_workspace(settings: &Settings, request: &Request) -> Option<Vec<IpAddr>> {
+    let addresses = match request.host.parse::<IpAddr>() {
+        Ok(ip) => vec![ip],
+        Err(_) => {
+            (settings.lookup)(request.host.clone(), request.port, settings.lookup_limit).await?
+        }
+    };
+    (!addresses.is_empty() && addresses.iter().all(|ip| request.is_local(*ip))).then_some(addresses)
+}
+
+/// Carries the connection to one of `addresses`, which were checked, without the proxy.
+async fn direct<I, O, E>(
+    addresses: &[IpAddr],
+    port: u16,
+    stdin: I,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> Exit
+where
+    I: AsyncRead + Unpin,
+    O: AsyncWrite + Unpin,
+    E: AsyncWrite + Unpin,
+{
+    let mut failure = None;
+    for ip in addresses {
+        match TcpStream::connect(SocketAddr::new(*ip, port)).await {
+            Ok(conn) => return carry_until_the_server_closes(conn, stdin, stdout).await,
+            Err(err) => failure = Some((*ip, err)),
+        }
+    }
+    if let Some((ip, err)) = failure {
+        say(
+            stderr,
+            &format!("puddle-agent connect: {ip} port {port}: {err}\n"),
+        )
+        .await;
+    }
+    Exit::Failed
+}
+
+/// Carries both directions until the server is done. The client's own end is no signal: `stdout`
+/// is a pipe that stays open until this process exits, so a client waiting for the server to
+/// close would never close its side first.
+async fn carry_until_the_server_closes<I, O>(conn: TcpStream, mut stdin: I, mut stdout: O) -> Exit
+where
+    I: AsyncRead + Unpin,
+    O: AsyncWrite + Unpin,
+{
+    let (mut from_server, mut to_server) = conn.into_split();
+    let down = async {
+        tokio::io::copy(&mut from_server, &mut stdout).await?;
+        stdout.flush().await
+    };
+    let up = async {
+        tokio::io::copy(&mut stdin, &mut to_server).await?;
+        to_server.shutdown().await
+    };
+    tokio::pin!(down, up);
+    let ended = tokio::select! {
+        down = &mut down => down,
+        up = &mut up => match up {
+            Ok(()) => down.await,
+            Err(err) => Err(err),
+        },
+    };
+    match ended {
+        Ok(()) => Exit::Done,
+        Err(err) => {
+            tracing::debug!(error = %err, "connection ended with an error");
             Exit::Failed
         }
     }
@@ -383,11 +542,22 @@ mod tests {
         (addr, rx)
     }
 
+    /// No name resolves: the unit tests never ask a resolver.
+    fn no_names(
+        _: String,
+        _: u16,
+        _: Duration,
+    ) -> Pin<Box<dyn Future<Output = Option<Vec<IpAddr>>> + Send>> {
+        Box::pin(async { None })
+    }
+
     fn settings(proxy: SocketAddr) -> Settings {
         Settings {
             proxy,
             first_bytes: Duration::from_millis(300),
             answer: Duration::from_secs(5),
+            lookup_limit: Duration::from_secs(1),
+            lookup: no_names,
         }
     }
 
@@ -581,5 +751,210 @@ mod tests {
         assert_eq!(exit, Exit::Failed);
         assert!(stderr.contains("timed out"), "{stderr}");
         silent_proxy.await.unwrap();
+    }
+
+    /// A few names with fixed answers, the rest do not resolve.
+    fn names(
+        host: String,
+        _: u16,
+        _: Duration,
+    ) -> Pin<Box<dyn Future<Output = Option<Vec<IpAddr>>> + Send>> {
+        let ip = |text: &str| text.parse::<IpAddr>().unwrap();
+        Box::pin(async move {
+            match host.as_str() {
+                "app.test" => Some(vec![ip("127.0.0.1")]),
+                "bridge.test" => Some(vec![ip("172.17.0.5")]),
+                // A DNS name that starts with 127. is just a name: its zone says where it goes.
+                "127.0.0.1.nip.test" | "127.evil.test" => Some(vec![ip("203.0.113.9")]),
+                "mixed.test" => Some(vec![ip("127.0.0.1"), ip("203.0.113.9")]),
+                "empty.test" => Some(vec![]),
+                _ => None,
+            }
+        })
+    }
+
+    fn bridge_request(host: &str, port: u16) -> Request {
+        Request::parse(&["--local-net", "172.17.0.0/16", host, &port.to_string()]).unwrap()
+    }
+
+    #[test]
+    fn the_workspace_is_loopback_and_the_listed_networks_by_address() {
+        let r = bridge_request("h", 22);
+        for local in [
+            "127.0.0.1",
+            "127.255.0.9",
+            "::1",
+            "::ffff:127.0.0.1",
+            "0.0.0.0",
+            "::",
+            "172.17.0.5",
+            "172.17.255.255",
+        ] {
+            assert!(r.is_local(local.parse().unwrap()), "{local}");
+        }
+        for outside in [
+            "203.0.113.9",
+            "172.18.0.5",
+            "172.16.255.255",
+            "10.0.0.1",
+            "2001:db8::1",
+            "fe80::1",
+            "::ffff:203.0.113.9",
+        ] {
+            assert!(!r.is_local(outside.parse().unwrap()), "{outside}");
+        }
+        // Without a network listed only loopback is inside.
+        assert!(!request("h", 22).is_local("172.17.0.5".parse().unwrap()));
+    }
+
+    #[test]
+    fn networks_are_checked_when_parsed() {
+        let r = Request::parse(&[
+            "--local-net",
+            "10.1.2.3/8",
+            "--local-net",
+            "192.168.0.0/16",
+            "h",
+            "22",
+            "n",
+        ])
+        .unwrap();
+        assert!(r.is_local("10.200.0.1".parse().unwrap()));
+        assert!(r.is_local("192.168.9.9".parse().unwrap()));
+        assert!(!r.is_local("192.169.0.1".parse().unwrap()));
+        assert!(
+            Request::parse(&["--local-net", "0.0.0.0/32", "h", "22"])
+                .unwrap()
+                .is_local("0.0.0.0".parse().unwrap())
+        );
+        for bad in [
+            "172.17.0.0",
+            "172.17.0.0/0",
+            "172.17.0.0/33",
+            "nope/16",
+            "172.17.0.0/x",
+            "::1/64",
+        ] {
+            let err = Request::parse(&["--local-net", bad, "h", "22"]).unwrap_err();
+            assert!(
+                err.contains("bad network") && err.contains(USAGE),
+                "{bad}: {err}"
+            );
+        }
+        assert!(Request::parse(&["--local-net"]).is_err());
+    }
+
+    /// An echo server on loopback; the port.
+    async fn echo() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (mut conn, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let (mut r, mut w) = conn.split();
+                    let _ = tokio::io::copy(&mut r, &mut w).await;
+                });
+            }
+        });
+        port
+    }
+
+    /// A proxy address nobody listens on: a connection that goes there fails loudly.
+    async fn no_proxy() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        listener.local_addr().unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_address_inside_the_workspace_is_dialled_directly_and_never_asked_of_the_proxy() {
+        let port = echo().await;
+        let direct = Settings {
+            lookup: names,
+            ..settings(no_proxy().await)
+        };
+        // A literal address, and a name that resolves to loopback.
+        for host in ["127.0.0.1", "::ffff:127.0.0.1", "app.test"] {
+            let (exit, stdout, stderr) =
+                go(&direct, &bridge_request(host, port), b"SSH-2.0-x\r\n").await;
+            assert_eq!(
+                (exit, stdout.as_str(), stderr.as_str()),
+                (Exit::Done, "SSH-2.0-x\r\n", ""),
+                "{host}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_dns_name_that_starts_with_127_goes_to_the_proxy_unless_it_resolves_inside() {
+        for host in [
+            "127.0.0.1.nip.test",
+            "127.evil.test",
+            "mixed.test",
+            "empty.test",
+            "nowhere.test",
+        ] {
+            let (addr, seen) =
+                proxy(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 3\r\n\r\nno\n").await;
+            let through = Settings {
+                lookup: names,
+                ..settings(addr)
+            };
+            let (exit, _, stderr) = go(&through, &bridge_request(host, 22), b"SSH-2.0-x\r\n").await;
+            assert_eq!((exit, stderr.as_str()), (Exit::Failed, "no\n"), "{host}");
+            let head = String::from_utf8(seen.await.unwrap()).unwrap();
+            assert!(
+                head.starts_with(&format!("CONNECT {host}:22 HTTP/1.1")),
+                "{head}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_local_destination_that_refuses_is_said_on_stderr() {
+        let closed = {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let direct = Settings {
+            lookup: names,
+            ..settings(no_proxy().await)
+        };
+        let (exit, stdout, stderr) = go(&direct, &bridge_request("app.test", closed), b"x").await;
+        assert_eq!((exit, stdout.as_str()), (Exit::Failed, ""));
+        assert!(
+            stderr.starts_with(&format!("puddle-agent connect: 127.0.0.1 port {closed}: ")),
+            "{stderr}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_direct_connection_whose_client_went_away_fails() {
+        let port = echo().await;
+        let direct = Settings {
+            lookup: names,
+            ..settings(no_proxy().await)
+        };
+        let (mut ssh, stdin) = tokio::io::duplex(64);
+        let (stdout, out) = tokio::io::duplex(64);
+        drop(out);
+        ssh.write_all(b"x").await.unwrap();
+        let mut stderr = Vec::new();
+        let request = bridge_request("127.0.0.1", port);
+        let exit = run(&direct, &request, stdin, stdout, &mut stderr).await;
+        assert_eq!(exit, Exit::Failed);
+    }
+
+    #[tokio::test]
+    async fn the_system_resolver_answers_with_addresses_and_gives_none_for_a_name_it_cannot_find() {
+        let limit = Duration::from_secs(10);
+        let found = system_lookup("localhost".to_owned(), 22, limit)
+            .await
+            .unwrap();
+        assert!(found.iter().all(IpAddr::is_loopback), "{found:?}");
+        assert_eq!(
+            system_lookup("bad host.invalid".to_owned(), 22, limit).await,
+            None
+        );
     }
 }

@@ -165,7 +165,15 @@ pub fn run(request: &Request, stdin: impl Read) -> Result<Outcome, MergeFileErro
                 .map_err(|e| MergeFileError::Spec(e.to_string()))?;
             let spec: MergeSpec =
                 serde_json::from_slice(&input).map_err(|e| MergeFileError::Spec(e.to_string()))?;
-            apply(request, &spec, mode)
+            let applied = apply(request, &spec, mode);
+            // The line in `ssh_config` only improves a message: a file puddle can't read or
+            // write is left as it is, with a notice, and never stops the boot.
+            match applied {
+                Err(e @ MergeFileError::Io { .. }) if spec.format() == MergeFormat::SshConfig => {
+                    Ok(Outcome::Left(e.to_string()))
+                }
+                other => other,
+            }
         }
         Action::Remove => remove(request),
         Action::Forget => {
@@ -603,5 +611,67 @@ mod tests {
         );
         assert!(Request::parse(&["apply", "/s", "/g", "/f", "17777"]).is_err());
         assert_eq!(Request::parse(&["nope"]).unwrap_err(), USAGE);
+    }
+
+    fn ssh_request(dir: &Dir) -> Request {
+        Request {
+            action: Action::Apply { mode: 0o644 },
+            state_dir: dir.0.join("state"),
+            key: "/etc/ssh/ssh_config".to_owned(),
+            file: dir.0.join("etc/ssh/ssh_config"),
+        }
+    }
+
+    fn ssh_include() -> Vec<u8> {
+        let entry = MergeEntry::ssh_include("/etc/ssh/ssh_config.d/*.conf");
+        serde_json::to_vec(&MergeSpec::new(MergeFormat::SshConfig, vec![entry]).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_include_line_is_added_once_and_the_rest_of_ssh_config_stays() {
+        let d = Dir::new("ssh-include");
+        let r = ssh_request(&d);
+        fs::create_dir_all(r.file.parent().unwrap()).unwrap();
+        let image = "Host *\n    SendEnv LANG LC_*\n";
+        fs::write(&r.file, image).unwrap();
+        fs::set_permissions(&r.file, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(run(&r, ssh_include().as_slice()).unwrap(), Outcome::Changed);
+        let merged = fs::read_to_string(&r.file).unwrap();
+        assert!(merged.ends_with(&format!("\nInclude /etc/ssh/ssh_config.d/*.conf\n{image}")));
+        assert_eq!(
+            fs::metadata(&r.file).unwrap().permissions().mode() & 0o7777,
+            0o600
+        );
+        assert_eq!(
+            run(&r, ssh_include().as_slice()).unwrap(),
+            Outcome::Unchanged
+        );
+        assert_eq!(fs::read_to_string(&r.file).unwrap(), merged);
+    }
+
+    #[test]
+    fn an_ssh_config_puddle_cannot_read_or_write_is_left_with_a_notice() {
+        // Not text: a refusal.
+        let d = Dir::new("ssh-binary");
+        let r = ssh_request(&d);
+        fs::create_dir_all(r.file.parent().unwrap()).unwrap();
+        fs::write(&r.file, b"Host a\0").unwrap();
+        let Outcome::Left(why) = run(&r, ssh_include().as_slice()).unwrap() else {
+            panic!("expected a notice")
+        };
+        assert!(why.contains("NUL"), "{why}");
+        assert_eq!(fs::read(&r.file).unwrap(), b"Host a\0");
+        // Not writable (a directory stands where the file is): a notice, not an error.
+        let d = Dir::new("ssh-directory");
+        let r = ssh_request(&d);
+        fs::create_dir_all(&r.file).unwrap();
+        let Outcome::Left(why) = run(&r, ssh_include().as_slice()).unwrap() else {
+            panic!("expected a notice")
+        };
+        assert!(why.contains("not a regular file"), "{why}");
+        // The same failure for a file puddle needs, such as the Docker config, stays an error.
+        let r = req(&d, Action::Apply { mode: 0o640 });
+        fs::create_dir_all(&r.file).unwrap();
+        assert!(run(&r, docker().as_slice()).is_err());
     }
 }

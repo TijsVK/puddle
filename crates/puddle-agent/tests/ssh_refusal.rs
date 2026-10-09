@@ -3,7 +3,7 @@
 //! `puddle-agent connect` binary as `ProxyCommand` (the drop-in `puddle-guest-env` writes), the
 //! agent's listener, a Unix socket route and the real proxy. Every SSH connection is refused with
 //! "SSH is not supported yet" on the client's own stderr; nothing reaches the rules, the inbox or
-//! the resolver; what is inside the workspace stays direct.
+//! the resolver; what is inside the workspace, decided by address, stays direct.
 //!
 //! Needs `ssh` and `git` on `PATH`. Without them the tests say so and pass locally; with `CI` set
 //! they fail instead.
@@ -345,13 +345,18 @@ async fn what_is_inside_the_workspace_stays_direct_and_the_users_own_proxy_comma
         "Host user-proxy.test\n  ProxyCommand sh -c 'echo user-proxy-ran >&2; exit 255'\n",
     );
     let drop_in = format!("'{AGENT}' connect");
+    // Only `localhost` and `::1` are exempt by name; every other destination, a literal local
+    // address and a DNS name that merely starts with 127. alike, goes through the agent, which
+    // looks at the address.
     for (target, through_agent) in [
         ("github.com", true),
         ("nas.example.test", true),
+        ("127.0.0.1", true),
+        ("172.17.0.5", true),
+        ("127.0.0.1.nip.example.test", true),
+        ("127.evil.example.test", true),
         ("localhost", false),
-        ("127.0.0.1", false),
         ("::1", false),
-        ("172.17.0.5", false),
         ("user-proxy.test", false),
     ] {
         let out = rig.ssh(&config, &["-G", target]).await;
@@ -363,22 +368,84 @@ async fn what_is_inside_the_workspace_stays_direct_and_the_users_own_proxy_comma
             "{target}: {proxy_command:?}"
         );
     }
-    // A connection to loopback is ssh's own, not the agent's: a closed port is refused by the
-    // kernel and said so by ssh, and the proxy never heard of it.
+    // A closed port on loopback: the connection is the agent's own, refused by the kernel and
+    // said so; the proxy never heard of it.
     let closed = {
         let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
         listener.local_addr().unwrap().port().to_string()
     };
-    let out = rig.ssh(&config, &["-p", &closed, "me@localhost"]).await;
-    assert!(
-        stderr(&out).contains("Connection refused"),
-        "{}",
-        stderr(&out)
-    );
-    assert!(!stderr(&out).contains("puddle"), "{}", stderr(&out));
+    for target in ["me@localhost", "me@127.0.0.1"] {
+        let out = rig.ssh(&config, &["-p", &closed, target]).await;
+        assert!(
+            stderr(&out).contains("Connection refused"),
+            "{target}: {}",
+            stderr(&out)
+        );
+        assert!(
+            !stderr(&out).contains("SSH is not supported"),
+            "{target}: {}",
+            stderr(&out)
+        );
+    }
     let out = rig.ssh(&config, &["me@user-proxy.test"]).await;
     assert!(stderr(&out).contains("user-proxy-ran"), "{}", stderr(&out));
     assert!(rig.log.events().is_empty(), "the proxy was never asked");
+}
+
+#[tokio::test]
+async fn an_ssh_server_on_a_local_address_is_reached_directly() {
+    if !clients_available() {
+        return;
+    }
+    let rig = Rig::new(&[]).await;
+    let config = rig.ssh_config("");
+    let server = TcpListener::bind((LOCAL, 0)).await.unwrap();
+    let port = server.local_addr().unwrap().port().to_string();
+    let seen = tokio::spawn(async move {
+        let (mut conn, _) = server.accept().await.unwrap();
+        conn.write_all(b"SSH-2.0-fixture\r\n").await.unwrap();
+        let mut got = Vec::new();
+        let mut buf = [0u8; 256];
+        while !got.ends_with(b"\n") {
+            let n = tokio::io::AsyncReadExt::read(&mut conn, &mut buf)
+                .await
+                .unwrap();
+            assert_ne!(n, 0, "ssh closed before it sent its identification");
+            got.extend_from_slice(&buf[..n]);
+        }
+        String::from_utf8(got).unwrap()
+    });
+    let out = rig.ssh(&config, &["-p", &port, "me@127.0.0.1"]).await;
+    let line = tokio::time::timeout(Duration::from_secs(10), seen)
+        .await
+        .expect("ssh reached the server")
+        .unwrap();
+    assert!(line.starts_with("SSH-2.0-OpenSSH"), "{line}");
+    assert!(
+        !stderr(&out).contains("SSH is not supported"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(rig.log.events().is_empty(), "the proxy was never asked");
+}
+
+#[tokio::test]
+async fn a_dns_name_that_starts_with_127_is_an_ordinary_destination() {
+    if !clients_available() {
+        return;
+    }
+    let rig = Rig::new(&[]).await;
+    let config = rig.ssh_config("");
+    for name in ["127.0.0.1.nip.example.test", "127.evil.example.test"] {
+        let out = rig.ssh(&config, &[&format!("me@{name}")]).await;
+        assert_eq!(
+            stderr(&out).lines().next(),
+            Some("puddle: SSH is not supported yet; no rule or setting allows it"),
+            "{name}: {}",
+            stderr(&out)
+        );
+    }
+    rig.assert_only_refusals(2).await;
 }
 
 #[tokio::test]
@@ -427,7 +494,9 @@ fn the_connect_command_without_a_destination_is_a_usage_error() {
     let out = Command::new(AGENT).arg("connect").output().unwrap();
     assert_eq!(out.status.code(), Some(2));
     assert!(
-        stderr(&out).contains("usage: puddle-agent connect <host> <port> [<name>]"),
+        stderr(&out).contains(
+            "usage: puddle-agent connect [--local-net <address>/<bits>]... <host> <port> [<name>]"
+        ),
         "{}",
         stderr(&out)
     );

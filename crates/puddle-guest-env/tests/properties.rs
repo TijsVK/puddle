@@ -90,7 +90,7 @@ proptest! {
         let ssh = file(SSH_CONFIG_GUEST);
         let active: Vec<&str> = ssh.lines().filter(|l| !l.starts_with('#')).collect();
         prop_assert_eq!(active.len(), 2, "{}", ssh);
-        prop_assert!(active[0].starts_with("Match host \"*,!"), "{}", active[0]);
+        prop_assert_eq!(active[0], "Match host \"*,!localhost,!::1\"", "{}", ssh);
         prop_assert!(active[1].starts_with("    ProxyCommand '"), "{}", active[1]);
         // Every user entry is in NO_PROXY once.
         let no_proxy: Vec<&str> = c.env.get("NO_PROXY").unwrap().split(',').collect();

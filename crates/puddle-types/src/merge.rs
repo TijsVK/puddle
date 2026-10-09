@@ -36,6 +36,7 @@ use crate::ValidationError;
 
 mod json;
 mod jsonc;
+mod sshconfig;
 
 /// Largest file the engine reads (4 MiB). A larger one is left alone.
 pub const MAX_MERGE_FILE: usize = 4 << 20;
@@ -51,6 +52,10 @@ pub enum MergeFormat {
     /// An object at the top level; the user's comments stay where they are. Values in a
     /// [`MergeEntry`] are plain JSON.
     Jsonc,
+    /// OpenSSH's `ssh_config`: puddle owns one `Include <pattern>` line (key path `["Include"]`,
+    /// the value is the pattern), added at the top when no `Include` before the first `Host` or
+    /// `Match` reads that pattern. The rest of the file keeps its bytes.
+    SshConfig,
 }
 
 /// One key puddle owns, as a path from the top level (`["proxies", "default"]`), and its value
@@ -68,6 +73,16 @@ impl MergeEntry {
         Self {
             key: key.iter().map(|k| (*k).to_owned()).collect(),
             value: value.to_string(),
+        }
+    }
+
+    /// The `Include` line of an `ssh_config` ([`MergeFormat::SshConfig`]): `pattern` is what it
+    /// includes, such as `/etc/ssh/ssh_config.d/*.conf`.
+    #[must_use]
+    pub fn ssh_include(pattern: &str) -> Self {
+        Self {
+            key: vec!["Include".to_owned()],
+            value: pattern.to_owned(),
         }
     }
 
@@ -164,6 +179,9 @@ pub enum MergeRefusal {
         /// The key path, joined with `.`.
         key: String,
     },
+    /// The file contains a NUL byte, so it isn't a text configuration file.
+    #[error("the file contains a NUL byte")]
+    NulByte,
     /// The engine's self-check failed (a bug); the file is left alone.
     #[error("the merged file failed puddle's consistency check")]
     Inconsistent,
@@ -201,6 +219,22 @@ impl MergeSpec {
                 MergeFormat::Json | MergeFormat::Jsonc => {
                     if serde_json::from_str::<serde_json::Value>(&e.value).is_err() {
                         return Err(ValidationError::new(WHAT, &shown, "value is not JSON"));
+                    }
+                }
+                MergeFormat::SshConfig => {
+                    if e.key != [sshconfig::KEY] {
+                        return Err(ValidationError::new(WHAT, &shown, "only Include is owned"));
+                    }
+                    if e.value.is_empty()
+                        || e.value
+                            .chars()
+                            .any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '#')
+                    {
+                        return Err(ValidationError::new(
+                            WHAT,
+                            &shown,
+                            "the pattern must be one word without quotes or #",
+                        ));
                     }
                 }
             }
@@ -248,13 +282,22 @@ impl MergeSpec {
         existing: Option<&[u8]>,
         previous: &[Vec<String>],
     ) -> Result<Merged, MergeRefusal> {
-        let original = text(existing)?;
+        if self.format == MergeFormat::SshConfig {
+            return sshconfig::apply(existing, &self.entries).map(|out| {
+                if existing == Some(out.as_bytes()) {
+                    Merged::Unchanged
+                } else {
+                    Merged::Write(out.into_bytes())
+                }
+            });
+        }
         let owned = self.keys();
         let dropped: Vec<&[String]> = previous
             .iter()
             .filter(|k| !owned.contains(k))
             .map(Vec::as_slice)
             .collect();
+        let original = text(existing)?;
         let dialect = dialect(self.format);
         json::apply(dialect, original.as_deref(), &dropped, &self.entries).map(|out| match out {
             Some(t) if original.as_deref() != Some(t.as_str()) => Merged::Write(t.into_bytes()),
@@ -273,6 +316,9 @@ pub fn unmerge(
     existing: &[u8],
     keys: &[Vec<String>],
 ) -> Result<Unmerged, MergeRefusal> {
+    if format == MergeFormat::SshConfig {
+        return sshconfig::unmerge(existing);
+    }
     let Some(original) = text(Some(existing))? else {
         return Ok(Unmerged {
             merged: Merged::Unchanged,
@@ -294,6 +340,7 @@ fn dialect(format: MergeFormat) -> json::Dialect {
     match format {
         MergeFormat::Json => json::Dialect::Strict,
         MergeFormat::Jsonc => json::Dialect::Comments,
+        MergeFormat::SshConfig => unreachable!("ssh_config has its own engine"),
     }
 }
 

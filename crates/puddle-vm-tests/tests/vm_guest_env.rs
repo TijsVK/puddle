@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 
 use microsandbox::Sandbox;
 use puddle_guest_env::{GuestProxyConfig, ProxySettings, guest_proxy_config};
+use puddle_types::{ApplyKind, GuestFile, MergeSpec};
 use puddle_vm_tests::{HarnessError, VmEnv, within};
 
 /// Node 24 (`NODE_USE_ENV_PROXY`), Debian 13 (Maven 3.9 for `MAVEN_ARGS`, `OpenJDK` 21).
@@ -413,6 +414,89 @@ fn probes() -> Vec<Probe> {
     ]
 }
 
+/// Runs `script` as root and returns its exit code and output.
+async fn root_shell(sb: &Sandbox, script: &str) -> (i32, String) {
+    let out = within(
+        "shell",
+        STEP_BUDGET,
+        sb.shell_with(script, |e| e.user("root")),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    (out.status().code, out.stdout().unwrap_or_default())
+}
+
+/// Where the spec of the merged file at `guest_path` is kept.
+fn merge_spec_path(guest_path: &str) -> String {
+    format!("/tmp/merge{}.spec", guest_path.replace('/', "_"))
+}
+
+/// Applies a merged file as the boot hook does: through `puddle-agent merge-file`.
+async fn merge_file(sb: &Sandbox, file: &GuestFile, spec: &MergeSpec) {
+    let spec_file = merge_spec_path(file.path().as_str());
+    write_file(sb, &spec_file, 0o600, &serde_json::to_vec(spec).unwrap()).await;
+    let path = sh_quote(file.path().as_str());
+    let (code, out) = root_shell(
+        sb,
+        &format!(
+            "/puddle/puddle-agent merge-file apply /var/lib/puddle/merge {path} {path} {:o} \
+             <{spec_file} 2>&1",
+            file.mode()
+        ),
+    )
+    .await;
+    assert_eq!(code, 0, "merging {path}: {out}");
+    assert!(
+        out.trim() == "changed" || out.trim() == "unchanged",
+        "merging {path}: {out}"
+    );
+}
+
+/// Takes the `Include` lines out of the image's `ssh_config`; returns the file as it is then. Checks
+/// that `ssh` does not see the drop-in's `ProxyCommand` (nothing is written yet).
+async fn ssh_config_without_include(sb: &Sandbox) -> String {
+    let (code, out) = root_shell(
+        sb,
+        "sed -i '/^[[:space:]]*[Ii]nclude/d' /etc/ssh/ssh_config && cat /etc/ssh/ssh_config",
+    )
+    .await;
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.to_lowercase().contains("include"), "{out}");
+    out
+}
+
+/// After the merge: the file is the stripped original behind the line puddle adds, a second merge
+/// changes nothing, and `ssh` now reads the drop-in.
+async fn check_ssh_config_include(sb: &Sandbox, before: &str) {
+    let (_, after) = root_shell(sb, "cat /etc/ssh/ssh_config").await;
+    let added = after.strip_suffix(before);
+    assert!(
+        added.is_some(),
+        "the original file is not kept byte for byte:\n{after}"
+    );
+    let added = added.unwrap_or_default();
+    assert!(
+        added.ends_with("\nInclude /etc/ssh/ssh_config.d/*.conf\n")
+            && added.starts_with("# Added by Puddle"),
+        "{added:?}"
+    );
+    let spec = merge_spec_path("/etc/ssh/ssh_config");
+    let (_, again) = root_shell(
+        sb,
+        &format!("cp /etc/ssh/ssh_config /tmp/ssh_config.merged; \
+         /puddle/puddle-agent merge-file apply /var/lib/puddle/merge /etc/ssh/ssh_config /etc/ssh/ssh_config 644 <{spec} 2>&1; \
+         cmp /etc/ssh/ssh_config /tmp/ssh_config.merged && echo same"),
+    )
+    .await;
+    assert_eq!(again.trim(), "unchanged\nsame", "{again}");
+    let (_, proxy) = root_shell(sb, "ssh -G git@ssh.fixture.test | grep -i '^proxycommand'").await;
+    assert!(
+        proxy.contains("connect"),
+        "ssh does not read the drop-in: {proxy:?}"
+    );
+}
+
 /// Runs `script` as root with `config`'s env; returns exit code and the output's tail.
 async fn run(sb: &Sandbox, config: &GuestProxyConfig, script: &str) -> (i32, String) {
     let env: Vec<(String, String)> = config
@@ -551,11 +635,8 @@ async fn tools_reach_the_fixture(env: &VmEnv) -> Result<Vec<Outcome>, HarnessErr
         }
         eprintln!("setup total {} s", started.elapsed().as_secs());
 
-        for f in &config.files {
-            write_file(&sb, f.path().as_str(), f.mode(), f.contents()).await;
-        }
-        // The agent binary the ssh drop-in runs as its ProxyCommand (the static build, as the boot
-        // hook's VM tests use).
+        // The agent binary the ssh drop-in runs as its ProxyCommand and the boot hook's merge tool
+        // (the static build, as the boot hook's VM tests use).
         let agent_bin = std::env::var_os("PUDDLE_AGENT_BIN");
         assert!(
             agent_bin.is_some(),
@@ -563,6 +644,16 @@ async fn tools_reach_the_fixture(env: &VmEnv) -> Result<Vec<Outcome>, HarnessErr
         );
         let agent = std::fs::read(agent_bin.unwrap()).unwrap();
         write_file(&sb, "/puddle/puddle-agent", 0o755, &agent).await;
+        // An image whose ssh_config has no Include line (Debian's has one): the drop-in is not
+        // read until the merge below adds the line.
+        let before = ssh_config_without_include(&sb).await;
+        for f in &config.files {
+            match f.apply() {
+                ApplyKind::Merge(spec) => merge_file(&sb, f, spec).await,
+                _ => write_file(&sb, f.path().as_str(), f.mode(), f.contents()).await,
+            }
+        }
+        check_ssh_config_include(&sb, &before).await;
         write_file(&sb, "/tmp/fixture.js", 0o644, FIXTURE.as_bytes()).await;
         write_file(&sb, "/tmp/Fetch.java", 0o644, JAVA_FETCH.as_bytes()).await;
         let up = within(
