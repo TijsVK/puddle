@@ -212,6 +212,9 @@ mod tests {
             "clear",
             r#"h30=":443""#,
             r#"H3=":443""#,
+            // A percent sign that does not start an escape stays what it is.
+            r#"h3%2=":443""#,
+            r#"h3%zz=":443""#,
             "h3",
             r#"h2=":443",,h2=":8443""#,
             "",
