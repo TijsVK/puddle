@@ -168,6 +168,7 @@ jobs:
           export PUDDLE_AGENT_BIN="$RUNNER_TEMP/bundle/puddle-agent"
           # cargo-nextest is called directly: through `cargo` it would make rustup install the
           # pinned toolchain here, which an archive run never needs.
+          mkdir -p "$RUNNER_TEMP/vmx"
           # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, not here. Each run gets its
           # own prefix, so its sandbox names and private msb home never meet another run's.
           base="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
