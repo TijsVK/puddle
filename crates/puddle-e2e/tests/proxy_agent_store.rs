@@ -248,10 +248,10 @@ async fn two_thousand_connections_held_open_at_once_all_succeed() {
     const HELD: usize = 2000;
     let limit = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft);
     eprintln!("{limit}");
-    if !limit.allows(4 * HELD as u64 + 512) {
-        eprintln!("skipped: the hard limit is below {}", 4 * HELD + 512);
-        return;
-    }
+    assert!(
+        limit.allows(4 * HELD as u64 + 512),
+        "this machine's hard open-file limit cannot hold {HELD} connections through one process: {limit}"
+    );
     let rig = rig().await;
     allow(&rig.store, "echo.test");
     let echo = echo_server().await;
