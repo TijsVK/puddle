@@ -47,6 +47,11 @@ pub struct WorkspaceLayer {
     /// VS Code, a terminal `ssh`). Off means no SSH endpoint and no ssh config entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direct_ssh: Option<bool>,
+    /// Whether a login made inside the workspace (Claude Code, GitHub's `gh` and Copilot CLI) is
+    /// captured: puddle keeps the real token on the host and the workspace holds a stand-in.
+    /// Applies at the workspace's next start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_logins: Option<bool>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -154,11 +159,12 @@ mod tests {
             zoom_hotkeys: Some(false),
             clipboard_read: Some(ClipboardRead::Deny),
             direct_ssh: Some(true),
+            capture_logins: Some(false),
             extra: BTreeMap::new(),
         };
         assert_eq!(
             serde_json::to_string(&l).unwrap(),
-            r#"{"memory":1024,"local_toggles":{"metadata":false},"wildcards_reach_local":true,"reconnection_grace":60,"zoom_hotkeys":false,"clipboard_read":"deny","direct_ssh":true}"#
+            r#"{"memory":1024,"local_toggles":{"metadata":false},"wildcards_reach_local":true,"reconnection_grace":60,"zoom_hotkeys":false,"clipboard_read":"deny","direct_ssh":true,"capture_logins":false}"#
         );
         assert_eq!(
             serde_json::from_str::<WorkspaceLayer>(&serde_json::to_string(&l).unwrap()).unwrap(),

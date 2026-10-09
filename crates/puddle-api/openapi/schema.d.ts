@@ -1760,6 +1760,8 @@ export interface components {
         Effect: "allow" | "deny";
         /** @description The values a workspace gets: its override, else the global value, else puddle's default. */
         EffectiveSettings: {
+            /** @description Whether logins made inside the workspace are captured. */
+            capture_logins: components["schemas"]["ResolvedBool"];
             /** @description Clipboard reads. */
             clipboard_read: components["schemas"]["ResolvedClipboardRead"];
             /** @description Whether direct SSH is on. */
@@ -1994,6 +1996,15 @@ export interface components {
             /** @enum {string} */
             type: "git_access_denied";
             /** @description The workspace that tried. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
+            /** @description What is wrong. */
+            kind: components["schemas"]["LoginProblemKind"];
+            /** @description The service as the user knows it (`Claude Code`, `GitHub`). */
+            service: string;
+            /** @enum {string} */
+            type: "login_problem";
+            /** @description The workspace the login is in. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
             /**
@@ -2282,6 +2293,11 @@ export interface components {
             /** @description Other special-purpose ranges. */
             special: boolean | null;
         };
+        /**
+         * @description What is wrong with a login, as [`Event::LoginProblem`] reports it.
+         * @enum {string}
+         */
+        LoginProblemKind: "store_unavailable" | "unexpected_answer" | "unusable_token" | "bound_token" | "unreadable";
         /** @description `GET /api/network-health`: everything puddle knows about how it reaches the internet. */
         NetworkHealth: {
             /**
@@ -2974,6 +2990,12 @@ export interface components {
          *     global value, then puddle's default) applies.
          */
         SettingsLayer: {
+            /**
+             * @description Whether a login made inside the workspace (Claude Code, `gh`, Copilot CLI) is captured:
+             *     puddle keeps the real token on the host and the workspace holds a stand-in that works
+             *     only through puddle. On by default; applies at the workspace's next start.
+             */
+            capture_logins: boolean | null;
             clipboard_read: components["schemas"]["ClipboardRead"] | null;
             /**
              * @description Whether puddle opens an SSH way into the workspace for the user's own tools (desktop

@@ -932,6 +932,42 @@ test.describe("the settings tab", () => {
     ).toBeVisible();
   });
 
+  test("login capture is on by default, can be turned off for the workspace and goes back to the global default", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop", "settings");
+    const capture = page.getByLabel("Keep logins made in this workspace");
+    await expect(capture).toHaveValue("inherit");
+    await expect(capture.locator("option").first()).toContainText(
+      "Use the global setting (on)",
+    );
+    await capture.selectOption("off");
+    await expect(page.getByText("Login capture saved.")).toBeVisible();
+    const stored = (await (
+      await request.get("/api/settings/workspaces/web-shop", {
+        headers: auth(backend),
+      })
+    ).json()) as {
+      overrides: { capture_logins: boolean | null };
+      effective: { capture_logins: { source: string; value: boolean } };
+    };
+    expect(stored.overrides.capture_logins).toBe(false);
+    expect(stored.effective.capture_logins).toEqual({
+      value: false,
+      source: "workspace",
+    });
+    await page.reload();
+    await expect(
+      page.getByLabel("Keep logins made in this workspace"),
+    ).toHaveValue("off");
+    await page
+      .getByLabel("Keep logins made in this workspace")
+      .selectOption("inherit");
+    await expect(page.getByText("Login capture saved.")).toBeVisible();
+  });
+
   test("a refused save says why and puts the choice back", async ({
     page,
     backend,

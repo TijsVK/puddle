@@ -21,6 +21,7 @@ const noLayer = (): S["SettingsLayer"] => ({
   wildcards_reach_local: null,
   zoom_hotkeys: null,
   direct_ssh: null,
+  capture_logins: null,
 });
 
 export class FakeSettings {
@@ -116,6 +117,7 @@ export class FakeSettings {
         },
         zoom_hotkeys: this.pick(l.zoom_hotkeys, true),
         direct_ssh: this.pick(l.direct_ssh),
+        capture_logins: this.pick(l.capture_logins, true),
         clipboard_read: {
           value: l.clipboard_read ?? "ask",
           source: l.clipboard_read === null ? "default" : "global",

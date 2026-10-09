@@ -17,6 +17,7 @@ import { asWorkspaceEvent } from "#lib/workspaces/events.ts";
 import { identities } from "#lib/stores/identities.svelte.ts";
 import type { LiveSource } from "#lib/stores/live.svelte.ts";
 import { CredentialNotices, type IdentityLookup } from "./credentials.ts";
+import { LoginNotices } from "./logins.ts";
 import { InAppNotifier, type Notifier } from "./notifier.ts";
 
 type Status = components["schemas"]["WorkspaceStatus"];
@@ -39,6 +40,7 @@ export class NoticeWatcher {
   readonly #notifier: Notifier;
   readonly #api: Pick<ApiClient, "GET" | "POST" | "PUT">;
   readonly #credentials: CredentialNotices;
+  readonly #logins: LoginNotices;
   readonly #status = new Map<string, Status>();
   readonly #expected = new Set<string>();
   /** The summary the network notice last said, so an unchanged problem is not announced again. */
@@ -53,6 +55,7 @@ export class NoticeWatcher {
       identities: deps.identities ?? identities,
       api: this.#api,
     });
+    this.#logins = new LoginNotices(this.#notifier);
   }
 
   /** Reads the statuses the events will be compared with; never throws. */
@@ -71,7 +74,7 @@ export class NoticeWatcher {
 
   /** Applies one stream event. */
   handle(raw: unknown): void {
-    if (this.#credentials.handle(raw)) return;
+    if (this.#credentials.handle(raw) || this.#logins.handle(raw)) return;
     const event = asWorkspaceEvent(raw);
     if (!event) return;
     const name = event.workspace;

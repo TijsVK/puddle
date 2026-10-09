@@ -16,6 +16,7 @@
     memoryOptions,
     memoryToChoice,
     sourceLabel,
+    switchOptions,
     toggleFromChoice,
     toggleOptions,
     toggleToChoice,
@@ -31,6 +32,7 @@
   let saved = $state<string | null>(null);
   let problem = $state<string | null>(null);
   let restartHint = $state(false);
+  let captureHint = $state(false);
 
   // Reload only for another workspace, not on every status change of this one.
   const name = $derived(workspace?.name);
@@ -116,6 +118,20 @@
     if (ok) await workspaces.refresh();
   }
 
+  async function saveCapture(select: HTMLSelectElement) {
+    const ok = await save(
+      { capture_logins: toggleFromChoice(select.value) },
+      "Login capture",
+      () => {
+        select.value = toggleToChoice(
+          settings.overrides?.capture_logins ?? null,
+        );
+      },
+    );
+    restartHint = false;
+    captureHint = ok && workspace?.status === "running";
+  }
+
   async function saveClipboard(select: HTMLSelectElement) {
     await save(
       {
@@ -151,6 +167,9 @@
       {#if problem}<p class="error" role="alert">{problem}</p>{/if}
       {#if restartHint}
         <p>The new memory applies the next time the workspace starts.</p>
+      {/if}
+      {#if captureHint}
+        <p>The new login setting applies the next time the workspace starts.</p>
       {/if}
     </div>
 
@@ -225,6 +244,36 @@
           onchange={(e) => void saveDirectSsh(e.currentTarget)}
         >
           {#each toggleOptions(global.direct_ssh.value) as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="logins-h">
+      <h2 id="logins-h">Logins</h2>
+      <div class="setting">
+        <div class="grow">
+          <label for="ws-capture">Keep logins made in this workspace</label>
+          <p class="desc" id="ws-capture-desc">
+            When you sign in to Claude Code, GitHub or Copilot inside this
+            workspace, puddle keeps the real token on this computer. The
+            workspace gets a stand-in that works only through puddle, so nothing
+            running in the workspace can copy your login. A change takes effect
+            when the workspace next starts; turning it off leaves the logins
+            puddle already kept unused, so sign in again in the workspace.
+            <span class="chip"
+              >{sourceLabel(effective.capture_logins.source)}</span
+            >
+          </p>
+        </div>
+        <select
+          id="ws-capture"
+          aria-describedby="ws-capture-desc"
+          value={toggleToChoice(overrides.capture_logins)}
+          onchange={(e) => void saveCapture(e.currentTarget)}
+        >
+          {#each switchOptions(global.capture_logins.value) as option (option.value)}
             <option value={option.value}>{option.label}</option>
           {/each}
         </select>

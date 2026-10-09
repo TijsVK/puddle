@@ -611,6 +611,46 @@ describe("the settings tab", () => {
     );
   });
 
+  it("keeps logins by default, turns capture off or back to the global default, and says the next start applies it", async () => {
+    await open();
+    const select = screen.getByLabelText(
+      "Keep logins made in this workspace",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("inherit");
+    expect(
+      screen.getByRole("option", { name: "Use the global setting (on)" }),
+    ).toBeInTheDocument();
+    await fireEvent.change(select, { target: { value: "off" } });
+    await screen.findByText("Login capture saved.");
+    expect(api.overrides["demo"]?.capture_logins).toBe(false);
+    expect(
+      await screen.findByText(
+        "The new login setting applies the next time the workspace starts.",
+      ),
+    ).toBeInTheDocument();
+    await fireEvent.change(select, { target: { value: "inherit" } });
+    await vi.waitFor(() =>
+      expect(api.overrides["demo"]?.capture_logins).toBeNull(),
+    );
+  });
+
+  it("doesn't mention a restart for login capture when the workspace isn't running, and puts the choice back when the save is refused", async () => {
+    api.list = [workspace("demo", { status: "stopped" })];
+    await open();
+    const select = screen.getByLabelText(
+      "Keep logins made in this workspace",
+    ) as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: "on" } });
+    await screen.findByText("Login capture saved.");
+    expect(screen.queryByText(/applies the next time/)).toBeNull();
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
+      status: 422,
+      message: "no",
+    });
+    await fireEvent.change(select, { target: { value: "off" } });
+    await vi.waitFor(() => expect(select.value).toBe("on"));
+  });
+
   it("saves a local toggle and the clipboard, keeping the others as they were", async () => {
     await open();
     await fireEvent.change(screen.getByLabelText("Private networks"), {

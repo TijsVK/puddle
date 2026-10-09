@@ -60,6 +60,18 @@ export function toggleOptions(globalOn: boolean): Option<ToggleChoice>[] {
   ];
 }
 
+/** The login capture switch: inherit, on or off, in the words of a switch. */
+export function switchOptions(globalOn: boolean): Option<ToggleChoice>[] {
+  return [
+    {
+      value: "inherit",
+      label: `Use the global setting (${globalOn ? "on" : "off"})`,
+    },
+    { value: "on", label: "On" },
+    { value: "off", label: "Off" },
+  ];
+}
+
 export const CLIPBOARD_OPTIONS: Option<Clipboard>[] = [
   { value: "ask", label: "Ask me each time" },
   { value: "allow", label: "Always allow" },

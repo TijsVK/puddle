@@ -203,6 +203,17 @@ pub enum Event {
         /// What was refused.
         access: GitAccess,
     },
+    /// A login made inside a workspace could not be captured, or one puddle kept could not be
+    /// used (`kind` says which). The service is one of puddle's built-in login profiles, never
+    /// anything the guest sent. Names only, never a value.
+    LoginProblem {
+        /// The workspace the login is in.
+        workspace: WorkspaceName,
+        /// The service as the user knows it (`Claude Code`, `GitHub`).
+        service: String,
+        /// What is wrong.
+        kind: LoginProblemKind,
+    },
     /// New audit records were committed. `id` is the newest record's id, so a client that holds
     /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit,
     /// not per record. Global: every subscriber gets it.
@@ -251,6 +262,28 @@ pub enum GitAccess {
     Push,
     /// A fetch or clone (`git-upload-pack`).
     Pull,
+}
+
+/// What is wrong with a login, as [`Event::LoginProblem`] reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[non_exhaustive]
+pub enum LoginProblemKind {
+    /// The operating system's credential store did not take the token: the workspace got the real
+    /// token, so the login works but is not protected.
+    StoreUnavailable,
+    /// The service's answer was in a form puddle does not read: the workspace got the real token.
+    UnexpectedAnswer,
+    /// The token has a length or a character a stand-in cannot copy: the workspace got the real
+    /// token.
+    UnusableToken,
+    /// The service ties its tokens to a key of the tool's own, which a stand-in cannot stand in
+    /// for: the workspace got the real token.
+    BoundToken,
+    /// A login puddle kept earlier could not be read back when the workspace started: the tool
+    /// asks for a new sign-in.
+    Unreadable,
 }
 
 /// How a pending request ended.
@@ -335,6 +368,7 @@ impl Event {
             | Self::PendingClosed { workspace, .. }
             | Self::SuppressionChanged { workspace, .. }
             | Self::GitAccessDenied { workspace, .. }
+            | Self::LoginProblem { workspace, .. }
             | Self::WorkspaceGitChanged { workspace }
             | Self::WorkspaceEnvChanged { workspace }
             | Self::WorkspaceEnvFailed { workspace, .. } => Some(workspace),
@@ -675,6 +709,24 @@ mod tests {
                 r#"{"type":"git_access_denied","workspace":"box","host":"dev.azure.com","owner":"acme","repo":"proj/web","access":"push"}"#,
                 Some(name()),
             ),
+            (
+                Event::LoginProblem {
+                    workspace: name(),
+                    service: "Claude Code".into(),
+                    kind: LoginProblemKind::StoreUnavailable,
+                },
+                r#"{"type":"login_problem","workspace":"box","service":"Claude Code","kind":"store_unavailable"}"#,
+                Some(name()),
+            ),
+            (
+                Event::LoginProblem {
+                    workspace: name(),
+                    service: "GitHub".into(),
+                    kind: LoginProblemKind::Unreadable,
+                },
+                r#"{"type":"login_problem","workspace":"box","service":"GitHub","kind":"unreadable"}"#,
+                Some(name()),
+            ),
         ] {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);
             assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
@@ -737,6 +789,7 @@ mod tests {
                 "workspace_env_failed",
                 "credential_sign_in_needed",
                 "git_access_denied",
+                "login_problem",
                 "audit_appended",
                 "network_changed"
             ]

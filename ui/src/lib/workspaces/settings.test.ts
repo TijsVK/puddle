@@ -8,6 +8,7 @@ import {
   memoryToChoice,
   sourceLabel,
   toggleFromChoice,
+  switchOptions,
   toggleOptions,
   toggleToChoice,
 } from "./settings.ts";
@@ -67,6 +68,18 @@ describe("toggles", () => {
       "inherit",
       "on",
       "off",
+    ]);
+  });
+});
+
+describe("the login capture switch", () => {
+  it("names what the global setting is, in the words of a switch", () => {
+    expect(switchOptions(true)[0]?.label).toBe("Use the global setting (on)");
+    expect(switchOptions(false)[0]?.label).toBe("Use the global setting (off)");
+    expect(switchOptions(true).map((o) => [o.value, o.label])).toEqual([
+      ["inherit", "Use the global setting (on)"],
+      ["on", "On"],
+      ["off", "Off"],
     ]);
   });
 });

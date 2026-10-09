@@ -7772,9 +7772,14 @@
           "reconnection_grace",
           "zoom_hotkeys",
           "clipboard_read",
-          "direct_ssh"
+          "direct_ssh",
+          "capture_logins"
         ],
         "properties": {
+          "capture_logins": {
+            "$ref": "#/components/schemas/ResolvedBool",
+            "description": "Whether logins made inside the workspace are captured."
+          },
           "clipboard_read": {
             "$ref": "#/components/schemas/ResolvedClipboardRead",
             "description": "Clipboard reads."
@@ -8393,6 +8398,36 @@
               "workspace": {
                 "$ref": "#/components/schemas/WorkspaceName",
                 "description": "The workspace that tried."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A login made inside a workspace could not be captured, or one puddle kept could not be\nused (`kind` says which). The service is one of puddle's built-in login profiles, never\nanything the guest sent. Names only, never a value.",
+            "required": [
+              "workspace",
+              "service",
+              "kind",
+              "type"
+            ],
+            "properties": {
+              "kind": {
+                "$ref": "#/components/schemas/LoginProblemKind",
+                "description": "What is wrong."
+              },
+              "service": {
+                "type": "string",
+                "description": "The service as the user knows it (`Claude Code`, `GitHub`)."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "login_problem"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace the login is in."
               }
             }
           },
@@ -9091,6 +9126,17 @@
           }
         },
         "additionalProperties": false
+      },
+      "LoginProblemKind": {
+        "type": "string",
+        "description": "What is wrong with a login, as [`Event::LoginProblem`] reports it.",
+        "enum": [
+          "store_unavailable",
+          "unexpected_answer",
+          "unusable_token",
+          "bound_token",
+          "unreadable"
+        ]
       },
       "NetworkHealth": {
         "type": "object",
@@ -10628,9 +10674,17 @@
           "reconnection_grace",
           "zoom_hotkeys",
           "clipboard_read",
-          "direct_ssh"
+          "direct_ssh",
+          "capture_logins"
         ],
         "properties": {
+          "capture_logins": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a login made inside the workspace (Claude Code, `gh`, Copilot CLI) is captured:\npuddle keeps the real token on the host and the workspace holds a stand-in that works\nonly through puddle. On by default; applies at the workspace's next start."
+          },
           "clipboard_read": {
             "oneOf": [
               {

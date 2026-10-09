@@ -359,6 +359,35 @@
             }}
           />
         </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-capture">Keep logins made in workspaces</label>
+            <p class="desc" id="set-capture-desc">
+              When you sign in to Claude Code, GitHub or Copilot inside a
+              workspace, puddle keeps the real token on this computer and the
+              workspace gets a stand-in that works only through puddle. On by
+              default. A workspace can set its own switch; a change takes effect
+              when a workspace next starts, and turning it off leaves the logins
+              puddle already kept unused.
+            </p>
+          </div>
+          <input
+            id="set-capture"
+            type="checkbox"
+            aria-describedby="set-capture-desc"
+            checked={eff.capture_logins.value}
+            onchange={(e) => {
+              const box = e.currentTarget;
+              void layerPatch(
+                { capture_logins: box.checked },
+                "Login capture",
+                () => {
+                  box.checked = eff.capture_logins.value;
+                },
+              );
+            }}
+          />
+        </div>
       </section>
 
       <section class="card" id="s-net" aria-labelledby="h-net">

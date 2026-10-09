@@ -288,6 +288,22 @@ describe("workspace defaults and the network", () => {
     await waitFor(() => expect(api.layer.direct_ssh).toBe(false));
   });
 
+  it("keeps logins by default and turns the default off and back on at once", async () => {
+    await open();
+    const box = screen.getByLabelText("Keep logins made in workspaces");
+    expect(box).toBeChecked();
+    await fireEvent.click(box);
+    await waitFor(() => expect(api.layer.capture_logins).toBe(false));
+    await screen.findByText("Login capture saved.");
+    expect(
+      screen.getByLabelText("Keep logins made in workspaces"),
+    ).not.toBeChecked();
+    await fireEvent.click(
+      screen.getByLabelText("Keep logins made in workspaces"),
+    );
+    await waitFor(() => expect(api.layer.capture_logins).toBe(true));
+  });
+
   it("cancelling the global trust text changes nothing", async () => {
     await open();
     await fireEvent.click(

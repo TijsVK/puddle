@@ -15,7 +15,8 @@ fn null_layer() -> Value {
         "reconnection_grace": null,
         "zoom_hotkeys": null,
         "clipboard_read": null,
-        "direct_ssh": null
+        "direct_ssh": null,
+        "capture_logins": null
     })
 }
 
@@ -43,6 +44,11 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
     assert_eq!(
         e["direct_ssh"],
         json!({"value": false, "source": "default"})
+    );
+    assert_eq!(
+        e["capture_logins"],
+        json!({"value": true, "source": "default"}),
+        "login capture is on until someone turns it off"
     );
     // Reading wrote nothing.
     assert_eq!(api.settings.load_global().unwrap(), None);
@@ -72,7 +78,7 @@ async fn global_and_workspace_values_resolve_in_order() {
         .send(
             "PUT",
             "/api/settings/workspaces/big",
-            Some(&json!({"overrides": {"memory": 16384, "clipboard_read": "deny"}})),
+            Some(&json!({"overrides": {"memory": 16384, "clipboard_read": "deny", "capture_logins": false}})),
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -84,6 +90,10 @@ async fn global_and_workspace_values_resolve_in_order() {
     );
     assert_eq!(view["effective"]["clipboard_read"]["source"], "workspace");
     assert_eq!(
+        view["effective"]["capture_logins"],
+        json!({"value": false, "source": "workspace"})
+    );
+    assert_eq!(
         view["effective"]["local_toggles"]["private"],
         json!({"value": true, "source": "global"})
     );
@@ -93,6 +103,7 @@ async fn global_and_workspace_values_resolve_in_order() {
     let plain = api.get("/api/settings/workspaces/plain").await.json();
     assert_eq!(plain["overrides"], null_layer());
     assert_eq!(plain["effective"]["memory"]["value"], 4096);
+    assert_eq!(plain["effective"]["capture_logins"]["value"], true);
     let name = WorkspaceName::new("plain").unwrap();
     assert_eq!(api.settings.load_workspace(&name).unwrap(), None);
 

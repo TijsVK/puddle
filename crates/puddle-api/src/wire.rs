@@ -1381,6 +1381,12 @@ pub struct SettingsLayer {
     #[serde(default)]
     #[schema(required = true)]
     pub direct_ssh: Option<bool>,
+    /// Whether a login made inside the workspace (Claude Code, `gh`, Copilot CLI) is captured:
+    /// puddle keeps the real token on the host and the workspace holds a stand-in that works
+    /// only through puddle. On by default; applies at the workspace's next start.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub capture_logins: Option<bool>,
 }
 
 impl From<&settings::WorkspaceLayer> for SettingsLayer {
@@ -1395,6 +1401,7 @@ impl From<&settings::WorkspaceLayer> for SettingsLayer {
             zoom_hotkeys: layer.zoom_hotkeys,
             clipboard_read: layer.clipboard_read.map(Into::into),
             direct_ssh: layer.direct_ssh,
+            capture_logins: layer.capture_logins,
         }
     }
 }
@@ -1411,6 +1418,7 @@ impl SettingsLayer {
             zoom_hotkeys,
             clipboard_read,
             direct_ssh,
+            capture_logins,
         } = self;
         layer.memory = memory.map(MemoryMib::new).transpose().map_err(invalid)?;
         local_toggles.apply_to(&mut layer.local_toggles);
@@ -1422,6 +1430,7 @@ impl SettingsLayer {
         layer.zoom_hotkeys = zoom_hotkeys;
         layer.clipboard_read = clipboard_read.map(Into::into);
         layer.direct_ssh = direct_ssh;
+        layer.capture_logins = capture_logins;
         Ok(())
     }
 }
@@ -1792,6 +1801,8 @@ pub struct EffectiveSettings {
     pub clipboard_read: ResolvedClipboardRead,
     /// Whether direct SSH is on.
     pub direct_ssh: ResolvedBool,
+    /// Whether logins made inside the workspace are captured.
+    pub capture_logins: ResolvedBool,
 }
 
 impl From<settings::Effective> for EffectiveSettings {
@@ -1804,6 +1815,7 @@ impl From<settings::Effective> for EffectiveSettings {
             zoom_hotkeys,
             clipboard_read,
             direct_ssh,
+            capture_logins,
         } = e;
         let settings::EffectiveToggles {
             loopback,
@@ -1835,6 +1847,7 @@ impl From<settings::Effective> for EffectiveSettings {
                 source: clipboard_read.source.into(),
             },
             direct_ssh: rb(direct_ssh),
+            capture_logins: rb(capture_logins),
         }
     }
 }
@@ -2092,7 +2105,8 @@ mod tests {
                 "reconnection_grace": 60,
                 "zoom_hotkeys": false,
                 "clipboard_read": "deny",
-                "direct_ssh": true
+                "direct_ssh": true,
+                "capture_logins": false
             }
         });
         let loaded = settings::WorkspaceSettings::from_document(doc).unwrap();

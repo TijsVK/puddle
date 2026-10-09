@@ -44,6 +44,8 @@ pub struct Effective {
     pub clipboard_read: Resolved<ClipboardRead>,
     /// Whether puddle opens an SSH endpoint and an ssh config entry for the workspace.
     pub direct_ssh: Resolved<bool>,
+    /// Whether logins made inside the workspace are captured (the real tokens stay on the host).
+    pub capture_logins: Resolved<bool>,
 }
 
 /// The local-destination toggles in effect for one workspace.
@@ -101,6 +103,7 @@ impl Effective {
         zoom_hotkeys: default(true),
         clipboard_read: default(ClipboardRead::Ask),
         direct_ssh: default(false),
+        capture_logins: default(true),
     };
 }
 
@@ -157,6 +160,7 @@ pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -
         zoom_hotkeys,
         clipboard_read,
         direct_ssh,
+        capture_logins,
         extra: _,
     } = s;
     let LocalToggles {
@@ -201,6 +205,7 @@ pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -
         zoom_hotkeys: pick(*zoom_hotkeys, g.zoom_hotkeys, d.zoom_hotkeys),
         clipboard_read: pick(*clipboard_read, g.clipboard_read, d.clipboard_read),
         direct_ssh: pick(*direct_ssh, g.direct_ssh, d.direct_ssh),
+        capture_logins: pick(*capture_logins, g.capture_logins, d.capture_logins),
     }
 }
 
@@ -220,6 +225,23 @@ mod tests {
         let e = resolve(&g, Some(&s));
         assert!(!e.direct_ssh.value);
         assert_eq!(e.direct_ssh.source, Source::Workspace);
+    }
+
+    #[test]
+    fn login_capture_is_on_until_someone_turns_it_off() {
+        let mut g = GlobalSettings::default();
+        let mut s = WorkspaceSettings::default();
+        let e = resolve(&g, Some(&s));
+        assert!(e.capture_logins.value);
+        assert_eq!(e.capture_logins.source, Source::Default);
+        g.workspace_defaults.capture_logins = Some(false);
+        let e = resolve(&g, Some(&s));
+        assert!(!e.capture_logins.value);
+        assert_eq!(e.capture_logins.source, Source::Global);
+        s.overrides.capture_logins = Some(true);
+        let e = resolve(&g, Some(&s));
+        assert!(e.capture_logins.value);
+        assert_eq!(e.capture_logins.source, Source::Workspace);
     }
 
     #[test]

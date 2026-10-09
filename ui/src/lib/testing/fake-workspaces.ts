@@ -63,6 +63,7 @@ export function dirtyCheck(name: string): DeleteCheck {
 }
 
 const noLayer = (): Layer => ({
+  capture_logins: null,
   clipboard_read: null,
   direct_ssh: null,
   local_toggles: {
@@ -154,6 +155,10 @@ export class FakeWorkspaces {
       wildcards_reach_local: resolved(false, "default"),
       zoom_hotkeys: resolved(true, "default"),
       direct_ssh: pick(o.direct_ssh),
+      capture_logins:
+        o.capture_logins === null
+          ? resolved(true, "default")
+          : resolved(o.capture_logins, "workspace"),
     };
   }
 
