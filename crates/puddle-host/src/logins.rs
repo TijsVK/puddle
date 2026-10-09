@@ -39,10 +39,10 @@ impl LoginNotices for EventNotices {
 fn kind_of(problem: Problem) -> LoginProblemKind {
     match problem {
         Problem::StoreUnavailable => LoginProblemKind::StoreUnavailable,
-        Problem::UnexpectedAnswer => LoginProblemKind::UnexpectedAnswer,
         Problem::UnusableToken => LoginProblemKind::UnusableToken,
         Problem::BoundToken => LoginProblemKind::BoundToken,
         Problem::Unreadable => LoginProblemKind::Unreadable,
+        // `UnexpectedAnswer` and any problem a later version adds.
         _ => LoginProblemKind::UnexpectedAnswer,
     }
 }
