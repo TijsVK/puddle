@@ -795,6 +795,9 @@ pub(crate) struct ConnectionWindow {
     second: u64,
     written: u32,
     excess: u64,
+    /// A summary whose audit write failed: `(second_start_ms, count)`, handed out again by the
+    /// next [`ConnectionWindow::roll`].
+    owed: Option<(u64, u64)>,
 }
 
 impl ConnectionWindow {
@@ -811,19 +814,34 @@ impl ConnectionWindow {
         }
     }
 
-    /// The summary of a finished second with excess, if `now` is past it.
+    /// The summary of a finished second with excess, if `now` is past it, merged with one owed
+    /// from a failed write.
     pub(crate) fn roll(&mut self, now: u64) -> Option<(u64, u64)> {
         let second = now / 1000;
-        if second == self.second {
-            return None;
-        }
-        let finished = (self.excess > 0).then_some((self.second * 1000, self.excess));
-        *self = Self {
-            second,
-            written: 0,
-            excess: 0,
+        let finished = if second == self.second {
+            None
+        } else {
+            let finished = (self.excess > 0).then_some((self.second * 1000, self.excess));
+            *self = Self {
+                second,
+                written: 0,
+                excess: 0,
+                owed: self.owed,
+            };
+            finished
         };
-        finished
+        match (self.owed.take(), finished) {
+            (Some((a_ts, a)), Some((b_ts, b))) => Some((a_ts.min(b_ts), a + b)),
+            (owed, finished) => owed.or(finished),
+        }
+    }
+
+    /// Keeps a summary whose audit write failed, to hand out again.
+    pub(crate) fn owe(&mut self, ts: u64, count: u64) {
+        self.owed = match self.owed {
+            Some((owed_ts, owed)) => Some((owed_ts.min(ts), owed + count)),
+            None => Some((ts, count)),
+        };
     }
 }
 
