@@ -28,6 +28,7 @@ mod identities;
 mod meta;
 mod network_health;
 mod pending;
+mod problems;
 mod repos;
 mod rule_sets;
 mod rules;
@@ -42,6 +43,7 @@ pub(crate) struct AppState {
     /// Serialises settings read-modify-write cycles.
     pub(crate) settings_lock: Arc<Mutex<()>>,
     pub(crate) events: Arc<EventHub>,
+    pub(crate) problems: Arc<puddle_types::Problems>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) workspaces: Arc<dyn WorkspaceService>,
     pub(crate) network_health: Arc<dyn NetworkHealthService>,
@@ -58,6 +60,7 @@ pub(crate) struct AppState {
 pub(crate) fn api_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(meta::health))
+        .routes(routes!(problems::list_problems))
         .routes(routes!(events::events))
         .routes(routes!(network_health::network_health))
         .routes(routes!(pending::list_pending))

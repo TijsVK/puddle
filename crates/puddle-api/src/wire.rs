@@ -83,6 +83,13 @@ pub struct Health {
     pub api_version: String,
 }
 
+/// The background problems that stand.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ProblemList {
+    /// Ordered by key.
+    pub problems: Vec<puddle_types::Problem>,
+}
+
 // ---------------------------------------------------------------------------------------------
 // Rules and pending requests (docs/spec/rules.md)
 

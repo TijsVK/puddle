@@ -5,7 +5,7 @@
 
 use puddle_settings::{Consent, ConsentKind, GlobalSettings, ServerChoice};
 use puddle_store::{SystemPlan, SystemReason};
-use puddle_types::WorkspaceName;
+use puddle_types::{Problem, WorkspaceName};
 
 use puddle_settings::resolve;
 
@@ -53,13 +53,15 @@ pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceName]) -> Sys
 /// at start and after every change that can move it: global or workspace settings, a consent, a
 /// workspace made or deleted. Takes the settings lock itself, so call it after releasing it.
 ///
-/// A failure is logged and leaves the store's reasons as they were. A workspace list that can't
-/// be read counts as no workspace with direct SSH on (an allow is only ever dropped then).
+/// A failure leaves the store's reasons as they were and raises the problem [`PROBLEM_KEY`], which
+/// the next successful refresh ends. A workspace list that can't be read counts as no workspace
+/// with direct SSH on (an allow is only ever dropped then) and raises the same problem.
 pub(crate) async fn refresh(state: &AppState) {
-    let names: Vec<WorkspaceName> = match state.workspaces.list().await {
-        Ok(records) => records.into_iter().map(|w| w.name).collect(),
-        Err(_) => Vec::new(),
-    };
+    let (names, list_error): (Vec<WorkspaceName>, Option<String>) =
+        match state.workspaces.list().await {
+            Ok(records) => (records.into_iter().map(|w| w.name).collect(), None),
+            Err(err) => (Vec::new(), Some(err.to_string())),
+        };
     let (store, settings) = (state.store.clone(), state.settings.clone());
     let _lock = state.settings_lock.lock().await;
     let result = blocking(move || {
@@ -78,17 +80,37 @@ pub(crate) async fn refresh(state: &AppState) {
         Ok(store.set_system_managed(&plan(&global.settings, &direct))?)
     })
     .await;
-    match result {
-        Ok(closed) if !closed.is_empty() => {
-            let count = closed.len();
-            tracing::info!(count, "System managed hosts decided waiting requests");
+    match (result, list_error) {
+        (Ok(closed), None) => {
+            state.problems.clear(PROBLEM_KEY);
+            if !closed.is_empty() {
+                let count = closed.len();
+                tracing::info!(count, "System managed hosts decided waiting requests");
+            }
         }
-        Ok(_) => {}
-        Err(err) => {
-            tracing::warn!(error = ?err, "System managed hosts not derived; the stored ones stay");
-        }
+        (Ok(_), Some(reason)) => state.problems.raise(Problem::new(
+            PROBLEM_KEY,
+            "puddle could not read the workspace list, so it allows no hosts for direct SSH",
+            format!(
+                "{reason}. Hosts that desktop VS Code needs in workspaces with direct SSH are \
+                 blocked until the list can be read; change a setting or restart puddle to try again."
+            ),
+        )),
+        (Err(err), _) => state.problems.raise(Problem::new(
+            PROBLEM_KEY,
+            "puddle could not update which hosts it allows for your setup",
+            format!(
+                "{}. The hosts it allowed before stay as they were, so a change you just made to \
+                 the editor server or direct SSH may not apply yet; change the setting again to \
+                 try again.",
+                err.reason()
+            ),
+        )),
     }
 }
+
+/// The key of the problem a failed [`refresh`] raises.
+const PROBLEM_KEY: &str = "system-managed";
 
 #[cfg(test)]
 mod tests {

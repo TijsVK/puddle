@@ -227,6 +227,10 @@ pub enum Event {
         /// The network epoch that began; it only grows while puddle runs.
         epoch: u64,
     },
+    /// The list of background problems changed (something puddle does on its own failed, or the
+    /// cause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber
+    /// gets it.
+    ProblemsChanged {},
 }
 
 /// An open pending request as [`Event::PendingOpened`] carries it. `host` comes from the guest
@@ -378,7 +382,8 @@ impl Event {
             | Self::GlobalEnvChanged {}
             | Self::CredentialSignInNeeded { .. }
             | Self::AuditAppended { .. }
-            | Self::NetworkChanged { .. } => None,
+            | Self::NetworkChanged { .. }
+            | Self::ProblemsChanged {} => None,
         }
     }
 }

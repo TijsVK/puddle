@@ -20,6 +20,7 @@ mod first_run;
 mod guard;
 mod identities;
 mod network_health;
+mod problems;
 mod repos;
 mod routes;
 mod rule_sets;

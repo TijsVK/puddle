@@ -19,6 +19,7 @@ import type { LiveSource } from "#lib/stores/live.svelte.ts";
 import { CredentialNotices, type IdentityLookup } from "./credentials.ts";
 import { LoginNotices } from "./logins.ts";
 import { InAppNotifier, type Notifier } from "./notifier.ts";
+import { ProblemNotices } from "./problems.ts";
 
 type Status = components["schemas"]["WorkspaceStatus"];
 
@@ -41,6 +42,7 @@ export class NoticeWatcher {
   readonly #api: Pick<ApiClient, "GET" | "POST" | "PUT">;
   readonly #credentials: CredentialNotices;
   readonly #logins: LoginNotices;
+  readonly #problems: ProblemNotices;
   readonly #status = new Map<string, Status>();
   readonly #expected = new Set<string>();
   /** The summary the network notice last said, so an unchanged problem is not announced again. */
@@ -56,10 +58,12 @@ export class NoticeWatcher {
       api: this.#api,
     });
     this.#logins = new LoginNotices(this.#notifier);
+    this.#problems = new ProblemNotices(this.#notifier, this.#api);
   }
 
   /** Reads the statuses the events will be compared with; never throws. */
   async seed(): Promise<void> {
+    void this.#problems.refresh();
     try {
       const { data } = await this.#api.GET("/api/workspaces");
       if (!data) return;
@@ -74,7 +78,13 @@ export class NoticeWatcher {
 
   /** Applies one stream event. */
   handle(raw: unknown): void {
-    if (this.#credentials.handle(raw) || this.#logins.handle(raw)) return;
+    if (
+      this.#credentials.handle(raw) ||
+      this.#logins.handle(raw) ||
+      this.#problems.handle(raw)
+    ) {
+      return;
+    }
     const event = asWorkspaceEvent(raw);
     if (!event) return;
     const name = event.workspace;

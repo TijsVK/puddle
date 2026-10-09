@@ -51,5 +51,5 @@ pub use store::{
     AuditCursor, AuditFilter, Limits, RuleSetEntryInfo, RuleSetInfo, Store, SweepReport,
     SystemHost, SystemPlan, WorkspaceDeletion, parse_rule_set,
 };
-pub use sweeper::{DEFAULT_SWEEP_PERIOD, Sweeper};
+pub use sweeper::{DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
 pub use workspace_git::{GitDefaults, GitStart, RepoEntry, RepoRef, StartBasis, WorkspaceGit};
