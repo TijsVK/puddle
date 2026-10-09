@@ -182,9 +182,10 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
+      # Restored everywhere, saved only by develop (a branch's own entry is never read by another).
       - name: Playwright browsers cache
         id: browsers
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
@@ -197,6 +198,12 @@ jobs:
           else
             npx playwright install --with-deps chromium webkit
           fi
+      - name: Save the Playwright browsers
+        if: ${{ github.ref == 'refs/heads/develop' && steps.browsers.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
       - name: UI (format, lint, types, unit and component tests with coverage, build)
         run: scripts/check.sh ui
       - name: UI licences (npm packages in the bundle)
