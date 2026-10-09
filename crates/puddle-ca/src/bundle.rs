@@ -137,13 +137,14 @@ mod tests {
         }
         let files = bundle.guest_files();
         assert_eq!(files.len(), 3);
-        for file in &files {
-            assert!(
-                !file.contents().contains(&b'\r'),
-                "{} has a carriage return",
-                file.path().as_str()
-            );
-        }
+        let carriage_returns: Vec<_> = files
+            .iter()
+            .map(|f| (f.path().as_str(), f.contents().contains(&b'\r')))
+            .collect();
+        assert!(
+            carriage_returns.iter().all(|(_, has)| !has),
+            "{carriage_returns:?}"
+        );
     }
 
     #[test]
