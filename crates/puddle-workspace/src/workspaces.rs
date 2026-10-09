@@ -44,8 +44,8 @@ const CLONE_TIMEOUT: Duration = Duration::from_secs(600);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceConfig {
     /// Size of a new workspace volume. Sparse on the host: it only takes what the guest writes
-    /// (and keeps after a trim). msb can't resize a volume, so this is the most a workspace can
-    /// ever hold.
+    /// (and keeps after a trim), plus the 64 MiB ext4 journal the runtime writes when it makes the
+    /// volume. msb can't resize a volume, so this is the most a workspace can ever hold.
     pub default_size: DiskSize,
     /// Image of the short-lived sandbox that checks or trims a workspace no running sandbox
     /// has. Needs `sh`, `git`, `awk`, `fstrim`.

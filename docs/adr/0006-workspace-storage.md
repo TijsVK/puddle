@@ -100,7 +100,9 @@ Two findings from the rerun put requirements on puddle rather than on the choice
   proxy adds the credential for github.com and dev.azure.com; the guest only sees a placeholder.
   The first milestone is HTTPS-only and relies on this injection; git over SSH comes later, and
   until then an SSH remote fails with an explicit message.
-- **Disk use:** sparse images grow with use and shrink only on trim (7). Each sandbox's root disk
+- **Disk use:** sparse images grow with use and shrink only on trim (7). Each image's 64 MiB ext4
+  journal is the exception: the runtime writes it when it makes the image (it halves the host's
+  journal commits for a guest's first writes), and a trim never returns it. Each sandbox's root disk
   grows too and can't be trimmed.
 - **Crash safety:** filesystem-level consistency after a VMM crash is measured; host power loss is
   not (it depends on msb turning a guest flush into `FlushFileBuffers`).

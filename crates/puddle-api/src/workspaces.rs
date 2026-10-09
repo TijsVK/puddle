@@ -90,7 +90,8 @@ impl WorkspaceRecord {
 /// The image a workspace gets when the request names none.
 pub const DEFAULT_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian";
 
-/// The volume size a new workspace gets (32 GiB, sparse on the host).
+/// The volume size a new workspace gets (32 GiB, sparse on the host apart from the 64 MiB journal
+/// written when the volume is made).
 pub const DEFAULT_DISK_MIB: u64 = 32 * 1024;
 
 /// A checked HTTPS repository URL: no credentials, no whitespace, a host.
