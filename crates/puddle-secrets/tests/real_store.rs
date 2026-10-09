@@ -9,6 +9,8 @@
     reason = "test code: a panic is how a test fails"
 )]
 
+use std::fmt::Write as _;
+
 use puddle_secrets::{
     ChunkedStore, KeyringStore, Secret, SecretStore, StoredId, keyring_available,
 };
