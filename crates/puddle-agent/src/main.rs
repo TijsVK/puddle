@@ -38,6 +38,8 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
         Command::Run => {
+            // Before the first connection: every guest connection costs the agent a descriptor.
+            let fd_limit = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::HardToo);
             let config = match Config::from_lookup(|k| std::env::var(k).ok()) {
                 Ok(config) => config,
                 Err(err) => {
@@ -49,6 +51,7 @@ fn main() -> ExitCode {
                 .with_writer(std::io::stderr)
                 .with_max_level(config.log)
                 .init();
+            fd_limit.log(FDS_NEEDED);
             match run(config) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
@@ -59,6 +62,10 @@ fn main() -> ExitCode {
         }
     }
 }
+
+/// Descriptors the agent needs to carry every connection the host lets one workspace open (the
+/// proxy's per-workspace cap is 4096), with room for its listeners, sessions and name lookups.
+const FDS_NEEDED: u64 = 4096 + 512;
 
 /// The ssh `ProxyCommand`: stdin and stdout are the ssh client's connection.
 #[expect(

@@ -1089,3 +1089,169 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
+
+/// How many connections the guest holds open at once in the test below: more than a browser or a
+/// parallel `npm install` opens, below the proxy's per-workspace cap.
+const HELD_CONNECTIONS: usize = 2000;
+
+/// Opens `HELD` connections to the agent's proxy port as `CONNECT 127.0.0.1:<port>` (the host's
+/// own loopback, which the test allows for this workspace), holds all of them open, then sends a
+/// line on each and reads it back, and prints the counts and the agent's own limits.
+///
+/// No `read -t`: bash waits with `select`, which breaks on descriptors from 1024 up. A stuck
+/// connection is caught by the guest command's own time limit.
+const HELD_CONNECTIONS_SCRIPT: &str = r#"
+set -u
+ulimit -n $((HELD * 2 + 256)) 2>/dev/null || ulimit -n "$(ulimit -Hn)"
+echo "guest shell limit: $(ulimit -n)"
+echo "agent started: $(grep -h 'open-file limit' /run/puddle/agent.log 2>&1 | tail -1)"
+echo "agent limits: $(grep -i 'open files' /proc/$(pidof puddle-agent | cut -d' ' -f1)/limits)"
+opened=0; refused=0; fds=()
+for ((i = 0; i < HELD; i++)); do
+  if exec {fd}<>/dev/tcp/127.0.0.1/3128 2>/dev/null; then
+    printf 'CONNECT 127.0.0.1:%s HTTP/1.1\r\nHost: 127.0.0.1:%s\r\n\r\n' "$PORT" "$PORT" >&"$fd"
+    IFS= read -r -u "$fd" status; IFS= read -r -u "$fd" _blank
+    case "$status" in
+      "HTTP/1.1 200"*) opened=$((opened + 1)); fds+=("$fd") ;;
+      *) refused=$((refused + 1)); echo "refused $i: $status"; exec {fd}>&- ;;
+    esac
+  else
+    refused=$((refused + 1)); echo "no socket for $i"
+  fi
+done
+echo "held=$opened refused=$refused"
+echoed=0
+for ((i = 0; i < ${#fds[@]}; i++)); do
+  fd=${fds[$i]}
+  printf 'line %s\n' "$i" >&"$fd"
+  IFS= read -r -u "$fd" back
+  if [ "$back" = "line $i" ]; then echoed=$((echoed + 1)); fi
+done
+echo "echoed=$echoed"
+for fd in "${fds[@]}"; do exec {fd}>&-; done
+"#;
+
+/// The bar from the tools that open the most connections: 2 000 connections from the guest,
+/// through the agent, the vsock route and the proxy, to a server on the host, all open at the
+/// same moment, none refused, each echoing a line back. The host process (this one) holds a
+/// socket per connection on each side, so it also proves the host's raised open-file limit.
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_carries_2000_concurrent_guest_connections_through_agent_and_proxy() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("held").await;
+    let limit = puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft);
+    eprintln!("host process: {limit}");
+    assert!(
+        limit.allows(4 * HELD_CONNECTIONS as u64),
+        "the host process cannot hold {HELD_CONNECTIONS} connections: {limit}"
+    );
+
+    // The server on the host: echoes each line, and counts the most connections open at once.
+    let server = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = server.local_addr().unwrap().port();
+    let now = std::sync::Arc::new(AtomicUsize::new(0));
+    let peak = std::sync::Arc::new(AtomicUsize::new(0));
+    {
+        let (now, peak) = (now.clone(), peak.clone());
+        tokio::spawn(async move {
+            loop {
+                let Ok((conn, _)) = server.accept().await else {
+                    return;
+                };
+                let (now, peak) = (now.clone(), peak.clone());
+                tokio::spawn(async move {
+                    peak.fetch_max(now.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                    let (read, mut write) = conn.into_split();
+                    let mut lines = BufReader::new(read);
+                    let mut line = String::new();
+                    while lines.read_line(&mut line).await.is_ok_and(|n| n > 0) {
+                        if write.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
+                        line.clear();
+                    }
+                    now.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+    }
+
+    let name = format!("{}-held", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    // The repository host for the clone, and the host's own address for the connections.
+    for site in [REPO_HOST, "127.0.0.1"] {
+        host.store()
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(sandbox.clone()),
+                pattern: Pattern::parse(site).unwrap(),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    // The host's loopback is a local destination: off by default, one toggle per workspace.
+    let toggle = api
+        .put(
+            &format!("/api/settings/workspaces/{name}"),
+            &json!({"overrides": {"local_toggles": {"loopback": true}}}).to_string(),
+        )
+        .await;
+    assert_eq!(toggle.status, 200, "{}", toggle.body);
+
+    let started = std::time::Instant::now();
+    let out = guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "HELD={HELD_CONNECTIONS} PORT={port} bash -s <<'PUDDLE_EOF'\n{HELD_CONNECTIONS_SCRIPT}\nPUDDLE_EOF"
+        ),
+    )
+    .await;
+    eprintln!("{out}took {:?}", started.elapsed());
+    let peak_seen = peak.load(Ordering::SeqCst);
+    eprintln!("the server saw {peak_seen} connections open at once");
+    assert!(
+        out.contains(&format!("held={HELD_CONNECTIONS} refused=0")),
+        "{out}"
+    );
+    assert!(out.contains(&format!("echoed={HELD_CONNECTIONS}")), "{out}");
+    assert!(
+        peak_seen >= HELD_CONNECTIONS,
+        "only {peak_seen} were open together"
+    );
+
+    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
