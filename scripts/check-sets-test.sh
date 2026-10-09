@@ -27,4 +27,17 @@ printf '%s\n' "$pre_push" | grep -qx ui || fail "pre-push lacks ui (its coverage
 [ "$("$check" --list fast ui-e2e)" = "$(printf '%s\nui-e2e' "$fast")" ] || fail "sets and gates do not combine"
 "$check" --list 2>/dev/null && fail "--list without a set succeeded"
 grep -q 'check.sh" pre-push$' "$here/.githooks/pre-push" || fail "the pre-push hook does not run the pre-push set"
+# The scheduler's streams: every gate of `all` has one, and a gate that waits for another is in a
+# different stream (the same stream would wait on itself) or comes after it.
+# shellcheck source=scripts/gate-sched.sh
+. "$here/scripts/gate-sched.sh"
+for g in $all; do
+    case $(gate_stream "$g") in rust | node | misc) ;; *) fail "gate $g has no stream" ;; esac
+    need=$(gate_needs "$g")
+    [ -z "$need" ] || printf '%s\n' "$all" | grep -qx "$need" || fail "$g needs $need, which is not a gate of all"
+    [ -z "$need" ] || [ "$(gate_stream "$need")" != "$(gate_stream "$g")" ] ||
+        [ "$(printf '%s\n' "$all" | grep -nx "$need" | cut -d: -f1)" -lt "$(printf '%s\n' "$all" | grep -nx "$g" | cut -d: -f1)" ] ||
+        fail "$g waits for $need later in its own stream"
+done
+# The fast gates run first and alone, so none of them may need a stream (they are the serial prefix).
 echo "check-sets-test: ok"
