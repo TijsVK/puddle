@@ -15,6 +15,10 @@ use http::header::{ACCEPT, AUTHORIZATION, CONNECTION, HOST, USER_AGENT};
 use http::{HeaderValue, Request};
 use http_body_util::{BodyExt, Empty, Limited};
 use hyper_util::rt::TokioIo;
+use puddle_types::{
+    ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Host, HttpRequestLine,
+    NullConnectionLog,
+};
 use puddle_upstream::host::connect;
 use puddle_upstream::{Chain, Destination, Form, Scheme, TlsClient, TlsConnectError};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -29,6 +33,7 @@ pub struct HostApi {
     chain: Arc<Chain>,
     tls: TlsClient,
     timeout: Duration,
+    log: Arc<dyn ConnectionLog>,
 }
 
 impl std::fmt::Debug for HostApi {
@@ -45,7 +50,16 @@ impl HostApi {
             chain,
             tls,
             timeout: REQUEST_TIMEOUT,
+            log: Arc::new(NullConnectionLog),
         }
+    }
+
+    /// The same, recording every request in `log` as puddle's own connection (origin `puddle`,
+    /// the Git host, and whether it worked), like an image pull.
+    #[must_use]
+    pub fn with_connection_log(mut self, log: Arc<dyn ConnectionLog>) -> Self {
+        self.log = log;
+        self
     }
 
     /// The same with another limit for one request.
@@ -83,10 +97,49 @@ impl HostApi {
 impl Api for HostApi {
     fn get(&self, request: ApiRequest) -> BoxFuture<'_, Result<ApiReply, TransportError>> {
         Box::pin(async move {
-            tokio::time::timeout(self.timeout, self.exchange(request))
+            let (host, path) = (request.host.clone(), request.path.clone());
+            let result = tokio::time::timeout(self.timeout, self.exchange(request))
                 .await
-                .unwrap_or(Err(TransportError::Timeout(self.timeout.as_secs().max(1))))
+                .unwrap_or(Err(TransportError::Timeout(self.timeout.as_secs().max(1))));
+            self.record(&host, &path, &result);
+            result
         })
+    }
+}
+
+impl HostApi {
+    /// Writes the request as a `connection` record of puddle's own. A write that fails is the
+    /// log's to report; the listing is not affected.
+    fn record(&self, host: &str, path: &str, result: &Result<ApiReply, TransportError>) {
+        let (name, port) = split_port(host);
+        let Ok(name) = Host::parse_normalised(name) else {
+            return;
+        };
+        let (reason, down) = match result {
+            Ok(reply) if reply.status < 400 => (ConnectionReason::PuddleRequest, reply.body.len()),
+            Ok(reply) => (
+                ConnectionReason::PuddleRequestFailed("host_refused"),
+                reply.body.len(),
+            ),
+            Err(err) => (ConnectionReason::PuddleRequestFailed(failure_code(err)), 0),
+        };
+        let mut event =
+            ConnectionEvent::puddle(name, port.unwrap_or(443), ConnectionDecision::Allow, reason);
+        event.http = Some(HttpRequestLine::new("GET", path));
+        event.bytes_down = down as u64;
+        self.log.record(&event);
+    }
+}
+
+/// The audit code of a request that got no answer.
+fn failure_code(err: &TransportError) -> &'static str {
+    match err {
+        TransportError::Unreachable(_) => "unreachable",
+        TransportError::Tls(_) => "tls",
+        TransportError::Timeout(_) => "timeout",
+        TransportError::TooLarge => "too_large",
+        TransportError::Protocol(_) => "protocol",
+        TransportError::BadToken => "bad_token",
     }
 }
 

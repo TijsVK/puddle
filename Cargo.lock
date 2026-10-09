@@ -6246,6 +6246,7 @@ dependencies = [
  "puddle-repos",
  "puddle-secrets",
  "puddle-store",
+ "puddle-types",
  "puddle-upstream",
  "rcgen",
  "rustls",

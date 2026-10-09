@@ -515,3 +515,138 @@ fn the_route_describes_itself_without_a_secret() {
     let api = api(direct_chain(), &pki);
     assert_eq!(format!("{api:?}"), "HostApi { .. }");
 }
+
+/// The `connection` events a `HostApi` wrote.
+#[derive(Default)]
+struct Written(Mutex<Vec<puddle_types::ConnectionEvent>>);
+
+impl puddle_types::ConnectionLog for Written {
+    fn record(&self, event: &puddle_types::ConnectionEvent) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(event.clone());
+    }
+}
+
+impl Written {
+    fn events(&self) -> Vec<puddle_types::ConnectionEvent> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+fn logged(chain: Arc<Chain>, pki: &Pki) -> (HostApi, Arc<Written>) {
+    let written = Arc::new(Written::default());
+    let api = api(chain, pki).with_connection_log(written.clone());
+    (api, written)
+}
+
+#[tokio::test]
+async fn a_listing_request_is_audited_as_puddles_own_connection_with_its_host_and_outcome() {
+    let pki = Pki::new("localhost");
+    let server = Server::start(&pki, Mode::Answer(Arc::new(|_| Reply::ok("[1,2,3]")))).await;
+    let host = format!("localhost:{}", server.addr.port());
+    let (api, written) = logged(direct_chain(), &pki);
+
+    api.get(request(&host, "/user/repos?per_page=1&secret=CANARY-query"))
+        .await
+        .unwrap();
+
+    let events = written.events();
+    assert_eq!(events.len(), 1, "{events:?}");
+    let event = &events[0];
+    assert_eq!(event.origin, puddle_types::ConnectionOrigin::Puddle);
+    assert_eq!(event.workspace, None);
+    assert_eq!(event.host.to_string(), "localhost");
+    assert_eq!(event.port, server.addr.port());
+    assert_eq!(event.decision, puddle_types::ConnectionDecision::Allow);
+    assert_eq!(event.reason, puddle_types::ConnectionReason::PuddleRequest);
+    assert_eq!(event.bytes_down, 7);
+    let line = event.http.as_ref().unwrap();
+    assert_eq!((line.method(), line.path()), ("GET", "/user/repos"));
+    // Neither the token nor the query is in the record.
+    assert!(!format!("{events:?}").contains(CANARY));
+    assert!(!format!("{events:?}").contains("CANARY-query"));
+}
+
+#[tokio::test]
+async fn a_listing_request_that_failed_says_why_in_the_audit() {
+    use puddle_types::ConnectionReason::PuddleRequestFailed;
+    let pki = Pki::new("localhost");
+    let other = Pki::new("localhost");
+    let server = Server::start(
+        &pki,
+        Mode::Answer(Arc::new(|_| Reply {
+            status: 401,
+            headers: Vec::new(),
+            raw_headers: Vec::new(),
+            body: b"bad credentials".to_vec(),
+        })),
+    )
+    .await;
+    let host = format!("localhost:{}", server.addr.port());
+    let closed = {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        listener.local_addr().unwrap().port()
+    };
+
+    let (api_ok, refused) = logged(direct_chain(), &pki);
+    assert_eq!(
+        api_ok.get(request(&host, "/user")).await.unwrap().status,
+        401
+    );
+    let (api_tls, tls) = logged(direct_chain(), &other);
+    api_tls.get(request(&host, "/user")).await.unwrap_err();
+    let (api_gone, gone) = logged(direct_chain(), &pki);
+    api_gone
+        .get(request(&format!("localhost:{closed}"), "/user"))
+        .await
+        .unwrap_err();
+
+    let reason = |written: &Written| written.events()[0].reason;
+    assert_eq!(reason(&refused), PuddleRequestFailed("host_refused"));
+    assert_eq!(reason(&tls), PuddleRequestFailed("tls"));
+    assert_eq!(reason(&gone), PuddleRequestFailed("unreachable"));
+    assert_eq!(
+        reason(&gone).to_string(),
+        "puddle_request_failed:unreachable"
+    );
+}
+
+#[tokio::test]
+async fn the_other_ways_a_listing_request_fails_have_their_own_audit_codes() {
+    use puddle_types::ConnectionReason::PuddleRequestFailed;
+    let pki = Pki::new("localhost");
+    let timeouts = Server::start(&pki, Mode::Hang).await;
+    let hangs_up = Server::start(&pki, Mode::HangUp).await;
+    let big = Server::start(
+        &pki,
+        Mode::Answer(Arc::new(|_| Reply::ok(&"x".repeat(MAX_BODY + 1)))),
+    )
+    .await;
+    let written = Arc::new(Written::default());
+    let api = api(direct_chain(), &pki)
+        .with_timeout(Duration::from_millis(200))
+        .with_connection_log(written.clone());
+    for server in [&timeouts, &hangs_up, &big] {
+        let host = format!("localhost:{}", server.addr.port());
+        api.get(request(&host, "/user")).await.unwrap_err();
+    }
+    let mut bad = request("localhost", "/user");
+    bad.authorization = Authorization::Bearer(Arc::new(Secret::new("bad\ntoken".to_owned())));
+    api.get(bad).await.unwrap_err();
+
+    let reasons: Vec<_> = written.events().iter().map(|e| e.reason).collect();
+    assert_eq!(
+        reasons,
+        [
+            PuddleRequestFailed("timeout"),
+            PuddleRequestFailed("protocol"),
+            PuddleRequestFailed("too_large"),
+            PuddleRequestFailed("bad_token"),
+        ]
+    );
+}

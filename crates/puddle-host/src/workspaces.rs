@@ -31,15 +31,15 @@ use puddle_api::{
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
-use puddle_compute::{ComputeError, DiskSize, ImageConfig, Runtime};
+use puddle_compute::{ComputeError, DiskSize, ImageConfig, Runtime, Sandbox as _};
 use puddle_lifecycle::Lifecycle;
 use puddle_proxy::Route;
 use puddle_settings::{WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
-    Event, EventSink, GuestEnv, ImageRef, MemoryMib, WorkspaceId, WorkspaceName, WorkspaceStatus,
-    WorkspaceStep,
+    Event, EventSink, GuestEnv, ImageRef, MemoryMib, Problem, Problems, WorkspaceId, WorkspaceName,
+    WorkspaceStatus, WorkspaceStep,
 };
 use puddle_workspace::{Findings, Layout, Workspaces};
 use tokio::sync::watch;
@@ -110,6 +110,7 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) launcher: Arc<dyn Launcher>,
     pub(crate) book: WorkspaceBook,
     pub(crate) injection: Arc<Injection>,
+    pub(crate) problems: Arc<Problems>,
 }
 
 struct Slot {
@@ -172,6 +173,7 @@ struct Inner<R: Runtime + Clone> {
     launcher: Arc<dyn Launcher>,
     book: WorkspaceBook,
     injection: Arc<Injection>,
+    problems: Arc<Problems>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -202,6 +204,24 @@ impl<R: Runtime + Clone> std::fmt::Debug for HostWorkspaces<R> {
 /// The way out after the workspace list could not be saved; the error already names the file.
 const SAVE_HINT: &str =
     "check the free disk space and that puddle may write that file, then try again";
+
+/// What a failed create or start tells the user about what it could not clean up: the reason it
+/// failed first, then what is still there and how it goes away.
+fn with_leftovers(reason: String, leftovers: &[String]) -> String {
+    if leftovers.is_empty() {
+        return reason;
+    }
+    format!(
+        "{reason}; puddle could not clean up after it: {}. puddle removes a sandbox no workspace \
+         claims at its next start, and keeps a volume it does not know, listing it then",
+        leftovers.join("; ")
+    )
+}
+
+/// The key of a problem about one workspace.
+fn problem_key(kind: &str, name: &WorkspaceName) -> String {
+    format!("{kind}:{name}")
+}
 
 fn not_found(id: &WorkspaceId) -> WorkspaceError {
     WorkspaceError::NotFound(format!("no workspace {id}"))
@@ -331,6 +351,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 launcher: parts.launcher,
                 book: parts.book,
                 injection: parts.injection,
+                problems: parts.problems,
                 state: Mutex::new(State {
                     slots,
                     closed: false,
@@ -646,27 +667,20 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let config = match config {
             Ok(config) => config,
-            Err(reason) => {
-                self.abort_attachment(attachment).await;
-                return Err(reason);
-            }
+            Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
         };
         let image = image.map_err(|e| e.clone())?;
         self.progress(name, WorkspaceStep::Starting, None);
         let route = match inner.kit.route(name) {
             Ok(route) => route,
-            Err(reason) => {
-                self.abort_attachment(attachment).await;
-                return Err(reason);
-            }
+            Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
         };
         // The CA comes after the route: a start that fails here has nothing else to take back.
         let (plan, env, guest) = match self.plan_guest(name, config).await {
             Ok(ready) => ready,
             Err(reason) => {
                 route.shutdown().await;
-                self.abort_attachment(attachment).await;
-                return Err(reason);
+                return Err(self.abort_attachment(attachment, reason).await);
             }
         };
         let spec = attachment.add_to(inner.kit.spec(name, image, record.memory, &env, &route));
@@ -695,9 +709,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             Err(e) => {
                 inner.injection.end(name);
-                self.abort_attachment(attachment).await;
+                let reason = self.abort_attachment(attachment, boot_message(&e)).await;
                 route.shutdown().await;
-                Err(boot_message(&e))
+                Err(reason)
             }
         }
     }
@@ -835,10 +849,51 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    async fn abort_attachment(&self, attachment: puddle_workspace::Attachment<'_>) {
-        if let Err(e) = attachment.abort(&self.inner.runtime).await {
-            tracing::warn!(error = %e, "cleanup after a failed create failed");
+    /// Takes back what a create that failed with `reason` left, and returns the reason, with
+    /// what could not be taken back added.
+    async fn abort_attachment(
+        &self,
+        attachment: puddle_workspace::Attachment<'_>,
+        reason: String,
+    ) -> String {
+        match attachment.abort(&self.inner.runtime).await {
+            Ok(()) => reason,
+            Err(e) => {
+                tracing::warn!(error = %e, "cleanup after a failed create failed");
+                with_leftovers(reason, &[e.to_string()])
+            }
         }
+    }
+
+    /// Tells the user about stale git locks that could not be cleared, and withdraws the
+    /// problem when they were.
+    fn report_locks(
+        &self,
+        name: &WorkspaceName,
+        locks: Result<puddle_workspace::LockReport, puddle_workspace::WorkspaceError>,
+    ) {
+        let key = problem_key("git-locks", name);
+        let why = match locks {
+            Ok(report) if report.errors.is_empty() => {
+                tracing::debug!(workspace = %name, ?report, "after boot");
+                self.inner.problems.clear(&key);
+                return;
+            }
+            Ok(report) => report.errors.join("; "),
+            Err(e) => e.to_string(),
+        };
+        self.inner.problems.raise(
+            Problem::new(
+                key,
+                format!("puddle could not clear the stale git lock files in {name}"),
+                format!(
+                    "{why}. The workspace started, but git may say \"Another git process seems to \
+                     be running\" until the .lock files in the repository's .git folder are \
+                     deleted by hand."
+                ),
+            )
+            .about(name.clone()),
+        );
     }
 
     /// After a boot: puddle's directory and stale locks on the volume, the SSH endpoint, and the
@@ -853,15 +908,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .and_then(|l| l.gated.clone())
                 .ok_or_else(|| format!("{name} is not running"))?
         };
-        inner
+        let locks = inner
             .workspaces
             .after_boot(gated.ungated(), id)
             .await
-            .map_err(|e| e.to_string())?
-            .map_or_else(
-                |e| tracing::warn!(workspace = %id, error = %e, "stale git locks not cleared"),
-                |report| tracing::debug!(workspace = %id, ?report, "after boot"),
-            );
+            .map_err(|e| e.to_string())?;
+        self.report_locks(name, locks);
         let mount = Layout::new(id).map_err(|e| e.to_string())?.mount().clone();
         let handle = inner
             .runtime
@@ -1005,9 +1057,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// Takes a sandbox that failed after it booted all the way down again.
-    async fn undo_boot(&self, record: &WorkspaceRecord, remove: bool, created_volume: bool) {
+    /// Takes a sandbox that failed after it booted all the way down again, and returns `reason`
+    /// with whatever could not be taken down added.
+    async fn undo_boot(
+        &self,
+        record: &WorkspaceRecord,
+        remove: bool,
+        created_volume: bool,
+        reason: String,
+    ) -> String {
         let inner = &self.inner;
+        let mut leftovers = Vec::new();
         let name = &record.name;
         let gated = inner
             .live
@@ -1019,6 +1079,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             && let Err(e) = gated.stop().await
         {
             tracing::warn!(workspace = %name, error = %e, "stopping a failed workspace failed");
+            leftovers.push(format!("the machine {name} may still be running ({e})"));
         }
         self.quiesce(name, remove).await;
         if remove {
@@ -1026,6 +1087,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Ok(()) | Err(ComputeError::NotFound { .. }) => {}
                 Err(e) => {
                     tracing::warn!(workspace = %name, error = %e, "removing a failed sandbox failed");
+                    leftovers.push(format!("the sandbox {name} was not removed ({e})"));
                 }
             }
             inner.workspaces.sandbox_removed(&name.sandbox_name());
@@ -1034,7 +1096,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             && let Err(e) = inner.runtime.remove_volume(&record.id.volume_name()).await
         {
             tracing::warn!(workspace = %record.id, error = %e, "removing a new volume failed");
+            leftovers.push(format!(
+                "the new volume {} was not removed ({e})",
+                record.id.volume_name()
+            ));
         }
+        with_leftovers(reason, &leftovers)
     }
 
     async fn create_work(&self, record: WorkspaceRecord) -> Result<(), String> {
@@ -1042,8 +1109,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.boot_new(&record, &mut created_volume, true, true)
             .await?;
         if let Err(reason) = self.settle(&record).await {
-            self.undo_boot(&record, true, created_volume).await;
-            return Err(reason);
+            return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
         self.progress(
             &record.name,
@@ -1057,16 +1123,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .clone_checkout(gated.ungated(), &record.id, &record.repo_url, None)
             .await
         {
-            self.undo_boot(&record, true, created_volume).await;
-            return Err(e.to_string());
+            return Err(self
+                .undo_boot(&record, true, created_volume, e.to_string())
+                .await);
         }
         // Nobody has worked in it yet, so undoing it now loses nothing; keeping it would leave
         // a workspace the next start takes for an unfinished create.
         if let Err(e) = self.mark_created(&record.id) {
-            self.undo_boot(&record, true, created_volume).await;
-            return Err(format!(
-                "{e}; the new workspace was removed again; {SAVE_HINT}"
-            ));
+            let reason = format!("{e}; the new workspace was removed again; {SAVE_HINT}");
+            return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
         Ok(())
     }
@@ -1085,6 +1150,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let inner = &self.inner;
         let name = &record.name;
         self.progress(name, WorkspaceStep::Starting, None);
+        inner.problems.clear(&problem_key("forced-stop", name));
         let exists = inner
             .runtime
             .list()
@@ -1123,8 +1189,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .await?;
         }
         if let Err(reason) = self.settle(&record).await {
-            self.undo_boot(&record, false, false).await;
-            return Err(reason);
+            return Err(self.undo_boot(&record, false, false, reason).await);
         }
         Ok(())
     }
@@ -1197,17 +1262,43 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let name = &record.name;
         let gated = self.gated(name).await?;
         self.progress(name, WorkspaceStep::Reclaiming, None);
-        // A failed trim only costs disk space; the VM still stops.
-        if let Err(e) = self
+        // A failed trim only costs disk space; the VM still stops, and the user is told.
+        let trim_key = problem_key("trim", name);
+        match self
             .inner
             .workspaces
             .trim(gated.ungated(), &record.id)
             .await
         {
-            tracing::warn!(workspace = %record.id, error = %e, "trim before stop failed");
+            Ok(_) => self.inner.problems.clear(&trim_key),
+            Err(e) => {
+                tracing::warn!(workspace = %record.id, error = %e, "trim before stop failed");
+                self.inner.problems.raise(
+                    Problem::new(
+                        trim_key,
+                        format!("{name}'s disk was not trimmed when it stopped"),
+                        format!(
+                            "{e}. The workspace stopped normally. Its disk file stays larger \
+                             than the data in it until a later stop, or Reclaim space, trims it."
+                        ),
+                    )
+                    .about(name.clone()),
+                );
+            }
         }
         self.progress(name, WorkspaceStep::Stopping, None);
         gated.stop().await.map_err(|e| e.to_string())?;
+        if gated.ungated().stopped_by_force() {
+            self.inner.problems.raise(
+                Problem::new(
+                    problem_key("forced-stop", name),
+                    format!("{name} did not shut down in time and was ended by force"),
+                    "Files it had not written to its disk yet may be missing. Start it again \
+                     and check the repositories with git status.",
+                )
+                .about(name.clone()),
+            );
+        }
         self.quiesce(name, false).await;
         Ok(())
     }

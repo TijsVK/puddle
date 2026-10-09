@@ -24,6 +24,7 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 puddle-secrets = { workspace = true }
 puddle-store = { workspace = true }
+puddle-types = { workspace = true }
 puddle-upstream = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
