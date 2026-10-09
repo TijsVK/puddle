@@ -5,6 +5,8 @@
 # (`gh workflow run vm-windows.yml --ref <branch>`) and nightly on develop unless it already has a green run on that
 # commit. VM tests are never retried; a runner without a usable hypervisor
 # is reported as an infrastructure skip, not a test result.
+# The test binaries are built once (`cargo nextest archive`) and the tests run in four partitions
+# on four runners at once; `vm-windows (WHP, msb microVMs)` is the one result of all of them.
 name: vm-windows
 
 on:
@@ -33,15 +35,17 @@ env:
   PUDDLE_VM_MSB_LOG_LEVEL: debug
 
 jobs:
-  vm-windows:
-    name: vm-windows (WHP, msb microVMs)
+  build:
+    name: vm-windows build (test archive, guest agent)
     # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
     permissions:
       contents: read
       actions: read
     runs-on: windows-2025
-    # A cold build of the SDK takes ~10 min on windows-2025; the tests have their own 30-minute cap.
-    timeout-minutes: 50
+    # A cold build of the SDK takes ~10 min on windows-2025.
+    timeout-minutes: 40
+    outputs:
+      run: ${{ steps.changed.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: anything new since the last green run?
@@ -50,9 +54,55 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ci/should-run.sh vm-windows.yml
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.changed.outputs.run == 'true'
+        with:
+          key: vm
+          cache-on-failure: true
+          # Only develop saves (10 GB cap for the whole repo); other refs restore it.
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+        if: steps.changed.outputs.run == 'true'
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: guest agent (static musl build)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bundle"
+          cp "$(ci/build-agent.sh --locked)" "$RUNNER_TEMP/bundle/puddle-agent"
+      - name: build the VM tests once (nextest archive)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: cargo nextest archive $VM_CRATES --profile vm --locked --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
+      - name: share the archive and the agent with the test jobs
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vm-windows-build
+          path: ${{ runner.temp }}/bundle
+          retention-days: 1
+          compression-level: 0 # the archive is already compressed
+
+  tests:
+    name: vm-windows tests (partition ${{ matrix.partition }} of 4)
+    needs: build
+    if: needs.build.outputs.run == 'true'
+    runs-on: windows-2025
+    # ~67 VM tests in all, each partition a quarter of them; every test has its own 12-minute cap.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: WHP preflight (infrastructure)
         id: whp
-        if: steps.changed.outputs.run == 'true'
         shell: pwsh
         run: |
           $cs = Get-CimInstance Win32_ComputerSystem
@@ -62,20 +112,9 @@ jobs:
             "ok=true" >> $env:GITHUB_OUTPUT
           } else {
             "::warning title=vm-windows skipped::Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp); VM tests did not run (infrastructure, not a test result)"
-            "### vm-windows: SKIPPED, WHP not usable on the runner (infrastructure)" >> $env:GITHUB_STEP_SUMMARY
+            "### vm-windows partition ${{ matrix.partition }}: SKIPPED, WHP not usable on the runner (infrastructure)" >> $env:GITHUB_STEP_SUMMARY
             "ok=false" >> $env:GITHUB_OUTPUT
           }
-      - name: Toolchain (from rust-toolchain.toml)
-        if: steps.whp.outputs.ok == 'true'
-        shell: bash
-        run: rustup toolchain install && rustc --version
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: steps.whp.outputs.ok == 'true'
-        with:
-          key: vm
-          cache-on-failure: true
-          # Only develop saves (10 GB cap for the whole repo); other refs restore it.
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         if: steps.whp.outputs.ok == 'true'
         with:
@@ -90,31 +129,48 @@ jobs:
           ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
-      - name: guest agent (static musl build)
+      - name: the test archive and the guest agent from the build job
         if: steps.whp.outputs.ok == 'true'
-        shell: bash
-        run: echo "PUDDLE_AGENT_BIN=$(cygpath -w "$PWD/$(ci/build-agent.sh --locked)")" >> "$GITHUB_ENV"
-      - name: build the VM tests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-build
+          path: ${{ runner.temp }}/bundle
+      - name: VM tests (tier W, partition ${{ matrix.partition }} of 4)
         if: steps.whp.outputs.ok == 'true'
-        shell: bash
-        run: cargo nextest run $VM_CRATES --profile vm --locked --no-run
-      - name: VM tests (tier W)
-        if: steps.whp.outputs.ok == 'true'
-        # ~40 VM tests (contract suite, adapter bars, boot hook).
-        timeout-minutes: 30
         shell: bash
         run: |
+          export PUDDLE_AGENT_BIN
+          PUDDLE_AGENT_BIN=$(cygpath -w "$RUNNER_TEMP/bundle/puddle-agent")
           # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, not here.
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            cargo nextest run $VM_CRATES --profile vm --locked \
+            cargo nextest run --profile vm --locked \
+            --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/vm-tests.tar.zst" \
+            --extract-to "$(cygpath -m "$RUNNER_TEMP")/vmx" --workspace-remap . \
+            --partition count:${{ matrix.partition }}/4 \
             -E 'not test(/(^|::)vm_machine_/)'
       - name: upload test results and msb logs
         if: ${{ !cancelled() && steps.whp.outputs.ok == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: vm-windows-results
+          name: vm-windows-results-${{ matrix.partition }}
           path: |
+            ${{ runner.temp }}/vmx/target/nextest/vm/junit.xml
             target/nextest/vm/junit.xml
             ${{ runner.temp }}/pvm/**/logs/**
           retention-days: 14
           if-no-files-found: ignore
+
+  # One stable result for the build and every partition (the name a check can require).
+  vm-windows:
+    name: vm-windows (WHP, msb microVMs)
+    needs: [build, tests]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: build and every partition passed (or were skipped on purpose)
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' >/dev/null

@@ -4,6 +4,8 @@
 # by hand on any branch (`gh workflow run vm-linux.yml --ref <branch>`) and nightly on develop unless
 # it already has a green run on that commit. VM tests are never retried; a runner without
 # KVM is reported as an infrastructure skip, not a test result.
+# The test binaries are built once (`cargo nextest archive`) and the tests run in three partitions
+# on three runners at once; `vm-linux (KVM, msb microVMs)` is the one result of all of them.
 name: vm-linux
 
 on:
@@ -12,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       parallel_runs:
-        description: "Test runs at once on the one runner, each with its own prefix and msb home (1-3)"
+        description: "Test runs at once on each partition's runner, each with its own prefix and msb home (1-3)"
         default: "1"
         type: choice
         options: ["1", "2", "3"]
@@ -38,15 +40,16 @@ env:
   PUDDLE_VM_MSB_LOG_LEVEL: debug
 
 jobs:
-  vm-linux:
-    name: vm-linux (KVM, msb microVMs)
+  build:
+    name: vm-linux build (test archive, guest agent)
     # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
     permissions:
       contents: read
       actions: read
     runs-on: ubuntu-24.04
-    # A cold build of the SDK takes ~10 min on windows-2025; the tests have their own 30-minute cap.
-    timeout-minutes: 50
+    timeout-minutes: 40
+    outputs:
+      run: ${{ steps.changed.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: anything new since the last green run?
@@ -55,13 +58,70 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ci/should-run.sh vm-linux.yml
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.changed.outputs.run == 'true'
+        with:
+          key: vm
+          cache-on-failure: true
+          # Only develop saves (10 GB cap for the whole repo); other refs restore it.
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+        if: steps.changed.outputs.run == 'true'
+        with:
+          tool: cargo-nextest@0.9.146
+      # The runtime is built from source on a cache miss (about 10 minutes). Doing that here, once,
+      # saves the msb entry for the three test jobs, which start after this job ends.
+      - name: msb build cache
+        id: msb-cache
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/msb-build/msb-*
+          key: msb-linux-${{ hashFiles('ci/msb-runtime.sha256', 'ci/fetch-msb.sh', 'rust-toolchain.toml') }}
+      - name: msb runtime (fork tag; build on a cache miss, to fill the cache)
+        if: steps.changed.outputs.run == 'true' && steps.msb-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libcap-ng-dev
+          MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+      - name: guest agent (static musl build)
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/bundle"
+          cp "$(ci/build-agent.sh --locked)" "$RUNNER_TEMP/bundle/puddle-agent"
+      - name: build the VM tests once (nextest archive)
+        if: steps.changed.outputs.run == 'true'
+        run: cargo nextest archive $VM_CRATES --profile vm --locked --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
+      - name: share the archive and the agent with the test jobs
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vm-linux-build
+          path: ${{ runner.temp }}/bundle
+          retention-days: 1
+          compression-level: 0 # the archive is already compressed
+
+  tests:
+    name: vm-linux tests (partition ${{ matrix.partition }} of 3)
+    needs: build
+    if: needs.build.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    # ~67 VM tests in all, each partition a third of them; every test has its own 12-minute cap.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: KVM preflight (infrastructure)
         id: kvm
-        if: steps.changed.outputs.run == 'true'
         run: |
           if [ ! -e /dev/kvm ]; then
             echo "::warning title=vm-linux skipped::/dev/kvm is missing on this runner; VM tests did not run (infrastructure, not a test result)"
-            echo "### vm-linux: SKIPPED, no /dev/kvm on the runner (infrastructure)" >> "$GITHUB_STEP_SUMMARY"
+            echo "### vm-linux partition ${{ matrix.partition }}: SKIPPED, no /dev/kvm on the runner (infrastructure)" >> "$GITHUB_STEP_SUMMARY"
             echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           # Hosted runners ship /dev/kvm root-only; open it to the runner user.
@@ -73,26 +133,16 @@ jobs:
           ls -l /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
           echo "ok=true" >> "$GITHUB_OUTPUT"
-      - name: Toolchain (from rust-toolchain.toml)
-        if: steps.kvm.outputs.ok == 'true'
-        run: rustup toolchain install && rustc --version
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: steps.kvm.outputs.ok == 'true'
-        with:
-          key: vm
-          cache-on-failure: true
-          # Only develop saves (10 GB cap for the whole repo); other refs restore it.
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         if: steps.kvm.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146
       # The runtime is the SDK's fork tag (ci/msb-tag.sh, from Cargo.lock). The fork releases no
       # Linux msb, so fetch-msb.sh builds it from the tag's pinned commit; the cache keeps only the
-      # resulting binary, keyed on the pins and the script.
+      # resulting binary, keyed on the pins and the script (the build job fills it).
       - name: msb build cache
         if: steps.kvm.outputs.ok == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/msb-build/msb-*
           key: msb-linux-${{ hashFiles('ci/msb-runtime.sha256', 'ci/fetch-msb.sh', 'rust-toolchain.toml') }}
@@ -103,31 +153,36 @@ jobs:
           MSB_BUILD_DIR="$RUNNER_TEMP/msb-build" ci/fetch-msb.sh "$RUNNER_TEMP/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$RUNNER_TEMP/msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$RUNNER_TEMP/pvm" >> "$GITHUB_ENV"
-      - name: guest agent (static musl build)
+      - name: the test archive and the guest agent from the build job
         if: steps.kvm.outputs.ok == 'true'
-        run: echo "PUDDLE_AGENT_BIN=$PWD/$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
-      - name: build the VM tests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-linux-build
+          path: ${{ runner.temp }}/bundle
+      - name: VM tests (tier K, partition ${{ matrix.partition }} of 3)
         if: steps.kvm.outputs.ok == 'true'
-        run: cargo nextest run $VM_CRATES --profile vm --locked --no-run
-      - name: VM tests (tier K)
-        if: steps.kvm.outputs.ok == 'true'
-        # ~40 VM tests (contract suite, adapter bars, boot hook).
-        timeout-minutes: 30
         env:
           RUNS: ${{ inputs.parallel_runs || '1' }}
         run: |
+          chmod +x "$RUNNER_TEMP/bundle/puddle-agent"
+          export PUDDLE_AGENT_BIN="$RUNNER_TEMP/bundle/puddle-agent"
           # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, not here. Each run gets its
           # own prefix, so its sandbox names and private msb home never meet another run's.
           base="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          if [ "$RUNS" = "1" ]; then
-            PUDDLE_VM_PREFIX="$base" cargo nextest run $VM_CRATES --profile vm --locked \
+          nextest() {
+            PUDDLE_VM_PREFIX="$1" cargo nextest run --profile vm --locked \
+              --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst" \
+              --extract-to "$RUNNER_TEMP/vmx" --extract-overwrite --workspace-remap . \
+              --partition count:${{ matrix.partition }}/3 \
               -E 'not test(/(^|::)vm_machine_/)'
+          }
+          if [ "$RUNS" = "1" ]; then
+            nextest "$base"
             exit
           fi
           pids=""
           for i in $(seq 1 "$RUNS"); do
-            PUDDLE_VM_PREFIX="$base-$i" cargo nextest run $VM_CRATES --profile vm --locked \
-              -E 'not test(/(^|::)vm_machine_/)' > "$RUNNER_TEMP/run-$i.log" 2>&1 &
+            nextest "$base-$i" > "$RUNNER_TEMP/run-$i.log" 2>&1 &
             pids="$pids $!"
           done
           rc=0
@@ -140,9 +195,25 @@ jobs:
         if: ${{ !cancelled() && steps.kvm.outputs.ok == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: vm-linux-results
+          name: vm-linux-results-${{ matrix.partition }}
           path: |
+            ${{ runner.temp }}/vmx/target/nextest/vm/junit.xml
             target/nextest/vm/junit.xml
             ${{ runner.temp }}/pvm/**/logs/**
           retention-days: 14
           if-no-files-found: ignore
+
+  # One stable result for the build and every partition (the name a check can require).
+  vm-linux:
+    name: vm-linux (KVM, msb microVMs)
+    needs: [build, tests]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: build and every partition passed (or were skipped on purpose)
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' >/dev/null

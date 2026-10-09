@@ -2,6 +2,8 @@
 # Native Windows MSVC build and tests. Windows runners are the slowest to start, so this
 # runs nightly (skipped when this workflow already has a green run on develop's head), on pull
 # requests to main, and by hand. Linux CI already cross-checks clippy for the msvc target.
+# Four jobs run side by side (clippy, tests, UI, release build), so the run takes as long as the
+# slowest one instead of the sum. Each restores its own cache entry; only develop saves them.
 # The nightly also reruns each failed test once and lists the ones that pass only on retry
 # (ci/flaky-report.py); it never turns the run red.
 name: windows
@@ -25,14 +27,109 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  # Line tables only: backtraces keep file:line, while the 100+ test binaries link much faster and
+  # the cache stays smaller (the same setting as ci.yml and the VM workflows).
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
-  windows:
-    name: windows-msvc (build, clippy, tests)
+  clippy:
+    name: windows clippy
     runs-on: windows-2025
-    # A cold cache (any Cargo.lock change) takes ~40 min: clippy 6, tests 14, release build 15,
-    # then the cache save (a run was once cut off at 40 minutes while saving).
-    timeout-minutes: 60
+    timeout-minutes: 30
+    # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: anything new since the last green run?
+        id: changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/should-run.sh windows.yml
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      # Only develop saves the cache (10 GB cap for the whole repo); other refs restore it.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.changed.outputs.run == 'true'
+        with:
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - name: clippy
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: scripts/check.sh clippy
+
+  tests:
+    name: windows tests (nextest, doc tests, secret scan)
+    runs-on: windows-2025
+    # Nearly all of it is compiling and linking the test binaries; running the 2000+ tests takes
+    # under two minutes, so there is nothing to gain from splitting them across runners.
+    timeout-minutes: 45
+    # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: anything new since the last green run?
+        id: changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/should-run.sh windows.yml
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      # Only develop saves the cache (10 GB cap for the whole repo); other refs restore it.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.changed.outputs.run == 'true'
+        with:
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+        if: steps.changed.outputs.run == 'true'
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: tests
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        env:
+          # The nightly retries a failed test once, only to report flakes (below). The profile
+          # keeps retries at 0 for every other run (docs/STANDARDS.md, "Flaky tests").
+          RETRIES: ${{ github.event_name == 'schedule' && '1' || '0' }}
+        run: cargo nextest run --workspace --all-features --locked --profile ci --retries "$RETRIES"
+      - name: flaky tests (nightly report)
+        if: ${{ github.event_name == 'schedule' && steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: bash
+        run: python3 ci/flaky-report.py target/nextest/ci/junit.xml | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: doc tests
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: bash
+        run: cargo test --doc --workspace --all-features --locked --no-fail-fast
+      # Windows runs this one gate of the Linux job too: it proves ci/fetch-gitleaks.sh and the
+      # gate work in Git Bash with the Windows release, where developers' pre-push hook runs.
+      - name: secret scanning (gitleaks, Windows release)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: bash
+        run: |
+          ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
+          PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
+      - name: upload test results
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-test-results
+          path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: ignore
+
+  ui:
+    name: windows UI (unit tests, e2e on Edge, desktop shell smoke)
+    runs-on: windows-2025
+    timeout-minutes: 40
     # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
     permissions:
       contents: read
@@ -56,10 +153,6 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         with:
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
-        if: steps.changed.outputs.run == 'true'
-        with:
-          tool: cargo-nextest@0.9.146
       - name: Node for the UI
         if: steps.changed.outputs.run == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -67,36 +160,8 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      - name: clippy
-        if: steps.changed.outputs.run == 'true'
-        shell: bash
-        run: scripts/check.sh clippy
-      - name: tests
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
-        shell: bash
-        env:
-          # The nightly retries a failed test once, only to report flakes (below). The profile
-          # keeps retries at 0 for every other run (docs/STANDARDS.md, "Flaky tests").
-          RETRIES: ${{ github.event_name == 'schedule' && '1' || '0' }}
-        run: cargo nextest run --workspace --all-features --locked --profile ci --retries "$RETRIES"
-      - name: flaky tests (nightly report)
-        if: ${{ github.event_name == 'schedule' && steps.changed.outputs.run == 'true' && !cancelled() }}
-        shell: bash
-        run: python3 ci/flaky-report.py target/nextest/ci/junit.xml | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: doc tests
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
-        shell: bash
-        run: cargo test --doc --workspace --all-features --locked --no-fail-fast
-      # Windows runs this one gate of the Linux job too: it proves ci/fetch-gitleaks.sh and the
-      # gate work in Git Bash with the Windows release, where developers' pre-push hook runs.
-      - name: secret scanning (gitleaks, Windows release)
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
-        shell: bash
-        run: |
-          ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
-          PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
       - name: UI (format, lint, types, unit and component tests with coverage, build)
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        if: steps.changed.outputs.run == 'true'
         shell: bash
         env:
           DIFF_BASE: ${{ github.event.pull_request.base.sha }}
@@ -114,20 +179,6 @@ jobs:
           cargo build -p puddle-app --all-features --locked
           $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
           node crates/puddle-app/e2e/smoke.mjs
-      # Nightly, PRs to main and develop dispatches only (it compiles everything a second time, and
-      # a develop cache save should hold it so the nightly isn't cold).
-      - name: release build
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/develop') }}
-        shell: bash
-        run: cargo build --workspace --release --locked
-      - name: upload test results
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-test-results
-          path: target/nextest/ci/junit.xml
-          retention-days: 14
-          if-no-files-found: ignore
       - name: upload UI test results
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -138,3 +189,48 @@ jobs:
             ui/test-results
           retention-days: 14
           if-no-files-found: ignore
+
+  # Nightly, PRs to main and develop dispatches only (it compiles everything a second time, and
+  # a develop cache save should hold it so the nightly isn't cold).
+  release:
+    name: windows release build
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/develop' }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+    # `actions: read` for ci/should-run.sh (a separate gate job would be billed a full minute).
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: anything new since the last green run?
+        id: changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/should-run.sh windows.yml
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      # Only develop saves the cache (10 GB cap for the whole repo); other refs restore it.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.changed.outputs.run == 'true'
+        with:
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      # The binaries embed ui/build, so it is built first, as the release build always saw it.
+      - name: Node for the UI
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: UI build (embedded in the release binaries)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: cd ui && npm ci --ignore-scripts --no-audit --no-fund && npm run build
+      - name: release build
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: cargo build --workspace --release --locked
