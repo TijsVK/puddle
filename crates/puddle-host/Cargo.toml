@@ -28,6 +28,7 @@ puddle-guest-env = { workspace = true }
 puddle-inject = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-lifecycle = { workspace = true }
+puddle-logins = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true }
 puddle-repos = { workspace = true }

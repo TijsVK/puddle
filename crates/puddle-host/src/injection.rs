@@ -28,8 +28,11 @@ use puddle_store::{Store, WorkspaceGit};
 use puddle_types::{Event, EventSink, GuestEnv, WorkspaceName};
 use tokio::task::JoinHandle;
 
+use puddle_logins::Logins;
+
 use crate::environment::{Resolved, resolve};
 use crate::git_hosts::decrypt_set;
+use crate::logins::LoginKeeper;
 
 /// What an injector is built from.
 #[derive(Clone)]
@@ -80,19 +83,32 @@ pub(crate) struct Began {
     pub(crate) env: GuestEnv,
 }
 
-/// What a running sandbox holds in memory: its CA, the injector made for this start and the
-/// registry of its stand-ins.
+/// What a running sandbox holds in memory: its CA, the injector made for this start, the
+/// registry of its stand-ins and its captured logins.
 #[derive(Clone)]
 struct Running {
     ca: Arc<WorkspaceCa>,
     injector: Arc<dyn Injector>,
     stand_ins: Arc<StandIns>,
+    logins: Logins,
 }
 
-/// What the workspace decrypts: its identities' credential hosts and the hosts of its secrets.
-fn decrypted(git: &WorkspaceGit, stand_ins: &StandIns) -> TerminationSet {
+impl Running {
+    /// What the workspace's termination is made of, around `set`: the registry of its stand-ins
+    /// (secrets and captured logins share it) and the reading of its login exchanges.
+    fn termination(&self, set: TerminationSet) -> Termination {
+        Termination::new(set, Arc::clone(&self.ca), Arc::clone(&self.injector))
+            .with_stand_ins(Arc::clone(&self.stand_ins))
+            .with_exchanges(Arc::new(self.logins.clone()))
+    }
+}
+
+/// What the workspace decrypts: its identities' credential hosts, the hosts of its secrets and
+/// the hosts of the logins it captures.
+fn decrypted(git: &WorkspaceGit, stand_ins: &StandIns, logins: &Logins) -> TerminationSet {
     let mut set = decrypt_set(git);
     set.extend(&stand_ins.hosts());
+    set.extend(&logins.hosts());
     set
 }
 
@@ -107,6 +123,8 @@ pub(crate) struct Injection {
     factory: Option<InjectorFactory>,
     /// Where the real values of environment secrets are kept.
     vault: Arc<dyn SecretStore>,
+    /// Makes each start's captured logins over the same credential store.
+    login_keeper: LoginKeeper,
     running: Mutex<BTreeMap<WorkspaceName, Running>>,
     /// Held while a workspace's settings are read and what it decrypts is changed to match, so
     /// the last change to run is the last one to read: a slow reader never puts back an old set.
@@ -128,6 +146,7 @@ impl Injection {
     ) -> Self {
         Self {
             terminations,
+            login_keeper: LoginKeeper::new(Arc::clone(&vault), Arc::clone(&inputs.events)),
             inputs,
             factory,
             vault,
@@ -185,22 +204,40 @@ impl Injection {
             .map_err(|e| format!("cannot read {workspace}'s Git settings: {e}"))
     }
 
-    /// Makes `workspace`'s CA for this start, reads its environment and registers what it
-    /// decrypts. A CA from an earlier start is replaced.
+    /// Makes `workspace`'s CA for this start, reads its environment and the logins kept for it,
+    /// and registers what it decrypts. A CA from an earlier start is replaced. With `capture` off
+    /// the workspace's logins stay in the workspace and none of their hosts is decrypted.
     ///
     /// # Errors
     /// A message for the user: the settings or the environment cannot be read (a secret's value
     /// is missing from the credential store, say), or the CA cannot be made.
-    pub(crate) async fn begin(&self, workspace: &WorkspaceName) -> Result<Began, String> {
+    pub(crate) async fn begin(
+        &self,
+        workspace: &WorkspaceName,
+        capture: bool,
+    ) -> Result<Began, String> {
         // Held until the workspace is registered: a change to its environment in the meantime
         // waits for that and then finds it running.
         let lock = self.environment_lock(workspace);
         let _environment = lock.lock().await;
         let resolved = self.environment_of(workspace).await?;
-        self.register(workspace, resolved)
+        // The registry is made here so that the logins kept for the workspace are in it before
+        // the guest boots: its disk still holds the stand-ins its tools were given.
+        let stand_ins = Arc::new(StandIns::new());
+        let logins = self
+            .login_keeper
+            .logins(workspace, capture, Arc::clone(&stand_ins));
+        logins.load().await;
+        self.register(workspace, resolved, stand_ins, logins)
     }
 
-    fn register(&self, workspace: &WorkspaceName, resolved: Resolved) -> Result<Began, String> {
+    fn register(
+        &self,
+        workspace: &WorkspaceName,
+        resolved: Resolved,
+        stand_ins: Arc<StandIns>,
+        logins: Logins,
+    ) -> Result<Began, String> {
         let _one_at_a_time = self.syncing.lock().unwrap_or_else(PoisonError::into_inner);
         let git = self.git(workspace)?;
         // The common name shows in the guest's trust store and in a tool's error message.
@@ -219,30 +256,23 @@ impl Injection {
             |make| make(&self.inputs, workspace),
         );
         let Resolved { guest, entries } = resolved;
-        let stand_ins = Arc::new(StandIns::new());
         stand_ins
             .replace_origin(StandInOrigin::Secret, entries)
             .map_err(|e| format!("the secrets of {workspace} cannot be registered: {e}"))?;
         // The registry and the list of running CAs change together, under the list's lock, so a
         // `resync` or an `end` never sees one without the other.
         let mut running = self.running();
+        let now = Running {
+            ca,
+            injector,
+            stand_ins,
+            logins,
+        };
         self.terminations.insert(
             workspace.clone(),
-            Termination::new(
-                decrypted(&git, &stand_ins),
-                Arc::clone(&ca),
-                Arc::clone(&injector),
-            )
-            .with_stand_ins(Arc::clone(&stand_ins)),
+            now.termination(decrypted(&git, &now.stand_ins, &now.logins)),
         );
-        running.insert(
-            workspace.clone(),
-            Running {
-                ca,
-                injector,
-                stand_ins,
-            },
-        );
+        running.insert(workspace.clone(), now);
         drop(running);
         Ok(Began {
             certificate,
@@ -312,17 +342,12 @@ impl Injection {
         // Held until the registry is changed: an `end` in between would otherwise leave a CA
         // registered for a sandbox that is gone.
         let running = self.running();
-        let Some(Running {
-            ca,
-            injector,
-            stand_ins,
-        }) = running.get(workspace).cloned()
-        else {
+        let Some(now) = running.get(workspace).cloned() else {
             return Ok(None);
         };
         self.terminations.insert(
             workspace.clone(),
-            Termination::new(decrypted(&git, &stand_ins), ca, injector).with_stand_ins(stand_ins),
+            now.termination(decrypted(&git, &now.stand_ins, &now.logins)),
         );
         drop(running);
         Ok(Some(git))
@@ -376,6 +401,7 @@ impl Injection {
         if let Err(reason) = outcome {
             self.failed(workspace, reason);
         }
+        self.login_keeper.delete_workspace(workspace).await;
     }
 
     /// The workspaces that have a CA now.
@@ -539,8 +565,8 @@ mod tests {
         let (a, b) = (workspace("alpha"), workspace("beta"));
         attach(&store, &a, "ada", "github.com");
 
-        let began_a = injection.begin(&a).await.unwrap();
-        let began_b = injection.begin(&b).await.unwrap();
+        let began_a = injection.begin(&a, false).await.unwrap();
+        let began_b = injection.begin(&b, false).await.unwrap();
         assert_ne!(began_a.certificate, began_b.certificate);
         assert!(decrypts(&terminations, &a, "github.com"));
         assert!(!decrypts(&terminations, &a, "gitlab.com"));
@@ -555,7 +581,7 @@ mod tests {
         let store = store();
         let (injection, terminations) = injection(&store);
         let ws = workspace("alpha");
-        injection.begin(&ws).await.unwrap();
+        injection.begin(&ws, false).await.unwrap();
         let ca_before = terminations
             .termination(&ws)
             .unwrap()
@@ -583,7 +609,7 @@ mod tests {
         let (injection, terminations) = injection(&store);
         let ws = workspace("alpha");
         attach(&store, &ws, "ada", "github.com");
-        injection.begin(&ws).await.unwrap();
+        injection.begin(&ws, false).await.unwrap();
         injection.end(&ws);
         assert!(terminations.termination(&ws).is_none());
         assert_eq!(injection.running_workspaces(), []);
@@ -598,8 +624,8 @@ mod tests {
         let store = store();
         let (injection, terminations) = injection(&store);
         let ws = workspace("alpha");
-        let first = injection.begin(&ws).await.unwrap().certificate;
-        let second = injection.begin(&ws).await.unwrap().certificate;
+        let first = injection.begin(&ws, false).await.unwrap().certificate;
+        let second = injection.begin(&ws, false).await.unwrap().certificate;
         assert_ne!(first, second);
         assert_eq!(
             terminations.termination(&ws).unwrap().ca().certificate(),
@@ -612,7 +638,7 @@ mod tests {
         let store = store();
         let (injection, _) = injection(&store);
         let ws = workspace(&"a".repeat(63));
-        assert!(injection.begin(&ws).await.is_ok());
+        assert!(injection.begin(&ws, false).await.is_ok());
     }
 
     #[tokio::test]
@@ -635,7 +661,7 @@ mod tests {
             )
             .unwrap();
 
-        let began = injection.begin(&ws).await.unwrap();
+        let began = injection.begin(&ws, false).await.unwrap();
         assert_eq!(began.env.get("EDITOR"), Some("vim"));
         let stand_in = began.env.get("NPM_TOKEN").unwrap();
         assert!(stand_in.starts_with("puddle-secret-NPM_TOKEN-"));
@@ -652,7 +678,7 @@ mod tests {
         let store = store();
         let (injection, terminations, vault) = injection_with_vault(&store);
         let ws = workspace("alpha");
-        let first = injection.begin(&ws).await.unwrap();
+        let first = injection.begin(&ws, false).await.unwrap();
         let before = terminations.termination(&ws).unwrap();
         assert_eq!(stand_ins(&terminations, &ws), Vec::<String>::new());
         assert!(!decrypts(&terminations, &ws, "api.example.org"));
@@ -693,8 +719,8 @@ mod tests {
         let store = store();
         let (injection, terminations, vault) = injection_with_vault(&store);
         let (a, b) = (workspace("alpha"), workspace("beta"));
-        injection.begin(&a).await.unwrap();
-        injection.begin(&b).await.unwrap();
+        injection.begin(&a, false).await.unwrap();
+        injection.begin(&b, false).await.unwrap();
         let id = StoredId::new("env-G").unwrap();
         vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
         store
@@ -736,7 +762,7 @@ mod tests {
         assert!(terminations.termination(&stopped).is_none());
 
         vault.heal();
-        injection.begin(&running).await.unwrap();
+        injection.begin(&running, false).await.unwrap();
         add_secret(&store, &vault, &running, "T", &["x.example.org"]);
         injection.environment_changed(&running).await;
         assert!(decrypts(&terminations, &running, "x.example.org"));
@@ -772,7 +798,7 @@ mod tests {
         let ws = workspace("alpha");
         add_secret(&store, &vault, &ws, "T", &["x.example.org"]);
         vault.break_it();
-        let err = injection.begin(&ws).await.err().unwrap();
+        let err = injection.begin(&ws, false).await.err().unwrap();
         assert!(
             err.contains('T') && err.contains("credential store"),
             "{err}"
@@ -875,10 +901,10 @@ mod tests {
         let (stuck, free) = (workspace("stuck"), workspace("free"));
         add_secret(&store, &vault.inner, &stuck, "T", &["x.example.org"]);
 
-        let waiting = injection.begin(&stuck);
+        let waiting = injection.begin(&stuck, false);
         let others = async {
             // A workspace without secrets never asks the store, so it is not held up.
-            let began = injection.begin(&free).await;
+            let began = injection.begin(&free, false).await;
             assert!(began.is_ok());
         };
         let (stuck_result, ()) = tokio::join!(waiting, others);
@@ -916,7 +942,7 @@ mod tests {
         add_secret(&store, &vault, &ws, "A", &["a.example.org"]);
         add_secret(&store, &vault, &ws, "B", &["b.example.org"]);
         overlapping_stand_ins(&store, &ws);
-        let err = injection.begin(&ws).await.err().unwrap();
+        let err = injection.begin(&ws, false).await.err().unwrap();
         assert!(err.contains("cannot be registered"), "{err}");
         assert!(terminations.termination(&ws).is_none());
 
@@ -924,7 +950,7 @@ mod tests {
         let other = workspace("beta");
         add_secret(&store, &vault, &other, "A", &["a.example.org"]);
         overlapping_stand_ins(&store, &other);
-        injection.begin(&other).await.unwrap();
+        injection.begin(&other, false).await.unwrap();
         add_secret(&store, &vault, &other, "B", &["b.example.org"]);
         overlapping_stand_ins(&store, &other);
         injection.environment_changed(&other).await;
@@ -1074,7 +1100,7 @@ mod tests {
         let store = store();
         let (injection, terminations) = injection(&store);
         let ws = workspace("alpha");
-        injection.begin(&ws).await.unwrap();
+        injection.begin(&ws, true).await.unwrap();
         let termination = terminations.termination(&ws).unwrap();
         assert!(format!("{termination:?}").contains("GitInjector"));
         // A push to a repository that is not on the workspace's list is refused, so the injector
@@ -1114,8 +1140,8 @@ mod tests {
             Arc::new(MemoryStore::new()),
         );
         let (a, b) = (workspace("alpha"), workspace("beta"));
-        injection.begin(&a).await.unwrap();
-        injection.begin(&b).await.unwrap();
+        injection.begin(&a, false).await.unwrap();
+        injection.begin(&b, false).await.unwrap();
         assert_eq!(*made.lock().unwrap(), [a.clone(), b]);
         // A change to a running workspace keeps its injector (it may hold state of its own).
         let before = format!("{:?}", terminations.termination(&a).unwrap());
@@ -1125,7 +1151,192 @@ mod tests {
         assert!(format!("{:?}", terminations.termination(&a).unwrap()).contains("NoInjection"));
         assert!(before.contains("NoInjection"));
         // A restart makes a new one.
-        injection.begin(&a).await.unwrap();
+        injection.begin(&a, false).await.unwrap();
         assert_eq!(made.lock().unwrap().len(), 3);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Captured logins
+
+    /// What the proxy does with a Claude Code token answer, through the termination the host made.
+    async fn claude_answer(terminations: &Terminations, ws: &WorkspaceName) -> Option<Vec<u8>> {
+        let termination = terminations.termination(ws).unwrap();
+        let mut exchange = termination.exchanges().unwrap().begin(
+            &Host::parse_normalised("platform.claude.com").unwrap(),
+            "POST",
+            "/v1/oauth/token",
+        )?;
+        let answer = exchange.answer_mut().unwrap();
+        let body = serde_json::json!({
+            "access_token": format!("sk-ant-oat01-CANARY-access-{}", "a".repeat(60)),
+            "refresh_token": format!("sk-ant-ort01-CANARY-refresh-{}", "b".repeat(60)),
+            "expires_in": 28800,
+        })
+        .to_string();
+        let head = puddle_proxy::AnswerHead {
+            status: 200,
+            content_type: Some("application/json"),
+            content_encoding: None,
+            content_length: Some(body.len() as u64),
+        };
+        assert!(answer.wants(&head));
+        answer
+            .rewrite(&head, body.as_bytes())
+            .await
+            .map(|bytes| bytes.to_vec())
+    }
+
+    fn login_ids(terminations: &Terminations, ws: &WorkspaceName) -> Vec<String> {
+        stand_ins(terminations, ws)
+            .into_iter()
+            .filter(|id| id.starts_with("stand-in:login:"))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn with_capture_on_a_workspace_decrypts_every_login_host_and_reads_its_token_exchanges() {
+        let store = store();
+        let (injection, terminations) = injection(&store);
+        let (on, off) = (workspace("alpha"), workspace("beta"));
+        injection.begin(&on, true).await.unwrap();
+        injection.begin(&off, false).await.unwrap();
+        for host in [
+            "platform.claude.com",
+            "api.anthropic.com",
+            "github.com",
+            "api.github.com",
+            "api.individual.githubcopilot.com",
+        ] {
+            assert!(decrypts(&terminations, &on, host), "{host}");
+            assert!(!decrypts(&terminations, &off, host), "{host}");
+        }
+        assert!(!decrypts(&terminations, &on, "example.com"));
+        // The login hosts stay decrypted when the workspace's identities change.
+        attach(&store, &on, "ada", "gitlab.com");
+        assert!(injection.resync(&on).unwrap().is_some());
+        assert!(decrypts(&terminations, &on, "platform.claude.com"));
+        assert!(decrypts(&terminations, &on, "gitlab.com"));
+        // Capture off reads nothing: the token endpoint is an ordinary request.
+        let exchanges = |ws: &WorkspaceName| {
+            terminations
+                .termination(ws)
+                .unwrap()
+                .exchanges()
+                .unwrap()
+                .begin(
+                    &Host::parse_normalised("platform.claude.com").unwrap(),
+                    "POST",
+                    "/v1/oauth/token",
+                )
+                .is_some()
+        };
+        assert!(exchanges(&on));
+        assert!(!exchanges(&off));
+    }
+
+    #[tokio::test]
+    async fn a_captured_login_shares_the_registry_with_secrets_and_outlives_a_restart() {
+        let store = store();
+        let (injection, terminations, vault) = injection_with_vault(&store);
+        let ws = workspace("alpha");
+        injection.begin(&ws, true).await.unwrap();
+        let given = claude_answer(&terminations, &ws).await.unwrap();
+        let given: serde_json::Value = serde_json::from_slice(&given).unwrap();
+        assert!(
+            given["access_token"]
+                .as_str()
+                .unwrap()
+                .starts_with("sk-ant-oat01-")
+        );
+        assert!(!given.to_string().contains("CANARY"));
+        assert_eq!(
+            login_ids(&terminations, &ws),
+            [
+                "stand-in:login:claude-access",
+                "stand-in:login:claude-refresh"
+            ]
+        );
+
+        // A secret added to the running workspace replaces only the secrets' entries.
+        add_secret(&store, &vault, &ws, "API_KEY", &["api.example.org"]);
+        injection.environment_changed(&ws).await;
+        assert_eq!(stand_ins(&terminations, &ws).len(), 3);
+        assert_eq!(login_ids(&terminations, &ws).len(), 2);
+
+        // The next start finds the login again, before the guest could use it.
+        injection.end(&ws);
+        assert!(terminations.termination(&ws).is_none());
+        injection.begin(&ws, true).await.unwrap();
+        assert_eq!(login_ids(&terminations, &ws).len(), 2);
+        let again = claude_answer(&terminations, &ws).await.unwrap();
+        let again: serde_json::Value = serde_json::from_slice(&again).unwrap();
+        assert_eq!(
+            again["access_token"], given["access_token"],
+            "the slot keeps its stand-in"
+        );
+
+        // Another workspace has none of it.
+        let other = workspace("beta");
+        injection.begin(&other, true).await.unwrap();
+        assert_eq!(login_ids(&terminations, &other).len(), 0);
+    }
+
+    #[tokio::test]
+    async fn with_capture_off_the_logins_kept_before_are_not_used_and_the_store_is_left_alone() {
+        let store = store();
+        let (injection, terminations, vault) = injection_with_vault(&store);
+        let ws = workspace("alpha");
+        injection.begin(&ws, true).await.unwrap();
+        claude_answer(&terminations, &ws).await.unwrap();
+        injection.end(&ws);
+
+        // Even a credential store that is broken is not asked about: off means off.
+        vault.break_it();
+        injection.begin(&ws, false).await.unwrap();
+        assert_eq!(login_ids(&terminations, &ws).len(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_credential_store_that_is_not_there_does_not_stop_a_start_and_says_so() {
+        let store = store();
+        let events = Arc::new(Events::default());
+        let vault = Arc::new(MemoryStore::new());
+        vault.break_it();
+        let terminations = Arc::new(Terminations::new());
+        let injection = Injection::new(
+            Arc::clone(&terminations),
+            InjectorInputs {
+                events: events.clone(),
+                ..inputs(&store)
+            },
+            None,
+            vault,
+        );
+        let ws = workspace("alpha");
+        injection.begin(&ws, true).await.unwrap();
+        let sent = events.0.lock().unwrap().clone();
+        assert_eq!(sent.len(), 2, "{sent:?}");
+        assert!(sent.iter().all(|event| matches!(
+            event,
+            Event::LoginProblem {
+                kind: puddle_types::LoginProblemKind::StoreUnavailable,
+                ..
+            }
+        )));
+        // The login still works, as it would without puddle: nothing was captured.
+        assert!(claude_answer(&terminations, &ws).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn deleting_a_workspace_deletes_the_logins_kept_for_it() {
+        let store = store();
+        let (injection, terminations) = injection(&store);
+        let ws = workspace("alpha");
+        injection.begin(&ws, true).await.unwrap();
+        claude_answer(&terminations, &ws).await.unwrap();
+        injection.end(&ws);
+        injection.forget(&ws).await;
+        injection.begin(&ws, true).await.unwrap();
+        assert_eq!(login_ids(&terminations, &ws).len(), 0);
     }
 }

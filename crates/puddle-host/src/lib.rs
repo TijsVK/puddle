@@ -35,6 +35,7 @@ mod files;
 mod git_hosts;
 mod host;
 mod injection;
+mod logins;
 mod paths;
 mod platform;
 mod process_env;

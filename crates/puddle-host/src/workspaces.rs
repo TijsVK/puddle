@@ -711,7 +711,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         image: ImageConfig,
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
         let inner = &self.inner;
-        let began = inner.injection.begin(name).await?;
+        let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
+        let began = inner.injection.begin(name, capture).await?;
         let state = GuestState {
             image,
             ca: began.certificate,

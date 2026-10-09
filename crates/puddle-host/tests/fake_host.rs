@@ -1835,6 +1835,71 @@ async fn turning_direct_ssh_on_and_off_opens_and_closes_the_endpoint_at_once() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn login_capture_is_on_by_default_and_a_workspace_can_turn_it_off_for_its_next_start() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    create(&api, &mut events, "beta").await;
+    // On by default: both decrypt the hosts of the Claude Code and GitHub logins and read their
+    // token exchanges.
+    for workspace in ["acme", "beta"] {
+        for site in [
+            "platform.claude.com",
+            "api.anthropic.com",
+            "github.com",
+            "api.github.com",
+        ] {
+            assert!(decrypts(&host, workspace, site), "{workspace} {site}");
+        }
+        assert!(
+            host.workspaces()
+                .termination(&name(workspace))
+                .unwrap()
+                .exchanges()
+                .is_some()
+        );
+    }
+
+    // acme turns it off: it applies at its next start, and beta is not touched.
+    let reply = api
+        .put(
+            "/api/settings/workspaces/acme",
+            &json!({"overrides": {"capture_logins": false}}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(
+        decrypts(&host, "acme", "platform.claude.com"),
+        "applies at the next start"
+    );
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    for site in ["platform.claude.com", "api.anthropic.com", "api.github.com"] {
+        assert!(!decrypts(&host, "acme", site), "{site}");
+    }
+    assert!(decrypts(&host, "beta", "platform.claude.com"));
+
+    // The global default decides for a workspace with no switch of its own.
+    let reply = api
+        .put(
+            "/api/settings",
+            &json!({"workspace_defaults": {"capture_logins": false}}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    api.post("/api/workspaces/beta/stop", "").await;
+    events.until(ended("beta"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/beta/start", "").await;
+    events.until(ended("beta"), Duration::from_secs(20)).await;
+    assert!(!decrypts(&host, "beta", "platform.claude.com"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
     let rig = Rig::new();
     let host = rig.start().await;
@@ -2256,7 +2321,8 @@ fn calls_of(rig: &Rig, op: &str) -> usize {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_new_workspace_trusts_its_own_ca_from_the_first_boot_and_decrypts_nothing_yet() {
+async fn a_new_workspace_trusts_its_own_ca_from_the_first_boot_and_decrypts_only_the_login_hosts_yet()
+ {
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
@@ -2293,7 +2359,7 @@ async fn a_new_workspace_trusts_its_own_ca_from_the_first_boot_and_decrypts_noth
         ),
         acme.pem()
     );
-    // Tools are pointed at the bundle, though nothing is decrypted yet.
+    // Tools are pointed at the bundle, though no identity decrypts anything yet.
     let env = pem_of(&files, "/etc/profile.d/01-puddle-env.sh");
     assert!(
         env.contains("export SSL_CERT_FILE='/etc/puddle/ca-bundle.pem'"),
@@ -2303,14 +2369,10 @@ async fn a_new_workspace_trusts_its_own_ca_from_the_first_boot_and_decrypts_noth
         env.contains("export NODE_EXTRA_CA_CERTS='/etc/puddle/extra-cas.pem'"),
         "{env}"
     );
-    assert!(!decrypts(&host, "acme", "github.com"));
-    assert!(
-        host.workspaces()
-            .termination(&name("acme"))
-            .unwrap()
-            .set()
-            .is_empty()
-    );
+    // Login capture is on by default: the hosts of the logins are decrypted from the start, and
+    // no other.
+    assert!(decrypts(&host, "acme", "platform.claude.com"));
+    assert!(!decrypts(&host, "acme", "gitlab.com"));
     // No key anywhere in what the guest was sent.
     for (_, plan) in rig.guest.plans.lock().unwrap().iter() {
         assert!(!plan.windows(KEY_MARKER.len()).any(|w| w == KEY_MARKER));
@@ -2354,8 +2416,8 @@ async fn a_credential_for_any_host_applies_to_the_running_workspace_with_no_rest
     })
     .await;
     assert!(decrypts(&host, "acme", "dev.azure.com"));
-    // Nothing else is: a host nobody gave a credential is still spliced.
-    assert!(!decrypts(&host, "acme", "github.com"));
+    // Nothing else is: a host nobody gave a credential, and that no login is for, is still spliced.
+    assert!(!decrypts(&host, "acme", "example.com"));
     assert!(!decrypts(&host, "acme", "api.gitlab.com"));
     // The CA is the one the guest booted with, and the sandbox was not touched.
     let after = host.workspaces().termination(&name("acme")).unwrap();

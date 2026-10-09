@@ -952,3 +952,140 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
+
+/// Login capture on a real guest. With capture on (the default) the hosts of the Claude Code and
+/// GitHub logins are decrypted from the workspace's start: the guest trusts puddle's certificate
+/// there, a request works over HTTP/2 where the real server speaks it, and a request to a token
+/// endpoint reaches the real server and the server's own error answer comes back untouched, with
+/// no notice (an answer with no token in it is nothing to capture). A workspace that turns capture
+/// off sees the real certificates from its next start.
+///
+/// No account is used: the real services refuse an unauthenticated request, which is the answer
+/// that proves the exchange path is transparent.
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_alone_when_it_is_off()
+{
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        secrets: _,
+    } = start_vm_host("login").await;
+    let name = format!("{}-login", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    for site in [
+        "github.com",
+        "api.github.com",
+        "platform.claude.com",
+        "api.anthropic.com",
+        "example.com",
+    ] {
+        host.store()
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(sandbox.clone()),
+                pattern: Pattern::parse(site).unwrap(),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // On by default: the login hosts show puddle's certificate, every other host its own.
+    let ca_name = format!("puddle CA for {name}");
+    for site in ["platform.claude.com", "api.anthropic.com", "api.github.com"] {
+        let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
+        assert!(issuer.contains(&ca_name), "{site}: {issuer}");
+    }
+    let example = guest(&runtime, &sandbox, &issuer_script("example.com")).await;
+    assert!(!example.contains("puddle"), "{example}");
+
+    // An ordinary request on a decrypted login host works, over HTTP/2 where the server speaks it.
+    let zen = guest(
+        &runtime,
+        &sandbox,
+        "curl -s -o /dev/null -w '%{http_code} %{http_version}' --max-time 60 https://api.github.com/zen",
+    )
+    .await;
+    assert!(zen.trim().starts_with("200 "), "{zen}");
+    eprintln!("api.github.com through the proxy: {zen}");
+
+    // A token endpoint: the real server refuses an unknown refresh token with its own error; the
+    // request body went through the exchange path and the answer is not touched.
+    let refused = guest(
+        &runtime,
+        &sandbox,
+        "curl -s -X POST -H 'content-type: application/json' --max-time 60 \
+         -d '{\"grant_type\":\"refresh_token\",\"refresh_token\":\"not-a-real-token\",\"client_id\":\"9d1c250a-e61b-44d9-88ed-5944d1962f5e\"}' \
+         -w '\\n%{http_code}' https://platform.claude.com/v1/oauth/token",
+    )
+    .await;
+    let status: u16 = refused
+        .trim()
+        .rsplit('\n')
+        .next()
+        .and_then(|code| code.trim().parse().ok())
+        .unwrap_or(0);
+    assert!(
+        (400..500).contains(&status),
+        "the real token endpoint should refuse it: {refused}"
+    );
+    // GitHub's device-code request: a form POST that is not a token answer either.
+    let device = guest(
+        &runtime,
+        &sandbox,
+        "curl -s -X POST -H 'accept: application/json' --max-time 60 \
+         -d 'client_id=178c6fc778ccc68e1d6a&scope=repo' -w '\\n%{http_code}' \
+         https://github.com/login/device/code",
+    )
+    .await;
+    assert!(device.trim().ends_with("200"), "{device}");
+    assert!(device.contains("user_code"), "{device}");
+    // Nothing was reported: no answer here held a token.
+    assert!(
+        !events.seen.iter().any(|e| e["type"] == "login_problem"),
+        "{:#?}",
+        events.seen
+    );
+
+    // Turning capture off applies at the next start.
+    let reply = api
+        .put(
+            &format!("/api/settings/workspaces/{name}"),
+            &json!({"overrides": {"capture_logins": false}}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    let end = events
+        .until(ended(name_static), Duration::from_secs(300))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    for site in ["platform.claude.com", "api.anthropic.com", "api.github.com"] {
+        let issuer = guest(&runtime, &sandbox, &issuer_script(site)).await;
+        assert!(!issuer.contains("puddle"), "{site}: {issuer}");
+    }
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
