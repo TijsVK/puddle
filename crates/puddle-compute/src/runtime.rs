@@ -289,6 +289,14 @@ pub trait Sandbox: Send + Sync + 'static {
     /// Whether dropping this handle kills the VM.
     fn owns_lifecycle(&self) -> bool;
 
+    /// Whether the last [`Sandbox::stop`] through this handle had to end the VM by force
+    /// because it did not shut down in time. The stop still returned `Ok`: the VM is down, but
+    /// what the guest had not yet written to disk may be lost. `false` when the runtime does
+    /// not tell.
+    fn stopped_by_force(&self) -> bool {
+        false
+    }
+
     /// The sandbox's current state.
     ///
     /// # Errors

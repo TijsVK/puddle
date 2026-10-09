@@ -86,6 +86,9 @@ pub struct StopReport {
     /// One entry per workspace the sandbox owns: its trim, or why it failed. A failed trim
     /// doesn't stop the stop.
     pub trims: Vec<Result<TrimReport, WorkspaceError>>,
+    /// The sandbox did not shut down in time and the runtime ended it by force: what the guest
+    /// had not yet written to disk may be lost.
+    pub forced: bool,
 }
 
 /// What [`Workspaces::delete`] removed.
@@ -211,6 +214,7 @@ impl Workspaces {
             sandbox: sandbox.clone(),
             mount: None,
             created_volume: false,
+            kept_size: None,
             before: Before {
                 record: true,
                 stale_dir: true,
@@ -242,8 +246,12 @@ impl Workspaces {
             .map_err(|e| WorkspaceError::runtime("list stale directories", id, e))?;
         attachment.before.stale_dir = stale.iter().any(|s| s == sandbox.as_str());
         let info = if let Some(info) = existing {
-            if size.is_some_and(|s| s != info.size) {
+            if let Some(requested) = size.filter(|s| *s != info.size) {
                 info!(workspace = %id, size = %info.size, "workspace volume exists; keeping its size");
+                attachment.kept_size = Some(KeptSize {
+                    requested,
+                    actual: info.size,
+                });
             }
             info
         } else if !may_create {
@@ -447,6 +455,9 @@ impl Workspaces {
         } else if report.removed_count() > 0 {
             info!(workspace = %id, removed = report.removed_count(), "stale git locks cleared");
         }
+        for error in &report.errors {
+            warn!(workspace = %id, %error, "a stale git lock could not be removed");
+        }
         Ok(report)
     }
 
@@ -495,21 +506,38 @@ impl Workspaces {
     pub async fn stop<S: Sandbox>(&self, sandbox: &S) -> Result<StopReport, WorkspaceError> {
         let name = sandbox.name();
         let mut trims = Vec::new();
-        let running = matches!(sandbox.status().await, Ok(WorkspaceStatus::Running));
-        if running {
-            for id in self.registry.owned_by(name) {
-                let result = self.trim(sandbox, &id).await;
-                if let Err(e) = &result {
-                    warn!(sandbox = %name, workspace = %id, error = %e, "trim before stop failed");
+        match sandbox.status().await {
+            Ok(WorkspaceStatus::Running) => {
+                for id in self.registry.owned_by(name) {
+                    let result = self.trim(sandbox, &id).await;
+                    if let Err(e) = &result {
+                        warn!(sandbox = %name, workspace = %id, error = %e, "trim before stop failed");
+                    }
+                    trims.push(result);
                 }
-                trims.push(result);
+            }
+            Ok(_) => {}
+            // Not knowing whether it runs is not "down": the trim is skipped, and the report
+            // says so for every workspace that was due one.
+            Err(e) => {
+                warn!(sandbox = %name, error = %e, "cannot tell whether the sandbox runs; no trim before the stop");
+                for id in self.registry.owned_by(name) {
+                    trims.push(Err(WorkspaceError::runtime(
+                        "tell whether the sandbox runs before the trim",
+                        &id,
+                        e.clone(),
+                    )));
+                }
             }
         }
         sandbox
             .stop()
             .await
             .map_err(|e| WorkspaceError::runtime("stop the sandbox", name, e))?;
-        Ok(StopReport { trims })
+        Ok(StopReport {
+            trims,
+            forced: sandbox.stopped_by_force(),
+        })
     }
 
     /// "Reclaim space" for workspace `id`: trims it in its running holder, or in a short-lived
@@ -857,10 +885,26 @@ impl Workspaces {
         let stopped = sandbox.stop().await;
         drop(sandbox);
         let removed = rt.remove(&name).await;
-        let output = output?;
-        stopped.map_err(|e| WorkspaceError::runtime("stop the maintenance sandbox", id, e))?;
-        removed.map_err(|e| WorkspaceError::runtime("remove the maintenance sandbox", id, e))?;
-        Ok(output)
+        let cleanup = stopped
+            .map_err(|e| WorkspaceError::runtime("stop the maintenance sandbox", id, e))
+            .and(
+                removed
+                    .map_err(|e| WorkspaceError::runtime("remove the maintenance sandbox", id, e)),
+            );
+        match (output, cleanup) {
+            (Ok(output), Ok(())) => Ok(output),
+            (Ok(_), Err(e)) => Err(e),
+            (Err(job), Ok(())) => Err(job),
+            // Say both: the job's error alone would hide that a sandbox is left behind.
+            (Err(job), Err(leftover)) => {
+                warn!(workspace = %id, error = %leftover, "the maintenance sandbox was left behind");
+                Err(WorkspaceError::Leftover {
+                    workspace: id.to_string(),
+                    job: job.to_string(),
+                    leftover: leftover.to_string(),
+                })
+            }
+        }
     }
 }
 
@@ -969,8 +1013,19 @@ pub struct Attachment<'w> {
     sandbox: SandboxName,
     mount: Option<VolumeMount>,
     created_volume: bool,
+    kept_size: Option<KeptSize>,
     before: Before,
     open: bool,
+}
+
+/// A volume that already existed with another size than the one asked for. A volume only ever
+/// grows through its own resize, so the existing size stays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeptSize {
+    /// The size the caller asked for.
+    pub requested: DiskSize,
+    /// The size the volume has, and keeps.
+    pub actual: DiskSize,
 }
 
 /// What existed under the sandbox's name before the create, so an abort leaves it alone.
@@ -1007,6 +1062,13 @@ impl Attachment<'_> {
     #[must_use]
     pub fn created_volume(&self) -> bool {
         self.created_volume
+    }
+
+    /// Set when the volume existed with another size than the one asked for: the request was not
+    /// applied, and the caller should say so.
+    #[must_use]
+    pub fn kept_size(&self) -> Option<KeptSize> {
+        self.kept_size
     }
 
     /// `spec` with the workspace's volume mount added.

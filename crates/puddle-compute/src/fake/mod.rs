@@ -47,6 +47,7 @@
 mod exec;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use puddle_types::{ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
@@ -231,6 +232,8 @@ struct State {
     calls: Vec<Call>,
     handlers: Vec<Arc<dyn ExecHandler>>,
     boots: u64,
+    /// Sandboxes whose next stop times out gracefully and is ended by force.
+    force_stop: BTreeSet<String>,
 }
 
 impl State {
@@ -471,7 +474,14 @@ impl FakeRuntime {
             name: name.clone(),
             boot,
             owned,
+            forced: AtomicBool::new(false),
         }
+    }
+
+    /// Makes the next stop of `name` time out gracefully and end the VM by force, as msb does
+    /// after 30 seconds: the stop returns `Ok` and [`Sandbox::stopped_by_force`] says `true`.
+    pub fn force_next_stop(&self, name: &SandboxName) {
+        self.lock().force_stop.insert(name.to_string());
     }
 
     /// Marks a failed create's leftover directory, as msb does until the upstream bug is fixed.
@@ -785,6 +795,7 @@ pub struct FakeSandbox {
     name: SandboxName,
     boot: u64,
     owned: bool,
+    forced: AtomicBool,
 }
 
 impl FakeSandbox {
@@ -847,6 +858,10 @@ impl Sandbox for FakeSandbox {
         self.owned
     }
 
+    fn stopped_by_force(&self) -> bool {
+        self.forced.load(Ordering::Relaxed)
+    }
+
     #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn status(&self) -> Result<WorkspaceStatus, ComputeError> {
         let mut state = self.runtime.lock();
@@ -880,6 +895,8 @@ impl Sandbox for FakeSandbox {
             });
         }
         r.status = WorkspaceStatus::Stopped;
+        let forced = state.force_stop.remove(self.name.as_str());
+        self.forced.store(forced, Ordering::Relaxed);
         Ok(())
     }
 

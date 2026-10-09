@@ -1126,3 +1126,127 @@ async fn a_workspace_with_no_volume_and_no_sandbox_is_deleted_with_nothing_left_
     let deleted = w.delete(&rt, &id, &report.confirm()).await.unwrap();
     assert_eq!(deleted.removed_sandbox, None);
 }
+
+#[tokio::test]
+async fn a_stop_that_cannot_tell_whether_the_sandbox_runs_reports_the_trim_it_skipped() {
+    let rt = FakeRuntime::new();
+    stub_fstrim(&rt, 0);
+    let w = Workspaces::default();
+    let sb = w.create(&rt, &ws("acme"), spec("box"), None).await.unwrap();
+    rt.inject(
+        Op::Status,
+        Fault::once(ComputeError::Runtime {
+            op: "status",
+            message: "the runtime did not answer".into(),
+        }),
+    );
+    let report = w.stop(&sb).await.unwrap();
+    assert_eq!(report.trims.len(), 1, "one entry per workspace due a trim");
+    let err = report.trims[0].as_ref().unwrap_err();
+    assert!(err.to_string().contains("did not answer"), "{err}");
+    assert!(
+        err.to_string().contains("whether the sandbox runs"),
+        "{err}"
+    );
+    assert!(
+        !targets(&rt, Op::Exec).contains(&"box".to_owned()),
+        "no trim ran"
+    );
+    assert_eq!(sb.status().await.unwrap(), WorkspaceStatus::Stopped);
+}
+
+#[tokio::test]
+async fn a_stop_the_runtime_had_to_force_says_so_in_the_report() {
+    let rt = FakeRuntime::new();
+    stub_fstrim(&rt, 0);
+    let w = Workspaces::default();
+    let sb = w.create(&rt, &ws("acme"), spec("box"), None).await.unwrap();
+    rt.force_next_stop(&name("box"));
+    let report = w.stop(&sb).await.unwrap();
+    assert!(report.forced);
+    assert!(report.trims[0].is_ok(), "the trim itself worked");
+    let sb = rt.start(&name("box")).await.unwrap();
+    assert!(
+        !w.stop(&sb).await.unwrap().forced,
+        "a clean stop is not forced"
+    );
+}
+
+#[tokio::test]
+async fn a_volume_that_exists_with_another_size_keeps_it_and_says_so() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    rt.create_volume(VolumeSpec {
+        name: id.volume_name(),
+        size: DiskSize::gib(1),
+    })
+    .await
+    .unwrap();
+    let att = w
+        .prepare(&rt, &id, &name("box"), Some(DiskSize::gib(4)))
+        .await
+        .unwrap();
+    assert_eq!(
+        att.kept_size(),
+        Some(puddle_workspace::KeptSize {
+            requested: DiskSize::gib(4),
+            actual: DiskSize::gib(1),
+        })
+    );
+    drop(att);
+    let same = w
+        .prepare(&rt, &id, &name("box"), Some(DiskSize::gib(1)))
+        .await
+        .unwrap();
+    assert_eq!(same.kept_size(), None);
+}
+
+#[tokio::test]
+async fn a_lock_script_that_dies_without_a_word_of_its_own_gives_the_shells_stderr() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    rt.on_exec(|_: &mut ExecContext<'_>, r: &ExecRequest| {
+        (r.program == "sh")
+            .then(|| ExecOutput::new(126, "", "sh: cannot execute: Permission denied\n"))
+    });
+    let err = w.clear_stale_locks(&sb, &id).await.unwrap_err();
+    assert!(err.to_string().contains("exited 126"), "{err}");
+    assert!(err.to_string().contains("Permission denied"), "{err}");
+}
+
+#[tokio::test]
+async fn a_failed_maintenance_job_and_a_leftover_sandbox_are_both_in_the_error() {
+    let rt = FakeRuntime::new();
+    stub_fstrim(&rt, 1);
+    let w = Workspaces::default();
+    let id = ws("acme");
+    rt.create_volume(VolumeSpec {
+        name: id.volume_name(),
+        size: DiskSize::gib(1),
+    })
+    .await
+    .unwrap();
+    rt.inject(
+        Op::Remove,
+        Fault::once(ComputeError::Runtime {
+            op: "remove",
+            message: "the record is locked".into(),
+        }),
+    );
+    let err = w.reclaim_space(&rt, &id).await.unwrap_err();
+    assert!(matches!(err, WorkspaceError::Leftover { .. }), "{err}");
+    let text = err.to_string();
+    assert!(text.contains("not supported"), "the job's reason: {text}");
+    assert!(
+        text.contains("record is locked"),
+        "the cleanup's reason: {text}"
+    );
+    assert!(text.contains("left behind"), "{text}");
+    // The next run clears it, as before.
+    stub_fstrim(&rt, 0);
+    w.reclaim_space(&rt, &id).await.unwrap();
+    assert_eq!(names(&rt).await, NONE);
+}

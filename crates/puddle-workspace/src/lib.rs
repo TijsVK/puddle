@@ -61,6 +61,6 @@ pub use locks::{CLEAR_LOCKS_SH, CLEAR_LOCKS_TIMEOUT, LockReport, MAX_LOCKS};
 pub use registry::{HoldKind, Holder};
 pub use trim::{TRIM_TIMEOUT, TrimReport};
 pub use workspaces::{
-    Attachment, Deleted, MAINTENANCE_PREFIX, StopReport, WorkspaceConfig, Workspaces,
+    Attachment, Deleted, KeptSize, MAINTENANCE_PREFIX, StopReport, WorkspaceConfig, Workspaces,
     is_maintenance_name,
 };

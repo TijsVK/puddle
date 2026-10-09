@@ -61,7 +61,7 @@ pub enum BootError {
     #[error(transparent)]
     Compute(#[from] ComputeError),
     /// The hook failed; puddle stopped the sandbox (fail closed: no half-set-up VM runs).
-    #[error("workspace {sandbox:?} failed its boot hook and was stopped: {failure}")]
+    #[error("workspace {sandbox:?} failed its boot hook and {}: {failure}", stop_text(.stop_error))]
     Hook {
         /// The sandbox.
         sandbox: String,
@@ -70,6 +70,15 @@ pub enum BootError {
         /// Set when stopping it failed too.
         stop_error: Option<Box<ComputeError>>,
     },
+}
+
+/// What [`BootError::Hook`] says became of the sandbox: stopped, or still up because the stop
+/// failed too.
+fn stop_text(stop_error: &Option<Box<ComputeError>>) -> String {
+    match stop_error {
+        None => "was stopped".to_owned(),
+        Some(e) => format!("could not be stopped either ({e}), so it may still be running"),
+    }
 }
 
 /// Runs the boot hook and keeps the [`Gate`] in step. One per puddle; cheap to copy.

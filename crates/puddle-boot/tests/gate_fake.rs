@@ -183,7 +183,16 @@ async fn a_failed_stop_after_a_failed_hook_is_reported_too() {
         .create(&rt, spec("d"), &plan(), &Gate::new())
         .await
         .unwrap_err();
-    assert!(matches!(err, BootError::Hook { stop_error: Some(e), .. } if *e == boom));
+    let message = err.to_string();
+    assert!(
+        matches!(err, BootError::Hook { stop_error: Some(e), .. } if *e == boom),
+        "{message}"
+    );
+    // The text does not claim the sandbox was stopped when the stop failed.
+    assert!(!message.contains("was stopped"), "{message}");
+    assert!(message.contains("could not be stopped either"), "{message}");
+    assert!(message.contains("injected"), "{message}");
+    assert!(message.contains("may still be running"), "{message}");
 }
 
 #[tokio::test]

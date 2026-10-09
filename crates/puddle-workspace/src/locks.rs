@@ -79,15 +79,15 @@ pub(crate) async fn run<S: Sandbox>(
         reason,
     };
     if !out.status.success() {
-        return Err(fail(format!(
-            "exited {}: {}",
-            out.status.code,
-            out.stdout_text()
-                .lines()
-                .find_map(|l| l.strip_prefix("E\t"))
-                .unwrap_or_default()
-                .replace('\t', ": ")
-        )));
+        // The script's own error line when it wrote one, else what the shell said.
+        let reason = out
+            .stdout_text()
+            .lines()
+            .find_map(|l| l.strip_prefix("E\t"))
+            .map(|l| l.replace('\t', ": "))
+            .filter(|l| !l.is_empty())
+            .unwrap_or_else(|| crate::trim::tail(&out.stderr_text()));
+        return Err(fail(format!("exited {}: {reason}", out.status.code)));
     }
     parse(&out.stdout_text()).map_err(fail)
 }

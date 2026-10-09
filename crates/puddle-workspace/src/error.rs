@@ -95,6 +95,20 @@ pub enum WorkspaceError {
         /// Why.
         reason: String,
     },
+    /// A maintenance job failed, and then the maintenance sandbox could not be stopped or
+    /// removed either: puddle's short-lived sandbox is still there. Both causes are in the
+    /// message; the next maintenance run removes the leftover.
+    #[error(
+        "{job}; and the maintenance sandbox of workspace {workspace:?} was left behind: {leftover}"
+    )]
+    Leftover {
+        /// The workspace.
+        workspace: String,
+        /// Why the job failed.
+        job: String,
+        /// What could not be cleaned up.
+        leftover: String,
+    },
     /// The confirmation was for another workspace.
     #[error("the delete confirmation is for workspace {confirmed:?}, not {workspace:?}")]
     WrongConfirmation {
