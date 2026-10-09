@@ -25,8 +25,8 @@ Rust, pinned in `rust-toolchain.toml` (rustup installs it on first use). Tools f
 `cargo install --locked cargo-nextest cargo-llvm-cov cargo-deny typos-cli` (or `cargo binstall`).
 
 ```sh
-git config core.hooksPath .githooks   # once per clone: fast gates on commit, all gates on push
-scripts/check.sh                      # every gate CI runs: fmt, typos, SPDX, clippy, deny, docs, tests + coverage
+git config core.hooksPath .githooks   # once per clone: fast gates on commit, the pre-push set on push
+scripts/check.sh                      # every gate CI runs (the pre-push set plus UI e2e): fmt, typos, SPDX, clippy, deny, docs, tests + coverage
 cargo nextest run                     # tests only
 cargo run -p puddle -- --version
 ```

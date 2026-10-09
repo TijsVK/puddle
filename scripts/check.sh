@@ -5,9 +5,11 @@
 #   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, secrets, clippy, clippy-windows, deny, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage,
 #   ui, ui-licences, ui-audit, ui-e2e
-#   fast  = fmt typos spdx shellcheck hooks platform-literals standalone   (pre-commit hook)
-#   all   = fast git-env secrets clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage
-#           (pre-push hook, CI; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
+#   fast     = fmt typos spdx shellcheck hooks platform-literals standalone   (pre-commit hook)
+#   all      = fast git-env secrets clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage
+#              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
+#   pre-push = every gate of `all` except ui-e2e, the slowest one (pre-push hook; CI still runs ui-e2e after the push)
+#   `scripts/check.sh --list <set>` prints a set's gates, one per line, without running anything.
 # The ui gates need Node 24 (the UI's package-lock.json pins every npm package). ui-e2e also needs
 # the Playwright browsers: `cd ui && npx playwright install --with-deps chromium webkit`.
 # Set CARGO to run every Cargo command through a wrapper, e.g. CARGO=mbx for the shared build
@@ -96,7 +98,7 @@ run_gate() {
         }
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
-    hooks) scripts/pre-push-test.sh && ci/fetch-msb-test.sh ;;
+    hooks) scripts/pre-push-test.sh && scripts/check-sets-test.sh && ci/fetch-msb-test.sh ;;
     git-env) scripts/git-env-test.sh ;;
     platform-literals)
         # The per-OS runtime file names live in puddle-runtime's table (platform.rs) and nowhere
@@ -242,11 +244,36 @@ run_gate() {
     esac
 }
 
+# The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
+fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone"
+all_gates="$fast_gates git-env secrets clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
+pre_push_gates=
+for g in $all_gates; do
+    [ "$g" = ui-e2e ] || pre_push_gates="$pre_push_gates $g"
+done
+
+# Prints the gates of a set, or of a single gate, one per line.
+gates_of() {
+    # shellcheck disable=SC2086 # the sets are space-separated names by design
+    case "$1" in
+    fast) printf '%s\n' $fast_gates ;;
+    all) printf '%s\n' $all_gates ;;
+    pre-push) printf '%s\n' $pre_push_gates ;;
+    *) printf '%s\n' "$1" ;;
+    esac
+}
+
+if [ "${1:-}" = --list ]; then
+    [ "$#" -ge 2 ] || {
+        echo "usage: scripts/check.sh --list <set>..." >&2
+        exit 2
+    }
+    shift
+    for arg in "$@"; do gates_of "$arg"; done
+    exit 0
+fi
+
 [ "$#" -gt 0 ] || set -- all
 for arg in "$@"; do
-    case "$arg" in
-    fast) for g in fmt typos spdx shellcheck hooks platform-literals standalone; do run_gate "$g"; done ;;
-    all) for g in fmt typos spdx shellcheck hooks platform-literals standalone git-env secrets clippy clippy-windows deny notices openapi ui ui-licences ui-audit ui-e2e doc coverage; do run_gate "$g"; done ;;
-    *) run_gate "$arg" ;;
-    esac
+    for g in $(gates_of "$arg"); do run_gate "$g"; done
 done

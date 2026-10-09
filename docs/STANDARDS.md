@@ -116,7 +116,7 @@ Work lands on `develop` as a **fast-forward**, never as a merge commit or a forc
    cargo lock. Set the identity in the worktree (`git config user.name`, `user.email`) if the
    clone's isn't the project one.
 2. **Enable the hooks** once per clone: `git config core.hooksPath .githooks` (pre-commit runs the
-   fast gates, pre-push runs all). Never skip them with `--no-verify`.
+   fast gates, pre-push runs the `pre-push` set: every gate but `ui-e2e`, see "Gate sets" below). Never skip them with `--no-verify`.
 3. **Stay in your crate.** Touch other crates only where the task needs it; changes to shared files
    (`Cargo.toml`, `Cargo.lock`, `puddle-types`, this file, CI) are kept small and land early, in
    their own commit, because they are where parallel tasks collide.
@@ -270,7 +270,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
   the trailer above, so repeated wobble can't wear it down. A drop of more than 0.05 points still fails;
   a smaller one passes (and is logged), and the diff gate (below) is what holds the lines a change adds.
   The owner accepted this allowance on 2026-10-08.
-- **Raising the baseline is automatic.** A local `scripts/check.sh coverage` (the pre-push hook runs it)
+- **Raising the baseline is automatic.** A local `scripts/check.sh coverage` (the pre-push set runs it)
   rewrites the baseline when coverage rose; commit the changed file with your change. CI never writes it,
   it only compares and tells you when the baseline is behind. If two branches raise it, take the higher
   value when merging. The ratchet reads two totals: a drop in one crate hidden by a gain elsewhere passes
@@ -297,9 +297,24 @@ the owner, then tagged `vX.Y.Z` on `main`.
 
 ## 10. CI
 
+**Gate sets.** `scripts/check.sh` runs named sets of gates; `scripts/check.sh --list <set>` prints one without running it.
+
+| Set | Gates | Runs |
+|---|---|---|
+| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone | pre-commit hook |
+| `pre-push` | every gate of `all` except `ui-e2e` | pre-push hook |
+| `all` (the default) | every gate, `ui-e2e` included | `ci.yml` (on every push and PR), by hand |
+
+`ui-e2e` is the slowest gate (two browsers against the built UI) and the one that flakes most on a loaded
+machine, so a push does not wait for it: the pre-push hook runs `pre-push`, and `ci.yml` runs `ui-e2e` on the
+push. A red `ui-e2e` on `develop` is fixed forward, like any red CI. No coverage number depends on it: the Rust
+coverage and the UI's thresholds and diff-coverage come from `cargo llvm-cov nextest` and `vitest`
+(gates `coverage` and `ui`), which the `pre-push` set runs. Run `scripts/check.sh all` (or `ui-e2e` alone)
+before pushing a change that touches the UI's behaviour, routes or accessibility.
+
 | Workflow | Trigger | Runner | Gates |
 |---|---|---|---|
-| `ci.yml` | push to `develop`/`main`, every PR, manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` in one job; every gate runs even if an earlier one fails |
+| `ci.yml` | push to `develop`/`main`, every PR, manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` in one job (the `pre-push` set plus `ui-e2e`); every gate runs even if an earlier one fails |
 | `windows.yml` | nightly 02:30 UTC (skipped if it already has a green run on that commit), PRs to `main`, manual | `windows-2025` | clippy, nextest, doc tests, release build (MSVC; not on a manual run from a task branch). The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
 | `vm-linux.yml` | manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if it already has a green run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K; no KVM ⇒ warning, infrastructure skip |
 | `vm-windows.yml` | manual on any branch, nightly 03:15 UTC on `develop` (skipped if it already has a green run on that commit) | `windows-2025` (WHP) | VM tests, tier W; no WHP ⇒ warning, infrastructure skip |
@@ -349,7 +364,7 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
 
 A SvelteKit single-page app (Svelte 5, TypeScript `strict`, `adapter-static`), served by
 `puddle-api` on its own origin (feature `embedded-ui`; ADR 0003). Gates, all in `scripts/check.sh all`
-and in `ci.yml` (Linux); `windows.yml` runs `ui` and `ui-e2e`:
+and in `ci.yml` (Linux); every one but `ui-e2e` is also in the `pre-push` set; `windows.yml` runs `ui` and `ui-e2e`:
 
 | Gate | What |
 |---|---|

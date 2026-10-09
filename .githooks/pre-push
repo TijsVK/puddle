@@ -1,10 +1,12 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# All gates before each push, so develop stays green. Enable: git config core.hooksPath .githooks
+# The pre-push gate set (`scripts/check.sh pre-push`: every gate but the UI end-to-end tests, which CI
+# runs after the push) before each push, so develop stays green. Enable: git config core.hooksPath .githooks
 #
 # Gates that already passed elsewhere: when PUDDLE_GATE_PASS_DIR names a directory holding a file
 # `<commit sha>.pass` for the tip of every ref being pushed, the gates ran on exactly that commit (for
-# example on a build host, with the same `scripts/check.sh all`), so they are not run again here.
+# example on a build host, with the same `scripts/check.sh pre-push`, or `all`, which includes it), so
+# they are not run again here.
 # Anything else, a missing file included, runs the gates as usual. This is not a way around them:
 # whoever writes a .pass file vouches for that commit, the way `git push --no-verify` would.
 zero=0000000000000000000000000000000000000000
@@ -25,4 +27,4 @@ top=$(git rev-parse --show-toplevel)
 # would act on this repository whatever its working directory (`git init --bare` in a temp dir
 # once turned this repository bare). The gates find the repository from their working directory.
 for var in $(git rev-parse --local-env-vars); do unset "$var"; done
-exec "$top/scripts/check.sh" all
+exec "$top/scripts/check.sh" pre-push
