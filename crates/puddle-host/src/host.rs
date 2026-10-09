@@ -174,6 +174,7 @@ pub fn prepare(config: HostConfig, platform: &dyn Platform) -> Result<Prepared, 
     // First, before anything is bound or looked at: a second process on this folder would
     // reconcile away the first one's running sandboxes.
     let lock = DataLock::acquire(config.paths.data())?;
+    puddle_fd_limit::raise_open_file_limit(puddle_fd_limit::Reach::Soft).log(FDS_NEEDED);
     let mut steps = vec![Step::DataFolderLocked];
     let endpoints = PuddleEndpoints::new();
     let pull = PullProxy::bind(&endpoints).map_err(HostError::PullProxy)?;
@@ -197,6 +198,10 @@ pub fn prepare(config: HostConfig, platform: &dyn Platform) -> Result<Prepared, 
         steps,
     })
 }
+
+/// Descriptors the host needs for every connection the proxy lets one workspace open (its cap is
+/// 4096; each costs a socket here), with room for the store, the API, routes and the runtime.
+const FDS_NEEDED: u64 = 4096 + 1024;
 
 /// What a [`RuntimeFactory`] opens the runtime with.
 #[derive(Debug)]

@@ -5833,6 +5833,7 @@ dependencies = [
  "libc",
  "proptest",
  "puddle-agent-proto",
+ "puddle-fd-limit",
  "puddle-guest-env",
  "puddle-ipc",
  "puddle-proxy",
@@ -6020,6 +6021,7 @@ dependencies = [
  "puddle-api",
  "puddle-compute",
  "puddle-compute-msb",
+ "puddle-fd-limit",
  "puddle-ipc",
  "puddle-netpolicy",
  "puddle-proxy",
@@ -6040,6 +6042,14 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "puddle-fd-limit"
+version = "0.0.0"
+dependencies = [
+ "rustix",
+ "tracing",
 ]
 
 [[package]]
@@ -6076,6 +6086,7 @@ dependencies = [
  "puddle-compute",
  "puddle-compute-msb",
  "puddle-doctor",
+ "puddle-fd-limit",
  "puddle-fs",
  "puddle-guest-env",
  "puddle-inject",

@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-fd-limit"
+description = "Raises a process's open-file limit (RLIMIT_NOFILE soft to hard) at start, and reports what it got"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+tracing = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["process"] }
+
+[lints]
+workspace = true

@@ -38,6 +38,7 @@ puddle-doctor = { path = "crates/puddle-doctor" }
 puddle-lifecycle = { path = "crates/puddle-lifecycle" }
 puddle-upstream = { path = "crates/puddle-upstream" }
 puddle-fs = { path = "crates/puddle-fs" }
+puddle-fd-limit = { path = "crates/puddle-fd-limit" }
 puddle-host = { path = "crates/puddle-host" }
 puddle-secrets = { path = "crates/puddle-secrets" }
 puddle-inject = { path = "crates/puddle-inject" }
@@ -84,6 +85,8 @@ tracing = { version = "0.1", default-features = false, features = ["std", "attri
 tokio-yamux = { version = "0.3.20", default-features = false, features = ["tokio-timer"] }
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 libc = "0.2.172"
+# The open-file limit (setrlimit) without unsafe or libc; already in the tree through the msb SDK.
+rustix = { version = "1.1", default-features = false }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 getrandom = "0.4"
 # Fast substring search for the proxy's stand-in swap (already in the tree through regex and axum).

@@ -13,6 +13,7 @@ publish.workspace = true
 [dependencies]
 futures-util = { workspace = true }
 puddle-agent-proto = { workspace = true }
+puddle-fd-limit = { workspace = true }
 puddle-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
