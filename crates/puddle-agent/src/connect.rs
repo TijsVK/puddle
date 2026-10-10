@@ -298,7 +298,9 @@ where
 {
     let mut failure = String::new();
     for ip in addresses {
-        match TcpStream::connect(SocketAddr::new(*ip, port)).await {
+        // An IPv4-mapped IPv6 address (::ffff:127.0.0.1) is local by `is_local`; dial its IPv4
+        // form, since Windows refuses to connect to the mapped one (os error 10049).
+        match TcpStream::connect(SocketAddr::new(ip.to_canonical(), port)).await {
             Ok(conn) => return carry_until_the_server_closes(conn, stdin, stdout).await,
             Err(err) => failure = format!("puddle-agent connect: {ip} port {port}: {err}\n"),
         }
