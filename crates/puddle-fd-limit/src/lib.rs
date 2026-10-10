@@ -108,9 +108,9 @@ pub fn raise_open_file_limit(reach: Reach) -> OpenFileLimit {
             current: before.current,
             maximum: Some(FALLBACK[0]),
         };
-        if setrlimit(Resource::Nofile, wanted).is_ok() {
-            before = getrlimit(Resource::Nofile);
-        }
+        // Refused without the privilege: the read below then shows the limit unchanged.
+        let _ = setrlimit(Resource::Nofile, wanted);
+        before = getrlimit(Resource::Nofile);
     }
     let mut now = before;
     if let Some(soft) = before.current {
