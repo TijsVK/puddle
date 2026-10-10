@@ -159,3 +159,4 @@ ADR to depart from one.
 - **Changeable when it has value or is cheap.** A behaviour needn't be customisable. Make it a
   setting when that has real value to the person using Puddle or costs little to build; a fixed
   behaviour is fine otherwise.
+
