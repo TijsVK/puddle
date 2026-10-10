@@ -112,19 +112,19 @@ pub fn raise_open_file_limit(reach: Reach) -> OpenFileLimit {
         let _ = setrlimit(Resource::Nofile, wanted);
         before = getrlimit(Resource::Nofile);
     }
-    let mut now = before;
-    if let Some(soft) = before.current {
-        for target in candidates(soft, before.maximum) {
-            let wanted = Rlimit {
-                current: Some(target),
-                maximum: before.maximum,
-            };
-            if setrlimit(Resource::Nofile, wanted).is_ok() {
-                now = getrlimit(Resource::Nofile);
-                break;
-            }
-        }
-    }
+    // The first target the system accepts; the limit is read back from the system either way.
+    let raised = before.current.and_then(|soft| {
+        candidates(soft, before.maximum)
+            .into_iter()
+            .find(|&target| {
+                let wanted = Rlimit {
+                    current: Some(target),
+                    maximum: before.maximum,
+                };
+                setrlimit(Resource::Nofile, wanted).is_ok()
+            })
+    });
+    let now = raised.map_or(before, |_| getrlimit(Resource::Nofile));
     OpenFileLimit {
         before: started.current,
         soft: now.current,
