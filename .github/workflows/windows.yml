@@ -86,6 +86,7 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         with:
           shared-key: windows
+          cache-on-failure: true # a red test must not forfeit the build
           save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         if: steps.changed.outputs.run == 'true'
