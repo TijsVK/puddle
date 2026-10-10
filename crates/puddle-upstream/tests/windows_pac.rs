@@ -9,6 +9,11 @@
     clippy::print_stderr,
     reason = "test helpers outside #[test] functions; a panic is how they fail"
 )]
+#![expect(
+    unsafe_code,
+    clippy::undocumented_unsafe_blocks,
+    reason = "one registry write through the Win32 call, see `set_in_process`"
+)]
 
 use std::process::Command;
 use std::sync::Arc;
@@ -345,38 +350,76 @@ async fn the_proxy_enable_switch_hides_a_static_proxy() {
     assert!(off.rules.is_empty(), "ProxyEnable=0 means no static proxy");
 }
 
+/// Writes a string value with one Win32 call: microseconds, where `reg add` is a process start
+/// that a loaded runner can stall for seconds. Debounce tests need edits that are quick *by
+/// construction*, not by luck of the scheduler.
+fn set_in_process(name: &str, data: &str) {
+    use windows_sys::Win32::System::Registry::{
+        HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ, RegCloseKey, RegOpenKeyExW, RegSetValueExW,
+    };
+    let wide = |text: &str| -> Vec<u16> { text.encode_utf16().chain(Some(0)).collect() };
+    let subkey = wide(KEY.strip_prefix(r"HKCU\").unwrap());
+    let (name, data) = (wide(name), wide(data));
+    let mut key = std::ptr::null_mut();
+    unsafe {
+        assert_eq!(
+            RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_SET_VALUE, &raw mut key),
+            0
+        );
+        let bytes = u32::try_from(data.len() * 2).unwrap();
+        let set = RegSetValueExW(key, name.as_ptr(), 0, REG_SZ, data.as_ptr().cast(), bytes);
+        RegCloseKey(key);
+        assert_eq!(set, 0, "RegSetValueExW");
+    }
+}
+
+/// Five edits in a burst give one epoch, `debounce` after the last one. The burst is written
+/// in-process, so it is over in a few milliseconds whatever the runner's load; the test checks
+/// that rather than assuming it, so a stalled runner reads as a stall and not as a debounce bug.
+/// Everything else waits on the epoch channel: the first change (30 s at most, not a delay) and
+/// then a second change that must not come within two debounce periods.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_registry_change_ends_the_epoch_once_after_the_debounce() {
     let Some(_registry) = registry_test() else {
         return;
     };
     let _registry = REGISTRY.lock().await;
+    let debounce = Duration::from_secs(1);
     let config = Config {
-        debounce: Duration::from_millis(300),
+        debounce,
         ..Config::default()
     };
     let discovery = Discovery::new(
         Arc::new(EnvFallback::new(Arc::new(WinOs::new()), EnvOs::default())),
         config,
     );
+    // Sets the value (and puts the old state back on drop) before the watch starts.
+    let _value = RegValue::set("ProxyServer", "REG_SZ", "before.corp:3128");
     let mut epochs = discovery.subscribe();
     let watching = discovery
         .watch()
         .expect("the registry watch is available on every Windows");
     let before = discovery.epoch();
-    let _flap: Vec<_> = (0..5)
-        .map(|i| RegValue::set("ProxyServer", "REG_SZ", &format!("flap{i}.corp:3128")))
-        .collect();
+    let started = std::time::Instant::now();
+    for i in 0..5 {
+        set_in_process("ProxyServer", &format!("flap{i}.corp:3128"));
+    }
+    let burst = started.elapsed();
+    assert!(
+        burst < debounce / 2,
+        "the runner stalled for {burst:?} inside five registry writes; the debounce is {debounce:?}"
+    );
     tokio::time::timeout(Duration::from_secs(30), epochs.changed())
         .await
         .expect("an epoch change")
         .unwrap();
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let after = discovery.epoch();
-    assert!(after > before, "epoch {before} -> {after}");
+    assert_eq!(discovery.epoch(), before + 1, "one epoch for the burst");
     assert!(
-        after <= before + 2,
-        "five quick edits must not give five epochs: {before} -> {after}"
+        tokio::time::timeout(debounce * 2, epochs.changed())
+            .await
+            .is_err(),
+        "five quick edits must not give a second epoch: {before} -> {}",
+        discovery.epoch()
     );
     drop(watching);
 }
