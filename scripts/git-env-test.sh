@@ -75,7 +75,7 @@ hook_env victim-tests "$cargo" llvm-cov nextest --workspace $exclude --all-featu
     { cat "$tmp/tests.log" >&2; echo "git-env-test: the git tests failed under the hook variables" >&2; exit 1; }
 # A renamed binary would match nothing and pass silently: every one of the three must have run.
 for bin in xtask::git_env puddle-workspace::delete_check_sh puddle-workspace::clear_locks_sh; do
-    grep -q "PASS .*$bin " "$tmp/tests.log" || {
+    grep -q "PASS.*$bin" "$tmp/tests.log" || {
         cat "$tmp/tests.log" >&2
         echo "git-env-test: no test of $bin ran" >&2
         exit 1
