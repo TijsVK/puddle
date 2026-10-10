@@ -648,13 +648,20 @@ async fn the_other_ways_a_listing_request_fails_have_their_own_audit_codes() {
     )
     .await;
     let written = Arc::new(Written::default());
-    let api = api(direct_chain(), &pki)
+    // Only the server that never answers gets a short limit: a big answer must not run into it.
+    let quick = api(direct_chain(), &pki)
         .with_timeout(Duration::from_millis(200))
         .with_connection_log(written.clone());
-    for server in [&timeouts, &hangs_up, &big] {
-        let host = format!("localhost:{}", server.addr.port());
-        api.get(request(&host, "/user")).await.unwrap_err();
-    }
+    let api = api(direct_chain(), &pki).with_connection_log(written.clone());
+    let host_of = |server: &Server| format!("localhost:{}", server.addr.port());
+    quick
+        .get(request(&host_of(&timeouts), "/user"))
+        .await
+        .unwrap_err();
+    api.get(request(&host_of(&hangs_up), "/user"))
+        .await
+        .unwrap_err();
+    api.get(request(&host_of(&big), "/user")).await.unwrap_err();
     let mut bad = request("localhost", "/user");
     bad.authorization = Authorization::Bearer(Arc::new(Secret::new("bad\ntoken".to_owned())));
     api.get(bad).await.unwrap_err();

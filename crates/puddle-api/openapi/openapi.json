@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.10.0"
+    "version": "0.11.0"
   },
   "paths": {
     "/api/audit": {
