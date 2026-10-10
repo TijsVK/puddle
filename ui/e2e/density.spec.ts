@@ -241,7 +241,6 @@ test.describe("layout by density", () => {
       test(`${density}: ${path} spacing, control and text sizes follow the tokens`, async ({
         page,
         backend,
-        browserName,
       }) => {
         const t = TOKENS[density];
         const layout = LAYOUT[path as keyof typeof LAYOUT];
@@ -303,13 +302,7 @@ test.describe("layout by density", () => {
 
         if (layout.select) {
           const select = await required(page, "main select");
-          // WebKit draws a select taller than its minimum, so there only the floor and a ceiling.
-          if (browserName === "chromium")
-            expect(select.height, "select height").toBe(t.control);
-          expect(select.height, "select height").toBeGreaterThanOrEqual(
-            t.control,
-          );
-          expect(select.height, "select height").toBeLessThan(t.control + 12);
+          expect(select.height, "select height").toBe(t.control);
           expect(select.padLeft, "select padding").toBe(t.s2);
         }
 

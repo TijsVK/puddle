@@ -48,6 +48,13 @@ a {
   border: 0;
 }
 
+/* A select is as tall as the control size, not as tall as its font's line: Edge on Windows gives
+   Segoe UI a taller line, which made its selects one pixel higher than the token. */
+select {
+  box-sizing: border-box;
+  height: var(--control-size);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
