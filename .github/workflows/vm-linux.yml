@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # VM tests on Linux KVM (tier K): crate puddle-vm-tests under `nextest --profile vm`, real
-# msb microVMs on the hosted runner. Runner time is shared (docs/STANDARDS.md, "CI"), so this runs
+# msb microVMs on the hosted runner. It runs on every pull request to develop (a required check),
 # by hand on any branch (`gh workflow run vm-linux.yml --ref <branch>`) and nightly on develop unless
 # it already has a green run on that commit. VM tests are never retried; a runner without
 # KVM is reported as an infrastructure skip, not a test result.
@@ -11,6 +11,8 @@ name: vm-linux
 on:
   schedule:
     - cron: "0 3 * * *"
+  pull_request:
+    branches: [develop]
   workflow_dispatch:
     inputs:
       parallel_runs:
@@ -22,9 +24,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request or task branch stops the run in flight (its result would be about a commit that is
+# no longer the head); develop's runs (the nightly, a dispatch) run to the end, each in its own group so none is dropped.
 concurrency:
-  group: vm-linux-${{ github.ref }}
-  cancel-in-progress: false
+  group: vm-linux-${{ github.ref == 'refs/heads/develop' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -206,7 +210,8 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # One stable result for the build and every partition (the name a check can require).
+  # One stable result for the build and every partition.
+  # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.
   vm-linux:
     name: vm-linux (KVM, msb microVMs)
     needs: [build, tests]

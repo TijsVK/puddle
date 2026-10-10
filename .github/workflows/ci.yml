@@ -227,7 +227,8 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # One stable result for both jobs above (the name branch protection can require).
+  # One stable result for both jobs above.
+  # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.
   linux:
     name: linux (all gates)
     needs: [rust, ui]

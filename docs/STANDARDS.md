@@ -232,8 +232,8 @@ the owner, then tagged `vX.Y.Z` on `main`.
 | L0 static | fmt, clippy (Linux + msvc), deny, typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references), rustdoc, API contract | `scripts/check.sh` | every push, every PR |
 | L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
-| L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: by hand on any branch, nightly on `develop` |
-| L4 Windows e2e (**W**) | the L3 scenarios on WHP plus Windows-only paths; hostile-guest **tier W** | same crate, same names | `vm-windows.yml` on the hosted `windows-2025` runner: by hand on any branch, nightly on `develop` |
+| L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: every pull request to `develop`, by hand on any branch, nightly on `develop` |
+| L4 Windows e2e (**W**) | the L3 scenarios on WHP plus Windows-only paths; hostile-guest **tier W** | same crate, same names | `vm-windows.yml` on the hosted `windows-2025` runner: every pull request to `develop`, by hand on any branch, nightly on `develop` |
 | L4 real machine (**R**) | what hosted runners can't show: real client OS, mains power, sleep/resume, Defender, corporate network | same crate, named `vm_machine_*` | `ci/windows-e2e.ps1` on a real Windows machine, posts the `puddle/windows-e2e` status; before a release |
 | L5 manual | VS Code attach, sleep/resume, network drop | release checklist | each release candidate |
 
@@ -326,9 +326,9 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 | Workflow | Trigger | Runner | Gates |
 |---|---|---|---|
 | `ci.yml` | push to `develop`/`main`, every PR, manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` (the `pre-push` set plus `ui-e2e`) in two parallel jobs (Rust and repository gates; UI gates) plus `linux (all gates)`, the one result that needs both; every gate runs even if an earlier one fails |
-| `windows.yml` | nightly 02:30 UTC (skipped if it already has a green run on that commit), PRs to `main`, manual | `windows-2025` | four parallel jobs (clippy; nextest, doc tests, secret scan; UI gates, e2e on Edge and the desktop shell smoke test; release build, MSVC, not on a manual run from a task branch) plus `windows-msvc (build, clippy, tests)`, the one result that needs them all. The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
-| `vm-linux.yml` | manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if it already has a green run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 3 hash partitions on 3 runners; `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip |
-| `vm-windows.yml` | manual on any branch, nightly 03:15 UTC on `develop` (skipped if it already has a green run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 5 hash partitions on 5 runners; `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip |
+| `windows.yml` | every PR to `develop` and `main` (a newer push to the PR cancels the run in flight), nightly 02:30 UTC (skipped if it already has a green run on that commit), manual | `windows-2025` | four parallel jobs (clippy; nextest, doc tests, secret scan; UI gates, e2e on Edge and the desktop shell smoke test; release build, MSVC, not on a manual run from a task branch) plus `windows-msvc (build, clippy, tests)`, the one result that needs them all. The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
+| `vm-linux.yml` | every PR to `develop` (a newer push to the PR cancels the run in flight), manual on any branch (`gh workflow run vm-linux.yml --ref <branch>`), nightly 03:00 UTC on `develop` (skipped if it already has a green run on that commit) | `ubuntu-24.04` (KVM) | VM tests, tier K: the test binaries are built once (`cargo nextest archive`) and run in 3 hash partitions on 3 runners; `vm-linux (KVM, msb microVMs)` is the one result. No KVM ⇒ warning, infrastructure skip |
+| `vm-windows.yml` | every PR to `develop` (a newer push to the PR cancels the run in flight), manual on any branch, nightly 03:15 UTC on `develop` (skipped if it already has a green run on that commit) | `windows-2025` (WHP) | VM tests, tier W: built once and run in 5 hash partitions on 5 runners; `vm-windows (WHP, msb microVMs)` is the one result. No WHP ⇒ warning, infrastructure skip |
 | `cache-gc.yml` | nightly 03:45 UTC, manual | `ubuntu-24.04` | deletes superseded rust-cache entries and stale branch caches (`ci/cache-gc.sh`) |
 | Dependabot | weekly, grouped | — | opens PRs to `develop` |
 
@@ -336,13 +336,16 @@ The repo is public, so standard hosted runners are free with no minute quota. Th
 shared (20 concurrent jobs), and the Actions cache is capped at 10 GB for the whole repo: only
 `develop` saves the Rust cache (`save-if`), one entry per workflow, so task branches restore it and
 the cargo-xwin cache isn't evicted. Each job of the nightly workflows gates itself
-(`ci/should-run.sh`), not in a separate job that is billed a full minute. A run starts up to about 19 jobs at once
-(`windows`, `vm-windows`, `vm-linux` and `ci` dispatched together), just under the shared limit. Keep Windows on
-nightly/PR-to-main.
+(`ci/should-run.sh`), not in a separate job that is billed a full minute. Every pull request to `develop` starts all
+four workflows, about 19 jobs at once, just under the shared limit, so a second PR's jobs queue behind the first's.
+Each workflow has one result job (`linux (all gates)`, `windows-msvc (build, clippy, tests)`, `vm-linux (KVM, msb
+microVMs)`, `vm-windows (WHP, msb microVMs)`): those names are what `develop` requires, so partitions and jobs can change
+freely, and renaming a result job means changing the requirement in the same change.
 Actions are pinned to commit SHAs and must be GitHub-owned or on the repo's allow-list (selected
 actions, SHA pinning required; an unpinned `uses:` ends as a `startup_failure` with no jobs).
 Workflows get `contents: read` unless they need more.
-VM jobs never run per push: dispatch them on your task branch when your change needs K/W evidence.
+VM jobs run on pull requests, never per push to a branch: dispatch them on your task branch when you want K/W evidence
+before opening the PR.
 The msb runtime they boot is the SDK's fork tag (`ci/msb-tag.sh`, read from `Cargo.lock`): release
 assets pinned by SHA-256 in `ci/msb-runtime.sha256`, and on Linux, where the fork releases no msb,
 a build of the tag's pinned commit. Bumping the fork tag: see the comment above the SDK lines in
