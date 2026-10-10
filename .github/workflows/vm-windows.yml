@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # VM tests on Windows WHP (tier W): crate puddle-vm-tests under `nextest --profile vm` on the
 # hosted windows-2025 runner, whose Hyper-V/WHP runs msb microVMs (observed, not promised by
-# GitHub). Windows runners are the slowest to queue, so this runs by hand on any branch
+# GitHub). It runs on every pull request to develop (a required check), by hand on any branch
 # (`gh workflow run vm-windows.yml --ref <branch>`) and nightly on develop unless it already has a green run on that
 # commit. VM tests are never retried; a runner without a usable hypervisor
 # is reported as an infrastructure skip, not a test result.
@@ -12,14 +12,18 @@ name: vm-windows
 on:
   schedule:
     - cron: "15 3 * * *"
+  pull_request:
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer push to the same pull request or task branch stops the run in flight (its result would be about a commit that is
+# no longer the head); develop's runs (the nightly, a dispatch) run to the end, each in its own group so none is dropped.
 concurrency:
-  group: vm-windows-${{ github.ref }}
-  cancel-in-progress: false
+  group: vm-windows-${{ github.ref == 'refs/heads/develop' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -163,7 +167,8 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # One stable result for the build and every partition (the name a check can require).
+  # One stable result for the build and every partition.
+  # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.
   vm-windows:
     name: vm-windows (WHP, msb microVMs)
     needs: [build, tests]

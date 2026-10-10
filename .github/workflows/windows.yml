@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Native Windows MSVC build and tests. Windows runners are the slowest to start, so this
-# runs nightly (skipped when this workflow already has a green run on develop's head), on pull
-# requests to main, and by hand. Linux CI already cross-checks clippy for the msvc target.
+# Native Windows MSVC build and tests. It runs on every pull request to develop and main (a
+# required check on develop), nightly (skipped when this workflow already has a green run on
+# develop's head), and by hand. Linux CI already cross-checks clippy for the msvc target.
 # Four jobs run side by side (clippy, tests, UI, release build), so the run takes as long as the
 # slowest one instead of the sum. Two cache entries (debug builds, release build); only develop saves
 # them. Clippy has none: its check builds were no faster with one.
@@ -13,7 +13,7 @@ on:
   schedule:
     - cron: "30 2 * * *"
   pull_request:
-    branches: [main]
+    branches: [develop, main]
   workflow_dispatch:
 
 permissions:
@@ -233,8 +233,9 @@ jobs:
         shell: bash
         run: cargo build --workspace --release --locked
 
-  # One stable result for the four jobs above (the name a check can require); the release build
-  # is skipped on a dispatch from a task branch.
+  # One stable result for the four jobs above; the release build is skipped
+  # on a dispatch from a task branch. The develop ruleset requires it by this name: a rename changes the
+  # ruleset in the same change.
   windows:
     name: windows-msvc (build, clippy, tests)
     needs: [clippy, tests, ui, release]
