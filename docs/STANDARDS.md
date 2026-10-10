@@ -94,6 +94,10 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   ui-e2e`. Every npm package is pinned to an exact version in `ui/package.json` and
   `ui/package-lock.json`. `ui-e2e` needs Playwright's browsers (`cd ui && npx playwright install
   --with-deps chromium webkit`); where WebKit can't start locally it runs Chromium only and says so.
+  The UI suite has no screenshot tests: a pixel baseline depends on the machine's fonts and breaks whenever a
+  screen gains a row, so the pages' layout is checked by reading computed styles and box sizes (padding, gaps,
+  control heights, text sizes) against the design tokens, per density, in every browser project, with the
+  accessibility checks (axe) covering the rest.
 - **WebKitGTK** (Linux only) for `crates/puddle-app`: `sudo apt install libwebkit2gtk-4.1-dev`. CI installs it.
   Without it and outside CI, `scripts/check.sh` skips that one crate in its Linux gates (clippy, tests, docs,
   coverage) and says so; `clippy-windows` still checks it for the msvc target. Windows needs WebView2, which
