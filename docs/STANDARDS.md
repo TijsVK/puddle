@@ -2,7 +2,7 @@
 
 puddle is a security tool built mostly by agents, so the gates below are what make its code
 trustworthy. They apply to every change, by a human or an agent. "Done" means: the behaviour is
-tested at the right tiers, `scripts/check.sh` passes, Linux CI is green on `develop`, and the change
+tested at the right tiers, `scripts/check.sh` passes, the pull request's required checks pass, and the change
 keeps the product [principles](principles.md) (a change that would break one doesn't land; open an
 issue instead).
 
@@ -112,8 +112,8 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
 
 ## 3. Workflow for agents and humans
 
-`develop` is the working branch and has no protection; `main` holds released versions only.
-Work lands on `develop` as a **fast-forward**, never as a merge commit or a force-push.
+`develop` is the working branch. It takes changes only through pull requests, merged by rebase so its history stays
+linear (no merge commits, no force-pushes, no direct pushes); `main` holds released versions only.
 
 1. **Own worktree, own branch.** From the clone:
    `git worktree add ../wt/<task> -b task/<task> origin/develop`. Use your own target dir
@@ -127,12 +127,16 @@ Work lands on `develop` as a **fast-forward**, never as a merge commit or a forc
    their own commit, because they are where parallel tasks collide.
 4. **Test first where it pays** (risk tests first): write the test that pins the risky
    behaviour, see it fail, then make it pass.
-5. **Land:** `scripts/check.sh` green → `git fetch origin` → `git rebase origin/develop` →
-   `scripts/check.sh` again if the rebase pulled in changes → `git push origin HEAD:develop`.
-   Rejected because someone landed first: fetch, rebase, retest, push again. Never `--force` on
-   `develop` or `main`. Rebasing your own unpublished task branch is fine.
-6. **Check CI** for your push (`gh run list --branch develop`, `gh run watch <id>`). A red run on
-   `develop` is fixed before anything else lands on top of it, by whoever broke it.
+5. **Open a pull request** to `develop`: `scripts/check.sh pre-push` green → `git fetch origin` →
+   `git rebase origin/develop` → push your branch → open the pull request and turn on auto-merge with
+   rebase (`gh pr merge <n> --auto --rebase`). It needs four checks: `linux (all gates)`,
+   `windows-msvc (build, clippy, tests)`, `vm-linux (KVM, msb microVMs)` and `vm-windows (WHP, msb
+   microVMs)`. It need not be up to date with `develop`: GitHub rebases it when it merges, once the
+   checks pass. Rebasing your own branch and pushing it again (`--force-with-lease`) is fine; never
+   `--force` on `develop` or `main`.
+6. **A red pull request** is fixed on its branch by whoever opened it; a conflict with `develop` is a
+   rebase and a push. A red run on `develop` itself (two green pull requests that clash, a nightly) is
+   fixed before anything else lands on top of it.
 7. **Clean up:** remove the worktree and its target dir when the task is done.
 
 **Releases:** a pull request from `develop` to `main` (this also runs the Windows job), merged by
@@ -151,7 +155,7 @@ the owner, then tagged `vX.Y.Z` on `main`.
 - Author: the project identity (`Tijs van Kampen <puddle@tijsvankampen.be>`). Agent-written
   commits end with a `Co-Authored-By:` trailer naming the model.
 - No secrets, tokens, personal paths or client names in code, tests, fixtures, logs or messages.
-- Pull requests (external contributors, releases) use the template in `.github/` and need the CLA
+- Pull requests use the template in `.github/`; an external contributor's also need the CLA
   ([CONTRIBUTING.md](../CONTRIBUTING.md)).
 
 ## 5. Code
