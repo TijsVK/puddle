@@ -406,14 +406,17 @@ async fn an_ssh_server_on_a_local_address_is_reached_directly() {
         conn.write_all(b"SSH-2.0-fixture\r\n").await.unwrap();
         let mut got = Vec::new();
         let mut buf = [0u8; 256];
-        while !got.ends_with(b"\n") {
+        // ssh may send its identification line and its key exchange in one segment, so the line
+        // is not the end of what arrives: look for its line break anywhere.
+        while !got.contains(&b'\n') {
             let n = tokio::io::AsyncReadExt::read(&mut conn, &mut buf)
                 .await
                 .unwrap();
             assert_ne!(n, 0, "ssh closed before it sent its identification");
             got.extend_from_slice(&buf[..n]);
         }
-        String::from_utf8(got).unwrap()
+        let end = got.iter().position(|b| *b == b'\n').unwrap_or(got.len());
+        String::from_utf8_lossy(&got[..end]).into_owned()
     });
     let out = rig.ssh(&config, &["-p", &port, "me@127.0.0.1"]).await;
     let line = tokio::time::timeout(Duration::from_secs(10), seen)
