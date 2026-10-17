@@ -14,7 +14,9 @@ use crate::identity::{
     Author, CredentialBinding, CredentialChoice, Identity, IdentityDraft, IdentityId, Signing,
     check_attachable, collision, resolve,
 };
-use crate::workspace_git::{GitDefaults, GitStart, RepoEntry, RepoRef, StartBasis, WorkspaceGit};
+use crate::workspace_git::{
+    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, WorkspaceGit,
+};
 
 const COLUMNS: &str = "id, label, author_name, author_email, credentials, signing, is_default, \
                        created_at, changed_at";
@@ -146,6 +148,41 @@ fn check_list(list: &[Identity]) -> Result<(), StoreError> {
         }
     }
     Ok(())
+}
+
+/// The identity `request` gets on a workspace whose list is `list`, from `everyone` (in your
+/// order), and why (see [`Store::start_repository_git`]).
+fn choose<'a>(
+    everyone: &'a [Identity],
+    list: &'a [Identity],
+    request: &RepoGitRequest,
+) -> Result<(Option<&'a Identity>, StartBasis), StoreError> {
+    let (host, owner) = (request.repo.host.as_str(), request.repo.owner.as_str());
+    if let Some(id) = request.identity {
+        let named = everyone
+            .iter()
+            .find(|i| i.id == id)
+            .ok_or(StoreError::UnknownIdentity(id))?;
+        return Ok((Some(named), StartBasis::Chosen));
+    }
+    // Whether an identity covers the repository by naming its owner (`true`) or as the rest of
+    // its host (`false`): naming the owner wins (credentials CD-38), and one already on the
+    // list wins over one that would have to join.
+    let level = |identity: &Identity| match resolve(std::slice::from_ref(identity), host, owner) {
+        CredentialChoice::Covered { exact, .. } => Some(exact),
+        _ => None,
+    };
+    for exact in [true, false] {
+        for pool in [list, everyone] {
+            if let Some(identity) = pool.iter().find(|i| level(i) == Some(exact)) {
+                return Ok((Some(identity), StartBasis::Covers));
+            }
+        }
+    }
+    Ok(match everyone.iter().find(|i| i.is_default) {
+        Some(default) => (Some(default), StartBasis::Default),
+        None => (None, StartBasis::NoIdentity),
+    })
 }
 
 fn label_free(
@@ -470,35 +507,86 @@ impl Store {
         })
     }
 
-    /// What a new workspace starts with: the identity that covers its repository (the first in
-    /// your order when several cover it equally), else the default identity, and the repository
-    /// itself in the table with Pull and Push on. The answer says which identity it got and why,
-    /// so the caller can warn when no identity covers the repository.
+    /// Checks that setting up `requests` in order (as [`Store::start_repository_git`] does) on
+    /// the workspace `ws` would work: every named identity exists and no two identities on the
+    /// workspace's list would cover the same place. Changes nothing.
     ///
     /// # Errors
-    /// A database error, or [`StoreError::RepoListed`] when the table already has the repository.
-    pub fn start_workspace_git(
+    /// [`StoreError::UnknownIdentity`], [`StoreError::IdentityCollision`] naming both, or a
+    /// database error.
+    pub fn check_repository_git(
         &self,
         ws: &WorkspaceName,
-        repo: &RepoRef,
-    ) -> Result<GitStart, StoreError> {
-        let all = self.identities()?;
-        let (chosen, basis) = match resolve(&all, repo.host.as_str(), repo.owner.as_str()) {
-            CredentialChoice::Covered { identity, .. } => (Some(identity), StartBasis::Covers),
-            CredentialChoice::Ambiguous(ids) => {
-                (all.iter().find(|i| ids.contains(&i.id)), StartBasis::Covers)
+        requests: &[RepoGitRequest],
+    ) -> Result<(), StoreError> {
+        let conn = lock(&self.conn);
+        let everyone = all(&conn)?;
+        let mut list = attached(&conn, ws)?;
+        for request in requests {
+            let (chosen, _) = choose(&everyone, &list, request)?;
+            if let Some(identity) = chosen
+                && !list.iter().any(|i| i.id == identity.id)
+            {
+                list.push(identity.clone());
+                check_list(&list)?;
             }
-            CredentialChoice::Uncovered => match all.iter().find(|i| i.is_default) {
-                Some(default) => (Some(default), StartBasis::Default),
-                None => (None, StartBasis::NoIdentity),
-            },
-        };
-        let identity = chosen.map(|i| (i.id, i.label.clone()));
-        if let Some((id, _)) = &identity {
-            self.attach_identity(ws, *id, None)?;
         }
-        self.add_repo(ws, repo, true, true)?;
-        Ok(GitStart { identity, basis })
+        Ok(())
+    }
+
+    /// Sets up one repository of the workspace `ws` before it is cloned (storage ST-44): the
+    /// identity the request names, else the one on the workspace's list that covers the
+    /// repository, else the one that covers it of all your identities (the first in your order
+    /// when several do), else the default identity, joins the list unless it is on it already;
+    /// the repository gets its table row with the request's Pull and Push, and a row that exists
+    /// keeps its toggles. Running it again changes nothing, so a clone that is tried again can
+    /// call it again. The answer says which identity serves the repository and why.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownIdentity`], [`StoreError::IdentityCollision`] when the identity would
+    /// cover what another on the list covers, or a database error. Nothing changes on an error.
+    pub fn start_repository_git(
+        &self,
+        ws: &WorkspaceName,
+        request: &RepoGitRequest,
+    ) -> Result<GitStart, StoreError> {
+        self.change(|tx, now, fx| {
+            let everyone = all(tx)?;
+            let mut list = attached(tx, ws)?;
+            let (chosen, basis) = choose(&everyone, &list, request)?;
+            let identity = chosen.map(|i| (i.id, i.label.clone()));
+            let mut changed = false;
+            if let Some(identity) = chosen
+                && !list.iter().any(|i| i.id == identity.id)
+            {
+                list.push(identity.clone());
+                check_list(&list)?;
+                let ids: Vec<IdentityId> = list.iter().map(|i| i.id).collect();
+                write_list(tx, ws, &ids)?;
+                changed = true;
+            }
+            let repo = &request.repo;
+            changed |= tx.execute(
+                "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT DO NOTHING",
+                params![
+                    ws.as_str(),
+                    repo.host.as_str(),
+                    repo.owner.as_str(),
+                    repo.repo,
+                    request.pull,
+                    request.push,
+                    sql_ts(now)
+                ],
+            )? > 0;
+            if changed {
+                fx.push(Event::WorkspaceGitChanged {
+                    workspace: ws.clone(),
+                });
+            }
+            Ok(GitStart { identity, basis })
+        })
     }
 
     /// The default of the two switches for workspaces that have not set their own.

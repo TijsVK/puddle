@@ -566,7 +566,7 @@ async fn scripted_steps_hold_and_fail_workspace_operations() {
         .api(
             "POST",
             "/api/workspaces",
-            Some(&json!({"name": "demo", "repo_url": "https://github.com/acme/demo.git"})),
+            Some(&json!({"name": "demo", "repositories": [{"url": "https://github.com/acme/demo.git"}]})),
         )
         .await;
     assert_eq!(created.status, 202, "{}", created.body);
@@ -604,19 +604,19 @@ async fn scripted_steps_hold_and_fail_workspace_operations() {
 async fn a_scenario_with_a_bad_workspace_fails_to_start() {
     let cases = [
         (
-            json!({"name": "A_b", "repo_url": "https://x.test/a"}),
+            json!({"name": "A_b", "repositories": [{"url": "https://x.test/a"}]}),
             "A_b",
         ),
         (
-            json!({"name": "a", "repo_url": "git@x.test:a/b"}),
+            json!({"name": "a", "repositories": [{"url": "git@x.test:a/b"}]}),
             "SSH remotes",
         ),
         (
-            json!({"name": "a", "repo_url": "https://x.test/a", "memory_mib": 1}),
+            json!({"name": "a", "repositories": [{"url": "https://x.test/a"}], "memory_mib": 1}),
             "memory",
         ),
         (
-            json!({"name": "a", "repo_url": "https://x.test/a", "image": "bad image"}),
+            json!({"name": "a", "repositories": [{"url": "https://x.test/a"}], "image": "bad image"}),
             "image",
         ),
     ];
@@ -635,7 +635,7 @@ async fn a_scenario_with_a_bad_workspace_fails_to_start() {
     }
     assert!(
         serde_json::from_value::<Scenario>(
-            json!({"workspaces": [{"name": "a", "repo_url": "https://x.test/a", "typo": 1}]})
+            json!({"workspaces": [{"name": "a", "repositories": [{"url": "https://x.test/a"}], "typo": 1}]})
         )
         .is_err()
     );
@@ -900,7 +900,7 @@ async fn the_credentials_service_can_report_accounts_from_every_listing_and_list
 #[tokio::test]
 async fn a_scenario_whose_workspace_names_an_identity_that_is_not_there_fails_to_start() {
     let bad: Scenario = serde_json::from_value(json!({
-        "workspaces": [{"name": "a", "repo_url": "https://github.com/x/y.git", "git": {"identities": ["Ghost"]}}]
+        "workspaces": [{"name": "a", "repositories": [{"url": "https://github.com/x/y.git"}], "git": {"identities": ["Ghost"]}}]
     }))
     .unwrap();
     let err = Fixture::start(FixtureOptions {

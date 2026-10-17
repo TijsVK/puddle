@@ -87,7 +87,7 @@ describe("CreateWorkspaceDialog", () => {
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalled());
     expect(create).toHaveBeenCalledWith({
       name: "web",
-      repo_url: "https://github.com/acme/web.git",
+      repositories: [{ url: "https://github.com/acme/web.git" }],
     });
   });
 
@@ -102,7 +102,7 @@ describe("CreateWorkspaceDialog", () => {
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
     expect(create).toHaveBeenCalledWith({
       name: "web",
-      repo_url: "https://github.com/acme/web.git",
+      repositories: [{ url: "https://github.com/acme/web.git" }],
       image: "ghcr.io/acme/dev:1",
       memory_mib: 3072,
     });
@@ -208,7 +208,7 @@ describe("CreateWorkspaceDialog", () => {
       value: workspace("made", {
         busy: "creating",
         status: "created",
-        identity: { identity: "Personal", basis: "default", warning },
+        identities: [{ identity: "Personal", basis: "default", warning }],
       }),
     });
     await screen.findByRole("dialog");
@@ -227,7 +227,7 @@ describe("CreateWorkspaceDialog", () => {
     const covered = mount({
       ok: true,
       value: workspace("made", {
-        identity: { identity: "Work", basis: "covers", warning: null },
+        identities: [{ identity: "Work", basis: "covers", warning: null }],
       }),
     });
     await screen.findByRole("dialog");

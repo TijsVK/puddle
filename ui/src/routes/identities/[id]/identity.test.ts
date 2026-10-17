@@ -417,7 +417,7 @@ describe("one identity", () => {
     await waitFor(() => expect(goto).toHaveBeenCalledWith("/workspaces/web"));
     expect(create).toHaveBeenCalledWith({
       name: "web",
-      repo_url: "https://github.com/acme/web",
+      repositories: [{ url: "https://github.com/acme/web" }],
     });
     await fireEvent.click(
       await screen.findByRole("button", {

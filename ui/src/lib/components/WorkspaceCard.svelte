@@ -48,7 +48,9 @@
           >{workspace.display_name}</a
         >
       </h2>
-      <p class="repo">{workspace.repo_url}</p>
+      {#if workspace.repositories[0]}
+        <p class="repo">{workspace.repositories[0].url}</p>
+      {/if}
     </div>
     {#if workspace.direct_ssh}<TrustedBadge />{/if}
     <StatusChip status={workspace.status} busy={workspace.busy} />

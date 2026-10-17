@@ -226,10 +226,12 @@ impl Default for GitDefaults {
     }
 }
 
-/// Why a new workspace got the identity it got.
+/// Why a repository got the identity it got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StartBasis {
+    /// The user picked it for this repository. It may cover the repository or not.
+    Chosen,
     /// An identity covers the repository's owner (or its host).
     Covers,
     /// None does, so it got the default identity, which has no credential for the repository.
@@ -238,7 +240,21 @@ pub enum StartBasis {
     NoIdentity,
 }
 
-/// What [`crate::Store::start_workspace_git`] set up.
+/// What one repository of a workspace asks of its Git settings
+/// ([`crate::Store::start_repository_git`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoGitRequest {
+    /// The repository, in the table's spelling.
+    pub repo: RepoRef,
+    /// The identity the user picked for it; `None` lets Puddle choose.
+    pub identity: Option<crate::IdentityId>,
+    /// Pull on its table row, when the row is new.
+    pub pull: bool,
+    /// Push on its table row, when the row is new.
+    pub push: bool,
+}
+
+/// What [`crate::Store::start_repository_git`] set up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitStart {
     /// The identity attached (id and label), if any.

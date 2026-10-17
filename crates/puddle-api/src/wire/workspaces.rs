@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Wire types of the workspaces resource.
 
-use puddle_types::{ImageRef, MemoryMib, SandboxName, WorkspaceName, WorkspaceStatus};
-use serde::{Deserialize, Serialize};
+use puddle_types::{CheckoutDir, ImageRef, MemoryMib, SandboxName, WorkspaceName, WorkspaceStatus};
+use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 
 use crate::error::ApiError;
@@ -13,7 +13,7 @@ use crate::workspaces as domain;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceOperation {
-    /// Creating the volume and cloning the repository.
+    /// Creating the volume and cloning the repositories.
     Creating,
     /// Booting.
     Starting,
@@ -37,7 +37,28 @@ impl From<domain::Operation> for WorkspaceOperation {
     }
 }
 
-/// A workspace: a repository checkout on its own disk, and the workspace that runs it.
+/// One repository Puddle manages for a workspace. Its identity and its Pull and Push toggles are
+/// the workspace's Git settings (`GET /api/workspaces/{id}/git`), matched in the repository
+/// table's spelling.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct WorkspaceRepository {
+    /// The HTTPS address it is cloned from, without credentials.
+    pub url: String,
+    /// The checkout it is cloned into, directly under the volume root.
+    pub directory: CheckoutDir,
+}
+
+impl From<domain::Repository> for WorkspaceRepository {
+    fn from(r: domain::Repository) -> Self {
+        Self {
+            url: r.url.as_str().to_owned(),
+            directory: r.directory,
+        }
+    }
+}
+
+/// A workspace: its own disk with the repositories Puddle manages for it (and anything else the
+/// user put there), and the sandbox that runs it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Workspace {
     /// The id used in paths. Today it is the workspace's name.
@@ -47,8 +68,12 @@ pub struct Workspace {
     /// What the user calls the workspace: the name until they rename it (`PATCH
     /// /api/workspaces/{id}`). Show this one; `name` and `id` never change.
     pub display_name: String,
-    /// The HTTPS URL it was cloned from.
-    pub repo_url: String,
+    /// The repositories Puddle manages for it, in the order they were added (0 to 100).
+    pub repositories: Vec<WorkspaceRepository>,
+    /// Where new terminals land and what the editor opens: a path under the volume, or `null`
+    /// for the volume root.
+    #[schema(required = true)]
+    pub start_folder: Option<String>,
     /// The image its workspace boots.
     pub image: String,
     /// Memory in MiB, applied at the next start.
@@ -77,12 +102,12 @@ pub struct Workspace {
     /// confirmation now. Read `direct_ssh` instead.
     #[deprecated(note = "always false; read `direct_ssh`")]
     pub first_connect_notice_due: bool,
-    /// Which identity the new workspace got and why. Only the answer to creating a workspace has
-    /// it (and only when its Git settings could be set up); `null` in every other answer, and the
-    /// Git tab shows it afterwards.
+    /// Which identity each repository of a new workspace got and why, one per repository of the
+    /// request, in its order. Only the answer to creating a workspace fills it; every other answer
+    /// has an empty list, and the Git tab shows the same afterwards.
     #[serde(default)]
     #[schema(required = true)]
-    pub identity: Option<crate::wire::NewWorkspaceIdentity>,
+    pub identities: Vec<crate::wire::NewWorkspaceIdentity>,
 }
 
 impl Workspace {
@@ -93,7 +118,8 @@ impl Workspace {
         let domain::WorkspaceRecord {
             id,
             name,
-            repo_url,
+            repositories,
+            start_folder,
             image,
             memory,
             status,
@@ -108,7 +134,8 @@ impl Workspace {
             id: id.to_string(),
             name,
             display_name,
-            repo_url,
+            repositories: repositories.into_iter().map(Into::into).collect(),
+            start_folder: start_folder.map(|f| f.as_str().to_owned()),
             image,
             memory_mib: memory.get(),
             status,
@@ -119,14 +146,14 @@ impl Workspace {
             direct_ssh,
             settings_error: None,
             first_connect_notice_due: false,
-            identity: None,
+            identities: Vec::new(),
         }
     }
 
     /// The same workspace, with what its Git settings started with (the answer to creating it).
     #[must_use]
-    pub fn with_identity(mut self, identity: Option<crate::wire::NewWorkspaceIdentity>) -> Self {
-        self.identity = identity;
+    pub fn with_identities(mut self, identities: Vec<crate::wire::NewWorkspaceIdentity>) -> Self {
+        self.identities = identities;
         self
     }
 
@@ -145,15 +172,55 @@ pub struct WorkspaceList {
     pub workspaces: Vec<Workspace>,
 }
 
+/// One repository of `POST /api/workspaces`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewRepositoryRequest {
+    /// The repository to clone, as an `https://` URL without credentials. SSH remotes
+    /// (`git@host:path`, `ssh://`) are refused with a message saying so.
+    pub url: String,
+    /// The checkout's directory under the volume root; left out or `null` is the last part of
+    /// the address (`api` for `https://github.com/acme/api.git`), or `src` when that is no usable
+    /// name.
+    #[serde(default)]
+    pub directory: Option<String>,
+    /// The identity that serves it (`id` of `GET /api/identities`); left out or `null` is the
+    /// identity that covers its owner, else the default identity.
+    #[serde(default)]
+    pub identity_id: Option<i64>,
+    /// Pull on its new repository table row; left out or `null` is on. A row the table already
+    /// has keeps its toggles.
+    #[serde(default)]
+    pub pull: Option<bool>,
+    /// Push on its new repository table row; left out or `null` is on.
+    #[serde(default)]
+    pub push: Option<bool>,
+}
+
+/// A field a request may no longer send: present whatever its value, `null` included.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Retired;
+
+fn retired<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Retired>, D::Error> {
+    serde::de::IgnoredAny::deserialize(deserializer).map(|_| Some(Retired))
+}
+
 /// `POST /api/workspaces`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewWorkspaceRequest {
     /// The workspace's name, which is also its workspace's name.
     pub name: WorkspaceName,
-    /// The repository to clone, as an `https://` URL without credentials. SSH remotes
-    /// (`git@host:path`, `ssh://`) are refused with a message saying so.
-    pub repo_url: String,
+    /// The repositories to clone, in order (0 to 100); left out is none. The list is checked
+    /// whole before anything exists.
+    #[serde(default)]
+    #[schema(max_items = 100)]
+    pub repositories: Vec<NewRepositoryRequest>,
+    /// Where new terminals land and what the editor opens: a path under the volume (relative,
+    /// `/` between its parts, at most 255 bytes, not inside `.puddle`); left out or `null` is the
+    /// volume root.
+    #[serde(default)]
+    pub start_folder: Option<String>,
     /// The image to boot; left out or `null` is the default devcontainer image.
     #[serde(default)]
     pub image: Option<String>,
@@ -161,19 +228,51 @@ pub struct NewWorkspaceRequest {
     #[serde(default)]
     #[schema(minimum = 256, maximum = 1_048_576)]
     pub memory_mib: Option<u32>,
+    /// Replaced by `repositories`; a body that sends it is refused with a message saying so.
+    #[serde(default, deserialize_with = "retired", skip_serializing)]
+    // skip-ok: leaves the retired field out of the contract; no test is skipped.
+    #[schema(ignore)]
+    pub repo_url: Option<Retired>,
 }
 
 /// Names starting with this are Puddle's own short-lived maintenance workspaces.
 const RESERVED_PREFIX: &str = "m--";
 
 impl NewWorkspaceRequest {
-    pub(crate) fn into_new(self) -> Result<domain::NewWorkspace, ApiError> {
+    /// The checked request; `identity_exists` says whether an identity id names one.
+    pub(crate) fn into_new(
+        self,
+        identity_exists: impl Fn(puddle_store::IdentityId) -> bool,
+    ) -> Result<domain::NewWorkspace, ApiError> {
+        if self.repo_url.is_some() {
+            return Err(ApiError::invalid(
+                "repo_url was replaced by repositories, a list of {url}",
+            ));
+        }
         if self.name.as_str().starts_with(RESERVED_PREFIX) {
             return Err(ApiError::invalid(format!(
                 "names starting with {RESERVED_PREFIX} are reserved for Puddle"
             )));
         }
-        let repo_url = domain::RepoUrl::parse(&self.repo_url).map_err(ApiError::invalid)?;
+        let drafts: Vec<domain::RepositoryDraft> = self
+            .repositories
+            .into_iter()
+            .map(|r| domain::RepositoryDraft {
+                url: r.url,
+                directory: r.directory,
+                identity: r.identity_id.map(puddle_store::IdentityId),
+                pull: r.pull,
+                push: r.push,
+            })
+            .collect();
+        let repositories =
+            domain::check_repositories(&drafts, identity_exists).map_err(ApiError::invalid)?;
+        let start_folder = self
+            .start_folder
+            .as_deref()
+            .map(domain::StartFolder::parse)
+            .transpose()
+            .map_err(ApiError::invalid)?;
         let image = self
             .image
             .as_deref()
@@ -187,7 +286,8 @@ impl NewWorkspaceRequest {
             .map_err(|e| ApiError::invalid(e.to_string()))?;
         Ok(domain::NewWorkspace {
             name: self.name,
-            repo_url,
+            repositories,
+            start_folder,
             image,
             memory,
         })

@@ -3,7 +3,7 @@
   "workspaces": [
     {
       "name": "web-shop",
-      "repo_url": "https://github.com/acme/web-shop.git",
+      "repositories": [{ "url": "https://github.com/acme/web-shop.git" }],
       "status": "running",
       "ago_ms": 1209600000,
       "disk_used_mib": 6144,
@@ -22,7 +22,7 @@
     },
     {
       "name": "docs-site",
-      "repo_url": "https://github.com/tijs-demo/docs-site.git",
+      "repositories": [{ "url": "https://github.com/tijs-demo/docs-site.git" }],
       "status": "stopped",
       "ago_ms": 604800000,
       "disk_used_mib": 1536,
@@ -36,7 +36,7 @@
     },
     {
       "name": "data-tools",
-      "repo_url": "https://github.com/acme/data-tools.git",
+      "repositories": [{ "url": "https://github.com/acme/data-tools.git" }],
       "status": "created",
       "ago_ms": 3600000,
       "disk_used_mib": 128

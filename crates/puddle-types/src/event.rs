@@ -6,7 +6,7 @@ use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-use crate::WorkspaceName;
+use crate::{CheckoutDir, WorkspaceName};
 
 /// A workspace's state: its sandbox's state as the runtime reports it (msb's states, one for one).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -104,11 +104,15 @@ pub enum Event {
         workspace: WorkspaceName,
         /// What it is doing now.
         step: WorkspaceStep,
-        /// More about the step, or why it failed; `null` when there is nothing to add. It can
-        /// quote tool output: escape it when rendering.
+        /// More about the step, or why it failed; `null` when there is nothing to add. A cloning
+        /// step names the address. It can quote tool output: escape it when rendering.
         #[serde(default)]
         #[cfg_attr(feature = "openapi", schema(required = true))]
         detail: Option<String>,
+        /// The checkout directory a cloning step is about; `null` for every other step.
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
+        repository: Option<CheckoutDir>,
     },
     /// A new open pending request (a workspace asked for a host:port no rule decides).
     PendingOpened {
@@ -584,12 +588,13 @@ mod tests {
                 workspace: name(),
                 step,
                 detail: None,
+                repository: None,
             };
             let json = serde_json::to_string(&e).unwrap();
             assert_eq!(
                 json,
                 format!(
-                    r#"{{"type":"workspace_progress","workspace":"box","step":"{text}","detail":null}}"#
+                    r#"{{"type":"workspace_progress","workspace":"box","step":"{text}","detail":null,"repository":null}}"#
                 )
             );
             assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), e);
@@ -601,7 +606,15 @@ mod tests {
         .unwrap();
         assert!(matches!(
             with_detail,
-            Event::WorkspaceProgress { detail: Some(ref d), .. } if d == "disk full"
+            Event::WorkspaceProgress { detail: Some(ref d), repository: None, .. } if d == "disk full"
+        ));
+        let cloning: Event = serde_json::from_str(
+            r#"{"type":"workspace_progress","workspace":"box","step":"cloning","detail":"https://h/a/web.git","repository":"web"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            cloning,
+            Event::WorkspaceProgress { repository: Some(ref r), .. } if r.as_str() == "web"
         ));
     }
 

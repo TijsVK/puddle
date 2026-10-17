@@ -162,7 +162,7 @@
     const memory = parseMemoryGib(memoryGib);
     const body: NewWorkspace = {
       name,
-      repo_url: repoUrl.trim(),
+      repositories: [{ url: repoUrl.trim() }],
       ...(image.trim() === "" ? {} : { image: image.trim() }),
       ...(memory.ok && memory.mib !== null ? { memory_mib: memory.mib } : {}),
     };
@@ -174,7 +174,7 @@
       const forAddress = offered.length > 0;
       open = false;
       reset();
-      const warning = result.value.identity?.warning;
+      const warning = result.value.identities[0]?.warning;
       if (warning && !forAddress) {
         // Nothing covers the repository (and the picker did not choose identities): say which identity the workspace got and what that
         // means, and offer the tab where it is changed. The toast stays long enough to read.

@@ -15,7 +15,7 @@ async fn stopped(api: &Api, name: &str) {
         .send(
             "POST",
             "/api/workspaces",
-            Some(&json!({"name": name, "repo_url": REPO})),
+            Some(&json!({"name": name, "repositories": [{"url": REPO}]})),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);

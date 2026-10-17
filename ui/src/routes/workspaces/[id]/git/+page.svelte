@@ -47,7 +47,8 @@
     identities.identities.filter((i) => !attachedIds.includes(i.id)),
   );
   // The workspace's own repository, and whether any identity on it covers that host and owner.
-  const own = $derived(workspace ? parseRepoUrl(workspace.repo_url) : null);
+  const ownUrl = $derived(workspace?.repositories[0]?.url);
+  const own = $derived(ownUrl === undefined ? null : parseRepoUrl(ownUrl));
   const uncovered = $derived(
     git && own?.ok && covering(git.identities, own.host, own.owner) === null
       ? own

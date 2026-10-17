@@ -11,7 +11,8 @@ use std::sync::Arc;
 use puddle_secrets::{AccountName, HostName, SourceSpec};
 use puddle_store::{
     Author, CollisionWhat, Coverage, CredentialBinding, CredentialChoice, GitDefaults,
-    IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoRef, StartBasis, Store, StoreError,
+    IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoGitRequest, RepoRef, StartBasis,
+    Store, StoreError, WorkspaceGit,
 };
 use puddle_types::{CollectingSink, Event, WorkspaceName};
 
@@ -306,6 +307,128 @@ fn repo(host: &str, owner: &str, name: &str) -> RepoRef {
     RepoRef::new(host, owner, name).unwrap()
 }
 
+/// A repository that leaves the identity to Puddle and asks for Pull and Push.
+fn ask(repo: RepoRef) -> RepoGitRequest {
+    RepoGitRequest {
+        repo,
+        identity: None,
+        pull: true,
+        push: true,
+    }
+}
+
+fn attached(store: &Store, name: &str) -> Vec<IdentityId> {
+    store
+        .workspace_git(&ws(name))
+        .unwrap()
+        .identities
+        .iter()
+        .map(|i| i.id)
+        .collect()
+}
+
+#[test]
+fn setting_a_repository_up_again_changes_nothing_and_an_existing_row_keeps_its_toggles() {
+    let (sink, store) = fixture();
+    let work = make(&store, "Work", &["acme"], false);
+    let shop = repo("github.com", "acme", "shop");
+    let first = store
+        .start_repository_git(&ws("w"), &ask(shop.clone()))
+        .unwrap();
+    assert_eq!(first.identity, Some((work, "Work".to_owned())));
+    let row = store.workspace_git(&ws("w")).unwrap().repos[0].id;
+    store.set_repo_toggles(&ws("w"), row, false, false).unwrap();
+    let _ = sink.take();
+    let again = store.start_repository_git(&ws("w"), &ask(shop)).unwrap();
+    assert_eq!(again, first);
+    assert_eq!(sink.take(), [], "a repeat set-up says nothing");
+    let git = store.workspace_git(&ws("w")).unwrap();
+    assert_eq!(attached(&store, "w"), [work]);
+    assert_eq!(git.repos.len(), 1);
+    assert_eq!((git.repos[0].pull, git.repos[0].push), (false, false));
+}
+
+#[test]
+fn a_picked_identity_and_toggles_are_used_and_a_later_repository_reuses_the_list() {
+    let (_sink, store) = fixture();
+    let personal = make(&store, "Personal", &[], true);
+    let work = make(&store, "Work", &["acme"], false);
+    // Personal covers the rest of github.com, so it serves `me/notes` from the list without
+    // Work joining for it, and Work joins for `acme/shop`, which Personal does not cover by name.
+    let picked = RepoGitRequest {
+        identity: Some(personal),
+        pull: true,
+        push: false,
+        ..ask(repo("github.com", "me", "notes"))
+    };
+    let got = store.start_repository_git(&ws("w"), &picked).unwrap();
+    assert_eq!(
+        (got.identity, got.basis),
+        (Some((personal, "Personal".to_owned())), StartBasis::Chosen)
+    );
+    let other = store
+        .start_repository_git(&ws("w"), &ask(repo("github.com", "me", "blog")))
+        .unwrap();
+    assert_eq!(other.basis, StartBasis::Covers);
+    assert_eq!(other.identity.map(|(id, _)| id), Some(personal));
+    store
+        .start_repository_git(&ws("w"), &ask(repo("github.com", "acme", "shop")))
+        .unwrap();
+    assert_eq!(attached(&store, "w"), [personal, work]);
+    let git = store.workspace_git(&ws("w")).unwrap();
+    let toggles: Vec<_> = git
+        .repos
+        .iter()
+        .map(|r| (r.repo.repo.clone(), r.pull, r.push))
+        .collect();
+    assert_eq!(
+        toggles,
+        [
+            ("notes".to_owned(), true, false),
+            ("blog".to_owned(), true, true),
+            ("shop".to_owned(), true, true)
+        ]
+    );
+}
+
+#[test]
+fn the_check_refuses_an_unknown_or_colliding_identity_and_changes_nothing() {
+    let (sink, store) = fixture();
+    let a = make(&store, "A", &["acme"], false);
+    let b = make(&store, "B", &["acme"], false);
+    let with = |identity, name: &str| RepoGitRequest {
+        identity: Some(identity),
+        ..ask(repo("github.com", "acme", name))
+    };
+    let _ = sink.take();
+    let both = [with(a, "one"), with(b, "two")];
+    let err = store.check_repository_git(&ws("w"), &both).unwrap_err();
+    assert!(matches!(err, StoreError::IdentityCollision(_)), "{err}");
+    assert!(err.to_string().contains("A and B"), "{err}");
+    let ghost = [with(IdentityId(99), "one")];
+    assert!(matches!(
+        store.check_repository_git(&ws("w"), &ghost),
+        Err(StoreError::UnknownIdentity(IdentityId(99)))
+    ));
+    // One identity named twice is no collision.
+    store
+        .check_repository_git(&ws("w"), &[with(a, "one"), with(a, "two")])
+        .unwrap();
+    assert_eq!(sink.take(), [], "a check changes nothing");
+    assert_eq!(
+        store.workspace_git(&ws("w")).unwrap(),
+        WorkspaceGit::unconfigured()
+    );
+    // Setting up the second after the first is refused the same way, and leaves the first.
+    store.start_repository_git(&ws("w"), &both[0]).unwrap();
+    assert!(matches!(
+        store.start_repository_git(&ws("w"), &both[1]),
+        Err(StoreError::IdentityCollision(_))
+    ));
+    assert_eq!(attached(&store, "w"), [a]);
+    assert_eq!(store.workspace_git(&ws("w")).unwrap().repos.len(), 1);
+}
+
 #[test]
 fn a_new_workspace_gets_the_identity_that_covers_its_repository_and_the_repository_itself() {
     let (_sink, store) = fixture();
@@ -313,7 +436,7 @@ fn a_new_workspace_gets_the_identity_that_covers_its_repository_and_the_reposito
     let work = make(&store, "Work", &["acme"], false);
 
     let started = store
-        .start_workspace_git(&ws("shop"), &repo("github.com", "acme", "shop"))
+        .start_repository_git(&ws("shop"), &ask(repo("github.com", "acme", "shop")))
         .unwrap();
     assert_eq!(started.basis, StartBasis::Covers);
     assert_eq!(started.identity, Some((work, "Work".to_owned())));
@@ -333,7 +456,7 @@ fn a_new_workspace_gets_the_identity_that_covers_its_repository_and_the_reposito
 fn a_repository_nobody_covers_gets_the_default_and_none_when_there_is_none() {
     let (_sink, store) = fixture();
     let lonely = store
-        .start_workspace_git(&ws("lonely"), &repo("github.com", "me", "x"))
+        .start_repository_git(&ws("lonely"), &ask(repo("github.com", "me", "x")))
         .unwrap();
     assert_eq!(
         (lonely.basis, lonely.identity),
@@ -350,7 +473,7 @@ fn a_repository_nobody_covers_gets_the_default_and_none_when_there_is_none() {
         .id;
     let _work = make(&store, "Work", &["acme"], false);
     let elsewhere = store
-        .start_workspace_git(&ws("elsewhere"), &repo("github.com", "me", "x"))
+        .start_repository_git(&ws("elsewhere"), &ask(repo("github.com", "me", "x")))
         .unwrap();
     assert_eq!(elsewhere.basis, StartBasis::Default);
     assert_eq!(elsewhere.identity, Some((default, "Default".to_owned())));
@@ -369,7 +492,7 @@ fn two_identities_that_cover_a_repository_equally_give_the_first_in_your_order()
     let a = make(&store, "A", &[], true);
     let b = make(&store, "B", &[], true);
     store
-        .start_workspace_git(&ws("both"), &repo("github.com", "x", "y"))
+        .start_repository_git(&ws("both"), &ask(repo("github.com", "x", "y")))
         .unwrap();
     let ids: Vec<_> = store
         .workspace_git(&ws("both"))
@@ -412,7 +535,7 @@ fn the_default_switches_are_inherited_until_a_workspace_sets_its_own() {
 
     // A new workspace starts on the defaults, with its own repository listed Pull and Push.
     store
-        .start_workspace_git(&ws("fresh"), &repo("github.com", "me", "fresh"))
+        .start_repository_git(&ws("fresh"), &ask(repo("github.com", "me", "fresh")))
         .unwrap();
     let fresh = store.workspace_git(&ws("fresh")).unwrap();
     assert!(!fresh.only_push_listed && fresh.only_pull_listed);

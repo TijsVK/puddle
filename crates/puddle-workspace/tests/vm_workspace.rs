@@ -5,8 +5,8 @@
 //!   local git server) survives stop, sandbox removal and a new sandbox on the same workspace;
 //! - a VMM kill during commits, with the boot hook's `core.fsync=committed`, leaves a repository
 //!   that passes `git fsck --full`, 5 of 5 times;
-//! - a VMM kill right after `Workspaces::clone_checkout` keeps the clone (the clone is
-//!   synced before it is reported done);
+//! - a VMM kill right after `Workspaces::clone_checkout` and `Workspaces::sync` keeps the
+//!   clone;
 //! - a VMM kill in the middle of commits leaves git locks; the next boot's
 //!   `Workspaces::after_boot` clears them and `git commit` works again;
 //! - `fstrim` on stop and "reclaim space" (in the running holder and in a maintenance sandbox)
@@ -347,8 +347,11 @@ async fn vm_clone_through_the_route_survives_a_sandbox_rebuild() {
     let sb = boot.create(rt, &w, &id, spec()).await;
     volume_root_refuses_a_clone(sb.ungated(), &mount, &url).await;
 
-    let clone = layout.clone_request(&url).unwrap().as_user("root");
-    let checkout = layout.checkout("repo").unwrap();
+    let clone = layout
+        .clone_request(&url, &repo_dir())
+        .unwrap()
+        .as_user("root");
+    let checkout = layout.checkout(&repo_dir()).unwrap();
     let out = sb.ungated().exec(clone).await.unwrap();
     assert!(
         out.status.success(),
@@ -502,7 +505,7 @@ async fn vm_vmm_kill_during_commits_leaves_git_consistent() {
     let (id, name) = names(&settings, "fsync");
     let boot = Boot::new(rt, "fsync", &GuestEnv::new(), false).await;
     let w = workspaces();
-    let repo = Layout::new(&id).unwrap().checkout("repo").unwrap();
+    let repo = Layout::new(&id).unwrap().checkout(&repo_dir()).unwrap();
     let repo = repo.as_str();
     let mut sb = boot.create(rt, &w, &id, base_spec(&name)).await;
     assert_eq!(
@@ -716,7 +719,7 @@ async fn kill_and_restart(
 }
 
 /// A VMM kill right after a clone: the checkout survives when it went through
-/// `Workspaces::clone_checkout` (clone, then `sync`). A control clone without the sync is killed
+/// `Workspaces::clone_checkout` and then `Workspaces::sync`. A control clone without the sync is killed
 /// first and only reported: whether it survives is up to the guest's writeback timing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_kill_right_after_a_synced_clone_keeps_the_repo() {
@@ -762,15 +765,17 @@ async fn vm_kill_right_after_a_synced_clone_keeps_the_repo() {
     );
     w.after_boot(sb.ungated(), &id).await.unwrap().unwrap();
 
-    // The product path, five times: clone_checkout returns, the VM is killed at once.
+    // The product path, five times: the clone and the sync after it return, the VM is killed
+    // at once.
     let mut kept = 0;
     for round in 1..=5 {
         let checkout = format!("{mount}/repo");
         sh_ok(sb.ungated(), &format!("rm -rf {checkout} && sync")).await;
         let dir = w
-            .clone_checkout(sb.ungated(), &id, &url, Some("root"))
+            .clone_checkout(sb.ungated(), &id, &url, &repo_dir(), Some("root"))
             .await
             .unwrap();
+        w.sync(sb.ungated(), &id).await.unwrap();
         assert_eq!(dir.as_str(), checkout);
         sb = kill_and_restart(rt, &settings, &boot, &name, sb).await;
         let got = sh(sb.ungated(), &format!("git -C {checkout} rev-parse HEAD")).await;
@@ -805,7 +810,7 @@ async fn vm_kill_mid_commit_then_boot_clears_the_locks() {
     let (id, name) = names(&settings, "locks");
     let boot = Boot::new(rt, "locks", &GuestEnv::new(), false).await;
     let w = workspaces();
-    let repo = Layout::new(&id).unwrap().checkout("repo").unwrap();
+    let repo = Layout::new(&id).unwrap().checkout(&repo_dir()).unwrap();
     let repo = repo.as_str();
     let mut sb = boot.create(rt, &w, &id, base_spec(&name)).await;
     sh_ok(
@@ -876,4 +881,9 @@ async fn vm_kill_mid_commit_then_boot_clears_the_locks() {
     rt.remove(&name).await.unwrap();
     w.sandbox_removed(&name);
     rt.remove_volume(&id.volume_name()).await.unwrap();
+}
+
+/// The checkout the lab repository is cloned into.
+fn repo_dir() -> puddle_types::CheckoutDir {
+    puddle_types::CheckoutDir::new("repo").unwrap()
 }

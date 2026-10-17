@@ -747,8 +747,11 @@ export interface paths {
         get: operations["list_workspaces"];
         put?: never;
         /**
-         * Creates a workspace: its disk, then a clone of the repository. Answers 202; follow it with
-         *     `workspace_progress` events.
+         * Creates a workspace: its disk, then a clone of each repository in the list, one at a time.
+         *     The list is checked whole before anything exists. Each repository's identity joins the
+         *     workspace and its repository table row is made before the first clone. A clone that fails
+         *     fails only its repository: a background problem names it and the create still ends `done`.
+         *     Answers 202; follow it with `workspace_progress` events.
          */
         post: operations["create_workspace"];
         delete?: never;
@@ -1564,6 +1567,11 @@ export interface components {
             readable: boolean;
         };
         /**
+         * @description A checkout's directory directly under the workspace's volume root: ASCII letters, digits, `.`, `_` and `-`, not starting with `.` or `-`, not `lost+found`.
+         * @example api
+         */
+        CheckoutDir: string;
+        /**
          * @description What a programmatic clipboard read in the browser window does.
          * @enum {string}
          */
@@ -1953,10 +1961,11 @@ export interface components {
             workspace: components["schemas"]["WorkspaceName"];
         } | {
             /**
-             * @description More about the step, or why it failed; `null` when there is nothing to add. It can
-             *     quote tool output: escape it when rendering.
+             * @description More about the step, or why it failed; `null` when there is nothing to add. A cloning
+             *     step names the address. It can quote tool output: escape it when rendering.
              */
             detail: string | null;
+            repository: components["schemas"]["CheckoutDir"] | null;
             /** @description What it is doing now. */
             step: components["schemas"]["WorkspaceStep"];
             /** @enum {string} */
@@ -2428,6 +2437,33 @@ export interface components {
             /** @description Signing in to the proxy. */
             sign_in: components["schemas"]["SignInReport"];
         };
+        /** @description One repository of `POST /api/workspaces`. */
+        NewRepositoryRequest: {
+            /**
+             * @description The checkout's directory under the volume root; left out or `null` is the last part of
+             *     the address (`api` for `https://github.com/acme/api.git`), or `src` when that is no usable
+             *     name.
+             */
+            directory?: string | null;
+            /**
+             * Format: int64
+             * @description The identity that serves it (`id` of `GET /api/identities`); left out or `null` is the
+             *     identity that covers its owner, else the default identity.
+             */
+            identity_id?: number | null;
+            /**
+             * @description Pull on its new repository table row; left out or `null` is on. A row the table already
+             *     has keeps its toggles.
+             */
+            pull?: boolean | null;
+            /** @description Push on its new repository table row; left out or `null` is on. */
+            push?: boolean | null;
+            /**
+             * @description The repository to clone, as an `https://` URL without credentials. SSH remotes
+             *     (`git@host:path`, `ssh://`) are refused with a message saying so.
+             */
+            url: string;
+        };
         /** @description A rule to create directly (not from a pending request). */
         NewRuleRequest: {
             /** @description Allow or deny. */
@@ -2453,8 +2489,8 @@ export interface components {
             name: string;
         };
         /**
-         * @description What a new workspace's Git settings started with. Only the answer to creating a workspace
-         *     carries it; the Git tab shows the same thing afterwards.
+         * @description What the Git settings of one repository of a new workspace started with. Only the answer to
+         *     creating a workspace carries it; the Git tab shows the same thing afterwards.
          */
         NewWorkspaceIdentity: {
             /** @description Why. */
@@ -2468,10 +2504,10 @@ export interface components {
             warning: string | null;
         };
         /**
-         * @description Why a new workspace got the identity it got.
+         * @description Why a new workspace's repository got the identity it got.
          * @enum {string}
          */
-        NewWorkspaceIdentityBasis: "covers" | "default" | "none";
+        NewWorkspaceIdentityBasis: "chosen" | "covers" | "default" | "none";
         /** @description `POST /api/workspaces`. */
         NewWorkspaceRequest: {
             /** @description The image to boot; left out or `null` is the default devcontainer image. */
@@ -2484,10 +2520,16 @@ export interface components {
             /** @description The workspace's name, which is also its workspace's name. */
             name: components["schemas"]["WorkspaceName"];
             /**
-             * @description The repository to clone, as an `https://` URL without credentials. SSH remotes
-             *     (`git@host:path`, `ssh://`) are refused with a message saying so.
+             * @description The repositories to clone, in order (0 to 100); left out is none. The list is checked
+             *     whole before anything exists.
              */
-            repo_url: string;
+            repositories?: components["schemas"]["NewRepositoryRequest"][];
+            /**
+             * @description Where new terminals land and what the editor opens: a path under the volume (relative,
+             *     `/` between its parts, at most 255 bytes, not inside `.puddle`); left out or `null` is the
+             *     volume root.
+             */
+            start_folder?: string | null;
         };
         /**
          * @description Whether the PAC script or WPAD answered.
@@ -3368,7 +3410,10 @@ export interface components {
             /** @description Whether the server may send Microsoft telemetry (default off). */
             telemetry: boolean | null;
         };
-        /** @description A workspace: a repository checkout on its own disk, and the workspace that runs it. */
+        /**
+         * @description A workspace: its own disk with the repositories Puddle manages for it (and anything else the
+         *     user put there), and the sandbox that runs it.
+         */
         Workspace: {
             busy: components["schemas"]["WorkspaceOperation"] | null;
             /**
@@ -3405,7 +3450,12 @@ export interface components {
             first_connect_notice_due: boolean;
             /** @description The id used in paths. Today it is the workspace's name. */
             id: string;
-            identity: components["schemas"]["NewWorkspaceIdentity"] | null;
+            /**
+             * @description Which identity each repository of a new workspace got and why, one per repository of the
+             *     request, in its order. Only the answer to creating a workspace fills it; every other answer
+             *     has an empty list, and the Git tab shows the same afterwards.
+             */
+            identities: components["schemas"]["NewWorkspaceIdentity"][];
             /** @description The image its workspace boots. */
             image: string;
             /**
@@ -3415,13 +3465,18 @@ export interface components {
             memory_mib: number;
             /** @description The name of the workspace that runs it; events and per-workspace settings use this name. */
             name: components["schemas"]["WorkspaceName"];
-            /** @description The HTTPS URL it was cloned from. */
-            repo_url: string;
+            /** @description The repositories Puddle manages for it, in the order they were added (0 to 100). */
+            repositories: components["schemas"]["WorkspaceRepository"][];
             /**
              * @description Why `direct_ssh` is only a guess: the settings could not be read, so it counts as off.
              *     `null` when the settings were read.
              */
             settings_error: string | null;
+            /**
+             * @description Where new terminals land and what the editor opens: a path under the volume, or `null`
+             *     for the volume root.
+             */
+            start_folder: string | null;
             /** @description The workspace's state. */
             status: components["schemas"]["WorkspaceStatus"];
         };
@@ -3471,6 +3526,17 @@ export interface components {
          * @enum {string}
          */
         WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "deleting";
+        /**
+         * @description One repository Puddle manages for a workspace. Its identity and its Pull and Push toggles are
+         *     the workspace's Git settings (`GET /api/workspaces/{id}/git`), matched in the repository
+         *     table's spelling.
+         */
+        WorkspaceRepository: {
+            /** @description The checkout it is cloned into, directly under the volume root. */
+            directory: components["schemas"]["CheckoutDir"];
+            /** @description The HTTPS address it is cloned from, without credentials. */
+            url: string;
+        };
         /** @description New overrides for one workspace. Replaces every value listed; `null` inherits. */
         WorkspaceSettingsRequest: {
             /** @description The overrides. */
@@ -7075,7 +7141,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description the name is taken */
+            /** @description the name is taken, or two identities of the list cover the same place (`identity_collision`) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7093,7 +7159,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description invalid name, repository URL (including SSH remotes), image or memory */
+            /** @description invalid name, repository (address, SSH remote, directory clash, the same repository twice, unknown identity, more than 100), start folder, image or memory, or `repo_url` sent */
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -12,13 +12,16 @@
 use std::fmt;
 
 use futures_util::future::BoxFuture;
-use puddle_types::{ImageRef, MemoryMib, SandboxName, WorkspaceId, WorkspaceName, WorkspaceStatus};
+use puddle_store::{IdentityId, RepoRef};
+use puddle_types::{
+    CheckoutDir, ImageRef, MemoryMib, SandboxName, WorkspaceId, WorkspaceName, WorkspaceStatus,
+};
 use sha2::{Digest, Sha256};
 
 /// The long operation a workspace is in the middle of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Operation {
-    /// Creating the volume and cloning the repository.
+    /// Creating the volume and cloning the repositories.
     Creating,
     /// Booting.
     Starting,
@@ -53,8 +56,10 @@ pub struct WorkspaceRecord {
     /// What the user renamed the workspace to; `None` until they do. Only a label: nothing
     /// else (sandbox, volume, rules, settings) uses it.
     pub display_name: Option<DisplayName>,
-    /// The repository it was created from (HTTPS, no credentials).
-    pub repo_url: String,
+    /// The repositories Puddle manages for it, in the order they were added.
+    pub repositories: Vec<Repository>,
+    /// Where new terminals land and what the editor opens; `None` is the volume root.
+    pub start_folder: Option<StartFolder>,
     /// The image its workspace boots.
     pub image: String,
     /// Its memory, applied at the next start.
@@ -74,12 +79,13 @@ pub struct WorkspaceRecord {
 impl WorkspaceRecord {
     /// A record with the defaults the fake and the tests start from.
     #[must_use]
-    pub fn new(id: WorkspaceId, name: WorkspaceName, repo_url: impl Into<String>) -> Self {
+    pub fn new(id: WorkspaceId, name: WorkspaceName, repositories: Vec<Repository>) -> Self {
         Self {
             id,
             name,
             display_name: None,
-            repo_url: repo_url.into(),
+            repositories,
+            start_folder: None,
             image: DEFAULT_IMAGE.to_owned(),
             memory: MemoryMib::DEFAULT,
             status: WorkspaceStatus::Created,
@@ -266,14 +272,245 @@ fn is_scp_like(url: &str) -> bool {
     }
 }
 
-/// What `create` needs. Build it from a request with [`RepoUrl::parse`] and the typed names.
+impl fmt::Display for RepoUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// One repository Puddle manages for a workspace (storage ST-40): the address it is cloned from
+/// and the checkout directly under the volume root it is cloned into. Its identity and its Pull
+/// and Push toggles are not part of it: they are the workspace's Git settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Repository {
+    /// Where it is cloned from.
+    pub url: RepoUrl,
+    /// The checkout it is cloned into.
+    pub directory: CheckoutDir,
+}
+
+impl Repository {
+    /// The entry for `url` in the directory `git clone` would pick (storage ST-9).
+    #[must_use]
+    pub fn at_default_directory(url: RepoUrl) -> Self {
+        let directory = CheckoutDir::from_url(url.as_str());
+        Self { url, directory }
+    }
+}
+
+/// Most repositories one workspace holds (where the delete check stops counting checkouts).
+pub const MAX_REPOSITORIES: usize = 100;
+
+/// A repository a create asks for: the entry, and the Git settings it starts with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewRepository {
+    /// The entry on the workspace's list.
+    pub repository: Repository,
+    /// The identity the user picked for it; `None` lets Puddle choose (storage ST-44).
+    pub identity: Option<IdentityId>,
+    /// Pull on its new repository table row.
+    pub pull: bool,
+    /// Push on its new repository table row.
+    pub push: bool,
+}
+
+/// A repository as a request names it, before [`check_repositories`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RepositoryDraft {
+    /// The address as typed.
+    pub url: String,
+    /// The checkout's directory as typed; `None` takes the one the address gives.
+    pub directory: Option<String>,
+    /// The identity picked for it.
+    pub identity: Option<IdentityId>,
+    /// Pull; `None` is on.
+    pub pull: Option<bool>,
+    /// Push; `None` is on.
+    pub push: Option<bool>,
+}
+
+/// Checks a create's repository list as a whole (storage ST-43), before anything exists. Each
+/// refusal names the entry by its place in the list and its address: an address the create
+/// checks refuse, a bad directory, two entries with one directory (with a free name to use
+/// instead), the same repository twice in the repository table's spelling, an identity
+/// `identity_exists` does not know, or more than [`MAX_REPOSITORIES`].
+///
+/// # Errors
+///
+/// The message for the user.
+pub fn check_repositories(
+    drafts: &[RepositoryDraft],
+    identity_exists: impl Fn(IdentityId) -> bool,
+) -> Result<Vec<NewRepository>, String> {
+    if drafts.len() > MAX_REPOSITORIES {
+        return Err(format!(
+            "a workspace holds at most {MAX_REPOSITORIES} repositories; this list has {}",
+            drafts.len()
+        ));
+    }
+    let mut checked: Vec<NewRepository> = Vec::with_capacity(drafts.len());
+    for (n, draft) in (1..).zip(drafts) {
+        let named = |reason: &str| format!("repository {n} ({}): {reason}", shown(&draft.url));
+        let url = RepoUrl::parse(&draft.url).map_err(|e| named(&e))?;
+        let directory = match &draft.directory {
+            Some(dir) => CheckoutDir::new(dir).map_err(|e| named(e.reason()))?,
+            None => CheckoutDir::from_url(url.as_str()),
+        };
+        if let Some(id) = draft.identity
+            && !identity_exists(id)
+        {
+            return Err(named(&format!("there is no identity {}", id.0)));
+        }
+        checked.push(NewRepository {
+            repository: Repository { url, directory },
+            identity: draft.identity,
+            pull: draft.pull.unwrap_or(true),
+            push: draft.push.unwrap_or(true),
+        });
+    }
+    for (i, a) in checked.iter().enumerate() {
+        for (j, b) in checked.iter().enumerate().skip(i + 1) {
+            let (an, bn) = (i + 1, j + 1);
+            if a.repository.directory == b.repository.directory {
+                let dir = &a.repository.directory;
+                return Err(format!(
+                    "repositories {an} ({}) and {bn} ({}) both go into {dir}; give one of them \
+                     another directory, such as {}",
+                    a.repository.url,
+                    b.repository.url,
+                    free_directory(dir, &checked)
+                ));
+            }
+            if let (Ok(ra), Ok(rb)) = (table_spelling(a), table_spelling(b))
+                && ra == rb
+            {
+                return Err(format!(
+                    "repositories {an} ({}) and {bn} ({}) are the same repository, {ra}; list it once",
+                    a.repository.url, b.repository.url
+                ));
+            }
+        }
+    }
+    Ok(checked)
+}
+
+/// `url` as an error message may quote it: trimmed, cut to a readable length, and with any user
+/// name or password replaced by `***`, so a refusal never echoes a credential.
+fn shown(url: &str) -> String {
+    const MAX_SHOWN: usize = 200;
+    let url = url.trim();
+    let shown = match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+            match rest.get(..end).and_then(|authority| authority.rfind('@')) {
+                Some(at) => format!("{scheme}://***{}", rest.get(at..).unwrap_or_default()),
+                None => url.to_owned(),
+            }
+        }
+        None => url.to_owned(),
+    };
+    if shown.chars().count() > MAX_SHOWN {
+        let cut: String = shown.chars().take(MAX_SHOWN).collect();
+        format!("{cut}…")
+    } else {
+        shown
+    }
+}
+
+/// How the repository table spells an entry's repository, when its address names one.
+pub(crate) fn table_spelling(
+    repository: &NewRepository,
+) -> Result<RepoRef, puddle_store::StoreError> {
+    RepoRef::from_https_url(repository.repository.url.as_str())
+}
+
+/// `<dir>-2`, `<dir>-3`, ...: the first that no entry uses (cut so it stays a valid name).
+fn free_directory(dir: &CheckoutDir, taken: &[NewRepository]) -> CheckoutDir {
+    (2..)
+        .find_map(|n| {
+            let suffix = format!("-{n}");
+            let keep = CheckoutDir::MAX_LEN - suffix.len();
+            let base: String = dir.as_str().chars().take(keep).collect();
+            let candidate = CheckoutDir::new(&format!("{base}{suffix}")).ok()?;
+            (!taken.iter().any(|t| t.repository.directory == candidate)).then_some(candidate)
+        })
+        .unwrap_or_else(|| dir.clone())
+}
+
+/// A start folder (storage ST-54): a relative path under the volume root, `/` between its
+/// parts, no part empty, `.` or `..`, no control character or `\`, not inside `.puddle` or
+/// `lost+found`, at most [`StartFolder::MAX_BYTES`] bytes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct StartFolder(String);
+
+impl StartFolder {
+    /// Longest start folder, in bytes.
+    pub const MAX_BYTES: usize = 255;
+
+    /// Checks a start folder.
+    ///
+    /// # Errors
+    ///
+    /// A message for the user that says which rule the path breaks.
+    pub fn parse(path: &str) -> Result<Self, String> {
+        if path.is_empty() {
+            return Err("the start folder must not be empty; use null for the volume root".into());
+        }
+        if path.len() > Self::MAX_BYTES {
+            return Err(format!(
+                "the start folder is longer than {} bytes",
+                Self::MAX_BYTES
+            ));
+        }
+        if path.starts_with('/') {
+            return Err("the start folder is a path under the volume, without a leading /".into());
+        }
+        if path.chars().any(|c| c.is_control() || c == '\\') {
+            return Err("the start folder must not contain control characters or \\".into());
+        }
+        for part in path.split('/') {
+            if matches!(part, "" | "." | "..") {
+                return Err(format!(
+                    "the start folder has an empty, . or .. part ({path}); name each folder"
+                ));
+            }
+        }
+        let first = path.split('/').next().unwrap_or_default();
+        if first == ".puddle" || first == CheckoutDir::LOST_AND_FOUND {
+            return Err(format!("the start folder must not be inside {first}"));
+        }
+        Ok(Self(path.to_owned()))
+    }
+
+    /// The start folder of a checkout's directory.
+    #[must_use]
+    pub fn of_checkout(dir: &CheckoutDir) -> Self {
+        Self(dir.as_str().to_owned())
+    }
+
+    /// The path.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for StartFolder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// What `create` needs. Build it from a request with [`check_repositories`] and the typed names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NewWorkspace {
-    /// The workspace's workspace name; its id is derived from it.
+    /// The workspace's name; its id is derived from it.
     pub name: WorkspaceName,
-    /// Where to clone from.
-    pub repo_url: RepoUrl,
+    /// What to clone, in order, with the Git settings each starts with.
+    pub repositories: Vec<NewRepository>,
+    /// The start folder; `None` is the volume root.
+    pub start_folder: Option<StartFolder>,
     /// The image, or the default.
     pub image: Option<ImageRef>,
     /// The memory, or the default.
@@ -283,13 +520,46 @@ pub struct NewWorkspace {
 impl NewWorkspace {
     /// A request for a workspace with the defaults.
     #[must_use]
-    pub fn new(name: WorkspaceName, repo_url: RepoUrl) -> Self {
+    pub fn new(name: WorkspaceName, repositories: Vec<NewRepository>) -> Self {
         Self {
             name,
-            repo_url,
+            repositories,
+            start_folder: None,
             image: None,
             memory: None,
         }
+    }
+
+    /// The entries the new workspace's list holds.
+    #[must_use]
+    pub fn entries(&self) -> Vec<Repository> {
+        self.repositories
+            .iter()
+            .map(|r| r.repository.clone())
+            .collect()
+    }
+}
+
+/// Sets up the Git settings of a new workspace's repositories (storage ST-44). A service calls
+/// it once a create is accepted (the name is reserved and the workspace list saved) and before
+/// the first clone, so every clone carries its credential. It reports nothing back to the
+/// service: a repository it could not set up is cloned without, and the caller tells the user.
+pub trait GitSetup: Send + Sync {
+    /// Sets up `repositories` of `workspace`, in order.
+    fn set_up<'a>(
+        &'a self,
+        workspace: &'a WorkspaceName,
+        repositories: &'a [NewRepository],
+    ) -> BoxFuture<'a, ()>;
+}
+
+/// A [`GitSetup`] that sets nothing up, for services and tests with no store.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoGitSetup;
+
+impl GitSetup for NoGitSetup {
+    fn set_up<'a>(&'a self, _: &'a WorkspaceName, _: &'a [NewRepository]) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
     }
 }
 
@@ -501,9 +771,15 @@ pub trait WorkspaceService: Send + Sync {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
-    /// Creates a workspace: its volume, then a clone of the repository.
-    /// [`WorkspaceError::Conflict`] if the name is taken.
-    fn create(&self, new: NewWorkspace) -> BoxFuture<'_, Result<WorkspaceRecord, WorkspaceError>>;
+    /// Creates a workspace: its volume, then a clone of each repository, one at a time. Once the
+    /// create is accepted and before the first clone it runs `git` for the new repositories.
+    /// [`WorkspaceError::Conflict`] if the name is taken. A clone that fails fails only its
+    /// repository (a background problem names it); the create still ends done.
+    fn create<'a>(
+        &'a self,
+        new: NewWorkspace,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
     /// Boots a workspace that is down.
     fn start<'a>(
@@ -635,7 +911,11 @@ impl WorkspaceService for NoWorkspaces {
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
-    fn create(&self, _: NewWorkspace) -> BoxFuture<'_, Result<WorkspaceRecord, WorkspaceError>> {
+    fn create<'a>(
+        &'a self,
+        _: NewWorkspace,
+        _: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
     fn start<'a>(
@@ -825,10 +1105,18 @@ mod tests {
         let id = WorkspaceId::new("w").unwrap();
         let name = WorkspaceName::new("w").unwrap();
         let url = RepoUrl::parse("https://example.com/a").unwrap();
+        let repos = vec![NewRepository {
+            repository: Repository::at_default_directory(url),
+            identity: None,
+            pull: true,
+            push: true,
+        }];
         let all = [
             svc.list().await.map(|_| ()),
             svc.get(&id).await.map(|_| ()),
-            svc.create(NewWorkspace::new(name, url)).await.map(|_| ()),
+            svc.create(NewWorkspace::new(name, repos), &NoGitSetup)
+                .await
+                .map(|_| ()),
             svc.start(&id).await.map(|_| ()),
             svc.stop(&id).await.map(|_| ()),
             svc.reclaim(&id).await.map(|_| ()),
@@ -883,7 +1171,7 @@ mod tests {
             let mut r = WorkspaceRecord::new(
                 WorkspaceId::new(id).unwrap(),
                 WorkspaceName::new(id).unwrap(),
-                "https://example.org/a",
+                Vec::new(),
             );
             r.display_name = shown.map(|s| DisplayName::parse(s).unwrap());
             r
@@ -908,7 +1196,7 @@ mod tests {
             WorkspaceRecord::new(
                 WorkspaceId::new(id).unwrap(),
                 WorkspaceName::new(id).unwrap(),
-                "https://example.org/a",
+                Vec::new(),
             )
         };
         let (mut a, b) = (mk("alpha"), mk("beta"));
@@ -943,6 +1231,187 @@ mod tests {
             check_rename([&a, &b], &missing, None),
             Err(WorkspaceError::NotFound(_))
         ));
+    }
+
+    fn draft(url: &str) -> RepositoryDraft {
+        RepositoryDraft {
+            url: url.to_owned(),
+            ..RepositoryDraft::default()
+        }
+    }
+
+    #[test]
+    fn a_repository_list_takes_defaults_and_keeps_its_order() {
+        let checked = check_repositories(
+            &[
+                draft("https://github.com/acme/api.git"),
+                RepositoryDraft {
+                    directory: Some("site".into()),
+                    identity: Some(IdentityId(4)),
+                    pull: Some(false),
+                    ..draft("https://github.com/acme/web")
+                },
+            ],
+            |id| id == IdentityId(4),
+        )
+        .unwrap();
+        let shape: Vec<_> = checked
+            .iter()
+            .map(|r| {
+                (
+                    r.repository.url.as_str(),
+                    r.repository.directory.as_str(),
+                    r.identity,
+                    r.pull,
+                    r.push,
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                ("https://github.com/acme/api.git", "api", None, true, true),
+                (
+                    "https://github.com/acme/web",
+                    "site",
+                    Some(IdentityId(4)),
+                    false,
+                    true
+                ),
+            ]
+        );
+        assert_eq!(check_repositories(&[], |_| false).unwrap(), []);
+    }
+
+    #[test]
+    fn a_repository_list_is_refused_naming_the_entry() {
+        let refused =
+            |drafts: &[RepositoryDraft]| check_repositories(drafts, |_| false).unwrap_err();
+        let clash = refused(&[
+            draft("https://github.com/acme/api"),
+            draft("https://github.com/acme/web"),
+            draft("https://gitlab.com/other/api.git"),
+        ]);
+        assert_eq!(
+            clash,
+            "repositories 1 (https://github.com/acme/api) and 3 (https://gitlab.com/other/api.git) \
+             both go into api; give one of them another directory, such as api-2"
+        );
+        let taken = refused(&[
+            draft("https://github.com/acme/api"),
+            RepositoryDraft {
+                directory: Some("api-2".into()),
+                ..draft("https://github.com/acme/web")
+            },
+            draft("https://gitlab.com/other/api.git"),
+        ]);
+        assert!(taken.ends_with("such as api-3"), "{taken}");
+        let twice = refused(&[
+            draft("https://github.com/Acme/API.git"),
+            RepositoryDraft {
+                directory: Some("again".into()),
+                ..draft("https://github.com/acme/api/")
+            },
+        ]);
+        assert_eq!(
+            twice,
+            "repositories 1 (https://github.com/Acme/API.git) and 2 (https://github.com/acme/api/) \
+             are the same repository, github.com/acme/api; list it once"
+        );
+        let ghost = refused(&[
+            draft("https://github.com/acme/api"),
+            RepositoryDraft {
+                identity: Some(IdentityId(9)),
+                ..draft("https://github.com/acme/web")
+            },
+        ]);
+        assert_eq!(
+            ghost,
+            "repository 2 (https://github.com/acme/web): there is no identity 9"
+        );
+        let ssh = refused(&[draft("git@github.com:acme/api.git")]);
+        assert!(
+            ssh.starts_with("repository 1 (git@github.com:acme/api.git): SSH remotes"),
+            "{ssh}"
+        );
+        let bad_dir = refused(&[RepositoryDraft {
+            directory: Some("../up".into()),
+            ..draft("https://github.com/acme/api")
+        }]);
+        assert!(bad_dir.contains("must not start with"), "{bad_dir}");
+        let many: Vec<_> = (0..=MAX_REPOSITORIES)
+            .map(|n| draft(&format!("https://github.com/acme/r{n}")))
+            .collect();
+        assert_eq!(
+            refused(&many),
+            "a workspace holds at most 100 repositories; this list has 101"
+        );
+        assert!(check_repositories(&many[..MAX_REPOSITORIES], |_| false).is_ok());
+    }
+
+    #[test]
+    fn a_refused_address_is_named_without_its_credentials() {
+        let err = check_repositories(&[draft("  https://me:tok@github.com/a/b  ")], |_| false)
+            .unwrap_err();
+        assert!(
+            err.starts_with("repository 1 (https://***@github.com/a/b): remove the user name"),
+            "{err}"
+        );
+        assert!(!err.contains("tok"), "{err}");
+        let long = format!("https://github.com/{}", "a".repeat(3000));
+        let err = check_repositories(&[draft(&long)], |_| false).unwrap_err();
+        assert!(err.len() < 400, "{}", err.len());
+    }
+
+    #[test]
+    fn a_long_directory_still_gets_a_free_name_that_fits() {
+        let long = "a".repeat(CheckoutDir::MAX_LEN);
+        let refused = check_repositories(
+            &[
+                RepositoryDraft {
+                    directory: Some(long.clone()),
+                    ..draft("https://github.com/acme/one")
+                },
+                RepositoryDraft {
+                    directory: Some(long.clone()),
+                    ..draft("https://github.com/acme/two")
+                },
+            ],
+            |_| false,
+        )
+        .unwrap_err();
+        let suggested = refused.rsplit(' ').next().unwrap();
+        assert_eq!(suggested, format!("{}-2", "a".repeat(98)));
+    }
+
+    #[test]
+    fn a_start_folder_is_a_plain_path_under_the_volume() {
+        for ok in ["api", "api/src", "web site/app", "a.b/c_d"] {
+            assert_eq!(StartFolder::parse(ok).unwrap().as_str(), ok);
+        }
+        assert!(StartFolder::parse(&"a".repeat(255)).is_ok());
+        for (bad, why) in [
+            ("", "empty"),
+            ("/api", "leading /"),
+            ("api/", "empty, . or .."),
+            ("a//b", "empty, . or .."),
+            ("./api", "empty, . or .."),
+            ("api/../..", "empty, . or .."),
+            ("..", "empty, . or .."),
+            ("a\\b", "control characters"),
+            ("a\nb", "control characters"),
+            (".puddle", "inside .puddle"),
+            (".puddle/editor", "inside .puddle"),
+            ("lost+found/x", "inside lost+found"),
+            (&"a".repeat(256), "255 bytes"),
+        ] {
+            let err = StartFolder::parse(bad).unwrap_err();
+            assert!(err.contains(why), "{bad:?}: {err}");
+        }
+        assert_eq!(
+            StartFolder::of_checkout(&CheckoutDir::new("src").unwrap()).as_str(),
+            "src"
+        );
     }
 
     #[test]

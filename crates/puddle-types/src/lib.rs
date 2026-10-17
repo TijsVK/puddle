@@ -4,7 +4,7 @@
 //!
 //! | Item | What |
 //! |---|---|
-//! | [`WorkspaceName`], [`SandboxName`], [`WorkspaceId`], [`VolumeName`], [`ImageRef`] | validated names; workspace, sandbox and volume names are DNS labels |
+//! | [`WorkspaceName`], [`SandboxName`], [`WorkspaceId`], [`VolumeName`], [`ImageRef`], [`CheckoutDir`] | validated names; workspace, sandbox and volume names are DNS labels |
 //! | [`GuestPath`], [`GuestFile`], [`GuestEnv`] | what providers put into a guest; the boot hook applies them |
 //! | [`ApplyKind`], [`MergeSpec`], [`unmerge`] | merged files: Puddle owns only some keys of a user's file; the engine `puddle-agent` runs in the guest |
 //! | [`MemoryMib`] | guest memory size: 256 MiB to 1 TiB, default 8 GiB (the setting is in `puddle-settings`) |
@@ -49,8 +49,8 @@ pub use merge::{
     MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged, unmerge,
 };
 pub use name::{
-    ImageRef, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName, WORKSPACE_VOLUME_PREFIX,
-    WorkspaceId, WorkspaceName,
+    CheckoutDir, ImageRef, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
+    WORKSPACE_VOLUME_PREFIX, WorkspaceId, WorkspaceName,
 };
 
 pub use policy::{

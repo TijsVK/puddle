@@ -33,7 +33,8 @@ use support::{Api, TestDevCert, ended, hermetic_options};
 #[cfg(not(windows))]
 use vm_support::start_vm_host_config;
 use vm_support::{
-    HarnessPlatform, VmHost, guest, guest_within, harness_config, start_vm_host, start_vm_host_with,
+    HarnessPlatform, VmHost, guest, guest_within, harness_config, kill_vm, start_vm_host,
+    start_vm_host_with,
 };
 
 /// A small public repository on a host the test allows.
@@ -68,7 +69,7 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -152,6 +153,131 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
     assert_eq!(record.status, WorkspaceStatus::Stopped);
 }
 
+/// A second small public repository on the same host.
+const SECOND_REPO: &str = "https://github.com/octocat/Spoon-Knife.git";
+/// A host the rules allow that resolves nowhere, so a clone from it fails like an unreachable
+/// server's.
+const UNREACHABLE_HOST: &str = "unreachable.invalid";
+
+/// A create with three repositories, the middle one unreachable: the other two are cloned, the
+/// create ends done, a problem names the one that failed and git left no folder for it. A VMM
+/// kill right after the create keeps both checkouts whole: `git fsck --full` passes in each.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alone() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("repos").await;
+    let name = format!("{}-repos", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    for allowed in [REPO_HOST, UNREACHABLE_HOST] {
+        host.store()
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(sandbox.clone()),
+                pattern: Pattern::parse(allowed).unwrap(),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
+    let unreachable = format!("https://{UNREACHABLE_HOST}/acme/missing.git");
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024, "repositories": [
+                {"url": REPO}, {"url": unreachable}, {"url": SECOND_REPO}
+            ]})
+            .to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let end = events
+        .until(ended(name_static), Duration::from_mins(15))
+        .await;
+    assert_eq!(
+        end["step"], "done",
+        "one failed clone does not fail the create: {end}"
+    );
+    assert_eq!(
+        events.steps(&name),
+        [
+            "preparing_volume",
+            "pulling_image",
+            "starting",
+            "syncing",
+            "cloning",
+            "cloning",
+            "cloning",
+            "done"
+        ]
+    );
+    let problems = api.get("/api/problems").await.json();
+    let failed: Vec<_> = problems["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["workspace"] == name)
+        .collect();
+    assert_eq!(failed.len(), 1, "{problems}");
+    assert_eq!(failed[0]["key"], format!("clone:{name}:missing"));
+    assert!(
+        failed[0]["title"].as_str().unwrap().contains(&unreachable),
+        "{problems}"
+    );
+    assert!(
+        failed[0]["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("git exited "),
+        "{problems}"
+    );
+    let listing = guest(&runtime, &sandbox, &format!("ls -1A /workspaces/{name}")).await;
+    let listed: Vec<&str> = listing.lines().filter(|l| *l != ".puddle").collect();
+    assert_eq!(
+        listed,
+        ["Hello-World", "Spoon-Knife"],
+        "git left nothing of the failed clone"
+    );
+
+    // The one sync after the last clone has put both on the disk: a hard kill now loses neither.
+    kill_vm(&runtime, &settings, &sandbox).await;
+    checkouts_are_whole(&runtime, &sandbox, &["Hello-World", "Spoon-Knife"]).await;
+    host.shutdown().await;
+}
+
+/// Boots the killed `sandbox` straight from the runtime and checks that each checkout passes
+/// `git fsck --full` and has a HEAD, then stops it again.
+async fn checkouts_are_whole(runtime: &MsbRuntime, sandbox: &WorkspaceName, dirs: &[&str]) {
+    let restarted = runtime.start(&sandbox.sandbox_name()).await.unwrap();
+    for dir in dirs {
+        let repo = format!("/workspaces/{sandbox}/{dir}");
+        let out = restarted
+            .exec(
+                ExecRequest::sh(format!(
+                    "git -c safe.directory='*' -C {repo} fsck --full && \
+                     git -c safe.directory='*' -C {repo} rev-parse HEAD"
+                ))
+                .as_user("root")
+                .with_timeout(Duration::from_mins(5)),
+            )
+            .await
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{dir} after the kill: {}{}",
+            out.stdout_text(),
+            out.stderr_text()
+        );
+    }
+    restarted.stop().await.unwrap();
+}
+
 /// The issuer curl saw on `https://<host>/`, which also proves the connection worked.
 fn issuer_script(host: &str) -> String {
     format!("curl -sv -o /dev/null --max-time 60 https://{host}/ 2>&1 | grep -i 'issuer:'")
@@ -227,7 +353,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -432,7 +558,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -717,7 +843,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -933,7 +1059,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -1159,7 +1285,7 @@ async fn vm_host_carries_2000_concurrent_guest_connections_through_agent_and_pro
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -1446,7 +1572,7 @@ async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -1590,7 +1716,7 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceName, 
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 2048}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 2048}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -2025,7 +2151,7 @@ async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -2219,7 +2345,7 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 2048}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 2048}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -2323,7 +2449,7 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -2594,7 +2720,7 @@ async fn vm_host_boots_the_guest_with_the_development_certificate_and_its_key_st
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);

@@ -27,9 +27,9 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use puddle_agent_proto::editor::EditorServer;
 use puddle_api::{
-    AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, LaunchError, Launcher, Listing,
-    NewWorkspace, Operation, RepoFindings, ShellInitCheck, WorkspaceError, WorkspaceRecord,
-    WorkspaceService,
+    AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup, LaunchError, Launcher,
+    Listing, NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck, WorkspaceError,
+    WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
@@ -40,8 +40,8 @@ use puddle_settings::{ReconnectionGrace, WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_store::Clock;
 use puddle_types::{
-    Event, EventSink, GuestEnv, ImageRef, MemoryMib, Problem, Problems, WorkspaceId, WorkspaceName,
-    WorkspaceStatus, WorkspaceStep,
+    CheckoutDir, Event, EventSink, GuestEnv, ImageRef, MemoryMib, Problem, Problems, WorkspaceId,
+    WorkspaceName, WorkspaceStatus, WorkspaceStep,
 };
 
 use crate::ssh_target::{ReportingTarget, report_no_endpoint};
@@ -256,6 +256,11 @@ fn problem_key(kind: &str, name: &WorkspaceName) -> String {
     format!("{kind}:{name}")
 }
 
+/// The key of the problem about one repository of a workspace that could not be cloned.
+fn clone_problem_key(name: &WorkspaceName, directory: &CheckoutDir) -> String {
+    format!("{}:{directory}", problem_key("clone", name))
+}
+
 fn not_found(id: &WorkspaceId) -> WorkspaceError {
     WorkspaceError::NotFound(format!("no workspace {id}"))
 }
@@ -341,18 +346,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 interrupted = true;
                 continue;
             }
-            let state = |e: &dyn std::fmt::Display| HostError::State {
-                what: "the workspace list",
-                reason: e.to_string(),
-            };
-            let id = WorkspaceId::new(&stored.id).map_err(|e| state(&e))?;
-            let name = WorkspaceName::new(&stored.name).map_err(|e| state(&e))?;
-            let mut record = WorkspaceRecord::new(id.clone(), name.clone(), stored.repo_url);
-            // The book's load already refused a bad display name (`files.rs`), so `ok()` drops nothing.
-            record.display_name = stored
-                .display_name
-                .as_deref()
-                .and_then(|shown| DisplayName::parse(shown).ok());
+            let (id, name) = (stored.id, stored.name);
+            let mut record = WorkspaceRecord::new(id.clone(), name.clone(), stored.repositories);
+            record.display_name = stored.display_name;
+            record.start_folder = stored.start_folder;
             record.image = stored.image;
             record.memory = MemoryMib::new(stored.memory_mib).map_err(|e| HostError::State {
                 what: "the workspace list",
@@ -423,10 +420,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .values()
             .filter(|slot| !slot.deleting)
             .map(|slot| Stored {
-                id: slot.record.id.to_string(),
-                name: slot.record.name.to_string(),
-                display_name: slot.record.display_name.as_ref().map(ToString::to_string),
-                repo_url: slot.record.repo_url.clone(),
+                id: slot.record.id.clone(),
+                name: slot.record.name.clone(),
+                display_name: slot.record.display_name.clone(),
+                repositories: slot.record.repositories.clone(),
+                start_folder: slot.record.start_folder.clone(),
                 image: slot.record.image.clone(),
                 memory_mib: slot.record.memory.get(),
                 created_at: slot.record.created_at,
@@ -466,6 +464,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             workspace: name.clone(),
             step,
             detail,
+            repository: None,
+        });
+    }
+
+    /// The cloning step of one repository: the address as the detail, the directory as the
+    /// repository it is about.
+    fn progress_cloning(&self, name: &WorkspaceName, repository: &Repository) {
+        self.inner.events.emit(Event::WorkspaceProgress {
+            workspace: name.clone(),
+            step: WorkspaceStep::Cloning,
+            detail: Some(repository.url.as_str().to_owned()),
+            repository: Some(repository.directory.clone()),
         });
     }
 
@@ -1418,21 +1428,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Err(reason) = self.settle(&record).await {
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
-        self.progress(
-            &record.name,
-            WorkspaceStep::Cloning,
-            Some(record.repo_url.clone()),
-        );
         let gated = self.gated(&record.name).await?;
-        if let Err(e) = self
-            .inner
-            .workspaces
-            .clone_checkout(gated.ungated(), &record.id, &record.repo_url, None)
-            .await
-        {
-            return Err(self
-                .undo_boot(&record, true, created_volume, e.to_string())
-                .await);
+        if let Err(reason) = self.clone_all(&record, gated.ungated()).await {
+            return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
         // Nobody has worked in it yet, so undoing it now loses nothing; keeping it would leave
         // a workspace the next start takes for an unfinished create.
@@ -1441,6 +1439,62 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
         Ok(())
+    }
+
+    /// Clones the repositories of a new workspace one at a time in list order, then runs one
+    /// `sync`. A clone git refuses fails only its repository: a background problem names it and
+    /// the next one starts (git removes the folder of its own failed clone). Anything else (the
+    /// guest gone, the sync failing) fails the create, which nobody has worked in yet.
+    async fn clone_all(
+        &self,
+        record: &WorkspaceRecord,
+        sandbox: &R::Sandbox,
+    ) -> Result<(), String> {
+        let workspaces = &self.inner.workspaces;
+        for repository in &record.repositories {
+            self.progress_cloning(&record.name, repository);
+            let key = clone_problem_key(&record.name, &repository.directory);
+            let cloned = workspaces
+                .clone_checkout(
+                    sandbox,
+                    &record.id,
+                    repository.url.as_str(),
+                    &repository.directory,
+                    None,
+                )
+                .await;
+            match cloned {
+                Ok(_) => self.inner.problems.clear(&key),
+                Err(puddle_workspace::WorkspaceError::Clone { reason, .. }) => {
+                    tracing::warn!(workspace = %record.name, url = %repository.url, %reason, "a repository of a new workspace was not cloned");
+                    self.inner.problems.raise(
+                        Problem::new(
+                            key,
+                            format!(
+                                "Puddle could not clone {} into {}",
+                                repository.url,
+                                record.label()
+                            ),
+                            format!(
+                                "{reason}. The workspace was made without it, and the repository \
+                                 stays on its list. To get it, clone it in a terminal in the \
+                                 workspace: git clone {} /workspaces/{}/{}",
+                                repository.url, record.id, repository.directory
+                            ),
+                        )
+                        .about(record.name.clone()),
+                    );
+                }
+                Err(other) => return Err(other.to_string()),
+            }
+        }
+        if record.repositories.is_empty() {
+            return Ok(());
+        }
+        workspaces
+            .sync(sandbox, &record.id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     async fn gated(&self, name: &WorkspaceName) -> Result<Arc<GatedSandbox<R::Sandbox>>, String> {
@@ -1629,6 +1683,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         // its environment and the values of its own secrets.
         inner.injection.forget(&record.name).await;
         inner.kit.shell_init().forget(&record.id);
+        inner
+            .problems
+            .clear_prefix(&format!("{}:", problem_key("clone", &record.name)));
         Ok(())
     }
 }
@@ -1663,13 +1720,17 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         })
     }
 
-    fn create(&self, new: NewWorkspace) -> BoxFuture<'_, Result<WorkspaceRecord, WorkspaceError>> {
+    fn create<'a>(
+        &'a self,
+        new: NewWorkspace,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
             let id = WorkspaceId::new(new.name.as_str()).map_err(|e| {
                 WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
             })?;
-            let mut record =
-                WorkspaceRecord::new(id.clone(), new.name.clone(), new.repo_url.as_str());
+            let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
+            record.start_folder.clone_from(&new.start_folder);
             record.image = new
                 .image
                 .as_ref()
@@ -1745,6 +1806,8 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     )));
                 }
             }
+            // The name is reserved and the list saved: set up what the clones need first.
+            git.set_up(&new.name, &new.repositories).await;
             self.status_event(&record);
             let this = self.clone();
             let work = record.clone();
@@ -2056,6 +2119,6 @@ pub(crate) fn known_ids(stored: &[Stored]) -> BTreeSet<WorkspaceId> {
     stored
         .iter()
         .filter(|s| !s.creating)
-        .filter_map(|s| WorkspaceId::new(&s.id).ok())
+        .map(|s| s.id.clone())
         .collect()
 }

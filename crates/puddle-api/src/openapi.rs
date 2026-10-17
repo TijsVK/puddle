@@ -12,7 +12,7 @@ use crate::routes::{AppState, api_router, slow_router};
 
 /// The contract's version. Bump the minor version for additive changes and the major version
 /// for anything a generated client would break on.
-pub const API_VERSION: &str = "0.12.0";
+pub const API_VERSION: &str = "0.13.0";
 
 /// The security scheme's name in the spec.
 const BEARER: &str = "bearer";
@@ -50,7 +50,7 @@ const BEARER: &str = "bearer";
         (name = "first-run", description = "Whether the first-run flow has been through"),
         (name = "network", description = "How Puddle reaches the internet: proxy, sign-in, company roots"),
         (name = "identities", description = "Git identities (author and credentials) and each workspace's identities, repository table and push and pull switches"),
-        (name = "workspaces", description = "Workspaces: repository checkouts with their own disk and sandbox"),
+        (name = "workspaces", description = "Workspaces: their own disk with the repositories Puddle manages for them, and the sandbox that runs them"),
         (name = "environment", description = "Environment variables and secrets, global and per workspace; a secret's value is write-only"),
         (name = "shell-init", description = "A workspace's shell init: the script its login shells source; the host's copy is the only source of truth")
     )

@@ -21,7 +21,7 @@ use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceName;
 use puddle_upstream::Mode;
-use puddle_vm_tests::{RuntimePair, Settings, test_owner};
+use puddle_vm_tests::{RuntimePair, Settings, VmEnv, test_owner};
 
 /// The harness has set the environment and checked the runtime pair already.
 #[derive(Default)]
@@ -195,4 +195,46 @@ pub(crate) async fn guest_within(
         out.stderr_text()
     );
     format!("{}{}", out.stdout_text(), out.stderr_text())
+}
+
+/// Kills the VM of `sandbox` the hard way (no shutdown, no flush), the way a crash or a power cut
+/// of the VMM would, and waits until the runtime sees it down.
+pub(crate) async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: &WorkspaceName) {
+    let harness = VmEnv::new(settings.clone()).await.unwrap();
+    let handle = harness
+        .scope(Box::pin(microsandbox::Sandbox::get(sandbox.as_str())))
+        .await
+        .unwrap();
+    let pid = handle
+        .local()
+        .and_then(|l| l.pid)
+        .expect("msb records the VM pid");
+    let status = if cfg!(windows) {
+        std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .status()
+    } else {
+        std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+    };
+    assert!(status.unwrap().success(), "killing VM process {pid}");
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let status = runtime
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|s| s.name == sandbox.as_str())
+            .map(|s| s.status);
+        if status.is_some_and(puddle_types::WorkspaceStatus::is_down) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "still {status:?} 60 s after the kill"
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
 }

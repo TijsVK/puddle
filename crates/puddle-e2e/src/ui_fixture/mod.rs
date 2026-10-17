@@ -26,8 +26,9 @@ use puddle_api::wire::{FoundAccount, FoundVia};
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DoctorService, EventHub,
     FakeCredentials, FakeDoctor, FakeLauncher, FakeNetworkHealth, FakeWorkspaces, Launcher,
-    Listing, MemorySettings, NetworkHealthService, Operation, RepoFindings, RepoService, RepoUrl,
-    RunningApi, Services, SettingsRepo, Unsaved, WorkspaceRecord,
+    Listing, MemorySettings, NetworkHealthService, Operation, RepoFindings, RepoService,
+    RepositoryDraft, RunningApi, Services, SettingsRepo, StartFolder, Unsaved, WorkspaceRecord,
+    check_repositories,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -647,9 +648,28 @@ impl State {
         let name = workspace(&seed.name)?;
         let id = WorkspaceId::new(&seed.name)
             .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
-        let repo_url = RepoUrl::parse(&seed.repo_url)
-            .map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
-        let mut record = WorkspaceRecord::new(id, name, repo_url.as_str());
+        let at = |err: &dyn std::fmt::Display| format!("workspace {:?}: {err}", seed.name);
+        let drafts: Vec<RepositoryDraft> = seed
+            .repositories
+            .iter()
+            .map(|r| RepositoryDraft {
+                url: r.url.clone(),
+                directory: r.directory.clone(),
+                ..RepositoryDraft::default()
+            })
+            .collect();
+        let repositories = check_repositories(&drafts, |_| false)
+            .map_err(|err| at(&err))?
+            .into_iter()
+            .map(|r| r.repository)
+            .collect();
+        let mut record = WorkspaceRecord::new(id, name, repositories);
+        record.start_folder = seed
+            .start_folder
+            .as_deref()
+            .map(StartFolder::parse)
+            .transpose()
+            .map_err(|err| at(&err))?;
         if let Some(image) = &seed.image {
             ImageRef::new(image)
                 .map_err(|err| format!("workspace {:?}: {err}", seed.name))?

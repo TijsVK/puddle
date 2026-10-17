@@ -995,22 +995,18 @@ async fn inventory_of<R: Runtime>(
     let workspaces = known_ids(stored);
     let mut inventory = Inventory::default();
     for stored in stored.iter().filter(|s| !s.creating) {
-        let (Ok(id), Ok(name)) = (
-            puddle_types::WorkspaceId::new(&stored.id),
-            WorkspaceName::new(&stored.name),
-        ) else {
-            continue;
-        };
-        if existing.contains(name.as_str()) {
-            inventory.attached.insert(id, name.sandbox_name());
+        if existing.contains(stored.name.as_str()) {
+            inventory
+                .attached
+                .insert(stored.id.clone(), stored.name.sandbox_name());
         }
-        inventory.sandboxes.insert(name.sandbox_name());
+        inventory.sandboxes.insert(stored.name.sandbox_name());
     }
     inventory.workspaces = workspaces;
     inventory.interrupted = stored
         .iter()
         .filter(|s| s.creating)
-        .filter_map(|s| puddle_types::WorkspaceId::new(&s.id).ok())
+        .map(|s| s.id.clone())
         .collect();
     Ok(inventory)
 }
@@ -1070,11 +1066,9 @@ async fn reconcile_with<R: Runtime>(
     // A workspace whose volume is gone shows that right away, not as stopped until a start
     // fails. It wins over `crashed`: the start would be refused anyway.
     for stored in stored {
-        let missing = puddle_types::WorkspaceId::new(&stored.id)
-            .is_ok_and(|id| report.missing_volumes.contains(&id));
-        if let (true, Ok(name)) = (missing, WorkspaceName::new(&stored.name)) {
-            tracing::warn!(workspace = %name, "a workspace's volume is gone; it shows as volume_missing");
-            status.insert(name, WorkspaceStatus::VolumeMissing);
+        if report.missing_volumes.contains(&stored.id) {
+            tracing::warn!(workspace = %stored.name, "a workspace's volume is gone; it shows as volume_missing");
+            status.insert(stored.name.clone(), WorkspaceStatus::VolumeMissing);
         }
     }
     Ok((report, status))

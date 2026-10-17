@@ -14,7 +14,10 @@ export function workspace(
     id: name,
     name,
     display_name: name,
-    repo_url: `https://github.com/acme/${name}.git`,
+    repositories: [
+      { url: `https://github.com/acme/${name}.git`, directory: name },
+    ],
+    start_folder: null,
     image: "mcr.microsoft.com/devcontainers/base:debian",
     memory_mib: 8192,
     status: "stopped",
@@ -25,7 +28,7 @@ export function workspace(
     direct_ssh: false,
     settings_error: null,
     first_connect_notice_due: false,
-    identity: null,
+    identities: [],
     ...over,
   };
 }
@@ -230,8 +233,16 @@ export class FakeWorkspaces {
           undefined,
           `a workspace named ${name} already exists`,
         );
+      const asked = (body["repositories"] ?? []) as { url: string }[];
       const created = workspace(name, {
-        repo_url: String(body["repo_url"]),
+        repositories: asked.map((r) => ({
+          url: r.url,
+          directory: r.url
+            .replace(/\/+$/, "")
+            .split("/")
+            .pop()!
+            .replace(/\.git$/, ""),
+        })),
         status: "created",
         busy: "creating",
         memory_mib: Number(body["memory_mib"] ?? 8192),

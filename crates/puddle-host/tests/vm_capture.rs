@@ -57,7 +57,7 @@ async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": name, "repo_url": REPO, "memory_mib": 1024}).to_string(),
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);

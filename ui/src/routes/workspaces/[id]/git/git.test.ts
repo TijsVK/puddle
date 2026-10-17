@@ -48,9 +48,14 @@ const { api, workspace } = h;
 beforeEach(() => {
   url.id = "web-shop";
   workspaces.list = [
-    workspace("web-shop", { repo_url: "https://github.com/acme/web-shop.git" }),
+    workspace("web-shop"),
     workspace("docs", {
-      repo_url: "https://dev.azure.com/contoso/Platform/_git/Docs",
+      repositories: [
+        {
+          url: "https://dev.azure.com/contoso/Platform/_git/Docs",
+          directory: "Docs",
+        },
+      ],
     }),
   ];
   api.identities = [
@@ -220,7 +225,9 @@ describe("identities on a workspace", () => {
 
   it("says when the workspace's own address could not be read, so nothing was listed or chosen", async () => {
     workspaces.list = [
-      workspace("odd", { repo_url: "https://github.com/a/b/c" }),
+      workspace("odd", {
+        repositories: [{ url: "https://github.com/a/b/c", directory: "c" }],
+      }),
     ];
     api.git["odd"] = { ids: [], repos: [], push: true, pull: false };
     url.id = "odd";

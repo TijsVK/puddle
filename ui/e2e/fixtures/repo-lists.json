@@ -3,7 +3,7 @@
   "workspaces": [
     {
       "name": "web-shop",
-      "repo_url": "https://github.com/acme/web-shop.git",
+      "repositories": [{ "url": "https://github.com/acme/web-shop.git" }],
       "status": "stopped",
       "ago_ms": 86400000
     }

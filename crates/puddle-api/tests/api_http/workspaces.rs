@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The workspaces resource over real HTTP, against `FakeWorkspaces`.
 
-use puddle_api::{Listing, Operation, RepoFindings, SettingsRepo, Unsaved, WorkspaceRecord};
+use puddle_api::{
+    Listing, Operation, RepoFindings, RepoUrl, Repository, SettingsRepo, Unsaved, WorkspaceRecord,
+};
 use puddle_types::{WorkspaceId, WorkspaceName, WorkspaceStatus};
 use serde_json::{Value, json};
 
@@ -15,7 +17,7 @@ async fn create(api: &Api, name: &str) -> Value {
         .send(
             "POST",
             "/api/workspaces",
-            Some(&json!({"name": name, "repo_url": REPO})),
+            Some(&json!({"name": name, "repositories": [{"url": REPO}]})),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -48,7 +50,9 @@ fn seed(api: &Api, name: &str, status: WorkspaceStatus, unsaved: Unsaved) {
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new(name).unwrap(),
         WorkspaceName::new(name).unwrap(),
-        REPO,
+        vec![Repository::at_default_directory(
+            RepoUrl::parse(REPO).unwrap(),
+        )],
     );
     record.status = status;
     api.workspaces.seed(record, unsaved);
@@ -96,7 +100,8 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
             "id": "web",
             "name": "web",
             "display_name": "web",
-            "repo_url": REPO,
+            "repositories": [{"url": REPO, "directory": "api"}],
+            "start_folder": null,
             "image": puddle_api::DEFAULT_IMAGE,
             "memory_mib": 8192,
             "status": "created",
@@ -108,14 +113,14 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
             "settings_error": null,
             "first_connect_notice_due": false,
             // No identity exists in this store, so the answer to creating says so.
-            "identity": {
+            "identities": [{
                 "identity": null,
                 "basis": "none",
-                "warning": ws["identity"]["warning"]
-            }
+                "warning": ws["identities"][0]["warning"]
+            }]
         })
     );
-    assert!(ws["identity"]["warning"].is_string());
+    assert!(ws["identities"][0]["warning"].is_string());
     api.workspaces.idle().await;
     stream.read_until(|b| b.contains("\"step\":\"done\"")).await;
     let steps: Vec<String> = stream
@@ -128,7 +133,26 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
         steps,
         ["preparing_volume", "pulling_image", "cloning", "done"]
     );
+    let cloning: Vec<_> = stream
+        .data()
+        .iter()
+        .filter(|e| e["type"] == "workspace_progress")
+        .map(|e| {
+            (
+                e["step"].clone(),
+                e["detail"].clone(),
+                e["repository"].clone(),
+            )
+        })
+        .filter(|(_, detail, _)| *detail == REPO)
+        .collect();
+    assert_eq!(cloning, [(json!("cloning"), json!(REPO), json!("api"))]);
     let detail = api.get("/api/workspaces/web").await.json();
+    assert_eq!(
+        detail["identities"],
+        json!([]),
+        "only creating answers with them"
+    );
     assert_eq!(detail["busy"], Value::Null);
     assert_eq!(detail["status"], "created");
     assert_eq!(
@@ -146,7 +170,7 @@ async fn create_takes_an_image_and_memory() {
             "POST",
             "/api/workspaces",
             Some(&json!({
-                "name": "big", "repo_url": REPO,
+                "name": "big", "repositories": [{"url": REPO}],
                 "image": "ghcr.io/acme/dev:1", "memory_mib": 16384
             })),
         )
@@ -158,49 +182,262 @@ async fn create_takes_an_image_and_memory() {
     api.running.shutdown().await;
 }
 
+async fn make_identity(api: &Api, label: &str, owners: &[&str]) -> i64 {
+    let reply = api
+        .send(
+            "POST",
+            "/api/identities",
+            Some(&json!({
+                "label": label,
+                "author": {"name": label, "email": format!("{}@example.org", label.to_lowercase())},
+                "credentials": [{
+                    "host": "github.com",
+                    "source": {"kind": "gh", "host": "github.com", "account": "me"},
+                    "covers": {"owners": owners, "rest_of_host": false}
+                }]
+            })),
+        )
+        .await;
+    assert_eq!(reply.status, 201, "{}", reply.body);
+    reply.json()["id"].as_i64().unwrap()
+}
+
 #[tokio::test]
-async fn create_refuses_what_cannot_work_and_says_why() {
+async fn create_with_no_repositories_is_an_ordinary_workspace() {
     let api = start().await;
+    let reply = api
+        .send("POST", "/api/workspaces", Some(&json!({"name": "empty"})))
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let ws = reply.json();
+    assert_eq!(
+        (&ws["repositories"], &ws["identities"], &ws["start_folder"]),
+        (&json!([]), &json!([]), &Value::Null)
+    );
+    api.workspaces.idle().await;
+    let git = api.get("/api/workspaces/empty/git").await.json();
+    assert_eq!(
+        (&git["identities"], &git["repos"]),
+        (&json!([]), &json!([]))
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn create_with_three_repositories_sets_each_up_and_answers_their_identities_in_order() {
+    let api = start().await;
+    let work = make_identity(&api, "Work", &["acme"]).await;
+    let mine = make_identity(&api, "Mine", &["me"]).await;
+    let reply = api
+        .send(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({
+                "name": "trio",
+                "start_folder": "web/src",
+                "repositories": [
+                    {"url": "https://github.com/acme/web.git"},
+                    {"url": "https://github.com/me/notes", "directory": "my-notes", "identity_id": work, "push": false},
+                    {"url": "https://github.com/me/blog"}
+                ]
+            })),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let ws = reply.json();
+    assert_eq!(
+        ws["repositories"],
+        json!([
+            {"url": "https://github.com/acme/web.git", "directory": "web"},
+            {"url": "https://github.com/me/notes", "directory": "my-notes"},
+            {"url": "https://github.com/me/blog", "directory": "blog"}
+        ])
+    );
+    assert_eq!(ws["start_folder"], "web/src");
+    let identities: Vec<_> = ws["identities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| {
+            (
+                i["identity"].clone(),
+                i["basis"].clone(),
+                i["warning"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        identities,
+        [
+            (json!("Work"), json!("covers"), Value::Null),
+            (json!("Work"), json!("chosen"), Value::Null),
+            (json!("Mine"), json!("covers"), Value::Null),
+        ]
+    );
+    api.workspaces.idle().await;
+    let git = api.get("/api/workspaces/trio/git").await.json();
+    let attached: Vec<_> = git["identities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(attached, [work, mine]);
+    let rows: Vec<_> = git["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["owner"].clone(),
+                r["repo"].clone(),
+                r["pull"].clone(),
+                r["push"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (json!("acme"), json!("web"), json!(true), json!(true)),
+            (json!("me"), json!("notes"), json!(true), json!(false)),
+            (json!("me"), json!("blog"), json!(true), json!(true)),
+        ]
+    );
+    assert_eq!(
+        api.get("/api/workspaces/trio").await.json()["repositories"],
+        ws["repositories"]
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn create_with_two_identities_that_cover_the_same_place_is_a_409_and_makes_nothing() {
+    let api = start().await;
+    let a = make_identity(&api, "A", &["acme"]).await;
+    let b = make_identity(&api, "B", &["acme"]).await;
+    let reply = api
+        .send(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({
+                "name": "clash",
+                "repositories": [
+                    {"url": "https://github.com/acme/one", "identity_id": a},
+                    {"url": "https://github.com/acme/two", "identity_id": b}
+                ]
+            })),
+        )
+        .await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert_eq!(reply.error(), "identity_collision");
+    let message = reply.json()["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("A and B"), "{message}");
+    assert_eq!(api.get("/api/workspaces/clash").await.status, 404);
+    // Nothing of the refused create is left: the same name made again has only its own settings.
+    let again = api
+        .send(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({"name": "clash", "repositories": [{"url": "https://github.com/acme/one", "identity_id": b}]})),
+        )
+        .await;
+    assert_eq!(again.status, 202, "{}", again.body);
+    api.workspaces.idle().await;
+    let git = api.get("/api/workspaces/clash/git").await.json();
+    assert_eq!(git["identities"].as_array().unwrap().len(), 1, "{git}");
+    assert_eq!(git["identities"][0]["id"], b);
+    assert_eq!(git["repos"].as_array().unwrap().len(), 1, "{git}");
+    api.running.shutdown().await;
+}
+
+/// Create bodies the API refuses with 422, each with a part of the message it gives.
+fn refused_bodies() -> [(Value, &'static str); 19] {
     let long = "w".repeat(61);
-    let cases: [(Value, &str); 13] = [
+    [
         (
-            json!({"name": "a", "repo_url": "git@github.com:acme/api.git"}),
+            json!({"name": "a", "repositories": [{"url": "git@github.com:acme/api.git"}]}),
             "SSH remotes are not supported yet",
         ),
         (
-            json!({"name": "a", "repo_url": "ssh://git@github.com/acme/api.git"}),
+            json!({"name": "a", "repositories": [{"url": "ssh://git@github.com/acme/api.git"}]}),
             "SSH remotes are not supported yet",
         ),
         (
-            json!({"name": "a", "repo_url": "http://github.com/a/b"}),
+            json!({"name": "a", "repositories": [{"url": "http://github.com/a/b"}]}),
             "https://",
         ),
-        (json!({"name": "a", "repo_url": "/srv/repo"}), "https://"),
         (
-            json!({"name": "a", "repo_url": "https://me:pw@github.com/a/b"}),
+            json!({"name": "a", "repositories": [{"url": "/srv/repo"}]}),
+            "https://",
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": "https://me:pw@github.com/a/b"}]}),
             "user name and password",
         ),
         (
-            json!({"name": "a", "repo_url": "https://github.com/a b"}),
+            json!({"name": "a", "repositories": [{"url": "https://github.com/a b"}]}),
             "spaces",
         ),
-        (json!({"name": "m--a", "repo_url": REPO}), "reserved"),
-        (json!({"name": "A_b", "repo_url": REPO}), "workspace name"),
         (
-            json!({"name": long, "repo_url": REPO}),
+            json!({"name": "m--a", "repositories": [{"url": REPO}]}),
+            "reserved",
+        ),
+        (
+            json!({"name": "A_b", "repositories": [{"url": REPO}]}),
+            "workspace name",
+        ),
+        (
+            json!({"name": long, "repositories": [{"url": REPO}]}),
             "can't be a workspace",
         ),
         (
-            json!({"name": "a", "repo_url": REPO, "memory_mib": 10}),
+            json!({"name": "a", "repositories": [{"url": REPO}], "memory_mib": 10}),
             "memory",
         ),
         (
-            json!({"name": "a", "repo_url": REPO, "image": "no spaces allowed"}),
+            json!({"name": "a", "repositories": [{"url": REPO}], "image": "no spaces allowed"}),
             "image",
         ),
-        (json!({"name": "a"}), "repo_url"),
-        (json!({"name": "a", "repo_url": REPO, "extra": 1}), "extra"),
-    ];
+        (
+            json!({"name": "a", "repo_url": REPO}),
+            "repo_url was replaced by repositories, a list of {url}",
+        ),
+        (
+            json!({"name": "a", "repo_url": null, "repositories": []}),
+            "repo_url was replaced",
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}, {"url": "https://gitlab.com/b/api"}]}),
+            "repositories 1 (https://github.com/acme/api.git) and 2 (https://gitlab.com/b/api) both go into api; give one of them another directory, such as api-2",
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}, {"url": "https://github.com/ACME/api", "directory": "two"}]}),
+            "are the same repository, github.com/acme/api",
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO, "identity_id": 77}]}),
+            "repository 1 (https://github.com/acme/api.git): there is no identity 77",
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}], "start_folder": "../etc"}),
+            "start folder",
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO, "branch": "main"}]}),
+            "branch",
+        ),
+        (
+            json!({"name": "a", "repositories": [{"url": REPO}], "extra": 1}),
+            "extra",
+        ),
+    ]
+}
+
+#[tokio::test]
+async fn create_refuses_what_cannot_work_and_says_why() {
+    let api = start().await;
+    let cases = refused_bodies();
     for (body, wants) in cases {
         let reply = api.send("POST", "/api/workspaces", Some(&body)).await;
         assert_eq!(reply.status, 422, "{body}: {}", reply.body);
@@ -212,6 +449,25 @@ async fn create_refuses_what_cannot_work_and_says_why() {
             "credentials are never echoed: {message}"
         );
     }
+    let many: Vec<Value> = (0..101)
+        .map(|n| json!({"url": format!("https://github.com/acme/r{n}")}))
+        .collect();
+    let too_many = api
+        .send(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({"name": "a", "repositories": many})),
+        )
+        .await;
+    assert_eq!(too_many.status, 422);
+    assert!(
+        too_many.json()["message"]
+            .as_str()
+            .unwrap()
+            .contains("at most 100 repositories"),
+        "{}",
+        too_many.body
+    );
     let array = api.send("POST", "/api/workspaces", Some(&json!([]))).await;
     assert_eq!(array.status, 422);
     assert_eq!(
@@ -229,7 +485,7 @@ async fn create_refuses_a_taken_name_and_a_failed_create_leaves_nothing() {
         .send(
             "POST",
             "/api/workspaces",
-            Some(&json!({"name": "web", "repo_url": REPO})),
+            Some(&json!({"name": "web", "repositories": [{"url": REPO}]})),
         )
         .await;
     assert_eq!(again.status, 409);
@@ -323,7 +579,7 @@ async fn reclaim_shrinks_what_the_disk_holds() {
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("web").unwrap(),
         WorkspaceName::new("web").unwrap(),
-        REPO,
+        Vec::new(),
     );
     record.status = WorkspaceStatus::Stopped;
     record.disk_used_mib = Some(1000);
@@ -858,7 +1114,7 @@ async fn a_rename_that_clashes_with_another_workspace_is_a_409_ignoring_case() {
         .send(
             "POST",
             "/api/workspaces",
-            Some(&json!({"name": "handbook", "repo_url": REPO})),
+            Some(&json!({"name": "handbook", "repositories": [{"url": REPO}]})),
         )
         .await;
     assert_eq!(create.status, 409, "{}", create.body);
@@ -944,7 +1200,7 @@ async fn without_a_workspaces_service_every_route_says_unavailable() {
         (
             "POST",
             "/api/workspaces",
-            Some(json!({"name": "a", "repo_url": REPO})),
+            Some(json!({"name": "a", "repositories": [{"url": REPO}]})),
         ),
         ("GET", "/api/workspaces/a", None),
         (

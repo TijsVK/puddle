@@ -332,9 +332,135 @@ impl ImageRef {
 
 string_newtype!(ImageRef);
 
+/// A checkout's directory directly under a workspace's volume root: ASCII letters, digits, `.`,
+/// `_` and `-`, not starting with `.` or `-`, at most [`CheckoutDir::MAX_LEN`] characters, and
+/// not `lost+found`. So it is one path segment that never names Puddle's own `.puddle` folder.
+///
+/// ```
+/// use puddle_types::CheckoutDir;
+/// assert_eq!(CheckoutDir::from_url("https://github.com/acme/api.git").as_str(), "api");
+/// assert_eq!(CheckoutDir::from_url("git@github.com:acme/web").as_str(), "web");
+/// assert_eq!(CheckoutDir::from_url("https://example.org/").as_str(), "example.org");
+/// assert_eq!(CheckoutDir::from_url("https://h/x/..git").as_str(), "src");
+/// assert!(CheckoutDir::new(".puddle").is_err());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+#[cfg_attr(
+    feature = "openapi",
+    derive(utoipa::ToSchema),
+    schema(
+        value_type = String,
+        min_length = 1,
+        max_length = 100,
+        pattern = "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
+        example = "api",
+        description = "A checkout's directory directly under the workspace's volume root: ASCII \
+                       letters, digits, `.`, `_` and `-`, not starting with `.` or `-`, not `lost+found`."
+    )
+)]
+pub struct CheckoutDir(String);
+
+impl CheckoutDir {
+    /// Longest directory name.
+    pub const MAX_LEN: usize = 100;
+
+    /// The directory a URL whose last part is no usable name is cloned into.
+    pub const FALLBACK: &str = "src";
+
+    /// The folder `mkfs` may make in a volume's root; never a checkout.
+    pub const LOST_AND_FOUND: &str = "lost+found";
+
+    /// Checks `name` and wraps it.
+    ///
+    /// # Errors
+    ///
+    /// When `name` breaks one of the rules above.
+    pub fn new(name: &str) -> Result<Self, ValidationError> {
+        let reason = if name.is_empty() {
+            "must not be empty"
+        } else if name.len() > Self::MAX_LEN {
+            "must be at most 100 characters"
+        } else if name.starts_with(['.', '-']) {
+            "must not start with `.` or `-`"
+        } else if name == Self::LOST_AND_FOUND {
+            "is the volume's own lost+found folder"
+        } else if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            "may only contain ASCII letters, digits, `.`, `_` and `-`"
+        } else {
+            return Ok(Self(name.to_owned()));
+        };
+        Err(ValidationError::new("checkout directory", name, reason))
+    }
+
+    /// The directory `git clone <url>` would make: the last part of the URL without `.git`, or
+    /// [`CheckoutDir::FALLBACK`] when that is no usable name.
+    #[must_use]
+    pub fn from_url(url: &str) -> Self {
+        let trimmed = url.trim_end_matches('/');
+        let last = trimmed.rsplit(['/', ':']).next().unwrap_or_default();
+        let name = last.strip_suffix(".git").unwrap_or(last);
+        Self::new(name).unwrap_or_else(|_| Self(Self::FALLBACK.to_owned()))
+    }
+}
+
+string_newtype!(CheckoutDir);
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkout_directories_follow_git_or_fall_back() {
+        for (url, dir) in [
+            ("https://github.com/acme/api.git", "api"),
+            ("https://github.com/acme/api", "api"),
+            ("https://github.com/acme/api/", "api"),
+            ("git@github.com:acme/web.git", "web"),
+            ("https://h/x/my_repo.v2", "my_repo.v2"),
+            ("https://example.org/", "example.org"),
+            ("https://h/x/.hidden", "src"),
+            ("https://h/x/-opt", "src"),
+            ("https://h/x/a%20b", "src"),
+            ("", "src"),
+            ("/", "src"),
+            ("https://h/x/.git", "src"),
+            ("https://h/x/lost+found", "src"),
+        ] {
+            assert_eq!(CheckoutDir::from_url(url).as_str(), dir, "{url}");
+        }
+        let long = format!("https://h/x/{}", "a".repeat(101));
+        assert_eq!(CheckoutDir::from_url(&long).as_str(), "src");
+    }
+
+    #[test]
+    fn a_checkout_directory_is_one_plain_segment() {
+        assert_eq!(CheckoutDir::new("api-2").unwrap().as_str(), "api-2");
+        assert!(CheckoutDir::new(&"x".repeat(100)).is_ok());
+        for (bad, why) in [
+            ("", "empty"),
+            (".", "start with"),
+            ("..", "start with"),
+            (".puddle", "start with"),
+            ("-x", "start with"),
+            ("lost+found", "lost+found"),
+            ("a/b", "ASCII letters"),
+            ("a b", "ASCII letters"),
+            ("é", "ASCII letters"),
+            (&"x".repeat(101), "100"),
+        ] {
+            let err = CheckoutDir::new(bad).unwrap_err();
+            assert!(err.to_string().contains(why), "{bad:?}: {err}");
+        }
+        assert!(serde_json::from_str::<CheckoutDir>(r#""../etc""#).is_err());
+        assert_eq!(
+            serde_json::from_str::<CheckoutDir>(r#""web""#).unwrap(),
+            CheckoutDir::new("web").unwrap()
+        );
+    }
 
     #[cfg(feature = "openapi")]
     proptest::proptest! {

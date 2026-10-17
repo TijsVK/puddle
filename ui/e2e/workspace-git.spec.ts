@@ -239,7 +239,10 @@ test("a new workspace starts with the identity that covers its repository and it
   await backend.control.reset("git-identities");
   const made = await request.post("/api/workspaces", {
     headers: auth(backend),
-    data: { name: "fresh", repo_url: "https://github.com/acme/fresh.git" },
+    data: {
+      name: "fresh",
+      repositories: [{ url: "https://github.com/acme/fresh.git" }],
+    },
   });
   expect(made.status()).toBe(202);
   await backend.signIn(page);
@@ -348,7 +351,7 @@ test("the default for the two switches is inherited by new workspaces and overri
     headers: auth(backend),
     data: {
       name: "inherits",
-      repo_url: "https://github.com/acme/inherits.git",
+      repositories: [{ url: "https://github.com/acme/inherits.git" }],
     },
   });
   expect(made.status()).toBe(202);

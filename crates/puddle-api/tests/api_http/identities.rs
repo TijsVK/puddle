@@ -33,7 +33,7 @@ async fn workspace(api: &Api, name: &str) -> Value {
         .send(
             "POST",
             "/api/workspaces",
-            Some(&json!({"name": name, "repo_url": REPO})),
+            Some(&json!({"name": name, "repositories": [{"url": REPO}]})),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -548,10 +548,19 @@ async fn a_repository_address_puddle_cannot_read_still_makes_the_workspace_with_
         .send(
             "POST",
             "/api/workspaces",
-            Some(&json!({"name": "odd", "repo_url": "https://github.com/a/b/c"})),
+            Some(&json!({"name": "odd", "repositories": [{"url": "https://github.com/a/b/c"}]})),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
+    let answer = reply.json()["identities"][0].clone();
+    assert_eq!(answer["basis"], "none");
+    assert!(
+        answer["warning"]
+            .as_str()
+            .unwrap()
+            .contains("cannot tell which repository https://github.com/a/b/c is"),
+        "{answer}"
+    );
     api.workspaces.idle().await;
     let git = api.get("/api/workspaces/odd/git").await.json();
     assert_eq!(git["identities"], json!([]));
@@ -563,10 +572,10 @@ async fn creating_a_workspace_says_which_identity_it_got_and_warns_only_when_non
     let api = start().await;
     // Nobody: no identity, and the answer says so.
     let none = workspace(&api, "alone").await;
-    assert_eq!(none["identity"]["basis"], "none");
-    assert_eq!(none["identity"]["identity"], Value::Null);
+    assert_eq!(none["identities"][0]["basis"], "none");
+    assert_eq!(none["identities"][0]["identity"], Value::Null);
     assert!(
-        none["identity"]["warning"]
+        none["identities"][0]["warning"]
             .as_str()
             .unwrap()
             .contains("no default identity")
@@ -575,9 +584,9 @@ async fn creating_a_workspace_says_which_identity_it_got_and_warns_only_when_non
     // The default covers a different owner: it is attached, with a warning naming it and the place.
     let _gitlab = make(&api, "Personal", &["me"], false).await;
     let default = workspace(&api, "fallback").await;
-    assert_eq!(default["identity"]["basis"], "default");
-    assert_eq!(default["identity"]["identity"], "Personal");
-    let warning = default["identity"]["warning"].as_str().unwrap();
+    assert_eq!(default["identities"][0]["basis"], "default");
+    assert_eq!(default["identities"][0]["identity"], "Personal");
+    let warning = default["identities"][0]["warning"].as_str().unwrap();
     assert!(
         warning.contains("Personal") && warning.contains("github.com/acme"),
         "{warning}"
@@ -588,14 +597,14 @@ async fn creating_a_workspace_says_which_identity_it_got_and_warns_only_when_non
     // One that covers acme wins and there is nothing to warn about; a plain read has no field.
     let _work = make(&api, "Work", &["acme"], false).await;
     let covered = workspace(&api, "covered").await;
-    assert_eq!(covered["identity"]["basis"], "covers");
-    assert_eq!(covered["identity"]["identity"], "Work");
-    assert_eq!(covered["identity"]["warning"], Value::Null);
+    assert_eq!(covered["identities"][0]["basis"], "covers");
+    assert_eq!(covered["identities"][0]["identity"], "Work");
+    assert_eq!(covered["identities"][0]["warning"], Value::Null);
     let read = api.get("/api/workspaces/covered").await.json();
     assert_eq!(
-        read["identity"],
-        Value::Null,
-        "only creating answers with it"
+        read["identities"],
+        json!([]),
+        "only creating answers with them"
     );
     api.running.shutdown().await;
 }

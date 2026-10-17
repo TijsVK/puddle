@@ -9,7 +9,7 @@ use crate::common::start;
 use crate::events::Stream;
 
 async fn make_a_workspace(api: &crate::common::Api, name: &str) {
-    let body = json!({"name": name, "repo_url": "https://github.com/acme/api.git"});
+    let body = json!({"name": name, "repositories": [{"url": "https://github.com/acme/api.git"}]});
     let reply = api.send("POST", "/api/workspaces", Some(&body)).await;
     assert_eq!(reply.status, 202, "{}", reply.body);
 }

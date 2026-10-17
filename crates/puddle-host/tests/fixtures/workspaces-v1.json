@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "workspaces": [
+    {
+      "created_at": 1760000000000,
+      "creating": false,
+      "disk_size_mib": 32768,
+      "display_name": "Web shop",
+      "id": "shop",
+      "image": "mcr.microsoft.com/devcontainers/base:debian",
+      "memory_mib": 8192,
+      "name": "shop",
+      "repo_url": "https://github.com/acme/shop.git"
+    },
+    {
+      "created_at": 1,
+      "creating": false,
+      "disk_size_mib": 64,
+      "id": "old",
+      "image": "alpine:3",
+      "memory_mib": 512,
+      "name": "old",
+      "repo_url": "https://example.org/team/tools"
+    },
+    {
+      "created_at": 2,
+      "creating": true,
+      "disk_size_mib": 64,
+      "id": "odd",
+      "image": "alpine:3",
+      "memory_mib": 512,
+      "name": "odd",
+      "repo_url": "https://example.org/team/.hidden"
+    }
+  ]
+}

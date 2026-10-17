@@ -70,8 +70,8 @@ pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,
-    NewWorkspaceRequest, RenameWorkspaceRequest, RepoFindings, Workspace, WorkspaceList,
-    WorkspaceOperation,
+    NewRepositoryRequest, NewWorkspaceRequest, RenameWorkspaceRequest, RepoFindings, Workspace,
+    WorkspaceList, WorkspaceOperation, WorkspaceRepository,
 };
 
 // ---------------------------------------------------------------------------------------------

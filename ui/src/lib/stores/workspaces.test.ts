@@ -219,7 +219,7 @@ describe("actions", () => {
     };
     const result = await store.create({
       name: "new-one",
-      repo_url: "https://github.com/acme/new-one.git",
+      repositories: [{ url: "https://github.com/acme/new-one.git" }],
     });
     expect(result).toMatchObject({
       ok: true,
@@ -229,14 +229,14 @@ describe("actions", () => {
     expect(store.progress["new-one"]).toBeUndefined();
     expect(api.bodies.at(-1)).toEqual({
       name: "new-one",
-      repo_url: "https://github.com/acme/new-one.git",
+      repositories: [{ url: "https://github.com/acme/new-one.git" }],
     });
   });
 
   it("puts a name that is taken on the name field", async () => {
     const result = await store.create({
       name: "a-shop",
-      repo_url: "https://x.org/a.git",
+      repositories: [{ url: "https://x.org/a.git" }],
     });
     expect(result).toMatchObject({
       ok: false,
@@ -251,13 +251,18 @@ describe("actions", () => {
       message:
         "SSH remotes are not supported yet; use the repository's HTTPS URL instead",
     });
-    const result = await store.create({ name: "x", repo_url: "git@x:y" });
+    const result = await store.create({
+      name: "x",
+      repositories: [{ url: "git@x:y" }],
+    });
     expect(result).toMatchObject({ ok: false, field: "repo_url" });
   });
 
   it("says the service is down", async () => {
     api.down = true;
-    expect(await store.create({ name: "x", repo_url: "https://x/y" })).toEqual({
+    expect(
+      await store.create({ name: "x", repositories: [{ url: "https://x/y" }] }),
+    ).toEqual({
       ok: false,
       message: "Puddle's service isn't answering.",
     });

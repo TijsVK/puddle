@@ -121,14 +121,29 @@ pub enum EffectSeed {
     Deny,
 }
 
+/// One repository of a seeded workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepositorySeed {
+    /// Where it is cloned from, an `https://` URL.
+    pub url: String,
+    /// Its checkout directory; the one the address gives when left out.
+    #[serde(default)]
+    pub directory: Option<String>,
+}
+
 /// A workspace that exists at start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceSeed {
     /// The name (also the id).
     pub name: String,
-    /// The repository, an `https://` URL.
-    pub repo_url: String,
+    /// The repositories Puddle manages for it, in order; none when left out.
+    #[serde(default)]
+    pub repositories: Vec<RepositorySeed>,
+    /// Its start folder, a path under the volume; the volume root when left out.
+    #[serde(default)]
+    pub start_folder: Option<String>,
     /// The image; the default image when left out.
     #[serde(default)]
     pub image: Option<String>,

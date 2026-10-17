@@ -39,6 +39,9 @@ use support::{Api, TestDevCert, ended, hermetic_options};
 
 type Log = Arc<Mutex<Vec<String>>>;
 
+/// What a test runs at each clone, with the clone's address.
+type CloneLook = Box<dyn Fn(&str) + Send>;
+
 /// A machine that records every call and can refuse one.
 struct FakePlatform {
     log: Log,
@@ -147,7 +150,15 @@ struct Guest {
     /// The environment the sandbox was made with, at every run of the boot hook.
     boot_envs: Mutex<Vec<GuestEnv>>,
     dirty: AtomicBool,
-    fail_clone: AtomicBool,
+    /// Clones of this address fail the way git does for a repository it cannot reach.
+    fail_clone_of: Mutex<Option<String>>,
+    /// The `sync` after the clones fails.
+    fail_sync: AtomicBool,
+    /// The arguments of every clone, in order.
+    clones: Mutex<Vec<Vec<String>>>,
+    /// Runs at every clone with its address, before the guest answers: a look at what Puddle had
+    /// set up by then.
+    at_clone: Mutex<Option<CloneLook>>,
     fail_boot: AtomicBool,
     /// The folder the guest is asked to make for the workspace cannot be made.
     fail_layout: AtomicBool,
@@ -246,11 +257,23 @@ impl Guest {
                 if let Some(list) = self.break_list_on_clone.lock().unwrap().take() {
                     make_unwritable(&list);
                 }
-                if self.fail_clone.load(Ordering::SeqCst) {
-                    ExecOutput::new(128, "", "fatal: repository not found")
+                let url = r.args.get(2).cloned().unwrap_or_default();
+                self.clones.lock().unwrap().push(r.args.clone());
+                if let Some(look) = self.at_clone.lock().unwrap().as_ref() {
+                    look(&url);
+                }
+                if self.fail_clone_of.lock().unwrap().as_deref() == Some(url.as_str()) {
+                    ExecOutput::new(
+                        128,
+                        "",
+                        format!("fatal: unable to access '{url}': Could not resolve host"),
+                    )
                 } else {
                     ExecOutput::new(0, "", "")
                 }
+            }
+            "sync" if self.fail_sync.load(Ordering::SeqCst) => {
+                ExecOutput::new(1, "", "sync: I/O error")
             }
             _ => ExecOutput::new(0, "", ""),
         })
@@ -263,6 +286,23 @@ impl Guest {
 
     fn commands(&self) -> Vec<String> {
         self.commands.lock().unwrap().clone()
+    }
+
+    /// Every clone's arguments, joined.
+    fn clone_commands(&self) -> Vec<String> {
+        self.clones
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|args| args.join(" "))
+            .collect()
+    }
+
+    fn syncs(&self) -> usize {
+        self.commands()
+            .iter()
+            .filter(|c| c.ends_with(" sync"))
+            .count()
     }
 
     /// The boot plan number `n` (from 0) as sent to the guest.
@@ -427,7 +467,7 @@ fn api(host: &Host<FakeRuntime>) -> Api {
 const REPO: &str = "https://example.org/acme/api.git";
 
 fn new_workspace(name: &str) -> String {
-    json!({"name": name, "repo_url": REPO}).to_string()
+    json!({"name": name, "repositories": [{"url": REPO}]}).to_string()
 }
 
 async fn create(api: &Api, events: &mut support::Events, name: &'static str) {
@@ -879,9 +919,9 @@ async fn the_system_check_looks_at_the_runtime_folder_the_host_was_started_with(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_failed_clone_leaves_nothing_behind() {
+async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
     let rig = Rig::new();
-    rig.guest.fail_clone.store(true, Ordering::SeqCst);
+    rig.guest.fail_sync.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -889,10 +929,7 @@ async fn a_failed_clone_leaves_nothing_behind() {
     let end = events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(end["step"], "failed");
     assert!(
-        end["detail"]
-            .as_str()
-            .unwrap()
-            .contains("repository not found"),
+        end["detail"].as_str().unwrap().contains("sync: I/O error"),
         "{end}"
     );
     assert_eq!(
@@ -916,8 +953,318 @@ async fn a_failed_clone_leaves_nothing_behind() {
     assert!(rig.runtime.list().await.unwrap().is_empty());
     assert!(rig.runtime.list_volumes().await.unwrap().is_empty());
     // The name is free again.
-    rig.guest.fail_clone.store(false, Ordering::SeqCst);
+    rig.guest.fail_sync.store(false, Ordering::SeqCst);
     create(&api, &mut events, "acme").await;
+    host.shutdown().await;
+}
+
+/// The only problem standing is the failed clone of `url` into `workspace`'s `dir`, with git's
+/// error first and the way out last.
+async fn the_one_problem_names_the_clone(api: &Api, workspace: &str, dir: &str, url: &str) {
+    let problems = problems_of(api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let (key, about, title, detail) = &problems[0];
+    assert_eq!(key, &format!("clone:{workspace}:{dir}"));
+    assert_eq!(about.as_deref(), Some(workspace));
+    assert_eq!(
+        title,
+        &format!("Puddle could not clone {url} into {workspace}")
+    );
+    assert!(
+        detail.starts_with(&format!(
+            "git exited 128: fatal: unable to access '{url}': Could not resolve host"
+        )),
+        "{detail}"
+    );
+    assert!(
+        detail.ends_with(&format!("git clone {url} /workspaces/{workspace}/{dir}")),
+        "{detail}"
+    );
+}
+
+/// Records, at each clone of `workspace`, the identities and repository table rows it has by then.
+fn git_settings_at_each_clone(
+    rig: &Rig,
+    host: &Host<FakeRuntime>,
+    workspace: &str,
+) -> Arc<Mutex<Vec<String>>> {
+    let store = host.store().clone();
+    let workspace = WorkspaceName::new(workspace).unwrap();
+    let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+    let look = seen.clone();
+    *rig.guest.at_clone.lock().unwrap() = Some(Box::new(move |url: &str| {
+        let git = store.workspace_git(&workspace).unwrap();
+        let rows: Vec<String> = git.repos.iter().map(|r| r.repo.to_string()).collect();
+        let identities: Vec<String> = git.identities.iter().map(|i| i.label.clone()).collect();
+        look.lock().unwrap().push(format!(
+            "clone {url}: identities {identities:?}, rows {rows:?}"
+        ));
+    }));
+    seen
+}
+
+/// An identity "Work" that covers `example.org/acme`.
+async fn make_work_identity(api: &Api) {
+    let work = api
+        .post(
+            "/api/identities",
+            &json!({
+                "label": "Work",
+                "author": {"name": "Work", "email": "work@example.org"},
+                "credentials": [{
+                    "host": "example.org",
+                    "source": {"kind": "gh", "host": "example.org", "account": "me"},
+                    "covers": {"owners": ["acme"], "rest_of_host": false}
+                }]
+            })
+            .to_string(),
+        )
+        .await;
+    assert_eq!(work.status, 201, "{}", work.body);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_clone_that_fails_fails_only_its_repository_and_every_clone_carries_its_git_settings() {
+    const DOWN: &str = "https://unreachable.example/acme/docs.git";
+    let rig = Rig::new();
+    *rig.guest.fail_clone_of.lock().unwrap() = Some(DOWN.to_owned());
+    let host = rig.start().await;
+    let seen = git_settings_at_each_clone(&rig, &host, "trio");
+    let api = api(&host);
+    make_work_identity(&api).await;
+    let mut events = api.events().await;
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": "trio", "repositories": [
+                {"url": REPO},
+                {"url": DOWN},
+                {"url": "https://example.org/acme/web", "push": false}
+            ]})
+            .to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("trio"), Duration::from_secs(20)).await;
+    assert_eq!(
+        end["step"], "done",
+        "a failed clone does not fail the create: {end}"
+    );
+    assert_eq!(
+        events.steps("trio"),
+        [
+            "preparing_volume",
+            "pulling_image",
+            "starting",
+            "syncing",
+            "cloning",
+            "cloning",
+            "cloning",
+            "done"
+        ]
+    );
+    // The identity and every table row were in place before the first clone ran.
+    let all_rows =
+        r#"["example.org/acme/api", "unreachable.example/acme/docs", "example.org/acme/web"]"#;
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            format!(r#"clone {REPO}: identities ["Work"], rows {all_rows}"#),
+            format!(r#"clone {DOWN}: identities ["Work"], rows {all_rows}"#),
+            format!(r#"clone https://example.org/acme/web: identities ["Work"], rows {all_rows}"#),
+        ]
+    );
+    assert_eq!(
+        rig.guest.clone_commands(),
+        [
+            format!("clone -- {REPO} /workspaces/trio/api"),
+            format!("clone -- {DOWN} /workspaces/trio/docs"),
+            "clone -- https://example.org/acme/web /workspaces/trio/web".to_owned(),
+        ]
+    );
+    assert_eq!(rig.guest.syncs(), 1, "one sync after the last clone");
+    // The workspace runs, keeps all three entries, and a problem names what was not cloned.
+    let ws = api.get("/api/workspaces/trio").await.json();
+    assert_eq!(ws["status"], "running");
+    assert_eq!(
+        ws["repositories"],
+        json!([
+            {"url": REPO, "directory": "api"},
+            {"url": DOWN, "directory": "docs"},
+            {"url": "https://example.org/acme/web", "directory": "web"}
+        ])
+    );
+    the_one_problem_names_the_clone(&api, "trio", "docs", DOWN).await;
+    let git = api.get("/api/workspaces/trio/git").await.json();
+    let toggles: Vec<_> = git["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["repo"].clone(), r["push"].clone()))
+        .collect();
+    assert_eq!(
+        toggles,
+        [
+            (json!("api"), json!(true)),
+            (json!("docs"), json!(true)),
+            (json!("web"), json!(false))
+        ]
+    );
+    stop_and_delete(&api, &mut events, "trio").await;
+    assert_eq!(
+        problems_of(&api).await,
+        [],
+        "deleting the workspace ends its problem"
+    );
+    host.shutdown().await;
+}
+
+async fn stop_and_delete(api: &Api, events: &mut support::Events, name: &'static str) {
+    api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    events.until(ended(name), Duration::from_secs(20)).await;
+    let deleted = api
+        .delete(
+            &format!("/api/workspaces/{name}"),
+            Some(&json!({"confirm": true}).to_string()),
+        )
+        .await;
+    assert_eq!(deleted.status, 202, "{}", deleted.body);
+    events.until(ended(name), Duration::from_secs(20)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_with_no_repositories_is_made_without_a_clone_or_a_sync() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let reply = api
+        .post("/api/workspaces", &json!({"name": "bare"}).to_string())
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("bare"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(
+        events.steps("bare"),
+        [
+            "preparing_volume",
+            "pulling_image",
+            "starting",
+            "syncing",
+            "done"
+        ]
+    );
+    assert_eq!(rig.guest.clone_commands(), Vec::<String>::new());
+    assert_eq!(rig.guest.syncs(), 0);
+    let ws = api.get("/api/workspaces/bare").await.json();
+    assert_eq!(
+        (&ws["status"], &ws["repositories"]),
+        (&json!("running"), &json!([]))
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves_nothing() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let body = |name: &str| {
+        json!({"name": name, "repositories": [
+            {"url": REPO}, {"url": "https://example.org/acme/web"}
+        ]})
+        .to_string()
+    };
+    // A create that works shows how many commands a create runs before its second clone.
+    api.post("/api/workspaces", &body("probe")).await;
+    events.until(ended("probe"), Duration::from_secs(20)).await;
+    let before_second_clone = rig
+        .runtime
+        .calls()
+        .iter()
+        .filter(|c| c.op == Op::Exec && c.target.as_deref() == Some("probe"))
+        .take_while(|c| {
+            c.detail.as_deref()
+                != Some("git clone -- https://example.org/acme/web /workspaces/probe/web")
+        })
+        .count();
+    rig.runtime.inject(
+        Op::Exec,
+        Fault::once(disk_error("exec"))
+            .only_for("gone")
+            .after(u32::try_from(before_second_clone).unwrap()),
+    );
+    let clones_before = rig.guest.clone_commands().len();
+    let reply = api.post("/api/workspaces", &body("gone")).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended("gone"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    assert!(
+        end["detail"].as_str().unwrap().contains("no space left"),
+        "{end}"
+    );
+    assert_eq!(
+        rig.guest.clone_commands()[clones_before..],
+        [format!("clone -- {REPO} /workspaces/gone/api")],
+        "the second clone never reached the guest"
+    );
+    assert_eq!(api.get("/api/workspaces/gone").await.status, 404);
+    let volumes: Vec<String> = rig
+        .runtime
+        .list_volumes()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|v| v.name.clone())
+        .collect();
+    assert_eq!(volumes, ["ws-probe"], "the failed create's volume is gone");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_rename_saves_version_2()
+ {
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let path = data.join("workspaces.json");
+    let v1 = json!({"version": 1, "workspaces": [{
+        "id": "acme", "name": "acme", "repo_url": "https://example.org/acme/shop.git",
+        "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024,
+        "first_connect_notice_due": false
+    }]})
+    .to_string();
+    std::fs::write(&path, &v1).unwrap();
+    let host = rig.start().await;
+    let api = api(&host);
+    let ws = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(
+        ws["repositories"],
+        json!([{"url": "https://example.org/acme/shop.git", "directory": "shop"}])
+    );
+    assert_eq!(ws["start_folder"], "shop");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        v1,
+        "a start never writes the list"
+    );
+    let renamed = api
+        .patch(
+            "/api/workspaces/acme",
+            &json!({"display_name": "Shop"}).to_string(),
+        )
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["version"], 2);
+    assert_eq!(
+        saved["workspaces"][0]["repositories"],
+        json!([{"url": "https://example.org/acme/shop.git", "directory": "shop"}])
+    );
+    assert_eq!(saved["workspaces"][0]["start_folder"], "shop");
+    assert_eq!(saved["workspaces"][0]["display_name"], "Shop");
+    assert!(saved["workspaces"][0].get("repo_url").is_none(), "{saved}");
     host.shutdown().await;
 }
 
@@ -1143,7 +1490,8 @@ async fn a_create_that_needs_the_default_memory_is_refused_while_the_settings_ar
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": "acme", "repo_url": REPO, "memory_mib": 4096}).to_string(),
+            &json!({"name": "acme", "repositories": [{"url": REPO}], "memory_mib": 4096})
+                .to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -3271,7 +3619,8 @@ async fn an_image_the_boot_plan_cannot_take_fails_the_start_and_leaves_nothing_b
     let reply = api
         .post(
             "/api/workspaces",
-            &json!({"name": "acme", "repo_url": REPO, "image": "example.org/odd:1"}).to_string(),
+            &json!({"name": "acme", "repositories": [{"url": REPO}], "image": "example.org/odd:1"})
+                .to_string(),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -4016,9 +4365,9 @@ async fn problems_of(api: &Api) -> Vec<(String, Option<String>, String, String)>
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_failed_clone_that_cannot_be_cleaned_up_names_what_is_left_in_the_failure() {
+async fn a_failed_sync_that_cannot_be_cleaned_up_names_what_is_left_in_the_failure() {
     let rig = Rig::new();
-    rig.guest.fail_clone.store(true, Ordering::SeqCst);
+    rig.guest.fail_sync.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4028,10 +4377,7 @@ async fn a_failed_clone_that_cannot_be_cleaned_up_names_what_is_left_in_the_fail
     let end = events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(end["step"], "failed", "{end}");
     let detail = end["detail"].as_str().unwrap();
-    assert!(
-        detail.contains("repository not found"),
-        "the cause: {detail}"
-    );
+    assert!(detail.contains("sync: I/O error"), "the cause: {detail}");
     assert!(detail.contains("could not clean up"), "{detail}");
     assert!(
         detail.contains("the new volume ws-"),

@@ -127,7 +127,7 @@
         <dt>Image</dt>
         <dd class="mono">{workspace.image}</dd>
         <dt>Repository</dt>
-        <dd class="mono">{workspace.repo_url}</dd>
+        <dd class="mono">{workspace.repositories[0]?.url ?? "None"}</dd>
       </dl>
       {#if workspace.status === "volume_missing" && workspace.busy === null}
         <VolumeMissingNotice name={workspace.name} detail />

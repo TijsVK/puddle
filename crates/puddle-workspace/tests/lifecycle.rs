@@ -896,29 +896,40 @@ fn record_execs(
     seen
 }
 
+fn dir(name: &str) -> puddle_types::CheckoutDir {
+    puddle_types::CheckoutDir::new(name).unwrap()
+}
+
 #[tokio::test]
-async fn a_clone_is_synced_before_it_is_reported_done() {
+async fn a_clone_goes_into_its_directory_and_the_sync_after_it_runs_as_root() {
     let rt = FakeRuntime::new();
     let w = Workspaces::default();
     let id = ws("acme");
     let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
     let seen = record_execs(&rt, &[("git", 0, ""), ("sync", 0, "")]);
-    let dir = w
-        .clone_checkout(&sb, &id, "https://h.example/acme/api.git", Some("root"))
+    let path = w
+        .clone_checkout(
+            &sb,
+            &id,
+            "https://h.example/acme/api.git",
+            &dir("api-2"),
+            Some("root"),
+        )
         .await
         .unwrap();
-    assert_eq!(dir.as_str(), "/workspaces/acme/api");
+    w.sync(&sb, &id).await.unwrap();
+    assert_eq!(path.as_str(), "/workspaces/acme/api-2");
     assert_eq!(
         *seen.lock().unwrap(),
         [
-            "git clone -- https://h.example/acme/api.git /workspaces/acme/api [root]",
+            "git clone -- https://h.example/acme/api.git /workspaces/acme/api-2 [root]",
             "sync  [root]"
         ]
     );
 }
 
 #[tokio::test]
-async fn a_failed_clone_is_an_error_and_is_not_synced() {
+async fn a_failed_clone_is_an_error_naming_what_git_said() {
     let rt = FakeRuntime::new();
     let w = Workspaces::default();
     let id = ws("acme");
@@ -931,7 +942,13 @@ async fn a_failed_clone_is_an_error_and_is_not_synced() {
         ],
     );
     let err = w
-        .clone_checkout(&sb, &id, "https://h.example/acme/api.git", None)
+        .clone_checkout(
+            &sb,
+            &id,
+            "https://h.example/acme/api.git",
+            &dir("api"),
+            None,
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, WorkspaceError::Clone { .. }), "{err}");
@@ -939,7 +956,7 @@ async fn a_failed_clone_is_an_error_and_is_not_synced() {
     assert_eq!(
         seen.lock().unwrap().len(),
         1,
-        "sync ran after a failed clone"
+        "a clone runs no sync of its own"
     );
     assert!(seen.lock().unwrap()[0].ends_with("[default]"));
 }
@@ -950,11 +967,8 @@ async fn a_failed_sync_is_an_error_not_a_silent_success() {
     let w = Workspaces::default();
     let id = ws("acme");
     let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
-    record_execs(&rt, &[("git", 0, ""), ("sync", 1, "sync: I/O error\n")]);
-    let err = w
-        .clone_checkout(&sb, &id, "https://h.example/acme/api.git", None)
-        .await
-        .unwrap_err();
+    record_execs(&rt, &[("sync", 1, "sync: I/O error\n")]);
+    let err = w.sync(&sb, &id).await.unwrap_err();
     assert!(matches!(err, WorkspaceError::Sync { .. }), "{err}");
     assert!(err.to_string().contains("I/O error"), "{err}");
 }

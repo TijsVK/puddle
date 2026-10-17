@@ -444,20 +444,23 @@ impl From<store::GitDefaults> for GitDefaultsView {
     }
 }
 
-/// Why a new workspace got the identity it got.
+/// Why a new workspace's repository got the identity it got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NewWorkspaceIdentityBasis {
+    /// The request picked it for the repository (`identity_id`).
+    Chosen,
     /// An identity covers the repository.
     Covers,
     /// None does: it got the default identity, which has no credential for the repository.
     Default,
-    /// None does and there is no default identity.
+    /// None does and there is no default identity, or Puddle could not set one up (the warning
+    /// says which).
     None,
 }
 
-/// What a new workspace's Git settings started with. Only the answer to creating a workspace
-/// carries it; the Git tab shows the same thing afterwards.
+/// What the Git settings of one repository of a new workspace started with. Only the answer to
+/// creating a workspace carries it; the Git tab shows the same thing afterwards.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct NewWorkspaceIdentity {
     /// The label of the identity it got; `null` for none.
@@ -484,6 +487,7 @@ impl NewWorkspaceIdentity {
                 )),
             ),
             (store::StartBasis::Covers, _) => (NewWorkspaceIdentityBasis::Covers, None),
+            (store::StartBasis::Chosen, _) => (NewWorkspaceIdentityBasis::Chosen, None),
             _ => (
                 NewWorkspaceIdentityBasis::None,
                 Some(format!(
@@ -496,6 +500,15 @@ impl NewWorkspaceIdentity {
             identity: start.identity.as_ref().map(|(_, label)| label.clone()),
             basis,
             warning,
+        }
+    }
+
+    /// A repository whose Git settings Puddle did not set up, and `why`.
+    pub(crate) fn not_set_up(why: String) -> Self {
+        Self {
+            identity: None,
+            basis: NewWorkspaceIdentityBasis::None,
+            warning: Some(why),
         }
     }
 }

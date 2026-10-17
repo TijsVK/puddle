@@ -324,7 +324,7 @@ describe("first workspace step", () => {
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
     expect(h.workspaces.bodies[0]).toMatchObject({
       name: "shop-api",
-      repo_url: "https://github.com/acme/shop-api.git",
+      repositories: [{ url: "https://github.com/acme/shop-api.git" }],
     });
     expect(h.firstRun.state.completed).toBe(true);
   });

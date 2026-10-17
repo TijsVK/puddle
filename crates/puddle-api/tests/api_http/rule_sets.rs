@@ -287,7 +287,7 @@ async fn direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
             .send(
                 "POST",
                 "/api/workspaces",
-                Some(&json!({"name": name, "repo_url": "https://github.com/acme/api.git"})),
+                Some(&json!({"name": name, "repositories": [{"url": "https://github.com/acme/api.git"}]})),
             )
             .await;
         assert_eq!(reply.status, 202, "{}", reply.body);
@@ -342,7 +342,7 @@ async fn unreadable_settings_leave_system_managed_as_it_was() {
         .send(
             "POST",
             "/api/workspaces",
-            Some(&json!({"name": "late", "repo_url": "https://github.com/acme/api.git"})),
+            Some(&json!({"name": "late", "repositories": [{"url": "https://github.com/acme/api.git"}]})),
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);

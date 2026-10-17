@@ -12,14 +12,17 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use puddle_store::Clock;
-use puddle_types::{Event, EventSink, WorkspaceId, WorkspaceStatus, WorkspaceStep};
+use puddle_types::{CheckoutDir, Event, EventSink, WorkspaceId, WorkspaceStatus, WorkspaceStep};
 use tokio::sync::watch;
 
 use crate::workspaces::{
-    AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DisplayName, LaunchError,
-    Launcher, Listing, NewWorkspace, Operation, RepoFindings, ShellInitCheck, WorkspaceError,
-    WorkspaceRecord, WorkspaceService,
+    AttachMode, Attached, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup,
+    LaunchError, Launcher, Listing, NewWorkspace, Operation, RepoFindings, ShellInitCheck,
+    WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
+
+/// One step an operation reports: the step, its detail, and the checkout a cloning step is about.
+type Step = (WorkspaceStep, Option<String>, Option<CheckoutDir>);
 
 /// A [`Launcher`] that opens nothing and remembers what it was asked to open.
 #[derive(Debug, Default)]
@@ -226,11 +229,12 @@ impl FakeWorkspaces {
         });
     }
 
-    fn progress(&self, record: &WorkspaceRecord, step: WorkspaceStep, detail: Option<String>) {
+    fn progress(&self, record: &WorkspaceRecord, (step, detail, repository): Step) {
         self.inner.events.emit(Event::WorkspaceProgress {
             workspace: record.name.clone(),
             step,
             detail,
+            repository,
         });
     }
 
@@ -258,19 +262,14 @@ impl FakeWorkspaces {
     }
 
     /// Runs the rest of an operation on a task: the steps, then the end state.
-    fn run(
-        &self,
-        record: &WorkspaceRecord,
-        op: Operation,
-        steps: Vec<(WorkspaceStep, Option<String>)>,
-    ) {
+    fn run(&self, record: &WorkspaceRecord, op: Operation, steps: Vec<Step>) {
         let this = self.clone();
         let record = record.clone();
         self.inner.in_flight.send_modify(|n| *n += 1);
         tokio::spawn(async move {
-            for (step, detail) in steps {
+            for step in steps {
                 this.pause().await;
-                this.progress(&record, step, detail);
+                this.progress(&record, step);
             }
             this.pause().await;
             this.finish(&record.id, op);
@@ -321,7 +320,7 @@ impl FakeWorkspaces {
             if status_changed {
                 self.emit_status(&record);
             }
-            self.progress(&record, WorkspaceStep::Failed, Some(reason));
+            self.progress(&record, (WorkspaceStep::Failed, Some(reason), None));
             return;
         }
         match op {
@@ -350,7 +349,7 @@ impl FakeWorkspaces {
         if status_changed {
             self.emit_status(&record);
         }
-        self.progress(&record, WorkspaceStep::Done, None);
+        self.progress(&record, (WorkspaceStep::Done, None, None));
     }
 
     fn check_for(&self, id: &WorkspaceId) -> Result<DeleteCheck, WorkspaceError> {
@@ -413,13 +412,17 @@ impl WorkspaceService for FakeWorkspaces {
         })
     }
 
-    fn create(&self, new: NewWorkspace) -> BoxFuture<'_, Result<WorkspaceRecord, WorkspaceError>> {
+    fn create<'a>(
+        &'a self,
+        new: NewWorkspace,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
             let id = WorkspaceId::new(new.name.as_str()).map_err(|e| {
                 WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
             })?;
-            let mut record =
-                WorkspaceRecord::new(id.clone(), new.name.clone(), new.repo_url.as_str());
+            let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
+            record.start_folder.clone_from(&new.start_folder);
             record.image = new
                 .image
                 .as_ref()
@@ -454,15 +457,28 @@ impl WorkspaceService for FakeWorkspaces {
                     },
                 );
             }
+            git.set_up(&new.name, &new.repositories).await;
             self.emit_status(&record);
             self.run(
                 &record,
                 Operation::Creating,
                 vec![
-                    (WorkspaceStep::PreparingVolume, None),
-                    (WorkspaceStep::PullingImage, Some(record.image.clone())),
-                    (WorkspaceStep::Cloning, Some(record.repo_url.clone())),
-                ],
+                    (WorkspaceStep::PreparingVolume, None, None),
+                    (
+                        WorkspaceStep::PullingImage,
+                        Some(record.image.clone()),
+                        None,
+                    ),
+                ]
+                .into_iter()
+                .chain(record.repositories.iter().map(|r| {
+                    (
+                        WorkspaceStep::Cloning,
+                        Some(r.url.as_str().to_owned()),
+                        Some(r.directory.clone()),
+                    )
+                }))
+                .collect(),
             );
             Ok(record)
         })
@@ -493,8 +509,8 @@ impl WorkspaceService for FakeWorkspaces {
                 &record,
                 Operation::Starting,
                 vec![
-                    (WorkspaceStep::Starting, None),
-                    (WorkspaceStep::Syncing, None),
+                    (WorkspaceStep::Starting, None, None),
+                    (WorkspaceStep::Syncing, None, None),
                 ],
             );
             Ok(record)
@@ -526,8 +542,8 @@ impl WorkspaceService for FakeWorkspaces {
                 &record,
                 Operation::Stopping,
                 vec![
-                    (WorkspaceStep::Stopping, None),
-                    (WorkspaceStep::Reclaiming, None),
+                    (WorkspaceStep::Stopping, None, None),
+                    (WorkspaceStep::Reclaiming, None, None),
                 ],
             );
             Ok(record)
@@ -559,7 +575,7 @@ impl WorkspaceService for FakeWorkspaces {
             self.run(
                 &record,
                 Operation::Reclaiming,
-                vec![(WorkspaceStep::Reclaiming, None)],
+                vec![(WorkspaceStep::Reclaiming, None, None)],
             );
             Ok(record)
         })
@@ -608,8 +624,8 @@ impl WorkspaceService for FakeWorkspaces {
                 &record,
                 Operation::Deleting,
                 vec![
-                    (WorkspaceStep::Checking, None),
-                    (WorkspaceStep::Removing, None),
+                    (WorkspaceStep::Checking, None, None),
+                    (WorkspaceStep::Removing, None, None),
                 ],
             );
             Ok(record)
@@ -696,7 +712,7 @@ mod tests {
     use puddle_types::{CollectingSink, WorkspaceName};
 
     use super::*;
-    use crate::workspaces::RepoUrl;
+    use crate::workspaces::{NewRepository, NoGitSetup, RepoUrl, Repository};
 
     fn id(s: &str) -> WorkspaceId {
         WorkspaceId::new(s).unwrap()
@@ -711,16 +727,20 @@ mod tests {
     fn new_ws(name: &str) -> NewWorkspace {
         NewWorkspace::new(
             WorkspaceName::new(name).unwrap(),
-            RepoUrl::parse("https://example.com/a/b").unwrap(),
+            vec![NewRepository {
+                repository: Repository::at_default_directory(
+                    RepoUrl::parse("https://example.com/a/b").unwrap(),
+                ),
+                identity: None,
+                pull: true,
+                push: true,
+            }],
         )
     }
 
     fn seeded(fake: &FakeWorkspaces, name: &str, status: WorkspaceStatus) {
-        let mut record = WorkspaceRecord::new(
-            id(name),
-            WorkspaceName::new(name).unwrap(),
-            "https://x.test/a",
-        );
+        let mut record =
+            WorkspaceRecord::new(id(name), WorkspaceName::new(name).unwrap(), Vec::new());
         record.status = status;
         fake.seed(record, Unsaved::default());
     }
@@ -767,7 +787,7 @@ mod tests {
         assert!(matches!(clash, Err(WorkspaceError::Conflict(_))));
         assert_eq!(fake.get(&id("b")).await.unwrap().display_name, None);
         // `a` now answers to "Shop", so a new workspace named "shop" is not free.
-        let taken = fake.create(new_ws("shop")).await;
+        let taken = fake.create(new_ws("shop"), &NoGitSetup).await;
         assert!(matches!(taken, Err(WorkspaceError::Conflict(_))));
         assert!(matches!(
             fake.rename(&id("nope"), None).await,
@@ -829,7 +849,7 @@ mod tests {
     async fn a_long_name_cannot_be_a_workspace() {
         let (fake, _) = fake();
         let long = "n".repeat(WorkspaceId::MAX_LEN + 1);
-        let err = fake.create(new_ws(&long)).await.unwrap_err();
+        let err = fake.create(new_ws(&long), &NoGitSetup).await.unwrap_err();
         assert!(matches!(err, WorkspaceError::Invalid(_)), "{err}");
     }
 
@@ -863,7 +883,7 @@ mod tests {
             Arc::new(FakeLauncher::new()),
             Duration::from_millis(300),
         );
-        fake.create(new_ws("slow")).await.unwrap();
+        fake.create(new_ws("slow"), &NoGitSetup).await.unwrap();
         tokio::task::yield_now().await;
         assert!(
             steps(&sink).is_empty(),
@@ -922,11 +942,7 @@ mod tests {
     #[tokio::test]
     async fn the_launcher_records_what_it_opened() {
         let launcher = FakeLauncher::new();
-        let record = WorkspaceRecord::new(
-            id("w"),
-            WorkspaceName::new("w").unwrap(),
-            "https://x.test/a",
-        );
+        let record = WorkspaceRecord::new(id("w"), WorkspaceName::new("w").unwrap(), Vec::new());
         launcher.open_desktop(&record).await.unwrap();
         launcher.fail_next("nope");
         assert_eq!(

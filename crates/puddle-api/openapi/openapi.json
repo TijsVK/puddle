@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.12.0"
+    "version": "0.13.0"
   },
   "paths": {
     "/api/audit": {
@@ -4246,7 +4246,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Creates a workspace: its disk, then a clone of the repository. Answers 202; follow it with\n`workspace_progress` events.",
+        "summary": "Creates a workspace: its disk, then a clone of each repository in the list, one at a time.\nThe list is checked whole before anything exists. Each repository's identity joins the\nworkspace and its repository table row is made before the first clone. A clone that fails\nfails only its repository: a background problem names it and the create still ends `done`.\nAnswers 202; follow it with `workspace_progress` events.",
         "operationId": "create_workspace",
         "requestBody": {
           "content": {
@@ -4290,7 +4290,7 @@
             }
           },
           "409": {
-            "description": "the name is taken",
+            "description": "the name is taken, or two identities of the list cover the same place (`identity_collision`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4310,7 +4310,7 @@
             }
           },
           "422": {
-            "description": "invalid name, repository URL (including SSH remotes), image or memory",
+            "description": "invalid name, repository (address, SSH remote, directory clash, the same repository twice, unknown identity, more than 100), start folder, image or memory, or `repo_url` sent",
             "content": {
               "application/json": {
                 "schema": {
@@ -7658,6 +7658,14 @@
           }
         }
       },
+      "CheckoutDir": {
+        "type": "string",
+        "description": "A checkout's directory directly under the workspace's volume root: ASCII letters, digits, `.`, `_` and `-`, not starting with `.` or `-`, not `lost+found`.",
+        "example": "api",
+        "maxLength": 100,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
+      },
       "ClipboardRead": {
         "type": "string",
         "description": "What a programmatic clipboard read in the browser window does.",
@@ -8571,6 +8579,7 @@
               "workspace",
               "step",
               "detail",
+              "repository",
               "type"
             ],
             "properties": {
@@ -8579,7 +8588,18 @@
                   "string",
                   "null"
                 ],
-                "description": "More about the step, or why it failed; `null` when there is nothing to add. It can\nquote tool output: escape it when rendering."
+                "description": "More about the step, or why it failed; `null` when there is nothing to add. A cloning\nstep names the address. It can quote tool output: escape it when rendering."
+              },
+              "repository": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CheckoutDir",
+                    "description": "The checkout directory a cloning step is about; `null` for every other step."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "step": {
                 "$ref": "#/components/schemas/WorkspaceStep",
@@ -9831,6 +9851,49 @@
         },
         "additionalProperties": false
       },
+      "NewRepositoryRequest": {
+        "type": "object",
+        "description": "One repository of `POST /api/workspaces`.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "directory": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The checkout's directory under the volume root; left out or `null` is the last part of\nthe address (`api` for `https://github.com/acme/api.git`), or `src` when that is no usable\nname."
+          },
+          "identity_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The identity that serves it (`id` of `GET /api/identities`); left out or `null` is the\nidentity that covers its owner, else the default identity."
+          },
+          "pull": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Pull on its new repository table row; left out or `null` is on. A row the table already\nhas keeps its toggles."
+          },
+          "push": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Push on its new repository table row; left out or `null` is on."
+          },
+          "url": {
+            "type": "string",
+            "description": "The repository to clone, as an `https://` URL without credentials. SSH remotes\n(`git@host:path`, `ssh://`) are refused with a message saying so."
+          }
+        },
+        "additionalProperties": false
+      },
       "NewRuleRequest": {
         "type": "object",
         "description": "A rule to create directly (not from a pending request).",
@@ -9884,7 +9947,7 @@
       },
       "NewWorkspaceIdentity": {
         "type": "object",
-        "description": "What a new workspace's Git settings started with. Only the answer to creating a workspace\ncarries it; the Git tab shows the same thing afterwards.",
+        "description": "What the Git settings of one repository of a new workspace started with. Only the answer to\ncreating a workspace carries it; the Git tab shows the same thing afterwards.",
         "required": [
           "identity",
           "basis",
@@ -9913,8 +9976,9 @@
       },
       "NewWorkspaceIdentityBasis": {
         "type": "string",
-        "description": "Why a new workspace got the identity it got.",
+        "description": "Why a new workspace's repository got the identity it got.",
         "enum": [
+          "chosen",
           "covers",
           "default",
           "none"
@@ -9924,8 +9988,7 @@
         "type": "object",
         "description": "`POST /api/workspaces`.",
         "required": [
-          "name",
-          "repo_url"
+          "name"
         ],
         "properties": {
           "image": {
@@ -9949,9 +10012,20 @@
             "$ref": "#/components/schemas/WorkspaceName",
             "description": "The workspace's name, which is also its workspace's name."
           },
-          "repo_url": {
-            "type": "string",
-            "description": "The repository to clone, as an `https://` URL without credentials. SSH remotes\n(`git@host:path`, `ssh://`) are refused with a message saying so."
+          "repositories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NewRepositoryRequest"
+            },
+            "description": "The repositories to clone, in order (0 to 100); left out is none. The list is checked\nwhole before anything exists.",
+            "maxItems": 100
+          },
+          "start_folder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where new terminals land and what the editor opens: a path under the volume (relative,\n`/` between its parts, at most 255 bytes, not inside `.puddle`); left out or `null` is the\nvolume root."
           }
         },
         "additionalProperties": false
@@ -12033,12 +12107,13 @@
       },
       "Workspace": {
         "type": "object",
-        "description": "A workspace: a repository checkout on its own disk, and the workspace that runs it.",
+        "description": "A workspace: its own disk with the repositories Puddle manages for it (and anything else the\nuser put there), and the sandbox that runs it.",
         "required": [
           "id",
           "name",
           "display_name",
-          "repo_url",
+          "repositories",
+          "start_folder",
           "image",
           "memory_mib",
           "status",
@@ -12049,7 +12124,7 @@
           "direct_ssh",
           "settings_error",
           "first_connect_notice_due",
-          "identity"
+          "identities"
         ],
         "properties": {
           "busy": {
@@ -12101,16 +12176,12 @@
             "type": "string",
             "description": "The id used in paths. Today it is the workspace's name."
           },
-          "identity": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/NewWorkspaceIdentity",
-                "description": "Which identity the new workspace got and why. Only the answer to creating a workspace has\nit (and only when its Git settings could be set up); `null` in every other answer, and the\nGit tab shows it afterwards."
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NewWorkspaceIdentity"
+            },
+            "description": "Which identity each repository of a new workspace got and why, one per repository of the\nrequest, in its order. Only the answer to creating a workspace fills it; every other answer\nhas an empty list, and the Git tab shows the same afterwards."
           },
           "image": {
             "type": "string",
@@ -12126,9 +12197,12 @@
             "$ref": "#/components/schemas/WorkspaceName",
             "description": "The name of the workspace that runs it; events and per-workspace settings use this name."
           },
-          "repo_url": {
-            "type": "string",
-            "description": "The HTTPS URL it was cloned from."
+          "repositories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceRepository"
+            },
+            "description": "The repositories Puddle manages for it, in the order they were added (0 to 100)."
           },
           "settings_error": {
             "type": [
@@ -12136,6 +12210,13 @@
               "null"
             ],
             "description": "Why `direct_ssh` is only a guess: the settings could not be read, so it counts as off.\n`null` when the settings were read."
+          },
+          "start_folder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where new terminals land and what the editor opens: a path under the volume, or `null`\nfor the volume root."
           },
           "status": {
             "$ref": "#/components/schemas/WorkspaceStatus",
@@ -12254,6 +12335,24 @@
           "reclaiming",
           "deleting"
         ]
+      },
+      "WorkspaceRepository": {
+        "type": "object",
+        "description": "One repository Puddle manages for a workspace. Its identity and its Pull and Push toggles are\nthe workspace's Git settings (`GET /api/workspaces/{id}/git`), matched in the repository\ntable's spelling.",
+        "required": [
+          "url",
+          "directory"
+        ],
+        "properties": {
+          "directory": {
+            "$ref": "#/components/schemas/CheckoutDir",
+            "description": "The checkout it is cloned into, directly under the volume root."
+          },
+          "url": {
+            "type": "string",
+            "description": "The HTTPS address it is cloned from, without credentials."
+          }
+        }
       },
       "WorkspaceSettingsRequest": {
         "type": "object",
@@ -12388,7 +12487,7 @@
     },
     {
       "name": "workspaces",
-      "description": "Workspaces: repository checkouts with their own disk and sandbox"
+      "description": "Workspaces: their own disk with the repositories Puddle manages for them, and the sandbox that runs them"
     },
     {
       "name": "environment",

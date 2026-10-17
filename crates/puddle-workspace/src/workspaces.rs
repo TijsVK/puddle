@@ -8,7 +8,8 @@ use puddle_compute::{
     ComputeError, DiskSize, Runtime, Sandbox, SandboxSpec, VolumeInfo, VolumeMount, VolumeSpec,
 };
 use puddle_types::{
-    GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceId, WorkspaceStatus,
+    CheckoutDir, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceId,
+    WorkspaceStatus,
 };
 use tracing::{debug, info, warn};
 
@@ -16,7 +17,7 @@ use crate::check::{self, DeleteConfirmation, DeleteReport, Findings};
 use crate::locks::{self, LockReport};
 use crate::registry::{HoldKind, Holder, Registry};
 use crate::trim::{self, TrimReport, tail};
-use crate::{Layout, WorkspaceError, checkout_name};
+use crate::{Layout, WorkspaceError};
 
 /// Prefix of Puddle's short-lived maintenance sandboxes: `m--<workspace id>` (fits the 63
 /// characters of a sandbox name for the longest workspace id). Reconcile may remove
@@ -362,28 +363,27 @@ impl Workspaces {
         }
     }
 
-    /// Clones `url` into a checkout directory of workspace `id` (named by [`checkout_name`])
-    /// and then runs `sync`, so the clone is on the volume before this returns: a VMM kill
-    /// within seconds of a clone could otherwise lose the whole repository (directory
-    /// entries aren't covered by `core.fsync=committed` until the first fsync).
-    /// Runs as `user` (the sandbox's default user if `None`), with the sandbox's own
-    /// environment (the proxy settings). Returns the checkout's path.
+    /// Clones `url` into the checkout directory `dir` of workspace `id`, as `user` (the sandbox's
+    /// default user if `None`), with the sandbox's own environment (the proxy settings). Returns
+    /// the checkout's path. Call [`Workspaces::sync`] after the last clone before calling it
+    /// done: a VMM kill within seconds of a clone could otherwise lose the whole repository
+    /// (directory entries aren't covered by `core.fsync=committed` until the first fsync).
     ///
     /// # Errors
     ///
-    /// [`WorkspaceError::Clone`] when `git clone` fails (nothing is synced);
-    /// [`WorkspaceError::Sync`] when the sync fails (the clone exists but isn't known to be on
-    /// disk); [`WorkspaceError::Layout`]; [`WorkspaceError::Runtime`].
+    /// [`WorkspaceError::Clone`] when `git clone` fails (git removes the folder it made);
+    /// [`WorkspaceError::Layout`]; [`WorkspaceError::Runtime`].
     pub async fn clone_checkout<S: Sandbox>(
         &self,
         sandbox: &S,
         id: &WorkspaceId,
         url: &str,
+        dir: &CheckoutDir,
         user: Option<&str>,
     ) -> Result<GuestPath, WorkspaceError> {
         let layout = Layout::new(id)?;
-        let checkout = layout.checkout(&checkout_name(url))?;
-        let mut request = layout.clone_request(url)?.with_timeout(CLONE_TIMEOUT);
+        let checkout = layout.checkout(dir)?;
+        let mut request = layout.clone_request(url, dir)?.with_timeout(CLONE_TIMEOUT);
         if let Some(user) = user {
             request = request.as_user(user);
         }
@@ -401,8 +401,7 @@ impl Workspaces {
                 ),
             });
         }
-        self.sync(sandbox, id).await?;
-        info!(workspace = %id, "checkout cloned and synced");
+        info!(workspace = %id, checkout = %dir, "checkout cloned");
         Ok(checkout)
     }
 

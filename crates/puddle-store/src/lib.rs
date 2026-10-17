@@ -54,4 +54,6 @@ pub use store::{
     SystemHost, SystemPlan, WorkspaceDeletion, parse_rule_set,
 };
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
-pub use workspace_git::{GitDefaults, GitStart, RepoEntry, RepoRef, StartBasis, WorkspaceGit};
+pub use workspace_git::{
+    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, WorkspaceGit,
+};
