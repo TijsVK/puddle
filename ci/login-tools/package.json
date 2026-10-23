@@ -4,7 +4,7 @@
   "description": "Pins the Claude Code and Copilot CLI versions the login tests run against in CI. Dependabot bumps them weekly; the Linux job fails if a new login flow breaks a test.",
   "license": "GPL-3.0-or-later",
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.299",
-    "@github/copilot": "1.0.97"
+    "@anthropic-ai/claude-code": "2.1.305",
+    "@github/copilot": "1.0.101"
   }
 }
