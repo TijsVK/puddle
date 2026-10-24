@@ -49,7 +49,7 @@ url = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Already in the tree through the notification plugin: asks the session bus whether a tray host exists.
-zbus = "5"
+zbus = "6"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Already in the tree through wry: the tray test starts GTK on a virtual display.
