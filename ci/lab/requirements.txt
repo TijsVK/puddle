@@ -254,9 +254,9 @@ brotli==1.2.0 \
     --hash=sha256:fc1530af5c3c275b8524f2e24841cbe2599d74462455e9bae5109e9ff42e9361 \
     --hash=sha256:ff09cd8c5eec3b9d02d2408db41be150d8891c5566addce57513bf546e3d6c6d
     # via mitmproxy
-certifi==2026.7.22 \
-    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
-    --hash=sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55
+certifi==2026.10.19 \
+    --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \
+    --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
     # via
     #   aioquic
     #   mitmproxy
@@ -621,14 +621,11 @@ markupsafe==3.0.4 \
     #   werkzeug
 mitmproxy==12.2.3 \
     --hash=sha256:df75ccd15ccb39ab55ce9dd4130312270e8ba208eb927a7cbe50cb52678ec722
-    # via -r ci/lab/requirements.in
-mitmproxy-linux==0.12.11 ; sys_platform == 'linux' \
+    # via -r requirements.in
+mitmproxy-linux==0.12.11 \
     --hash=sha256:0e5670a6b82546ebc0f947d79adfcb3c001ba3136a10ce848a2f4e2f336611c4 \
     --hash=sha256:3155d4aa6b3e038f97b39ed5aa7b1fc89e5b7d25d119a19581aa472dc606ae5c \
     --hash=sha256:3de4f96c11565cca2d051655f8ca23f8f24f4b3220e9ca3b0ad81007f293e9da
-    # via mitmproxy-rs
-mitmproxy-macos==0.12.11 ; sys_platform == 'darwin' \
-    --hash=sha256:63349d9b46514ca679547651f7c0548f9222892edfbcba087b82b3244fbae859
     # via mitmproxy-rs
 mitmproxy-rs==0.12.11 \
     --hash=sha256:6f5ecf3dd3c21e56191b84fc90364dc4d1dc95c660beedab4c816a0119ecb785 \
@@ -637,9 +634,6 @@ mitmproxy-rs==0.12.11 \
     --hash=sha256:c5d00a02414de0a81c088e1b3b8bcb6af4c55332fa106dd8c454512b671477ba \
     --hash=sha256:d57eabeb5317e42a26d2878046c46079865e488f667898b1d67cc6f28d5bf85d
     # via mitmproxy
-mitmproxy-windows==0.12.11 ; os_name == 'nt' \
-    --hash=sha256:59addc8864669a08f8cb48d8b29129efb1ca5f6cba9696e2d91f1f506b21a2d7
-    # via mitmproxy-rs
 msgpack==1.1.2 \
     --hash=sha256:0051fffef5a37ca2cd16978ae4f0aef92f164df86823871b5162812bebecd8e2 \
     --hash=sha256:04fb995247a6e83830b62f0b07bf36540c213f6eac8e851166d8d86d83cbd014 \
@@ -712,14 +706,10 @@ pyasn1==0.6.4 \
     --hash=sha256:9c447d8431c947fe4c8febc4ed9e760bc29011a5b01e5c74b67025bd9fb8ce81 \
     --hash=sha256:deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b
     # via ldap3
-pycparser==3.11 ; implementation_name != 'PyPy' \
+pycparser==3.11 \
     --hash=sha256:51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80 \
     --hash=sha256:d875f09c3507d00e1aba0eecc6dcadc1352f30fff09dc6bff2f1c2935e97c2bc
     # via cffi
-pydivert==2.1.0 ; sys_platform == 'win32' \
-    --hash=sha256:382db488e3c37c03ec9ec94e061a0b24334d78dbaeebb7d4e4d32ce4355d9da1 \
-    --hash=sha256:f0e150f4ff591b78e35f514e319561dadff7f24a82186a171dd4d465483de5b4
-    # via mitmproxy
 pylsqpack==0.3.24 \
     --hash=sha256:23b4d8af48836893beac356c10ca268161953de5bf9ed691526a93f5c82433e9 \
     --hash=sha256:54978a9879471596d84bbad5e67d727014048926bc5bb2dac0eb3701b48c5ac9 \
@@ -772,12 +762,6 @@ tornado==6.5.5 \
     --hash=sha256:dd3eafaaeec1c7f2f8fdcd5f964e8907ad788fe8a5a32c4426fbbdda621223b7 \
     --hash=sha256:e74c92e8e65086b338fd56333fb9a68b9f6f2fe7ad532645a290a464bcf46be5
     # via mitmproxy
-typing-extensions==4.14.0 ; python_full_version < '3.13' \
-    --hash=sha256:8676b788e32f02ab42d9e7c61324048ae4c6d844a399eebace3d4979d75ceef4 \
-    --hash=sha256:a1514509136dd0b477638fc68d6a91497af5076466ad0fa6c338e44e359944af
-    # via
-    #   mitmproxy
-    #   pyopenssl
 urwid==3.0.5 \
     --hash=sha256:24be27ffafdb68c09cd95dc21b60ccfd02843320b25ce5feee1708b34fad5a23 \
     --hash=sha256:f188144261224fdfc9b56b4222869bd0eac90fd7895cf1e376129cdc7e13bc84
