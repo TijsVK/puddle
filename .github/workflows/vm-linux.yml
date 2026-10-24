@@ -97,7 +97,7 @@ jobs:
       # No Rust cache here: this job's nextest archive build restored an entry on 0 of the last 22 pull
       # requests, and with the ci entry restored (exact) it was no faster than a cold build, so the
       # restore only cost time and the repo's 10 GB cap more space (cache-gc.yml, budget table).
-      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -173,7 +173,7 @@ jobs:
           ls -l /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
           echo "ok=true" >> "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         if: steps.kvm.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146
